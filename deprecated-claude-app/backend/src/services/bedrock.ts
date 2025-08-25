@@ -205,12 +205,17 @@ export class BedrockService {
       return modelId;
     }
     
-    // Fallback mapping for any legacy IDs
-    const modelMap: Record<string, string> = {
-      'claude-3-5-sonnet-20240610': 'anthropic.claude-3-5-sonnet-20240610-v1:0',
-      'claude-3-5-sonnet-20241022': 'anthropic.claude-3-5-sonnet-20241022-v1:0',    
-      'claude-3-opus-20240229': 'anthropic.claude-3-opus-20240229-v1:0',
-      'claude-3-sonnet-20240229': 'anthropic.claude-3-sonnet-20240229-v1:0',
+          // Fallback mapping for any legacy IDs
+      const modelMap: Record<string, string> = {
+        'claude-opus-4-1-20250805': 'anthropic.claude-opus-4-1-20250805-v1:0',
+        'claude-opus-4-20250514': 'anthropic.claude-opus-4-20250514-v1:0',
+        'claude-sonnet-4-20250514': 'anthropic.claude-sonnet-4-20250514-v1:0',
+        'claude-3-7-sonnet-20250219': 'anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'claude-3-5-haiku-20241022': 'anthropic.claude-3-5-haiku-20241022-v1:0',
+        'claude-3-5-sonnet-20240610': 'anthropic.claude-3-5-sonnet-20240610-v1:0',
+        'claude-3-5-sonnet-20241022': 'anthropic.claude-3-5-sonnet-20241022-v1:0',    
+        'claude-3-opus-20240229': 'anthropic.claude-3-opus-20240229-v1:0',
+        'claude-3-sonnet-20240229': 'anthropic.claude-3-sonnet-20240229-v1:0',
       'claude-2.1': 'anthropic.claude-v2:1',
       'claude-2.0': 'anthropic.claude-v2',
       'claude-instant-1.2': 'anthropic.claude-instant-v1'

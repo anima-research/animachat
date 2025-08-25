@@ -26,13 +26,88 @@ export function createBranch(
 // Constants
 export const MODELS: import('./types.js').Model[] = [
   {
+    id: 'claude-opus-4-1-20250805',
+    name: 'claude-opus-4-1',
+    displayName: 'Claude Opus 4.1',
+    provider: 'anthropic',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'claude-opus-4-20250514',
+    name: 'claude-opus-4',
+    displayName: 'Claude Opus 4',
+    provider: 'anthropic',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'claude-sonnet-4-20250514',
+    name: 'claude-sonnet-4',
+    displayName: 'Claude Sonnet 4',
+    provider: 'anthropic',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'claude-3-7-sonnet-20250219',
+    name: 'claude-3-7-sonnet',
+    displayName: 'Claude Sonnet 3.7',
+    provider: 'anthropic',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'claude-3-5-haiku-20241022',
+    name: 'claude-3-5-haiku',
+    displayName: 'Claude Haiku 3.5',
+    provider: 'anthropic',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
     id: 'claude-3-opus-20240229',
     name: 'claude-3-opus',
     displayName: 'Claude 3 Opus',
     provider: 'anthropic',
     deprecated: false,
     contextWindow: 200000,
-    outputTokenLimit: 800,
+    outputTokenLimit: 4096,
     settings: {
       temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
@@ -47,7 +122,7 @@ export const MODELS: import('./types.js').Model[] = [
     provider: 'anthropic',
     deprecated: false,
     contextWindow: 200000,
-    outputTokenLimit: 800,
+    outputTokenLimit: 4096,
     settings: {
       temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
@@ -62,7 +137,82 @@ export const MODELS: import('./types.js').Model[] = [
     provider: 'anthropic',
     deprecated: false,
     contextWindow: 200000,
-    outputTokenLimit: 800,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'anthropic.claude-opus-4-1-20250805-v1:0',
+    name: 'claude-opus-4-1-bedrock',
+    displayName: 'Claude Opus 4.1 (Bedrock)',
+    provider: 'bedrock',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'anthropic.claude-opus-4-20250514-v1:0',
+    name: 'claude-opus-4-bedrock',
+    displayName: 'Claude Opus 4 (Bedrock)',
+    provider: 'bedrock',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'anthropic.claude-sonnet-4-20250514-v1:0',
+    name: 'claude-sonnet-4-bedrock',
+    displayName: 'Claude Sonnet 4 (Bedrock)',
+    provider: 'bedrock',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'anthropic.claude-3-7-sonnet-20250219-v1:0',
+    name: 'claude-3-7-sonnet-bedrock',
+    displayName: 'Claude Sonnet 3.7 (Bedrock)',
+    provider: 'bedrock',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'anthropic.claude-3-5-haiku-20241022-v1:0',
+    name: 'claude-3-5-haiku-bedrock',
+    displayName: 'Claude Haiku 3.5 (Bedrock)',
+    provider: 'bedrock',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 4096,
     settings: {
       temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
@@ -77,7 +227,7 @@ export const MODELS: import('./types.js').Model[] = [
     provider: 'bedrock',
     deprecated: true,
     contextWindow: 200000,
-    outputTokenLimit: 800,
+    outputTokenLimit: 4096,
     settings: {
       temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
@@ -92,7 +242,7 @@ export const MODELS: import('./types.js').Model[] = [
     provider: 'bedrock',
     deprecated: true,
     contextWindow: 100000,
-    outputTokenLimit: 800,
+    outputTokenLimit: 4096,
     settings: {
       temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
@@ -107,7 +257,7 @@ export const MODELS: import('./types.js').Model[] = [
     provider: 'bedrock',
     deprecated: true,
     contextWindow: 100000,
-    outputTokenLimit: 800,
+    outputTokenLimit: 4096,
     settings: {
       temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
@@ -122,7 +272,7 @@ export const MODELS: import('./types.js').Model[] = [
     provider: 'bedrock',
     deprecated: true,
     contextWindow: 100000,
-    outputTokenLimit: 800,
+    outputTokenLimit: 4096,
     settings: {
       temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
