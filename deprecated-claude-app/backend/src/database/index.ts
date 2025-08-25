@@ -1,16 +1,7 @@
-import { User, Conversation, Message, Participant } from '@deprecated-claude/shared';
+import { User, Conversation, Message, Participant, ApiKey } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
-
-interface ApiKey {
-  id: string;
-  userId: string;
-  name: string;
-  key: string;
-  provider: 'bedrock' | 'anthropic';
-  createdAt: Date;
-}
 
 export class Database {
   private users: Map<string, User> = new Map();
@@ -380,20 +371,29 @@ export class Database {
   }
 
   // API Key methods
-  async createApiKey(userId: string, name: string, provider: 'bedrock' | 'anthropic', key: string): Promise<ApiKey> {
-    const apiKey: ApiKey = {
+  async createApiKey(userId: string, data: import('@deprecated-claude/shared').CreateApiKey): Promise<import('@deprecated-claude/shared').ApiKey> {
+    const apiKey = {
       id: uuidv4(),
       userId,
-      name,
-      key,
-      provider,
-      createdAt: new Date()
-    };
+      name: data.name,
+      provider: data.provider,
+      credentials: data.credentials,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    } as import('@deprecated-claude/shared').ApiKey;
 
     this.apiKeys.set(apiKey.id, apiKey);
     
     const user = await this.getUserById(userId);
     if (user) {
+      // Create masked version for display
+      let masked = '****';
+      if ('apiKey' in apiKey.credentials) {
+        masked = '****' + (apiKey.credentials.apiKey as string).slice(-4);
+      } else if ('accessKeyId' in apiKey.credentials) {
+        masked = '****' + (apiKey.credentials.accessKeyId as string).slice(-4);
+      }
+      
       // Create new user object with updated apiKeys
       const updatedUser = {
         ...user,
@@ -403,7 +403,7 @@ export class Database {
             id: apiKey.id,
             name: apiKey.name,
             provider: apiKey.provider,
-            masked: '****' + key.slice(-4),
+            masked,
             createdAt: apiKey.createdAt
           }
         ]
@@ -412,9 +412,9 @@ export class Database {
     }
 
     await this.logEvent('api_key_created', { 
-      apiKey,
+      apiKeyId: apiKey.id,
       userId,
-      masked: '****' + key.slice(-4)
+      provider: apiKey.provider
     });
     
     return apiKey;

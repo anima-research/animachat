@@ -1,7 +1,9 @@
-import { Message, MODELS, ConversationFormat, ModelSettings, Participant } from '@deprecated-claude/shared';
+import { Message, MODELS, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
+import { OpenRouterService } from './openrouter.js';
+import { OpenAICompatibleService } from './openai-compatible.js';
 
 export class InferenceService {
   private bedrockService: BedrockService;
@@ -45,7 +47,8 @@ export class InferenceService {
     if (model.provider === 'anthropic') {
       // Try to get user's Anthropic API key
       const apiKey = await this.getUserApiKey(userId, 'anthropic');
-      const anthropicService = new AnthropicService(this.db, apiKey);
+      const apiKeyStr = apiKey && 'apiKey' in apiKey.credentials ? apiKey.credentials.apiKey : undefined;
+      const anthropicService = new AnthropicService(this.db, apiKeyStr);
       
       await anthropicService.streamCompletion(
         modelId,
@@ -56,8 +59,59 @@ export class InferenceService {
         stopSequences
       );
     } else if (model.provider === 'bedrock') {
-      // Use Bedrock service (can use user's AWS keys or default)
-      await this.bedrockService.streamCompletion(
+      // Try to get user's Bedrock credentials
+      const apiKey = await this.getUserApiKey(userId, 'bedrock');
+      if (apiKey && 'accessKeyId' in apiKey.credentials) {
+        // Use user credentials
+        const bedrockService = new BedrockService(this.db, apiKey.credentials);
+        await bedrockService.streamCompletion(
+          modelId,
+          formattedMessages,
+          systemPrompt,
+          settings,
+          onChunk,
+          stopSequences
+        );
+      } else {
+        // Fall back to system credentials
+        await this.bedrockService.streamCompletion(
+          modelId,
+          formattedMessages,
+          systemPrompt,
+          settings,
+          onChunk,
+          stopSequences
+        );
+      }
+    } else if (model.provider === 'openrouter') {
+      // Try to get user's OpenRouter API key
+      const apiKey = await this.getUserApiKey(userId, 'openrouter');
+      const apiKeyStr = apiKey && 'apiKey' in apiKey.credentials ? apiKey.credentials.apiKey : undefined;
+      const openRouterService = new OpenRouterService(this.db, apiKeyStr);
+      
+      await openRouterService.streamCompletion(
+        modelId,
+        formattedMessages,
+        systemPrompt,
+        settings,
+        onChunk,
+        stopSequences
+      );
+    } else if (model.provider === 'openai-compatible') {
+      // OpenAI-compatible APIs require user credentials
+      const apiKey = await this.getUserApiKey(userId, 'openai-compatible');
+      if (!apiKey || !('apiKey' in apiKey.credentials) || !('baseUrl' in apiKey.credentials)) {
+        throw new Error('OpenAI-compatible API requires API key and base URL');
+      }
+      
+      const openAIService = new OpenAICompatibleService(
+        this.db,
+        apiKey.credentials.apiKey,
+        apiKey.credentials.baseUrl,
+        apiKey.credentials.modelPrefix
+      );
+      
+      await openAIService.streamCompletion(
         modelId,
         formattedMessages,
         systemPrompt,
@@ -70,11 +124,11 @@ export class InferenceService {
     }
   }
 
-  private async getUserApiKey(userId: string, provider: string): Promise<string | undefined> {
+  private async getUserApiKey(userId: string, provider: string): Promise<ApiKey | undefined> {
     try {
       const apiKeys = await this.db.getUserApiKeys(userId);
       const key = apiKeys.find(k => k.provider === provider);
-      return key?.key;
+      return key;
     } catch (error) {
       console.error('Error getting user API key:', error);
       return undefined;

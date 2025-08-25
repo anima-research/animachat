@@ -68,8 +68,12 @@
               class="mt-2"
             />
             
+            <!-- Provider-specific fields -->
+            
+            <!-- Anthropic API Key -->
             <v-text-field
-              v-model="newKey.key"
+              v-if="newKey.provider === 'anthropic'"
+              v-model="newKey.credentials.apiKey"
               label="API Key"
               type="password"
               variant="outlined"
@@ -77,8 +81,81 @@
               class="mt-2"
             />
             
+            <!-- OpenRouter API Key -->
+            <v-text-field
+              v-if="newKey.provider === 'openrouter'"
+              v-model="newKey.credentials.apiKey"
+              label="API Key"
+              type="password"
+              variant="outlined"
+              density="compact"
+              class="mt-2"
+            />
+            
+            <!-- AWS Bedrock Credentials -->
+            <template v-if="newKey.provider === 'bedrock'">
+              <v-text-field
+                v-model="newKey.credentials.accessKeyId"
+                label="Access Key ID"
+                variant="outlined"
+                density="compact"
+                class="mt-2"
+              />
+              <v-text-field
+                v-model="newKey.credentials.secretAccessKey"
+                label="Secret Access Key"
+                type="password"
+                variant="outlined"
+                density="compact"
+                class="mt-2"
+              />
+              <v-text-field
+                v-model="newKey.credentials.region"
+                label="Region"
+                variant="outlined"
+                density="compact"
+                class="mt-2"
+              />
+              <v-text-field
+                v-model="newKey.credentials.sessionToken"
+                label="Session Token (optional)"
+                type="password"
+                variant="outlined"
+                density="compact"
+                class="mt-2"
+              />
+            </template>
+            
+            <!-- OpenAI Compatible -->
+            <template v-if="newKey.provider === 'openai-compatible'">
+              <v-text-field
+                v-model="newKey.credentials.apiKey"
+                label="API Key"
+                type="password"
+                variant="outlined"
+                density="compact"
+                class="mt-2"
+              />
+              <v-text-field
+                v-model="newKey.credentials.baseUrl"
+                label="Base URL"
+                placeholder="https://api.example.com"
+                variant="outlined"
+                density="compact"
+                class="mt-2"
+              />
+              <v-text-field
+                v-model="newKey.credentials.modelPrefix"
+                label="Model Prefix (optional)"
+                variant="outlined"
+                density="compact"
+                class="mt-2"
+                hint="Some providers require a prefix for model names"
+              />
+            </template>
+            
             <v-btn
-              :disabled="!newKey.name || !newKey.provider || !newKey.key"
+              :disabled="!isValidApiKey"
               color="primary"
               variant="elevated"
               @click="addApiKey"
@@ -187,15 +264,47 @@ const models = computed(() => store.state.models);
 
 const newKey = ref({
   name: '',
-  provider: 'bedrock',
-  key: ''
+  provider: 'anthropic',
+  credentials: {
+    apiKey: '',
+    accessKeyId: '',
+    secretAccessKey: '',
+    region: 'us-east-1',
+    sessionToken: '',
+    baseUrl: '',
+    modelPrefix: ''
+  }
 });
 
-const providers = ['bedrock', 'anthropic'];
+const providers = [
+  { value: 'anthropic', title: 'Anthropic' },
+  { value: 'bedrock', title: 'AWS Bedrock' },
+  { value: 'openrouter', title: 'OpenRouter' },
+  { value: 'openai-compatible', title: 'OpenAI Compatible' }
+];
 const codeThemes = ['github', 'monokai', 'dracula', 'vs-dark'];
 
 const darkMode = ref(theme.global.current.value.dark);
 const codeTheme = ref(localStorage.getItem('codeTheme') || 'github');
+
+// Validation for API key
+const isValidApiKey = computed(() => {
+  if (!newKey.value.name || !newKey.value.provider) return false;
+  
+  switch (newKey.value.provider) {
+    case 'anthropic':
+    case 'openrouter':
+      return !!newKey.value.credentials.apiKey;
+    case 'bedrock':
+      return !!newKey.value.credentials.accessKeyId && 
+             !!newKey.value.credentials.secretAccessKey;
+    case 'openai-compatible':
+      return !!newKey.value.credentials.apiKey && 
+             !!newKey.value.credentials.baseUrl;
+    default:
+      return false;
+  }
+});
 
 watch(darkMode, (value) => {
   theme.global.name.value = value ? 'dark' : 'light';
@@ -217,14 +326,51 @@ async function loadApiKeys() {
 
 async function addApiKey() {
   try {
-    const response = await api.post('/auth/api-keys', newKey.value);
+    // Build request payload with only necessary credentials
+    const payload: any = {
+      name: newKey.value.name,
+      provider: newKey.value.provider,
+      credentials: {}
+    };
+    
+    switch (newKey.value.provider) {
+      case 'anthropic':
+      case 'openrouter':
+        payload.credentials = { apiKey: newKey.value.credentials.apiKey };
+        break;
+      case 'bedrock':
+        payload.credentials = {
+          accessKeyId: newKey.value.credentials.accessKeyId,
+          secretAccessKey: newKey.value.credentials.secretAccessKey,
+          region: newKey.value.credentials.region || 'us-east-1',
+          ...(newKey.value.credentials.sessionToken && { sessionToken: newKey.value.credentials.sessionToken })
+        };
+        break;
+      case 'openai-compatible':
+        payload.credentials = {
+          apiKey: newKey.value.credentials.apiKey,
+          baseUrl: newKey.value.credentials.baseUrl,
+          ...(newKey.value.credentials.modelPrefix && { modelPrefix: newKey.value.credentials.modelPrefix })
+        };
+        break;
+    }
+    
+    const response = await api.post('/auth/api-keys', payload);
     apiKeys.value.push(response.data);
     
     // Reset form
     newKey.value = {
       name: '',
-      provider: 'bedrock',
-      key: ''
+      provider: 'anthropic',
+      credentials: {
+        apiKey: '',
+        accessKeyId: '',
+        secretAccessKey: '',
+        region: 'us-east-1',
+        sessionToken: '',
+        baseUrl: '',
+        modelPrefix: ''
+      }
     };
   } catch (error) {
     console.error('Failed to add API key:', error);

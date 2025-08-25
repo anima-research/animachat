@@ -7,21 +7,32 @@ export class BedrockService {
   private client: BedrockRuntimeClient;
   private db: Database;
 
-  constructor(db: Database) {
+  constructor(db: Database, credentials?: import('@deprecated-claude/shared').BedrockCredentials) {
     this.db = db;
     
-    // Initialize Bedrock client
-    // Can be configured with specific credentials or use default AWS credentials
-    this.client = new BedrockRuntimeClient({
-      region: process.env.AWS_REGION || 'us-east-1',
-      ...(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && {
+    // Initialize Bedrock client with user credentials or environment variables
+    if (credentials) {
+      this.client = new BedrockRuntimeClient({
+        region: credentials.region || 'us-east-1',
         credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-          ...(process.env.AWS_SESSION_TOKEN && { sessionToken: process.env.AWS_SESSION_TOKEN })
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey,
+          ...(credentials.sessionToken && { sessionToken: credentials.sessionToken })
         }
-      })
-    });
+      });
+    } else {
+      // Fall back to environment variables
+      this.client = new BedrockRuntimeClient({
+        region: process.env.AWS_REGION || 'us-east-1',
+        ...(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && {
+          credentials: {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+            ...(process.env.AWS_SESSION_TOKEN && { sessionToken: process.env.AWS_SESSION_TOKEN })
+          }
+        })
+      });
+    }
   }
 
   async streamCompletion(

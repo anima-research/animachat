@@ -9,7 +9,7 @@ export const UserSchema = z.object({
   apiKeys: z.array(z.object({
     id: z.string().uuid(),
     name: z.string(),
-    provider: z.enum(['bedrock', 'anthropic']),
+    provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible']),
     masked: z.string(),
     createdAt: z.date()
   })).optional()
@@ -22,7 +22,7 @@ export const ModelSchema = z.object({
   id: z.string(),
   name: z.string(),
   displayName: z.string(),
-  provider: z.enum(['bedrock', 'anthropic']),
+  provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible']),
   deprecated: z.boolean(),
   contextWindow: z.number(),
   outputTokenLimit: z.number(),

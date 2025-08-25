@@ -112,19 +112,27 @@ export function authRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const { name, provider, key } = req.body;
+      const { name, provider, credentials } = req.body;
       
-      if (!name || !provider || !key) {
+      if (!name || !provider || !credentials) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      const apiKey = await db.createApiKey(req.userId, name, provider, key);
+      const apiKey = await db.createApiKey(req.userId, { name, provider, credentials });
+
+      // Create masked version for display
+      let masked = '****';
+      if ('apiKey' in credentials) {
+        masked = '****' + credentials.apiKey.slice(-4);
+      } else if ('accessKeyId' in credentials) {
+        masked = '****' + credentials.accessKeyId.slice(-4);
+      }
 
       res.json({
         id: apiKey.id,
         name: apiKey.name,
         provider: apiKey.provider,
-        masked: '****' + key.slice(-4),
+        masked,
         createdAt: apiKey.createdAt
       });
     } catch (error) {
@@ -141,13 +149,23 @@ export function authRouter(db: Database): Router {
 
       const apiKeys = await db.getUserApiKeys(req.userId);
       
-      res.json(apiKeys.map(key => ({
-        id: key.id,
-        name: key.name,
-        provider: key.provider,
-        masked: '****' + key.key.slice(-4),
-        createdAt: key.createdAt
-      })));
+      res.json(apiKeys.map(key => {
+        // Create masked version for display
+        let masked = '****';
+        if ('apiKey' in key.credentials) {
+          masked = '****' + (key.credentials.apiKey as string).slice(-4);
+        } else if ('accessKeyId' in key.credentials) {
+          masked = '****' + (key.credentials.accessKeyId as string).slice(-4);
+        }
+        
+        return {
+          id: key.id,
+          name: key.name,
+          provider: key.provider,
+          masked,
+          createdAt: key.createdAt
+        };
+      }));
     } catch (error) {
       console.error('Get API keys error:', error);
       res.status(500).json({ error: 'Internal server error' });
