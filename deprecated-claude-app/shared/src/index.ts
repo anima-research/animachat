@@ -1,4 +1,5 @@
 export * from './types.js';
+export * from './import-types.js';
 
 // Utility functions for handling conversation branches
 export function getActiveBranch(message: import('./types.js').Message): import('./types.js').MessageBranch | undefined {

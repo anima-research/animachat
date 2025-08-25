@@ -7,6 +7,7 @@ import { authRouter } from './routes/auth.js';
 import { conversationRouter } from './routes/conversations.js';
 import { modelRouter } from './routes/models.js';
 import { participantRouter } from './routes/participants.js';
+import { importRouter } from './routes/import.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
 import { authenticateToken } from './middleware/auth.js';
@@ -25,13 +26,15 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Routes
 app.use('/api/auth', authRouter(db));
 app.use('/api/conversations', authenticateToken, conversationRouter(db));
 app.use('/api/models', authenticateToken, modelRouter());
 app.use('/api/participants', authenticateToken, participantRouter(db));
+app.use('/api/import', authenticateToken, importRouter(db));
 
 // Health check
 app.get('/api/health', (req, res) => {

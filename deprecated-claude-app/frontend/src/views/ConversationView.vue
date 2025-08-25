@@ -164,7 +164,7 @@
       <!-- Messages Area -->
       <v-container
         ref="messagesContainer"
-        class="flex-grow-1 overflow-y-auto"
+        class="flex-grow-1 overflow-y-auto messages-container"
         style="max-height: calc(100vh - 200px);"
       >
         <div v-if="!currentConversation" class="text-center mt-12">
@@ -248,9 +248,8 @@
     </v-main>
 
     <!-- Dialogs -->
-    <ImportDialog
+    <ImportDialogV2
       v-model="importDialog"
-      @imported="onConversationImported"
     />
     
     <SettingsDialog
@@ -281,7 +280,7 @@ import { useStore } from '@/store';
 import { api } from '@/services/api';
 import type { Conversation, Message, Participant } from '@deprecated-claude/shared';
 import MessageComponent from '@/components/MessageComponent.vue';
-import ImportDialog from '@/components/ImportDialog.vue';
+import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
 import ParticipantsDialog from '@/components/ParticipantsDialog.vue';
@@ -342,6 +341,12 @@ onMounted(async () => {
   if (route.params.id) {
     await store.loadConversation(route.params.id as string);
     await loadParticipants();
+    // Scroll to bottom after messages load
+    await nextTick();
+    // Add small delay for long conversations
+    setTimeout(() => {
+      scrollToBottom();
+    }, 100);
   }
 });
 
@@ -350,21 +355,49 @@ watch(() => route.params.id, async (newId) => {
   if (newId) {
     await store.loadConversation(newId as string);
     await loadParticipants();
-    scrollToBottom();
+    // Ensure DOM is updated before scrolling
+    await nextTick();
+    // Add small delay for long conversations
+    setTimeout(() => {
+      scrollToBottom();
+    }, 100);
   }
 });
 
 // Watch for new messages to scroll
 watch(messages, () => {
   nextTick(() => {
-    scrollToBottom();
+    scrollToBottom(true); // Smooth scroll for new messages
   });
 }, { deep: true });
 
-function scrollToBottom() {
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
-  }
+function scrollToBottom(smooth: boolean = false) {
+  // For long conversations, we need multiple frames to ensure full render
+  const attemptScroll = (attempts: number = 0) => {
+    requestAnimationFrame(() => {
+      if (messagesContainer.value) {
+        const container = messagesContainer.value;
+        const previousHeight = container.scrollHeight;
+        
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: smooth ? 'smooth' : 'instant'
+        });
+        
+        // Check if content is still loading (scroll height is changing)
+        if (attempts < 10) { // Increased attempts for very long conversations
+          setTimeout(() => {
+            if (container.scrollHeight > previousHeight) {
+              // Content grew, scroll again
+              attemptScroll(attempts + 1);
+            }
+          }, 50); // Reduced delay for more responsive scrolling
+        }
+      }
+    });
+  };
+  
+  attemptScroll();
 }
 
 async function createNewConversation() {
@@ -545,10 +578,6 @@ async function updateParticipants(updatedParticipants: Participant[]) {
   }
 }
 
-function onConversationImported(conversation: Conversation) {
-  router.push(`/conversation/${conversation.id}`);
-}
-
 function logout() {
   store.logout();
   router.push('/login');
@@ -567,3 +596,48 @@ function formatDate(date: Date | string): string {
   return d.toLocaleDateString();
 }
 </script>
+
+<style scoped>
+/* Custom scrollbar styles for better visibility in dark theme */
+.overflow-y-auto::-webkit-scrollbar {
+  width: 12px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: rgba(187, 134, 252, 0.5); /* Primary color with opacity */
+  border-radius: 6px;
+  border: 1px solid rgba(187, 134, 252, 0.2);
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: rgba(187, 134, 252, 0.7);
+  border: 1px solid rgba(187, 134, 252, 0.4);
+}
+
+/* Firefox scrollbar */
+.overflow-y-auto {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(187, 134, 252, 0.5) rgba(255, 255, 255, 0.05);
+}
+
+/* Ensure container has proper styling and scrollbar is always visible */
+.messages-container {
+  position: relative;
+}
+
+/* Force scrollbar to always show on macOS/webkit */
+.messages-container::-webkit-scrollbar {
+  -webkit-appearance: none;
+  width: 12px;
+}
+
+.messages-container {
+  overflow-y: scroll !important; /* Force scrollbar to always show */
+}
+</style>
