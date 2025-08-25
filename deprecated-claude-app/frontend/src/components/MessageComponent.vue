@@ -26,7 +26,6 @@
         
         <div v-if="!isEditing" class="d-flex gap-1">
           <v-btn
-            v-if="message.branches[branchIndex].role === 'user'"
             icon="mdi-pencil"
             size="x-small"
             variant="text"
@@ -46,6 +45,14 @@
             size="x-small"
             variant="text"
             @click="copyContent"
+          />
+          
+          <v-btn
+            icon="mdi-delete-outline"
+            size="x-small"
+            variant="text"
+            color="error"
+            @click="$emit('delete', message.id, currentBranch.id)"
           />
         </div>
       </div>
@@ -131,6 +138,7 @@ const emit = defineEmits<{
   regenerate: [messageId: string, branchId: string];
   edit: [messageId: string, branchId: string, content: string];
   'switch-branch': [messageId: string, branchId: string];
+  delete: [messageId: string, branchId: string];
 }>();
 
 const isEditing = ref(false);
