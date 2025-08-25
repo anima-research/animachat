@@ -1,0 +1,32 @@
+{
+  "name": "@deprecated-claude/frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mdi/font": "^7.4.47",
+    "axios": "^1.6.5",
+    "dompurify": "^3.0.8",
+    "marked": "^11.1.1",
+    "prismjs": "^1.29.0",
+    "vue": "^3.4.5",
+    "vue-router": "^4.2.5",
+    "vuetify": "^3.4.9"
+  },
+  "devDependencies": {
+    "@types/dompurify": "^3.0.5",
+    "@types/marked": "^6.0.0",
+    "@types/prismjs": "^1.26.3",
+    "@vitejs/plugin-vue": "^5.0.2",
+    "@vue/tsconfig": "^0.5.1",
+    "sass": "^1.69.7",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.11",
+    "vite-plugin-vuetify": "^2.0.1",
+    "vue-tsc": "^1.8.27"
+  }
+}

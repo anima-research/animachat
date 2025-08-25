@@ -1,0 +1,5 @@
+*node_modules*
+.specstory
+.specstory/*
+deprecated-claude-app/frontend/node_modules/**
+deprecated-claude-app/shared/dist/**
