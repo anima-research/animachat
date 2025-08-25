@@ -36,7 +36,8 @@ export function conversationRouter(db: Database): Router {
         data.title || 'New Conversation',
         data.model,
         data.systemPrompt,
-        data.settings
+        data.settings,
+        data.format
       );
 
       res.json(conversation);

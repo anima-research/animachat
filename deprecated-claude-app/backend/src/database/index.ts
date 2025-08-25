@@ -1,4 +1,4 @@
-import { User, Conversation, Message } from '@deprecated-claude/shared';
+import { User, Conversation, Message, Participant } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
@@ -21,6 +21,8 @@ export class Database {
   private userConversations: Map<string, Set<string>> = new Map(); // userId -> conversationIds
   private conversationMessages: Map<string, string[]> = new Map(); // conversationId -> messageIds (ordered)
   private passwordHashes: Map<string, string> = new Map(); // email -> passwordHash
+  private participants: Map<string, Participant> = new Map(); // participantId -> Participant
+  private conversationParticipants: Map<string, string[]> = new Map(); // conversationId -> participantIds
   
   private eventStore: EventStore;
   private initialized: boolean = false;
@@ -299,6 +301,38 @@ export class Database {
         break;
       }
       
+      case 'participant_created': {
+        const { participant } = event.data;
+        this.participants.set(participant.id, participant);
+        const convParticipants = this.conversationParticipants.get(participant.conversationId) || [];
+        convParticipants.push(participant.id);
+        this.conversationParticipants.set(participant.conversationId, convParticipants);
+        break;
+      }
+      
+      case 'participant_updated': {
+        const { participantId, updates } = event.data;
+        const participant = this.participants.get(participantId);
+        if (participant) {
+          const updated = { ...participant, ...updates };
+          this.participants.set(participantId, updated);
+        }
+        break;
+      }
+      
+      case 'participant_deleted': {
+        const { participantId, conversationId } = event.data;
+        this.participants.delete(participantId);
+        const convParticipants = this.conversationParticipants.get(conversationId);
+        if (convParticipants) {
+          const index = convParticipants.indexOf(participantId);
+          if (index > -1) {
+            convParticipants.splice(index, 1);
+          }
+        }
+        break;
+      }
+      
       // Add more cases as needed
     }
   }
@@ -395,13 +429,14 @@ export class Database {
   }
 
   // Conversation methods
-  async createConversation(userId: string, title: string, model: string, systemPrompt?: string, settings?: any): Promise<Conversation> {
+  async createConversation(userId: string, title: string, model: string, systemPrompt?: string, settings?: any, format?: 'standard' | 'prefill'): Promise<Conversation> {
     const conversation: Conversation = {
       id: uuidv4(),
       userId,
       title: title || 'New Conversation',
       model,
       systemPrompt,
+      format: format || 'standard',
       createdAt: new Date(),
       updatedAt: new Date(),
       archived: false,
@@ -420,7 +455,18 @@ export class Database {
     
     this.conversationMessages.set(conversation.id, []);
 
-    this.logEvent('conversation_created', conversation);
+    await this.logEvent('conversation_created', conversation);
+    
+    // Create default participants
+    if (format === 'standard' || !format) {
+      // Standard format: fixed User and Assistant
+      await this.createParticipant(conversation.id, 'User', 'user');
+      await this.createParticipant(conversation.id, 'Assistant', 'assistant', model, systemPrompt, settings);
+    } else {
+      // Prefill format: starts with default participants but can add more
+      await this.createParticipant(conversation.id, 'User', 'user');
+      await this.createParticipant(conversation.id, 'Assistant', 'assistant', model, systemPrompt, settings);
+    }
 
     return conversation;
   }
@@ -433,7 +479,7 @@ export class Database {
     const convIds = this.userConversations.get(userId) || new Set();
     return Array.from(convIds)
       .map(id => this.conversations.get(id))
-      .filter((conv): conv is Conversation => conv !== undefined)
+      .filter((conv): conv is Conversation => conv !== undefined && !conv.archived)
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   }
 
@@ -509,7 +555,7 @@ export class Database {
   }
 
   // Message methods
-  async createMessage(conversationId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string): Promise<Message> {
+  async createMessage(conversationId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string): Promise<Message> {
     // Get conversation messages to determine parent
     const existingMessages = await this.getConversationMessages(conversationId);
     
@@ -538,6 +584,7 @@ export class Database {
         id: uuidv4(),
         content,
         role,
+        participantId,
         createdAt: new Date(),
         model,
         isActive: true,
@@ -569,7 +616,7 @@ export class Database {
     return message;
   }
 
-  async addMessageBranch(messageId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string): Promise<Message | null> {
+  async addMessageBranch(messageId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string): Promise<Message | null> {
     const message = this.messages.get(messageId);
     if (!message) return null;
 
@@ -577,6 +624,7 @@ export class Database {
       id: uuidv4(),
       content,
       role,
+      participantId,
       createdAt: new Date(),
       model,
       parentBranchId,
@@ -783,6 +831,86 @@ export class Database {
 
   async getMessage(id: string): Promise<Message | null> {
     return this.messages.get(id) || null;
+  }
+  
+  // Participant methods
+  async createParticipant(
+    conversationId: string, 
+    name: string, 
+    type: 'user' | 'assistant', 
+    model?: string,
+    systemPrompt?: string,
+    settings?: any
+  ): Promise<Participant> {
+    const participant: Participant = {
+      id: uuidv4(),
+      conversationId,
+      name,
+      type,
+      model,
+      systemPrompt,
+      settings,
+      isActive: true
+    };
+    
+    this.participants.set(participant.id, participant);
+    
+    const convParticipants = this.conversationParticipants.get(conversationId) || [];
+    convParticipants.push(participant.id);
+    this.conversationParticipants.set(conversationId, convParticipants);
+    
+    await this.logEvent('participant_created', { participant });
+    
+    return participant;
+  }
+  
+  async getConversationParticipants(conversationId: string): Promise<Participant[]> {
+    const participantIds = this.conversationParticipants.get(conversationId) || [];
+    const participants = participantIds
+      .map(id => this.participants.get(id))
+      .filter((p): p is Participant => p !== undefined);
+    
+
+    return participants;
+  }
+  
+  async getParticipant(participantId: string): Promise<Participant | null> {
+    return this.participants.get(participantId) || null;
+  }
+  
+  async updateParticipant(participantId: string, updates: Partial<Participant>): Promise<Participant | null> {
+    const participant = this.participants.get(participantId);
+    if (!participant) return null;
+    
+    const updated = {
+      ...participant,
+      ...updates
+    };
+    
+    this.participants.set(participantId, updated);
+    
+    await this.logEvent('participant_updated', { participantId, updates });
+    
+    return updated;
+  }
+  
+  async deleteParticipant(participantId: string): Promise<boolean> {
+    const participant = this.participants.get(participantId);
+    if (!participant) return false;
+    
+    this.participants.delete(participantId);
+    
+    const convParticipants = this.conversationParticipants.get(participant.conversationId);
+    if (convParticipants) {
+      const index = convParticipants.indexOf(participantId);
+      if (index > -1) {
+        convParticipants.splice(index, 1);
+      }
+    }
+    
+    await this.logEvent('participant_deleted', { participantId, conversationId: participant.conversationId });
+    
+    return true;
   }
 
   // Export/Import functionality

@@ -121,6 +121,7 @@
         <v-spacer />
         
         <v-chip 
+          v-if="currentConversation?.format === 'standard'"
           class="mr-2" 
           size="small" 
           variant="outlined"
@@ -132,6 +133,26 @@
             {{ currentModel?.deprecated ? ' (Deprecated)' : '' }}
           </v-tooltip>
         </v-chip>
+        
+        <v-chip 
+          v-else
+          class="mr-2" 
+          size="small" 
+          variant="outlined"
+          color="info"
+        >
+          Multi-Participant Mode
+          <v-tooltip activator="parent" location="bottom">
+            Configure models and settings for each participant
+          </v-tooltip>
+        </v-chip>
+        
+        <v-btn 
+          v-if="currentConversation && currentConversation.format !== 'standard'"
+          icon="mdi-account-multiple"
+          size="small"
+          @click="participantsDialog = true"
+        />
         
         <v-btn
           icon="mdi-cog-outline"
@@ -156,6 +177,7 @@
             v-for="message in messages"
             :key="message.id"
             :message="message"
+            :participants="participants"
             @regenerate="regenerateMessage"
             @edit="editMessage"
             @switch-branch="switchBranch"
@@ -176,6 +198,31 @@
 
       <!-- Input Area -->
       <v-container v-if="currentConversation" class="pa-4">
+        <div v-if="currentConversation.format !== 'standard'" class="mb-2 d-flex gap-2">
+          <v-select
+            v-model="selectedParticipant"
+            :items="userParticipants"
+            item-title="name"
+            item-value="id"
+            label="Speaking as"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="flex-grow-1"
+          />
+          <v-select
+            v-model="selectedResponder"
+            :items="responderOptions"
+            item-title="name"
+            item-value="id"
+            label="Response from"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="flex-grow-1"
+          />
+        </div>
+        
         <v-textarea
           v-model="messageInput"
           :disabled="isStreaming"
@@ -216,6 +263,14 @@
       :models="store.state.models"
       @update="updateConversationSettings"
     />
+    
+    <ParticipantsDialog
+      v-model="participantsDialog"
+      :conversation="currentConversation"
+      :models="store.state.models"
+      :current-participants="participants"
+      @update="updateParticipants"
+    />
   </v-layout>
 </template>
 
@@ -223,11 +278,13 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useStore } from '@/store';
-import type { Conversation, Message } from '@deprecated-claude/shared';
+import { api } from '@/services/api';
+import type { Conversation, Message, Participant } from '@deprecated-claude/shared';
 import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialog from '@/components/ImportDialog.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
+import ParticipantsDialog from '@/components/ParticipantsDialog.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -238,9 +295,13 @@ const rail = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
+const participantsDialog = ref(false);
 const messageInput = ref('');
 const isStreaming = ref(false);
 const messagesContainer = ref<HTMLElement>();
+const participants = ref<Participant[]>([]);
+const selectedParticipant = ref<string>('');
+const selectedResponder = ref<string>('');
 
 const conversations = computed(() => store.state.conversations);
 const currentConversation = computed(() => store.state.currentConversation);
@@ -253,6 +314,24 @@ const userAvatar = computed(() => {
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=BB86FC&color=fff`;
 });
 
+const userParticipants = computed(() => {
+  return participants.value.filter(p => p.type === 'user' && p.isActive);
+});
+
+const assistantParticipants = computed(() => {
+  return participants.value.filter(p => p.type === 'assistant' && p.isActive);
+});
+
+const responderOptions = computed(() => {
+  const options = [{ id: '', name: 'No response' }];
+  // Map assistant participants to ensure we show their names
+  const assistantOptions = assistantParticipants.value.map(p => ({
+    id: p.id,
+    name: p.name
+  }));
+  return options.concat(assistantOptions);
+});
+
 // Load initial data
 onMounted(async () => {
   await store.loadModels();
@@ -262,6 +341,7 @@ onMounted(async () => {
   // Load conversation from route
   if (route.params.id) {
     await store.loadConversation(route.params.id as string);
+    await loadParticipants();
   }
 });
 
@@ -269,6 +349,7 @@ onMounted(async () => {
 watch(() => route.params.id, async (newId) => {
   if (newId) {
     await store.loadConversation(newId as string);
+    await loadParticipants();
     scrollToBottom();
   }
 });
@@ -287,7 +368,7 @@ function scrollToBottom() {
 }
 
 async function createNewConversation() {
-  const model = store.state.models[0]?.id || 'claude-3-opus-20240229';
+  const model = store.state.models[0]?.id || 'claude-3-5-sonnet-20241022';
   const conversation = await store.createConversation(model);
   router.push(`/conversation/${conversation.id}`);
 }
@@ -303,7 +384,23 @@ async function sendMessage() {
   isStreaming.value = true;
   
   try {
-    await store.sendMessage(content);
+    let participantId: string | undefined;
+    let responderId: string | undefined;
+    
+    if (currentConversation.value?.format === 'standard') {
+      // For standard format, use default participants
+      const defaultUser = participants.value.find(p => p.type === 'user' && p.name === 'User');
+      const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.name === 'Assistant');
+      
+      participantId = defaultUser?.id;
+      responderId = defaultAssistant?.id;
+    } else {
+      // For other formats, use selected participants
+      participantId = selectedParticipant.value || undefined;
+      responderId = selectedResponder.value || undefined;
+    }
+      
+    await store.sendMessage(content, participantId, responderId);
   } finally {
     isStreaming.value = false;
   }
@@ -377,6 +474,74 @@ async function updateConversationSettings(updates: Partial<Conversation>) {
 async function deleteMessage(messageId: string, branchId: string) {
   if (confirm('Are you sure you want to delete this message and all its replies?')) {
     await store.deleteMessage(messageId, branchId);
+  }
+}
+
+async function loadParticipants() {
+  if (!currentConversation.value) return;
+  
+  try {
+    const response = await api.get(`/participants/conversation/${currentConversation.value.id}`);
+    participants.value = response.data;
+    
+    // Set default selected participant
+    if (currentConversation.value.format !== 'standard') {
+      const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
+      if (defaultUser) {
+        selectedParticipant.value = defaultUser.id;
+      }
+      
+      // Set default responder to first assistant
+      const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.isActive);
+      if (defaultAssistant) {
+        selectedResponder.value = defaultAssistant.id;
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load participants:', error);
+  }
+}
+
+async function updateParticipants(updatedParticipants: Participant[]) {
+  if (!currentConversation.value) return;
+  
+  try {
+    // Handle updates and deletions
+    for (const existing of participants.value) {
+      const updated = updatedParticipants.find(p => p.id === existing.id);
+      if (!updated) {
+        // Participant was deleted
+        await api.delete(`/participants/${existing.id}`);
+      } else if (JSON.stringify(existing) !== JSON.stringify(updated)) {
+        // Participant was updated
+        await api.patch(`/participants/${existing.id}`, {
+          name: updated.name,
+          model: updated.model,
+          systemPrompt: updated.systemPrompt,
+          settings: updated.settings
+        });
+      }
+    }
+    
+    // Handle new participants
+    for (const participant of updatedParticipants) {
+      if (participant.id.startsWith('temp-')) {
+        // New participant
+        await api.post('/participants', {
+          conversationId: currentConversation.value.id,
+          name: participant.name,
+          type: participant.type,
+          model: participant.model,
+          systemPrompt: participant.systemPrompt,
+          settings: participant.settings
+        });
+      }
+    }
+    
+    // Reload participants
+    await loadParticipants();
+  } catch (error) {
+    console.error('Failed to update participants:', error);
   }
 }
 

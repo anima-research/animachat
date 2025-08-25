@@ -12,3 +12,6 @@ data/
 # IDE
 .vscode/
 .idea/
+
+# LLM logs
+logs/

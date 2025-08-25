@@ -4,11 +4,16 @@
 
 echo "🚀 Starting Deprecated Claude Models Application..."
 
-# Check if node_modules exist
-if [ ! -d "node_modules" ]; then
-    echo "📦 Installing dependencies..."
-    npm install
-fi
+# Clean up caches and build artifacts
+echo "🧹 Cleaning up caches and build artifacts..."
+rm -rf node_modules/.cache
+rm -rf */node_modules/.cache
+rm -rf */dist
+rm -rf shared/lib
+
+# Fresh install of dependencies
+echo "📦 Installing dependencies..."
+npm ci
 
 # Check if .env exists in backend
 if [ ! -f "backend/.env" ]; then
@@ -16,6 +21,10 @@ if [ ! -f "backend/.env" ]; then
     cp backend/env.example backend/.env
     echo "📝 Please edit backend/.env with your AWS credentials and JWT secret"
 fi
+
+# Build shared package first
+echo "🔨 Building shared package..."
+npm run build -w shared
 
 # Start the application
 echo "🎯 Starting development servers..."

@@ -30,13 +30,13 @@ export interface Store {
   
   loadConversations(): Promise<void>;
   loadConversation(id: string): Promise<void>;
-  createConversation(model: string, title?: string): Promise<Conversation>;
+  createConversation(model: string, title?: string, format?: 'standard' | 'prefill'): Promise<Conversation>;
   updateConversation(id: string, updates: Partial<Conversation>): Promise<void>;
   archiveConversation(id: string): Promise<void>;
   duplicateConversation(id: string): Promise<Conversation>;
   
   loadMessages(conversationId: string): Promise<void>;
-  sendMessage(content: string): Promise<void>;
+  sendMessage(content: string, participantId?: string, responderId?: string): Promise<void>;
   regenerateMessage(messageId: string, branchId: string): Promise<void>;
   editMessage(messageId: string, branchId: string, content: string): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
@@ -161,11 +161,12 @@ export function createStore(): {
       }
     },
     
-    async createConversation(model: string, title?: string) {
+    async createConversation(model: string, title?: string, format: 'standard' | 'prefill' = 'standard') {
       try {
         const response = await api.post('/conversations', {
           model,
           title: title || 'New Conversation',
+          format,
           settings: {
             temperature: 1.0,
             maxTokens: 1024
@@ -248,7 +249,7 @@ export function createStore(): {
       }
     },
     
-    async sendMessage(content: string) {
+    async sendMessage(content: string, participantId?: string, responderId?: string) {
       if (!state.currentConversation || !state.wsService) return;
       
       // Get the last visible message to determine the parent branch
@@ -286,7 +287,9 @@ export function createStore(): {
         conversationId: state.currentConversation.id,
         messageId: crypto.randomUUID(),
         content,
-        parentBranchId
+        parentBranchId,
+        participantId,
+        responderId
       });
     },
     
@@ -361,11 +364,6 @@ export function createStore(): {
       // Force recompute visible messages after branch switch
       const newVisible = this.getVisibleMessages();
       console.log('After switch, visible messages:', newVisible.length);
-    },
-    
-    // Getter for visible messages
-    get messages() {
-      return this.getVisibleMessages();
     },
     
     async deleteMessage(messageId: string, branchId: string) {
@@ -478,6 +476,12 @@ export function createStore(): {
       try {
         const response = await api.get('/models');
         state.models = response.data;
+        console.log('Frontend loaded models:', state.models.map(m => ({
+          id: m.id,
+          name: m.name,
+          displayName: m.displayName,
+          provider: m.provider
+        })));
       } catch (error) {
         console.error('Failed to load models:', error);
         throw error;

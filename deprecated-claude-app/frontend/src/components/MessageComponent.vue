@@ -19,7 +19,7 @@
           class="mr-2"
         />
         <div class="text-caption">
-          {{ message.branches[branchIndex].role === 'user' ? 'You' : currentBranch.model || 'Assistant' }}
+          {{ participantName }}
         </div>
         
         <v-spacer />
@@ -128,10 +128,11 @@
 import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import type { Message, MessageBranch } from '@deprecated-claude/shared';
+import type { Message, MessageBranch, Participant } from '@deprecated-claude/shared';
 
 const props = defineProps<{
   message: Message;
+  participants?: Participant[];
 }>();
 
 const emit = defineEmits<{
@@ -150,6 +151,25 @@ const branchIndex = computed(() => {
 
 const currentBranch = computed(() => {
   return props.message.branches[branchIndex.value];
+});
+
+// Get participant name for current branch
+const participantName = computed(() => {
+  const branch = currentBranch.value;
+  
+  // If no participants list provided or no participantId, fall back to default behavior
+  if (!props.participants || !branch.participantId) {
+    return branch.role === 'user' ? 'You' : branch.model || 'Assistant';
+  }
+  
+  // Find the participant by ID
+  const participant = props.participants.find(p => p.id === branch.participantId);
+  if (participant) {
+    return participant.name;
+  }
+  
+  // Fallback if participant not found
+  return branch.role === 'user' ? 'You' : branch.model || 'Assistant';
 });
 
 // Get all sibling branches (branches that share the same parent)

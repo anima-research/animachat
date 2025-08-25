@@ -18,6 +18,7 @@
         />
         
         <v-select
+          v-if="settings.format === 'standard'"
           v-model="settings.model"
           :items="models"
           item-title="displayName"
@@ -28,21 +29,51 @@
           class="mt-4"
         />
         
-        <v-textarea
-          v-model="settings.systemPrompt"
-          label="System Prompt"
-          placeholder="You are a helpful AI assistant..."
+        <v-select
+          v-model="settings.format"
+          :items="formatOptions"
+          item-title="title"
+          item-value="value"
+          label="Conversation Format"
           variant="outlined"
           density="compact"
-          rows="4"
           class="mt-4"
-        />
+        >
+          <template v-slot:item="{ props, item }">
+            <v-list-item v-bind="props">
+              <template v-slot:subtitle>
+                {{ item.raw.description }}
+              </template>
+            </v-list-item>
+          </template>
+        </v-select>
         
-        <v-divider class="my-4" />
+        <div v-if="settings.format === 'standard'">
+          <v-textarea
+            v-model="settings.systemPrompt"
+            label="System Prompt"
+            placeholder="You are a helpful AI assistant..."
+            variant="outlined"
+            density="compact"
+            rows="4"
+            class="mt-4"
+          />
+          
+          <v-divider class="my-4" />
+          
+          <h4 class="text-h6 mb-4">Model Parameters</h4>
+        </div>
         
-        <h4 class="text-h6 mb-4">Model Parameters</h4>
+        <v-alert
+          v-else
+          type="info"
+          density="compact"
+          class="mt-4"
+        >
+          In multi-participant mode, configure models and settings for each assistant in the Participants dialog.
+        </v-alert>
         
-        <div v-if="selectedModel">
+        <div v-if="selectedModel && settings.format === 'standard'">
           <!-- Temperature -->
           <v-slider
             v-model="settings.settings.temperature"
@@ -197,9 +228,23 @@ const emit = defineEmits<{
 const topPEnabled = ref(false);
 const topKEnabled = ref(false);
 
+const formatOptions = [
+  {
+    value: 'standard',
+    title: 'Standard',
+    description: 'Traditional user/assistant conversation format'
+  },
+  {
+    value: 'prefill',
+    title: 'Multi-Participant (Prefill)',
+    description: 'Supports multiple participants with "Name: message" format'
+  }
+];
+
 const settings = ref<any>({
   title: '',
   model: '',
+  format: 'standard',
   systemPrompt: '',
   settings: {
     temperature: 1.0,
@@ -210,6 +255,11 @@ const settings = ref<any>({
 });
 
 const selectedModel = computed(() => {
+  console.log('Models in dropdown:', props.models.map(m => ({
+    id: m.id,
+    displayName: m.displayName,
+    provider: m.provider
+  })));
   return props.models.find(m => m.id === settings.value.model);
 });
 
@@ -219,6 +269,7 @@ watch(() => props.conversation, (conversation) => {
     settings.value = {
       title: conversation.title,
       model: conversation.model,
+      format: conversation.format || 'standard',
       systemPrompt: conversation.systemPrompt || '',
       settings: { ...conversation.settings }
     };
@@ -294,6 +345,7 @@ function save() {
   emit('update', {
     title: settings.value.title,
     model: settings.value.model,
+    format: settings.value.format,
     systemPrompt: settings.value.systemPrompt || undefined,
     settings: finalSettings
   });

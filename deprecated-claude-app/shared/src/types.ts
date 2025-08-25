@@ -55,11 +55,36 @@ export const ModelSchema = z.object({
 
 export type Model = z.infer<typeof ModelSchema>;
 
+// Model settings schema
+export const ModelSettingsSchema = z.object({
+  temperature: z.number(),
+  maxTokens: z.number(),
+  topP: z.number().optional(),
+  topK: z.number().optional()
+});
+
+export type ModelSettings = z.infer<typeof ModelSettingsSchema>;
+
+// Participant types
+export const ParticipantSchema = z.object({
+  id: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  name: z.string(),
+  type: z.enum(['user', 'assistant']),
+  model: z.string().optional(), // Only for assistant participants
+  systemPrompt: z.string().optional(), // Only for assistant participants
+  settings: ModelSettingsSchema.optional(), // Only for assistant participants
+  isActive: z.boolean().default(true)
+});
+
+export type Participant = z.infer<typeof ParticipantSchema>;
+
 // Message types
 export const MessageBranchSchema = z.object({
   id: z.string().uuid(),
   content: z.string(),
   role: z.enum(['user', 'assistant', 'system']),
+  participantId: z.string().uuid().optional(), // Link to participant
   createdAt: z.date(),
   model: z.string().optional(),
   parentBranchId: z.string().uuid().optional(),
@@ -78,6 +103,10 @@ export const MessageSchema = z.object({
 
 export type Message = z.infer<typeof MessageSchema>;
 
+// Conversation format types
+export const ConversationFormatSchema = z.enum(['standard', 'prefill']);
+export type ConversationFormat = z.infer<typeof ConversationFormatSchema>;
+
 // Conversation types
 export const ConversationSchema = z.object({
   id: z.string().uuid(),
@@ -85,15 +114,11 @@ export const ConversationSchema = z.object({
   title: z.string(),
   model: z.string(),
   systemPrompt: z.string().optional(),
+  format: ConversationFormatSchema.default('standard'),
   createdAt: z.date(),
   updatedAt: z.date(),
   archived: z.boolean().default(false),
-  settings: z.object({
-    temperature: z.number(),
-    maxTokens: z.number(),
-    topP: z.number().optional(),
-    topK: z.number().optional()
-  })
+  settings: ModelSettingsSchema
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;
@@ -105,7 +130,9 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     conversationId: z.string().uuid(),
     messageId: z.string().uuid(),
     content: z.string(),
-    parentBranchId: z.string().uuid().optional()
+    parentBranchId: z.string().uuid().optional(),
+    participantId: z.string().uuid().optional(),
+    responderId: z.string().uuid().optional() // Which assistant should respond (if any)
   }),
   z.object({
     type: z.literal('regenerate'),
@@ -145,13 +172,9 @@ export type WsMessage = z.infer<typeof WsMessageSchema>;
 export const CreateConversationRequestSchema = z.object({
   title: z.string().optional(),
   model: z.string(),
+  format: ConversationFormatSchema.optional(),
   systemPrompt: z.string().optional(),
-  settings: z.object({
-    temperature: z.number(),
-    maxTokens: z.number(),
-    topP: z.number().optional(),
-    topK: z.number().optional()
-  }).optional()
+  settings: ModelSettingsSchema.optional()
 });
 
 export type CreateConversationRequest = z.infer<typeof CreateConversationRequestSchema>;

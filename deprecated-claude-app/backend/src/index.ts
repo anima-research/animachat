@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import { authRouter } from './routes/auth.js';
 import { conversationRouter } from './routes/conversations.js';
 import { modelRouter } from './routes/models.js';
+import { participantRouter } from './routes/participants.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
 import { authenticateToken } from './middleware/auth.js';
@@ -30,6 +31,7 @@ app.use(express.json());
 app.use('/api/auth', authRouter(db));
 app.use('/api/conversations', authenticateToken, conversationRouter(db));
 app.use('/api/models', authenticateToken, modelRouter());
+app.use('/api/participants', authenticateToken, participantRouter(db));
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -4,6 +4,7 @@ import { WsMessageSchema, WsMessage, Message } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { verifyToken } from '../middleware/auth.js';
 import { InferenceService } from '../services/inference.js';
+import { llmLogger } from '../utils/llmLogger.js';
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -111,7 +112,8 @@ async function handleChatMessage(
     message.content,
     'user',
     undefined, // model
-    message.parentBranchId // explicit parent
+    message.parentBranchId, // explicit parent
+    message.participantId // participant ID
   );
   
   console.log('Created user message:', userMessage.id, 'with branch:', userMessage.branches[0]?.id, 'parent:', userMessage.branches[0]?.parentBranchId);
@@ -122,14 +124,42 @@ async function handleChatMessage(
     message: userMessage
   }));
 
+  // Get participants for the conversation
+  const participants = await db.getConversationParticipants(message.conversationId);
+  
+  // Handle response generation based on conversation format
+  let responder: typeof participants[0] | undefined;
+  
+  if (conversation.format === 'standard') {
+    // For standard format, always use the default assistant
+    responder = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+    if (!responder) {
+      ws.send(JSON.stringify({ type: 'error', error: 'No assistant participant found' }));
+      return;
+    }
+  } else {
+    // For other formats, check if a responder was specified
+    if (!message.responderId) {
+      // No responder selected, just return
+      return;
+    }
+    
+    responder = participants.find(p => p.id === message.responderId);
+    if (!responder || responder.type !== 'assistant') {
+      ws.send(JSON.stringify({ type: 'error', error: 'Invalid responder' }));
+      return;
+    }
+  }
+
   // Create assistant message placeholder with correct parent
   const userBranch = userMessage.branches[0];
   const assistantMessage = await db.createMessage(
     message.conversationId,
     '',
     'assistant',
-    conversation.model,
-    userBranch?.id // Parent is the user message branch we just created
+    responder.model || conversation.model,
+    userBranch?.id, // Parent is the user message branch we just created
+    responder.id // Responder's participant ID
   );
   
   console.log('Created assistant message:', assistantMessage.id, 'with parent:', assistantMessage.branches[0]?.parentBranchId);
@@ -185,11 +215,27 @@ async function handleChatMessage(
   
   // Stream response from appropriate service
   try {
+    const inferenceModel = responder.model || conversation.model;
+    const inferenceSystemPrompt = responder.systemPrompt || conversation.systemPrompt;
+    const inferenceSettings = responder.settings || conversation.settings;
+    
+    // Log WebSocket event
+    await llmLogger.logWebSocketEvent({
+      event: 'chat_message',
+      conversationId: conversation.id,
+      messageId: message.messageId,
+      participantId: message.participantId,
+      responderId: responder.id,
+      model: inferenceModel,
+      settings: inferenceSettings,
+      format: conversation.format
+    });
+    
     await inferenceService.streamCompletion(
-      conversation.model,
+      inferenceModel,
       visibleHistory,
-      conversation.systemPrompt,
-      conversation.settings,
+      inferenceSystemPrompt,
+      inferenceSettings,
       ws.userId,
       async (chunk: string, isComplete: boolean) => {
         // Update message content in memory (mutation is OK during streaming)
@@ -218,7 +264,10 @@ async function handleChatMessage(
           // Update conversation timestamp
           await db.updateConversation(conversation.id, { updatedAt: new Date() });
         }
-      }
+      },
+      conversation.format || 'standard',
+      participants,
+      responder.id
     );
   } catch (error) {
     console.error('Inference streaming error:', error);
@@ -255,13 +304,18 @@ async function handleRegenerate(
   const parentUserMessage = targetMessageIndex > 0 ? allMessages[targetMessageIndex - 1] : null;
   const parentUserBranch = parentUserMessage ? parentUserMessage.branches.find(b => b.id === parentUserMessage.activeBranchId) : null;
 
+  // Get the participant ID from the branch we're regenerating
+  const originalBranch = msg.branches.find(b => b.id === message.branchId);
+  const participantId = originalBranch?.participantId;
+  
   // Create new branch
   const updatedMessage = await db.addMessageBranch(
     message.messageId,
     '',
     'assistant',
     parentUserBranch?.id || message.branchId,
-    conversation.model
+    conversation.model,
+    participantId
   );
 
   if (!updatedMessage) {
@@ -278,13 +332,49 @@ async function handleRegenerate(
   // Get conversation history up to this message
   const historyMessages = allMessages.slice(0, targetMessageIndex);
 
+  // Get participants for the conversation
+  const participants = await db.getConversationParticipants(conversation.id);
+  
+  // Determine the responder ID for streaming
+  let responderId = participantId;
+  if (conversation.format === 'standard') {
+    // For standard format, always use the default assistant
+    const defaultAssistant = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+    responderId = defaultAssistant?.id;
+  }
+  
+  // Get the participant who should respond
+  let responderSettings = conversation.settings;
+  let responderSystemPrompt = conversation.systemPrompt;
+  let responderModel = conversation.model;
+  
+  if (participantId && participants.length > 0) {
+    const participant = participants.find(p => p.id === participantId);
+    if (participant) {
+      responderModel = participant.model || conversation.model;
+      responderSystemPrompt = participant.systemPrompt || conversation.systemPrompt;
+      responderSettings = participant.settings || conversation.settings;
+    }
+  }
+  
   // Stream new response
   try {
+    // Log WebSocket event
+    await llmLogger.logWebSocketEvent({
+      event: 'regenerate_message',
+      conversationId: conversation.id,
+      messageId: message.messageId,
+      responderId: responderId,
+      model: responderModel,
+      settings: responderSettings,
+      format: conversation.format
+    });
+    
     await inferenceService.streamCompletion(
-      conversation.model,
+      responderModel,
       historyMessages,
-      conversation.systemPrompt,
-      conversation.settings,
+      responderSystemPrompt,
+      responderSettings,
       ws.userId,
       async (chunk: string, isComplete: boolean) => {
         const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
@@ -308,7 +398,10 @@ async function handleRegenerate(
             currentBranch.content
           );
         }
-      }
+      },
+      conversation.format || 'standard',
+      participants,
+      responderId
     );
   } catch (error) {
     console.error('Regeneration error:', error);
@@ -353,7 +446,8 @@ async function handleEdit(
     message.content,
     branch.role,
     branch.parentBranchId, // Use the same parent as the original branch
-    branch.model
+    branch.model,
+    branch.participantId // Keep the same participant
   );
 
   if (!updatedMessage) {
@@ -372,6 +466,21 @@ async function handleEdit(
     const allMessages = await db.getConversationMessages(msg.conversationId);
     const editedMessageIndex = allMessages.findIndex(m => m.id === msg.id);
     
+    // Get participants early to determine responderId
+    const participants = await db.getConversationParticipants(conversation.id);
+    
+    // Determine which assistant should respond
+    let responderId: string | undefined;
+    if (conversation.format === 'standard') {
+      // For standard format, always use the default assistant
+      const defaultAssistant = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+      responderId = defaultAssistant?.id;
+    } else {
+      // For other formats, use the first active assistant
+      const defaultAssistant = participants.find(p => p.type === 'assistant' && p.isActive);
+      responderId = defaultAssistant?.id;
+    }
+    
     // Check if there's already an assistant message after this user message
     const nextMessage = editedMessageIndex + 1 < allMessages.length ? allMessages[editedMessageIndex + 1] : null;
     
@@ -384,7 +493,8 @@ async function handleEdit(
         '',
         'assistant',
         updatedMessage.activeBranchId, // Parent is the edited user message's active branch
-        conversation.model
+        conversation.model,
+        responderId // Assistant participant ID
       );
       
       if (!newBranch) {
@@ -407,7 +517,8 @@ async function handleEdit(
         '',
         'assistant',
         conversation.model,
-        updatedMessage.activeBranchId // Parent is the edited user message's active branch
+        updatedMessage.activeBranchId, // Parent is the edited user message's active branch
+        responderId // Assistant participant ID
       );
       
       // Send assistant message to frontend
@@ -425,16 +536,41 @@ async function handleEdit(
       historyMessages[editedMessageIndex] = updatedMessage;
     }
     
+    // Get the responder's settings
+    let responderSettings = conversation.settings;
+    let responderSystemPrompt = conversation.systemPrompt;
+    let responderModel = conversation.model;
+    
+    if (responderId && participants.length > 0) {
+      const responder = participants.find(p => p.id === responderId);
+      if (responder) {
+        responderModel = responder.model || conversation.model;
+        responderSystemPrompt = responder.systemPrompt || conversation.systemPrompt;
+        responderSettings = responder.settings || conversation.settings;
+      }
+    }
+    
     // Stream response
     try {
       const targetMessage = assistantMessage;
       const targetBranchId = targetMessage.activeBranchId;
       
+      // Log WebSocket event
+      await llmLogger.logWebSocketEvent({
+        event: 'edit_message',
+        conversationId: conversation.id,
+        messageId: message.messageId,
+        responderId: responderId,
+        model: responderModel,
+        settings: responderSettings,
+        format: conversation.format
+      });
+      
       await inferenceService.streamCompletion(
-        conversation.model,
+        responderModel,
         historyMessages,
-        conversation.systemPrompt,
-        conversation.settings,
+        responderSystemPrompt,
+        responderSettings,
         ws.userId,
         async (chunk: string, isComplete: boolean) => {
           const currentBranch = targetMessage.branches.find(b => b.id === targetBranchId);
@@ -458,7 +594,10 @@ async function handleEdit(
               currentBranch.content
             );
           }
-        }
+        },
+        conversation.format || 'standard',
+        participants,
+        responderId
       );
     } catch (error) {
       console.error('Error generating response to edited message:', error);

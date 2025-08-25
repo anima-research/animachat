@@ -1,13 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { Message, getActiveBranch } from '@deprecated-claude/shared';
+import { Message, getActiveBranch, ModelSettings } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
-
-interface ModelSettings {
-  temperature: number;
-  maxTokens: number;
-  topP?: number;
-  topK?: number;
-}
+import { llmLogger } from '../utils/llmLogger.js';
 
 export class AnthropicService {
   private client: Anthropic;
@@ -26,7 +20,8 @@ export class AnthropicService {
     messages: Message[],
     systemPrompt: string | undefined,
     settings: ModelSettings,
-    onChunk: (chunk: string, isComplete: boolean) => Promise<void>
+    onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
+    stopSequences?: string[]
   ): Promise<void> {
     // Demo mode - simulate streaming response
     if (process.env.DEMO_MODE === 'true') {
@@ -34,31 +29,84 @@ export class AnthropicService {
       return;
     }
 
+    let requestId: string | undefined;
+    let startTime: number = Date.now();
+    let requestParams: any;
+
     try {
       // Convert messages to Anthropic format
       const anthropicMessages = this.formatMessagesForAnthropic(messages);
       
-      const stream = await this.client.messages.create({
-        model: this.getAnthropicModelId(modelId),
+      requestParams = {
+        model: modelId,
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
         ...(settings.topP !== undefined && { top_p: settings.topP }),
         ...(settings.topK !== undefined && { top_k: settings.topK }),
         ...(systemPrompt && { system: systemPrompt }),
+        ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences }),
         messages: anthropicMessages,
         stream: true
+      };
+      
+      requestId = `anthropic-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Log the request
+      await llmLogger.logRequest({
+        requestId,
+        service: 'anthropic',
+        model: requestParams.model,
+        systemPrompt: systemPrompt,
+        temperature: requestParams.temperature,
+        maxTokens: requestParams.max_tokens,
+        topP: requestParams.top_p,
+        topK: requestParams.top_k,
+        stopSequences: stopSequences,
+        messageCount: anthropicMessages.length,
+        requestBody: {
+          ...requestParams,
+          messages: anthropicMessages
+        }
       });
+      
+      startTime = Date.now();
+      const chunks: string[] = [];
+      
+      const stream = await this.client.messages.create(requestParams) as any;
 
       for await (const chunk of stream) {
         if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+          chunks.push(chunk.delta.text);
           await onChunk(chunk.delta.text, false);
         } else if (chunk.type === 'message_stop') {
           await onChunk('', true);
+          
+          // Log the response
+          const duration = Date.now() - startTime;
+          await llmLogger.logResponse({
+            requestId,
+            service: 'anthropic',
+            model: requestParams.model,
+            chunks,
+            duration
+          });
           break;
         }
       }
     } catch (error) {
       console.error('Anthropic streaming error:', error);
+      
+      // Log the error
+      if (requestId) {
+        await llmLogger.logResponse({
+          requestId,
+          service: 'anthropic',
+          model: requestParams?.model || modelId,
+          error: error instanceof Error ? error.message : String(error),
+          duration: Date.now() - startTime
+        });
+      }
+      
       throw error;
     }
   }
@@ -78,18 +126,6 @@ export class AnthropicService {
     }
 
     return formattedMessages;
-  }
-
-  private getAnthropicModelId(modelId: string): string {
-    // Map our model IDs to Anthropic model IDs
-    const modelMap: Record<string, string> = {
-      'claude-3-opus-20240229': 'claude-3-opus-20240229',
-      'claude-3-5-sonnet-20240620': 'claude-3-5-sonnet-20240620',
-      'claude-3-sonnet-20240229': 'claude-3-sonnet-20240229',
-      'claude-3-haiku-20240307': 'claude-3-haiku-20240307'
-    };
-
-    return modelMap[modelId] || modelId;
   }
 
   // Demo mode simulation

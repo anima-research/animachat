@@ -40,7 +40,22 @@ export const MODELS: import('./types.js').Model[] = [
     }
   },
   {
-    id: 'claude-3-5-sonnet-20240620',
+    id: 'claude-3-5-sonnet-20240610',
+    name: 'claude-3-5-sonnet',
+    displayName: 'Claude 3.5 Sonnet',
+    provider: 'anthropic',
+    deprecated: false,
+    contextWindow: 200000,
+    outputTokenLimit: 800,
+    settings: {
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
+      maxTokens: { min: 1, max: 4096, default: 1024 },
+      topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
+      topK: { min: 1, max: 500, default: 40, step: 1 }
+    }
+  },
+  {
+    id: 'claude-3-5-sonnet-20241022',
     name: 'claude-3-6-sonnet',
     displayName: 'Claude 3.6 Sonnet',
     provider: 'anthropic',

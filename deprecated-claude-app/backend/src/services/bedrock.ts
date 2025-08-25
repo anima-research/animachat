@@ -1,13 +1,7 @@
 import { BedrockRuntimeClient, InvokeModelWithResponseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
-import { Message, getActiveBranch } from '@deprecated-claude/shared';
+import { Message, getActiveBranch, ModelSettings } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
-
-interface ModelSettings {
-  temperature: number;
-  maxTokens: number;
-  topP?: number;
-  topK?: number;
-}
+import { llmLogger } from '../utils/llmLogger.js';
 
 export class BedrockService {
   private client: BedrockRuntimeClient;
@@ -35,7 +29,8 @@ export class BedrockService {
     messages: Message[],
     systemPrompt: string | undefined,
     settings: ModelSettings,
-    onChunk: (chunk: string, isComplete: boolean) => Promise<void>
+    onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
+    stopSequences?: string[]
   ): Promise<void> {
     // Demo mode - simulate streaming response
     if (process.env.DEMO_MODE === 'true') {
@@ -43,15 +38,40 @@ export class BedrockService {
       return;
     }
 
+    let requestId: string | undefined;
+    let startTime: number = Date.now();
+    let bedrockModelId: string | undefined;
+
     try {
       // Convert messages to Claude format
       const claudeMessages = this.formatMessagesForClaude(messages);
       
       // Build the request body based on model version
-      const requestBody = this.buildRequestBody(modelId, claudeMessages, systemPrompt, settings);
+      const requestBody = this.buildRequestBody(modelId, claudeMessages, systemPrompt, settings, stopSequences);
+      bedrockModelId = this.getBedrockModelId(modelId);
+
+      requestId = `bedrock-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Log the request
+      await llmLogger.logRequest({
+        requestId,
+        service: 'bedrock',
+        model: bedrockModelId,
+        systemPrompt: systemPrompt,
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens,
+        topP: settings.topP,
+        topK: settings.topK,
+        stopSequences: stopSequences,
+        messageCount: claudeMessages.length,
+        requestBody: requestBody
+      });
+
+      startTime = Date.now();
+      const chunks: string[] = [];
 
       const command = new InvokeModelWithResponseStreamCommand({
-        modelId: this.getBedrockModelId(modelId),
+        modelId: bedrockModelId,
         body: JSON.stringify(requestBody),
         contentType: 'application/json',
         accept: 'application/json'
@@ -74,18 +94,41 @@ export class BedrockService {
           
           if (content) {
             fullContent += content;
+            chunks.push(content);
             await onChunk(content, false);
           }
 
           // Check if stream is complete
           if (this.isStreamComplete(modelId, chunkData)) {
             await onChunk('', true);
+            
+            // Log the response
+            const duration = Date.now() - startTime;
+            await llmLogger.logResponse({
+              requestId,
+              service: 'bedrock',
+              model: bedrockModelId || modelId,
+              chunks,
+              duration
+            });
             break;
           }
         }
       }
     } catch (error) {
       console.error('Bedrock streaming error:', error);
+      
+      // Log the error
+      if (requestId) {
+        await llmLogger.logResponse({
+          requestId,
+          service: 'bedrock',
+          model: bedrockModelId || modelId,
+          error: error instanceof Error ? error.message : String(error),
+          duration: Date.now() - startTime
+        });
+      }
+      
       throw error;
     }
   }
@@ -111,7 +154,8 @@ export class BedrockService {
     modelId: string,
     messages: Array<{ role: string; content: string }>,
     systemPrompt: string | undefined,
-    settings: ModelSettings
+    settings: ModelSettings,
+    stopSequences?: string[]
   ): any {
     // Claude 3 models use Messages API format
     if (modelId.startsWith('claude-3')) {
@@ -122,7 +166,8 @@ export class BedrockService {
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
         ...(settings.topP !== undefined && { top_p: settings.topP }),
-        ...(settings.topK !== undefined && { top_k: settings.topK })
+        ...(settings.topK !== undefined && { top_k: settings.topK }),
+        ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences })
       };
     }
     
@@ -148,7 +193,8 @@ export class BedrockService {
       max_tokens_to_sample: settings.maxTokens,
       temperature: settings.temperature,
       ...(settings.topP !== undefined && { top_p: settings.topP }),
-      ...(settings.topK !== undefined && { top_k: settings.topK })
+      ...(settings.topK !== undefined && { top_k: settings.topK }),
+      ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences })
     };
   }
 
@@ -161,6 +207,8 @@ export class BedrockService {
     
     // Fallback mapping for any legacy IDs
     const modelMap: Record<string, string> = {
+      'claude-3-5-sonnet-20240610': 'anthropic.claude-3-5-sonnet-20240610-v1:0',
+      'claude-3-5-sonnet-20241022': 'anthropic.claude-3-5-sonnet-20241022-v1:0',    
       'claude-3-opus-20240229': 'anthropic.claude-3-opus-20240229-v1:0',
       'claude-3-sonnet-20240229': 'anthropic.claude-3-sonnet-20240229-v1:0',
       'claude-2.1': 'anthropic.claude-v2:1',

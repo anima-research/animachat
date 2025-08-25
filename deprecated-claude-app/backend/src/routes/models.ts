@@ -6,6 +6,12 @@ export function modelRouter(): Router {
 
   // Get available models
   router.get('/', (req, res) => {
+    console.log('Available models:', MODELS.map(m => ({
+      id: m.id,
+      name: m.name,
+      displayName: m.displayName,
+      provider: m.provider
+    })));
     res.json(MODELS);
   });
 

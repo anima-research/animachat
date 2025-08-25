@@ -162,14 +162,14 @@ async function parseFile() {
       // Simple message array
       parsedData.value = {
         title: 'Imported Conversation',
-        model: models.value[0]?.id || 'claude-3-opus-20240229',
+        model: models.value[0]?.id || 'claude-3-5-sonnet-20241022',
         messages: data
       };
     } else if (data.messages) {
       // claude.ai export format
       parsedData.value = {
         title: data.title || 'Imported from Claude.ai',
-        model: data.model || models.value[0]?.id || 'claude-3-opus-20240229',
+        model: data.model || models.value[0]?.id || 'claude-3-5-sonnet-20241022',
         systemPrompt: data.systemPrompt,
         messages: data.messages
       };
