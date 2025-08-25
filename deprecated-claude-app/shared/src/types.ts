@@ -154,6 +154,13 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     branchId: z.string().uuid()
   }),
   z.object({
+    type: z.literal('continue'),
+    conversationId: z.string().uuid(),
+    messageId: z.string().uuid(),
+    parentBranchId: z.string().uuid().optional(),
+    responderId: z.string().uuid().optional() // Which assistant should respond
+  }),
+  z.object({
     type: z.literal('stream'),
     messageId: z.string().uuid(),
     branchId: z.string().uuid(),

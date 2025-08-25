@@ -236,6 +236,15 @@
         >
           <template v-slot:append-inner>
             <v-btn
+              :disabled="isStreaming"
+              :color="currentConversation?.format === 'standard' ? 'grey' : 'secondary'"
+              icon="mdi-robot"
+              variant="text"
+              :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
+              @click="continueGeneration"
+              class="mr-1"
+            />
+            <v-btn
               :disabled="!messageInput.trim() || isStreaming"
               color="primary"
               icon="mdi-send"
@@ -313,6 +322,11 @@ const userAvatar = computed(() => {
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=BB86FC&color=fff`;
 });
 
+const selectedResponderName = computed(() => {
+  const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
+  return responder?.name || 'Assistant';
+});
+
 const userParticipants = computed(() => {
   return participants.value.filter(p => p.type === 'user' && p.isActive);
 });
@@ -377,21 +391,27 @@ function scrollToBottom(smooth: boolean = false) {
     requestAnimationFrame(() => {
       if (messagesContainer.value) {
         const container = messagesContainer.value;
-        const previousHeight = container.scrollHeight;
+        // Vuetify components expose their DOM element via $el
+        const element = (container as any).$el || container;
         
-        container.scrollTo({
-          top: container.scrollHeight,
-          behavior: smooth ? 'smooth' : 'instant'
-        });
-        
-        // Check if content is still loading (scroll height is changing)
-        if (attempts < 10) { // Increased attempts for very long conversations
-          setTimeout(() => {
-            if (container.scrollHeight > previousHeight) {
-              // Content grew, scroll again
-              attemptScroll(attempts + 1);
-            }
-          }, 50); // Reduced delay for more responsive scrolling
+        if (element && element.scrollTo) {
+          const previousHeight = element.scrollHeight;
+          
+          element.scrollTo({
+            top: element.scrollHeight,
+            behavior: smooth ? 'smooth' : 'instant'
+          });
+          
+          // Check if content is still loading (scroll height is changing)
+          if (attempts < 10) { // Increased attempts for very long conversations
+            setTimeout(() => {
+              const el = (messagesContainer.value as any)?.$el || messagesContainer.value;
+              if (el && el.scrollHeight > previousHeight) {
+                // Content grew, scroll again
+                attemptScroll(attempts + 1);
+              }
+            }, 50); // Reduced delay for more responsive scrolling
+          }
         }
       }
     });
@@ -434,6 +454,32 @@ async function sendMessage() {
     }
       
     await store.sendMessage(content, participantId, responderId);
+  } finally {
+    isStreaming.value = false;
+  }
+}
+
+async function continueGeneration() {
+  if (isStreaming.value) return;
+  
+  console.log('ConversationView continueGeneration');
+  
+  isStreaming.value = true;
+  
+  try {
+    let responderId: string | undefined;
+    
+    if (currentConversation.value?.format === 'standard') {
+      // For standard format, use default assistant
+      const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.name === 'Assistant');
+      responderId = defaultAssistant?.id;
+    } else {
+      // For other formats, use selected responder
+      responderId = selectedResponder.value || undefined;
+    }
+    
+    // Send empty message to trigger AI response
+    await store.continueGeneration(responderId);
   } finally {
     isStreaming.value = false;
   }

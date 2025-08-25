@@ -1,6 +1,6 @@
 import { WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
-import { WsMessageSchema, WsMessage, Message } from '@deprecated-claude/shared';
+import { WsMessageSchema, WsMessage, Message, Participant } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { verifyToken } from '../middleware/auth.js';
 import { InferenceService } from '../services/inference.js';
@@ -63,6 +63,10 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
           
         case 'delete':
           await handleDelete(ws, message, db);
+          break;
+          
+        case 'continue':
+          await handleContinue(ws, message, db, inferenceService);
           break;
           
         default:
@@ -213,6 +217,12 @@ async function handleChatMessage(
   visibleHistory.push(userMessage);
   console.log('Final visible history length:', visibleHistory.length);
   
+  // For prefill format, we need to include the empty assistant message too
+  // so that formatMessagesForConversation knows to append the assistant's name
+  const messagesForInference = conversation.format === 'prefill' 
+    ? [...visibleHistory, assistantMessage]
+    : visibleHistory;
+  
   // Stream response from appropriate service
   try {
     const inferenceModel = responder.model || conversation.model;
@@ -233,7 +243,7 @@ async function handleChatMessage(
     
     await inferenceService.streamCompletion(
       inferenceModel,
-      visibleHistory,
+      messagesForInference,
       inferenceSystemPrompt,
       inferenceSettings,
       ws.userId,
@@ -640,6 +650,128 @@ async function handleDelete(
   } catch (error) {
     console.error('Delete message error:', error);
     ws.send(JSON.stringify({ type: 'error', error: 'Failed to delete message' }));
+  }
+}
+
+async function handleContinue(
+  ws: AuthenticatedWebSocket,
+  message: Extract<WsMessage, { type: 'continue' }>,
+  db: Database,
+  inferenceService: InferenceService
+) {
+  if (!ws.userId) return;
+
+  const { conversationId, messageId, parentBranchId, responderId } = message;
+  
+  try {
+    // Verify conversation ownership
+    const conversation = await db.getConversation(conversationId);
+    if (!conversation || conversation.userId !== ws.userId) {
+      ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
+      return;
+    }
+
+    // Get participants
+    const participants = await db.getConversationParticipants(conversationId);
+    
+    // Determine the responder
+    let responder: Participant | undefined;
+    if (conversation.format === 'standard') {
+      // For standard format, always use default Assistant
+      responder = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+    } else {
+      // For other formats, use the specified responder
+      responder = participants.find(p => p.id === responderId);
+      if (!responder || responder.type !== 'assistant') {
+        // If no valid responder specified, use first active assistant
+        responder = participants.find(p => p.type === 'assistant' && p.isActive);
+      }
+    }
+
+    if (!responder) {
+      ws.send(JSON.stringify({ type: 'error', error: 'No assistant participant found' }));
+      return;
+    }
+
+    // Get messages and determine parent
+    const messages = await db.getConversationMessages(conversationId);
+    
+    // Create assistant message as a continuation
+    const assistantMessage = await db.createMessage(
+      conversationId,
+      '', // empty content initially
+      'assistant',
+      responder.model || conversation.model,
+      parentBranchId || undefined,
+      responder.id
+    );
+
+    const assistantBranch = assistantMessage.branches[0];
+
+    // Send initial empty message
+    ws.send(JSON.stringify({
+      type: 'message_created',
+      message: assistantMessage
+    }));
+
+    // Log WebSocket event
+    await llmLogger.logWebSocketEvent({
+      event: 'continue',
+      conversationId,
+      messageId,
+      participantId: responder.id,
+      model: responder.model || conversation.model
+    });
+
+    // Include the new assistant message in the messages array for prefill formatting
+    const messagesWithNewAssistant = [...messages, assistantMessage];
+
+    // Stream the completion
+    await inferenceService.streamCompletion(
+      responder.model || conversation.model,
+      messagesWithNewAssistant,
+      responder.systemPrompt || conversation.systemPrompt,
+      responder.settings || conversation.settings || {
+        temperature: 1.0,
+        maxTokens: 1024
+      },
+      ws.userId!,
+      async (chunk: string, isComplete: boolean) => {
+        assistantBranch.content += chunk;
+        
+        ws.send(JSON.stringify({
+          type: 'stream',
+          messageId: assistantMessage.id,
+          branchId: assistantBranch.id,
+          content: chunk,
+          isComplete
+        }));
+
+        if (isComplete) {
+          // Update the message in the database
+          await db.updateMessageContent(assistantMessage.id, assistantBranch.id, assistantBranch.content);
+          
+          // Send updated conversation
+          const updatedConversation = await db.getConversation(conversationId);
+          if (updatedConversation) {
+            ws.send(JSON.stringify({
+              type: 'conversation_updated',
+              conversation: updatedConversation
+            }));
+          }
+        }
+      },
+      conversation.format,
+      participants,
+      responder.id
+    );
+
+  } catch (error) {
+    console.error('Continue generation error:', error);
+    ws.send(JSON.stringify({ 
+      type: 'error', 
+      error: error instanceof Error ? error.message : 'Failed to continue generation'
+    }));
   }
 }
 

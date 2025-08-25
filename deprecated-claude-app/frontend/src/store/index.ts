@@ -293,6 +293,34 @@ export function createStore(): {
       });
     },
     
+    async continueGeneration(responderId?: string) {
+      if (!state.currentConversation || !state.wsService) return;
+      
+      // Get the last visible message to determine the parent branch
+      const visibleMessages = this.messages;
+      console.log('=== CONTINUE GENERATION ===');
+      console.log('Visible messages count:', visibleMessages.length);
+      
+      let parentBranchId: string | undefined;
+      
+      if (visibleMessages.length > 0) {
+        const lastMessage = visibleMessages[visibleMessages.length - 1];
+        const activeBranch = lastMessage.branches.find(b => b.id === lastMessage.activeBranchId);
+        parentBranchId = activeBranch?.id;
+        console.log('>>> PARENT BRANCH ID:', parentBranchId, 'from branch', activeBranch?.id, 'of message', lastMessage.id);
+      } else {
+        console.log('Continuing with no parent - first message');
+      }
+      
+      state.wsService.sendMessage({
+        type: 'continue',
+        conversationId: state.currentConversation.id,
+        messageId: crypto.randomUUID(),
+        parentBranchId,
+        responderId
+      });
+    },
+    
     async regenerateMessage(messageId: string, branchId: string) {
       if (!state.currentConversation || !state.wsService) return;
       

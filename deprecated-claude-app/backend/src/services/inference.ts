@@ -40,7 +40,12 @@ export class InferenceService {
     // Build stop sequences for prefill/colon formats
     let stopSequences: string[] | undefined;
     if (format === 'prefill') {
-      stopSequences = participants.map(p => `${p.name}:`);
+      // Always include these common stop sequences
+      const baseStopSequences = ['User:', 'A:'];
+      // Add participant names as stop sequences
+      const participantStopSequences = participants.map(p => `${p.name}:`);
+      // Combine and deduplicate
+      stopSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
     }
 
     // Route to appropriate service based on provider
@@ -180,6 +185,8 @@ export class InferenceService {
       
       // Build the conversation content with participant names
       let conversationContent = '';
+      let lastMessageWasEmptyAssistant = false;
+      let lastAssistantName = 'Assistant';
       
       for (const message of messages) {
         const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
@@ -194,12 +201,22 @@ export class InferenceService {
           }
         }
         
+        // Track if this is an empty assistant message
+        if (activeBranch.role === 'assistant' && activeBranch.content === '') {
+          lastMessageWasEmptyAssistant = true;
+          lastAssistantName = participantName;
+          continue; // Skip empty assistant messages
+        }
+        
         // Always use participant name format: "Name: content"
         conversationContent += `${participantName}: ${activeBranch.content}\n\n`;
       }
       
-      // If we have a responder, append their name with a colon (no newline)
-      if (responderId && participants.length > 0) {
+      // If the last message was an empty assistant, append that assistant's name
+      if (lastMessageWasEmptyAssistant) {
+        conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:`;
+      } else if (responderId && participants.length > 0) {
+        // Otherwise, if we have a responder, append their name with a colon (no newline)
         const responder = participants.find(p => p.id === responderId);
         if (responder) {
           conversationContent = conversationContent.trim() + `\n\n${responder.name}:`;
