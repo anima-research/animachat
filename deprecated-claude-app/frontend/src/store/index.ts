@@ -40,6 +40,7 @@ export interface Store {
   regenerateMessage(messageId: string, branchId: string): Promise<void>;
   editMessage(messageId: string, branchId: string, content: string): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
+  deleteMessage(messageId: string, branchId: string): Promise<void>;
   
   loadModels(): Promise<void>;
   
@@ -166,8 +167,9 @@ export function createStore(): {
           model,
           title: title || 'New Conversation',
           settings: {
-            temperature: 0.7,
-            maxTokens: 1024,
+            temperature: 1.0,
+            maxTokens: 1024
+            // topP and topK are intentionally omitted to use API defaults
           }
         });
         
@@ -360,6 +362,22 @@ export function createStore(): {
       const newVisible = this.getVisibleMessages();
       console.log('After switch, visible messages:', newVisible.length);
     },
+    
+    // Getter for visible messages
+    get messages() {
+      return this.getVisibleMessages();
+    },
+    
+    async deleteMessage(messageId: string, branchId: string) {
+      if (!state.currentConversation || !state.wsService) return;
+      
+      state.wsService.sendMessage({
+        type: 'delete',
+        conversationId: state.currentConversation.id,
+        messageId,
+        branchId
+      });
+    },
 
     // Helper method to get visible messages based on current branch selections
     getVisibleMessages(): Message[] {
@@ -495,6 +513,34 @@ export function createStore(): {
         if (index !== -1) {
           state.allMessages[index] = data.message;
           console.log('Updated message at index', index, 'new activeBranchId:', data.message.activeBranchId);
+        }
+      });
+      
+      state.wsService.on('message_deleted', (data: any) => {
+        console.log('Store handling message_deleted:', data);
+        const { messageId, branchId, deletedMessages } = data;
+        
+        // If multiple messages were deleted (cascade delete)
+        if (deletedMessages && deletedMessages.length > 0) {
+          state.allMessages = state.allMessages.filter(m => !deletedMessages.includes(m.id));
+        } else {
+          // Single branch deletion
+          const index = state.allMessages.findIndex(m => m.id === messageId);
+          if (index !== -1) {
+            const message = state.allMessages[index];
+            if (message.branches.length > 1) {
+              // Remove the branch
+              const updatedBranches = message.branches.filter(b => b.id !== branchId);
+              state.allMessages[index] = {
+                ...message,
+                branches: updatedBranches,
+                activeBranchId: message.activeBranchId === branchId ? updatedBranches[0].id : message.activeBranchId
+              };
+            } else {
+              // Remove the entire message
+              state.allMessages.splice(index, 1);
+            }
+          }
         }
       });
       

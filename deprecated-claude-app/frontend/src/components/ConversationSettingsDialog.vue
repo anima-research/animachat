@@ -89,52 +89,64 @@
           </v-slider>
           
           <!-- Top P (if supported) -->
-          <v-slider
-            v-if="selectedModel.settings.topP"
-            v-model="settings.settings.topP"
-            :min="selectedModel.settings.topP.min"
-            :max="selectedModel.settings.topP.max"
-            :step="selectedModel.settings.topP.step"
-            thumb-label
-            color="primary"
-            class="mt-4"
-          >
-            <template v-slot:label>
-              Top P
-              <v-tooltip location="top">
-                <template v-slot:activator="{ props }">
-                  <v-icon v-bind="props" size="small" class="ml-1">
-                    mdi-help-circle-outline
-                  </v-icon>
-                </template>
-                Nucleus sampling. Consider tokens with top_p probability mass.
-              </v-tooltip>
-            </template>
-          </v-slider>
+          <div v-if="selectedModel.settings.topP" class="mt-4">
+            <v-checkbox
+              v-model="topPEnabled"
+              label="Enable Top P"
+              density="compact"
+            />
+            <v-slider
+              v-if="topPEnabled"
+              v-model="settings.settings.topP"
+              :min="selectedModel.settings.topP.min"
+              :max="selectedModel.settings.topP.max"
+              :step="selectedModel.settings.topP.step"
+              thumb-label
+              color="primary"
+            >
+              <template v-slot:label>
+                Top P
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small" class="ml-1">
+                      mdi-help-circle-outline
+                    </v-icon>
+                  </template>
+                  Nucleus sampling. Consider tokens with top_p probability mass.
+                </v-tooltip>
+              </template>
+            </v-slider>
+          </div>
           
           <!-- Top K (if supported) -->
-          <v-slider
-            v-if="selectedModel.settings.topK"
-            v-model="settings.settings.topK"
-            :min="selectedModel.settings.topK.min"
-            :max="selectedModel.settings.topK.max"
-            :step="selectedModel.settings.topK.step"
-            thumb-label
-            color="primary"
-            class="mt-4"
-          >
-            <template v-slot:label>
-              Top K
-              <v-tooltip location="top">
-                <template v-slot:activator="{ props }">
-                  <v-icon v-bind="props" size="small" class="ml-1">
-                    mdi-help-circle-outline
-                  </v-icon>
-                </template>
-                Consider only the top K most likely tokens.
-              </v-tooltip>
-            </template>
-          </v-slider>
+          <div v-if="selectedModel.settings.topK" class="mt-4">
+            <v-checkbox
+              v-model="topKEnabled"
+              label="Enable Top K"
+              density="compact"
+            />
+            <v-slider
+              v-if="topKEnabled"
+              v-model="settings.settings.topK"
+              :min="selectedModel.settings.topK.min"
+              :max="selectedModel.settings.topK.max"
+              :step="selectedModel.settings.topK.step"
+              thumb-label
+              color="primary"
+            >
+              <template v-slot:label>
+                Top K
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small" class="ml-1">
+                      mdi-help-circle-outline
+                    </v-icon>
+                  </template>
+                  Consider only the top K most likely tokens.
+                </v-tooltip>
+              </template>
+            </v-slider>
+          </div>
         </div>
         
         <v-divider class="my-4" />
@@ -182,15 +194,18 @@ const emit = defineEmits<{
   update: [updates: Partial<Conversation>];
 }>();
 
+const topPEnabled = ref(false);
+const topKEnabled = ref(false);
+
 const settings = ref<any>({
   title: '',
   model: '',
   systemPrompt: '',
   settings: {
-    temperature: 0.7,
+    temperature: 1.0,
     maxTokens: 1024,
-    topP: 0.9,
-    topK: 40
+    topP: undefined,
+    topK: undefined
   }
 });
 
@@ -207,6 +222,10 @@ watch(() => props.conversation, (conversation) => {
       systemPrompt: conversation.systemPrompt || '',
       settings: { ...conversation.settings }
     };
+    
+    // Set checkbox states based on whether values are defined
+    topPEnabled.value = conversation.settings?.topP !== undefined;
+    topKEnabled.value = conversation.settings?.topK !== undefined;
   }
 }, { immediate: true });
 
@@ -217,9 +236,31 @@ watch(() => settings.value.model, (modelId) => {
     settings.value.settings = {
       temperature: model.settings.temperature.default,
       maxTokens: model.settings.maxTokens.default,
-      ...(model.settings.topP && { topP: model.settings.topP.default }),
-      ...(model.settings.topK && { topK: model.settings.topK.default })
+      topP: undefined,
+      topK: undefined
     };
+    
+    // Disable topP and topK by default when changing models
+    topPEnabled.value = false;
+    topKEnabled.value = false;
+  }
+});
+
+// Watch topP enabled state
+watch(topPEnabled, (enabled) => {
+  if (enabled && selectedModel.value?.settings.topP) {
+    settings.value.settings.topP = selectedModel.value.settings.topP.default;
+  } else {
+    settings.value.settings.topP = undefined;
+  }
+});
+
+// Watch topK enabled state
+watch(topKEnabled, (enabled) => {
+  if (enabled && selectedModel.value?.settings.topK) {
+    settings.value.settings.topK = selectedModel.value.settings.topK.default;
+  } else {
+    settings.value.settings.topK = undefined;
   }
 });
 
@@ -228,9 +269,13 @@ function resetToDefaults() {
     settings.value.settings = {
       temperature: selectedModel.value.settings.temperature.default,
       maxTokens: selectedModel.value.settings.maxTokens.default,
-      ...(selectedModel.value.settings.topP && { topP: selectedModel.value.settings.topP.default }),
-      ...(selectedModel.value.settings.topK && { topK: selectedModel.value.settings.topK.default })
+      topP: undefined,
+      topK: undefined
     };
+    
+    // Disable topP and topK by default
+    topPEnabled.value = false;
+    topKEnabled.value = false;
   }
 }
 
@@ -239,11 +284,18 @@ function cancel() {
 }
 
 function save() {
+  const finalSettings = {
+    temperature: settings.value.settings.temperature,
+    maxTokens: settings.value.settings.maxTokens,
+    ...(topPEnabled.value && settings.value.settings.topP !== undefined && { topP: settings.value.settings.topP }),
+    ...(topKEnabled.value && settings.value.settings.topK !== undefined && { topK: settings.value.settings.topK })
+  };
+  
   emit('update', {
     title: settings.value.title,
     model: settings.value.model,
     systemPrompt: settings.value.systemPrompt || undefined,
-    settings: settings.value.settings
+    settings: finalSettings
   });
   emit('update:modelValue', false);
 }

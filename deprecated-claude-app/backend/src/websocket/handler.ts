@@ -60,6 +60,10 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
           await handleEdit(ws, message, db, inferenceService);
           break;
           
+        case 'delete':
+          await handleDelete(ws, message, db);
+          break;
+          
         default:
           ws.send(JSON.stringify({ type: 'error', error: 'Unknown message type' }));
       }
@@ -188,7 +192,7 @@ async function handleChatMessage(
       conversation.settings,
       ws.userId,
       async (chunk: string, isComplete: boolean) => {
-        // Update message content
+        // Update message content in memory (mutation is OK during streaming)
         const currentBranch = assistantMessage.branches.find(b => b.id === assistantMessage.activeBranchId);
         if (currentBranch) {
           currentBranch.content += chunk;
@@ -203,7 +207,14 @@ async function handleChatMessage(
           isComplete
         }));
 
-        if (isComplete) {
+        if (isComplete && currentBranch) {
+          // Persist the complete content to disk only when done
+          await db.updateMessageContent(
+            assistantMessage.id,
+            assistantMessage.activeBranchId,
+            currentBranch.content
+          );
+          
           // Update conversation timestamp
           await db.updateConversation(conversation.id, { updatedAt: new Date() });
         }
@@ -288,6 +299,15 @@ async function handleRegenerate(
           content: chunk,
           isComplete
         }));
+
+        if (isComplete && currentBranch) {
+          // Persist the complete content to disk only when done
+          await db.updateMessageContent(
+            updatedMessage.id,
+            updatedMessage.activeBranchId,
+            currentBranch.content
+          );
+        }
       }
     );
   } catch (error) {
@@ -429,6 +449,15 @@ async function handleEdit(
             content: chunk,
             isComplete
           }));
+
+          if (isComplete && currentBranch) {
+            // Persist the complete content to disk only when done
+            await db.updateMessageContent(
+              targetMessage.id,
+              targetBranchId,
+              currentBranch.content
+            );
+          }
         }
       );
     } catch (error) {
@@ -438,6 +467,40 @@ async function handleEdit(
         error: 'Failed to generate response'
       }));
     }
+  }
+}
+
+async function handleDelete(
+  ws: AuthenticatedWebSocket,
+  message: Extract<WsMessage, { type: 'delete' }>,
+  db: Database
+) {
+  try {
+    const { conversationId, messageId, branchId } = message;
+    
+    // Get the message to verify ownership
+    const conversation = await db.getConversation(conversationId);
+    if (!conversation || conversation.userId !== ws.userId) {
+      ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
+      return;
+    }
+    
+    // Delete the message branch and all its descendants
+    const deleted = await db.deleteMessageBranch(messageId, branchId);
+    
+    if (deleted) {
+      ws.send(JSON.stringify({
+        type: 'message_deleted',
+        messageId,
+        branchId,
+        deletedMessages: deleted
+      }));
+    } else {
+      ws.send(JSON.stringify({ type: 'error', error: 'Failed to delete message' }));
+    }
+  } catch (error) {
+    console.error('Delete message error:', error);
+    ws.send(JSON.stringify({ type: 'error', error: 'Failed to delete message' }));
   }
 }
 

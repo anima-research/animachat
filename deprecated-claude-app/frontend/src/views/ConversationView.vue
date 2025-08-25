@@ -152,14 +152,48 @@
         </div>
         
         <div v-else>
-          <MessageComponent
+          <div 
             v-for="message in messages"
             :key="message.id"
-            :message="message"
-            @regenerate="regenerateMessage"
-            @edit="editMessage"
-            @switch-branch="switchBranch"
-          />
+            class="message-wrapper position-relative"
+            @mouseenter="hoveredMessageId = message.id"
+            @mouseleave="hoveredMessageId = null"
+          >
+            <MessageComponent
+              :message="message"
+              @regenerate="regenerateMessage"
+              @edit="editMessage"
+              @switch-branch="switchBranch"
+            />
+            
+            <!-- Floating action buttons -->
+            <div
+              v-if="hoveredMessageId === message.id"
+              class="message-actions"
+            >
+              <v-btn
+                v-if="message.branches[message.branches.findIndex(b => b.id === message.activeBranchId)]?.role === 'user'"
+                icon="mdi-square-edit-outline"
+                size="small"
+                variant="text"
+                @click="startEdit(message)"
+              />
+              <v-btn
+                v-if="message.branches[message.branches.findIndex(b => b.id === message.activeBranchId)]?.role === 'assistant'"
+                icon="mdi-refresh"
+                size="small"
+                variant="text"
+                @click="regenerateMessage(message.id, message.activeBranchId)"
+              />
+              <v-btn
+                icon="mdi-delete-outline"
+                size="small"
+                variant="text"
+                color="error"
+                @click="deleteMessage(message.id, message.activeBranchId)"
+              />
+            </div>
+          </div>
           
           <div v-if="isStreaming" class="d-flex align-center mt-4">
             <v-progress-circular
@@ -240,6 +274,7 @@ const conversationSettingsDialog = ref(false);
 const messageInput = ref('');
 const isStreaming = ref(false);
 const messagesContainer = ref<HTMLElement>();
+const hoveredMessageId = ref<string | null>(null);
 
 const conversations = computed(() => store.state.conversations);
 const currentConversation = computed(() => store.state.currentConversation);
@@ -373,6 +408,19 @@ async function updateConversationSettings(updates: Partial<Conversation>) {
   }
 }
 
+function startEdit(message: Message) {
+  const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+  if (activeBranch && activeBranch.role === 'user') {
+    editMessage(message.id, message.activeBranchId, activeBranch.content);
+  }
+}
+
+async function deleteMessage(messageId: string, branchId: string) {
+  if (confirm('Are you sure you want to delete this message and all its replies?')) {
+    await store.deleteMessage(messageId, branchId);
+  }
+}
+
 function onConversationImported(conversation: Conversation) {
   router.push(`/conversation/${conversation.id}`);
 }
@@ -395,3 +443,25 @@ function formatDate(date: Date | string): string {
   return d.toLocaleDateString();
 }
 </script>
+
+<style scoped>
+.message-wrapper {
+  position: relative;
+}
+
+.message-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 4px;
+  padding: 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.v-theme--dark .message-actions {
+  background: rgba(30, 30, 30, 0.9);
+}
+</style>

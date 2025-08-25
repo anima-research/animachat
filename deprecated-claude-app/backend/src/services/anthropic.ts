@@ -63,15 +63,15 @@ export class AnthropicService {
     }
   }
 
-  private formatMessagesForAnthropic(messages: Message[]): Array<{ role: string; content: string }> {
-    const formattedMessages: Array<{ role: string; content: string }> = [];
+  private formatMessagesForAnthropic(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: string }> {
+    const formattedMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
 
     for (const message of messages) {
       const activeBranch = getActiveBranch(message);
       if (activeBranch && activeBranch.role !== 'system') {
         // Anthropic expects 'user' and 'assistant' roles only
         formattedMessages.push({
-          role: activeBranch.role,
+          role: activeBranch.role as 'user' | 'assistant',
           content: activeBranch.content
         });
       }

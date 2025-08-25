@@ -1,6 +1,7 @@
 import { User, Conversation, Message } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
+import { EventStore, Event } from './persistence.js';
 
 interface ApiKey {
   id: string;
@@ -19,17 +20,34 @@ export class Database {
   private apiKeys: Map<string, ApiKey> = new Map();
   private userConversations: Map<string, Set<string>> = new Map(); // userId -> conversationIds
   private conversationMessages: Map<string, string[]> = new Map(); // conversationId -> messageIds (ordered)
+  private passwordHashes: Map<string, string> = new Map(); // email -> passwordHash
   
-  // Event log for append-only behavior
-  private eventLog: Array<{
-    timestamp: Date;
-    type: string;
-    data: any;
-  }> = [];
+  private eventStore: EventStore;
+  private initialized: boolean = false;
 
   constructor() {
-    // Always create a test user for development
-    this.createTestUser();
+    this.eventStore = new EventStore();
+  }
+  
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    
+    await this.eventStore.init();
+    
+    // Load all events and rebuild state
+    const events = await this.eventStore.loadEvents();
+    console.log(`Loading ${events.length} events from disk...`);
+    
+    for (const event of events) {
+      await this.replayEvent(event);
+    }
+    
+    // Create test user if no users exist
+    if (this.users.size === 0) {
+      await this.createTestUser();
+    }
+    
+    this.initialized = true;
   }
 
   private async createTestUser() {
@@ -68,15 +86,221 @@ export class Database {
     this.users.set(demoUser.id, demoUser);
     this.usersByEmail.set(demoUser.email, demoUser.id);
     
-    this.logEvent('user_created', demoUser);
+    await this.logEvent('user_created', { user: demoUser });
   }
 
-  private logEvent(type: string, data: any) {
-    this.eventLog.push({
+  private async logEvent(type: string, data: any): Promise<void> {
+    const event: Event = {
       timestamp: new Date(),
       type,
       data: JSON.parse(JSON.stringify(data)) // Deep clone to avoid mutations
-    });
+    };
+    
+    await this.eventStore.appendEvent(event);
+  }
+  
+  private async replayEvent(event: Event): Promise<void> {
+    switch (event.type) {
+      case 'user_created': {
+        const { user, passwordHash } = event.data;
+        const userWithDates = {
+          ...user,
+          createdAt: new Date(user.createdAt)
+        };
+        this.users.set(user.id, userWithDates);
+        this.usersByEmail.set(user.email, user.id);
+        this.userConversations.set(user.id, new Set());
+        if (passwordHash) {
+          this.passwordHashes.set(user.email, passwordHash);
+        }
+        break;
+      }
+      
+      case 'api_key_created': {
+        const { apiKey, userId, masked } = event.data;
+        const apiKeyWithDates = {
+          ...apiKey,
+          createdAt: new Date(apiKey.createdAt)
+        };
+        this.apiKeys.set(apiKey.id, apiKeyWithDates);
+        
+        const user = this.users.get(userId);
+        if (user) {
+          const updatedUser = {
+            ...user,
+            apiKeys: [
+              ...(user.apiKeys || []),
+              {
+                id: apiKey.id,
+                name: apiKey.name,
+                provider: apiKey.provider,
+                masked: masked,
+                createdAt: new Date(apiKey.createdAt)
+              }
+            ]
+          };
+          this.users.set(userId, updatedUser);
+        }
+        break;
+      }
+      
+      case 'conversation_created': {
+        const conversation = {
+          ...event.data,
+          createdAt: new Date(event.data.createdAt),
+          updatedAt: new Date(event.data.updatedAt)
+        };
+        this.conversations.set(conversation.id, conversation);
+        const userConvs = this.userConversations.get(conversation.userId) || new Set();
+        userConvs.add(conversation.id);
+        this.userConversations.set(conversation.userId, userConvs);
+        this.conversationMessages.set(conversation.id, []);
+        break;
+      }
+      
+      case 'conversation_updated': {
+        const { id, updates } = event.data;
+        const conversation = this.conversations.get(id);
+        if (conversation) {
+          // Create new object instead of mutating
+          const updatesWithDates = { ...updates };
+          if (updates.updatedAt) {
+            updatesWithDates.updatedAt = new Date(updates.updatedAt);
+          }
+          const updated = { ...conversation, ...updatesWithDates };
+          this.conversations.set(id, updated);
+        }
+        break;
+      }
+      
+      case 'conversation_archived': {
+        const { id } = event.data;
+        const conversation = this.conversations.get(id);
+        if (conversation) {
+          // Create new object instead of mutating
+          const updated = { ...conversation, archived: true, updatedAt: event.timestamp };
+          this.conversations.set(id, updated);
+        }
+        break;
+      }
+      
+      case 'message_created': {
+        const message = {
+          ...event.data,
+          branches: event.data.branches.map((branch: any) => ({
+            ...branch,
+            createdAt: new Date(branch.createdAt)
+          }))
+        };
+        this.messages.set(message.id, message);
+        const convMessages = this.conversationMessages.get(message.conversationId) || [];
+        convMessages.push(message.id);
+        this.conversationMessages.set(message.conversationId, convMessages);
+        
+        // Update conversation timestamp
+        const conversation = this.conversations.get(message.conversationId);
+        if (conversation) {
+          const updated = { ...conversation, updatedAt: event.timestamp };
+          this.conversations.set(message.conversationId, updated);
+        }
+        break;
+      }
+      
+      case 'message_branch_added': {
+        const { messageId, branch } = event.data;
+        const message = this.messages.get(messageId);
+        if (message) {
+          // Create new message object with added branch
+          const branchWithDate = {
+            ...branch,
+            createdAt: new Date(branch.createdAt)
+          };
+          const updated = {
+            ...message,
+            branches: [...message.branches, branchWithDate],
+            activeBranchId: branch.id
+          };
+          this.messages.set(messageId, updated);
+          
+          // Update conversation timestamp
+          const conversation = this.conversations.get(message.conversationId);
+          if (conversation) {
+            const updatedConv = { ...conversation, updatedAt: event.timestamp };
+            this.conversations.set(message.conversationId, updatedConv);
+          }
+        }
+        break;
+      }
+      
+      case 'active_branch_changed': {
+        const { messageId, branchId } = event.data;
+        const message = this.messages.get(messageId);
+        if (message) {
+          // Create new message object with updated active branch
+          const updated = { ...message, activeBranchId: branchId };
+          this.messages.set(messageId, updated);
+        }
+        break;
+      }
+      
+      case 'message_content_updated': {
+        const { messageId, branchId, content } = event.data;
+        const message = this.messages.get(messageId);
+        if (message) {
+          // Create new message object with updated content
+          const updatedBranches = message.branches.map(branch => 
+            branch.id === branchId 
+              ? { ...branch, content }
+              : branch
+          );
+          const updated = { ...message, branches: updatedBranches };
+          this.messages.set(messageId, updated);
+        }
+        break;
+      }
+      
+      case 'message_deleted': {
+        const { messageId, conversationId } = event.data;
+        this.messages.delete(messageId);
+        const convMessages = this.conversationMessages.get(conversationId);
+        if (convMessages) {
+          const index = convMessages.indexOf(messageId);
+          if (index > -1) {
+            convMessages.splice(index, 1);
+          }
+        }
+        break;
+      }
+      
+      case 'message_branch_deleted': {
+        const { messageId, branchId, conversationId } = event.data;
+        const message = this.messages.get(messageId);
+        if (message) {
+          const updatedBranches = message.branches.filter(b => b.id !== branchId);
+          if (updatedBranches.length > 0) {
+            const updated = {
+              ...message,
+              branches: updatedBranches,
+              activeBranchId: message.activeBranchId === branchId ? updatedBranches[0].id : message.activeBranchId
+            };
+            this.messages.set(messageId, updated);
+          } else {
+            // Should not happen, but handle gracefully
+            this.messages.delete(messageId);
+            const convMessages = this.conversationMessages.get(conversationId);
+            if (convMessages) {
+              const index = convMessages.indexOf(messageId);
+              if (index > -1) {
+                convMessages.splice(index, 1);
+              }
+            }
+          }
+        }
+        break;
+      }
+      
+      // Add more cases as needed
+    }
   }
 
   // User methods
@@ -115,14 +339,10 @@ export class Database {
   }
 
   async validatePassword(email: string, password: string): Promise<boolean> {
-    // Find password hash from event log
-    const userCreatedEvent = this.eventLog.find(
-      event => event.type === 'user_created' && event.data.user.email === email
-    );
+    const passwordHash = this.passwordHashes.get(email);
+    if (!passwordHash) return false;
     
-    if (!userCreatedEvent) return false;
-    
-    return bcrypt.compare(password, userCreatedEvent.data.passwordHash);
+    return bcrypt.compare(password, passwordHash);
   }
 
   // API Key methods
@@ -140,17 +360,28 @@ export class Database {
     
     const user = await this.getUserById(userId);
     if (user) {
-      if (!user.apiKeys) user.apiKeys = [];
-      user.apiKeys.push({
-        id: apiKey.id,
-        name: apiKey.name,
-        provider: apiKey.provider,
-        masked: '****' + key.slice(-4),
-        createdAt: apiKey.createdAt
-      });
+      // Create new user object with updated apiKeys
+      const updatedUser = {
+        ...user,
+        apiKeys: [
+          ...(user.apiKeys || []),
+          {
+            id: apiKey.id,
+            name: apiKey.name,
+            provider: apiKey.provider,
+            masked: '****' + key.slice(-4),
+            createdAt: apiKey.createdAt
+          }
+        ]
+      };
+      this.users.set(userId, updatedUser);
     }
 
-    this.logEvent('api_key_created', { userId, keyId: apiKey.id, provider });
+    await this.logEvent('api_key_created', { 
+      apiKey,
+      userId,
+      masked: '****' + key.slice(-4)
+    });
     
     return apiKey;
   }
@@ -175,8 +406,9 @@ export class Database {
       updatedAt: new Date(),
       archived: false,
       settings: settings || {
-        temperature: 0.7,
+        temperature: 1.0,
         maxTokens: 1024
+        // topP and topK are intentionally omitted to use API defaults
       }
     };
 
@@ -216,7 +448,7 @@ export class Database {
     };
 
     this.conversations.set(id, updated);
-    this.logEvent('conversation_updated', { id, updates });
+    await this.logEvent('conversation_updated', { id, updates });
 
     return updated;
   }
@@ -225,10 +457,15 @@ export class Database {
     const conversation = this.conversations.get(id);
     if (!conversation) return false;
 
-    conversation.archived = true;
-    conversation.updatedAt = new Date();
+    // Create new object instead of mutating
+    const updated = {
+      ...conversation,
+      archived: true,
+      updatedAt: new Date()
+    };
     
-    this.logEvent('conversation_archived', { id });
+    this.conversations.set(id, updated);
+    await this.logEvent('conversation_archived', { id });
     
     return true;
   }
@@ -266,7 +503,7 @@ export class Database {
       this.conversationMessages.set(duplicate.id, convMessages);
     }
 
-    this.logEvent('conversation_duplicated', { originalId: id, duplicateId: duplicate.id });
+    await this.logEvent('conversation_duplicated', { originalId: id, duplicateId: duplicate.id });
 
     return duplicate;
   }
@@ -323,10 +560,11 @@ export class Database {
     // Update conversation timestamp
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
-      conversation.updatedAt = new Date();
+      const updated = { ...conversation, updatedAt: new Date() };
+      this.conversations.set(conversationId, updated);
     }
 
-    this.logEvent('message_created', message);
+    await this.logEvent('message_created', message);
 
     return message;
   }
@@ -345,18 +583,25 @@ export class Database {
       isActive: true
     };
 
-    message.branches.push(newBranch);
-    message.activeBranchId = newBranch.id;
+    // Create new message object with added branch
+    const updatedMessage = {
+      ...message,
+      branches: [...message.branches, newBranch],
+      activeBranchId: newBranch.id
+    };
+    
+    this.messages.set(messageId, updatedMessage);
 
     // Update conversation timestamp
     const conversation = this.conversations.get(message.conversationId);
     if (conversation) {
-      conversation.updatedAt = new Date();
+      const updated = { ...conversation, updatedAt: new Date() };
+      this.conversations.set(message.conversationId, updated);
     }
 
-    this.logEvent('message_branch_added', { messageId, branch: newBranch });
+    await this.logEvent('message_branch_added', { messageId, branch: newBranch });
 
-    return message;
+    return updatedMessage;
   }
 
   async setActiveBranch(messageId: string, branchId: string): Promise<boolean> {
@@ -366,11 +611,166 @@ export class Database {
     const branch = message.branches.find(b => b.id === branchId);
     if (!branch) return false;
 
-    message.activeBranchId = branchId;
+    // Create new message object with updated active branch
+    const updated = { ...message, activeBranchId: branchId };
+    this.messages.set(messageId, updated);
     
-    this.logEvent('active_branch_changed', { messageId, branchId });
+    await this.logEvent('active_branch_changed', { messageId, branchId });
 
     return true;
+  }
+  
+  async updateMessageContent(messageId: string, branchId: string, content: string): Promise<boolean> {
+    const message = this.messages.get(messageId);
+    if (!message) return false;
+    
+    const branch = message.branches.find(b => b.id === branchId);
+    if (!branch) return false;
+    
+    // Create new message object with updated content
+    const updatedBranches = message.branches.map(b => 
+      b.id === branchId 
+        ? { ...b, content }
+        : b
+    );
+    const updated = { ...message, branches: updatedBranches };
+    this.messages.set(messageId, updated);
+    
+    await this.logEvent('message_content_updated', { messageId, branchId, content });
+    
+    return true;
+  }
+  
+  async deleteMessageBranch(messageId: string, branchId: string): Promise<string[] | null> {
+    const message = this.messages.get(messageId);
+    if (!message) return null;
+    
+    const branch = message.branches.find(b => b.id === branchId);
+    if (!branch) return null;
+    
+    const deletedMessageIds: string[] = [];
+    
+    // If this is the only branch, delete the entire message and cascade
+    if (message.branches.length === 1) {
+      // Find all messages that need to be deleted (cascade)
+      const messagesToDelete = this.findDescendantMessages(messageId, branchId);
+      deletedMessageIds.push(messageId, ...messagesToDelete);
+      
+      // Delete messages in reverse order (children first)
+      for (const msgId of [...messagesToDelete].reverse()) {
+        const msg = this.messages.get(msgId);
+        if (msg) {
+          this.messages.delete(msgId);
+          const convMessages = this.conversationMessages.get(msg.conversationId);
+          if (convMessages) {
+            const index = convMessages.indexOf(msgId);
+            if (index > -1) {
+              convMessages.splice(index, 1);
+            }
+          }
+          
+          await this.logEvent('message_deleted', { 
+            messageId: msgId,
+            conversationId: msg.conversationId
+          });
+        }
+      }
+      
+      // Delete the original message
+      this.messages.delete(messageId);
+      const convMessages = this.conversationMessages.get(message.conversationId);
+      if (convMessages) {
+        const index = convMessages.indexOf(messageId);
+        if (index > -1) {
+          convMessages.splice(index, 1);
+        }
+      }
+      
+      await this.logEvent('message_deleted', { 
+        messageId,
+        conversationId: message.conversationId
+      });
+    } else {
+      // Just remove this branch
+      const updatedBranches = message.branches.filter(b => b.id !== branchId);
+      const updatedMessage = {
+        ...message,
+        branches: updatedBranches,
+        updatedAt: new Date(),
+        // If we're deleting the active branch, switch to another branch
+        activeBranchId: message.activeBranchId === branchId ? updatedBranches[0].id : message.activeBranchId
+      };
+      
+      this.messages.set(messageId, updatedMessage);
+      
+      await this.logEvent('message_branch_deleted', { 
+        messageId,
+        branchId,
+        conversationId: message.conversationId
+      });
+      
+      // Still need to cascade delete messages that reply to this specific branch
+      const descendantMessages = this.findDescendantMessages(messageId, branchId);
+      deletedMessageIds.push(...descendantMessages);
+      
+      for (const msgId of [...descendantMessages].reverse()) {
+        const msg = this.messages.get(msgId);
+        if (msg) {
+          this.messages.delete(msgId);
+          const convMessages = this.conversationMessages.get(msg.conversationId);
+          if (convMessages) {
+            const index = convMessages.indexOf(msgId);
+            if (index > -1) {
+              convMessages.splice(index, 1);
+            }
+          }
+          
+          await this.logEvent('message_deleted', { 
+            messageId: msgId,
+            conversationId: msg.conversationId
+          });
+        }
+      }
+    }
+    
+    return deletedMessageIds;
+  }
+  
+  private findDescendantMessages(messageId: string, branchId: string): string[] {
+    const descendants: string[] = [];
+    const conversation = Array.from(this.messages.values()).find(m => m.id === messageId)?.conversationId;
+    
+    if (!conversation) return descendants;
+    
+    const allMessages = Array.from(this.messages.values())
+      .filter(m => m.conversationId === conversation)
+      .sort((a, b) => a.order - b.order);
+    
+    // Find the index of the current message
+    const currentIndex = allMessages.findIndex(m => m.id === messageId);
+    if (currentIndex === -1) return descendants;
+    
+    // Track which branch path we're following
+    let currentBranchId = branchId;
+    
+    // Look at all messages after this one
+    for (let i = currentIndex + 1; i < allMessages.length; i++) {
+      const msg = allMessages[i];
+      
+      // Check if any branch of this message has parentBranchId matching our current branch
+      const matchingBranch = msg.branches.find(b => b.parentBranchId === currentBranchId);
+      
+      if (matchingBranch) {
+        descendants.push(msg.id);
+        // Update the branch we're following to this message's active branch
+        currentBranchId = msg.activeBranchId;
+      } else {
+        // If no branch continues from our current branch, stop looking
+        break;
+      }
+    }
+    
+    return descendants;
   }
 
   async getConversationMessages(conversationId: string): Promise<Message[]> {
@@ -399,11 +799,8 @@ export class Database {
     };
   }
 
-  // Get event log (for debugging/audit)
-  getEventLog(limit?: number): Array<any> {
-    if (limit) {
-      return this.eventLog.slice(-limit);
-    }
-    return [...this.eventLog];
+  // Close database connection
+  async close(): Promise<void> {
+    await this.eventStore.close();
   }
 }

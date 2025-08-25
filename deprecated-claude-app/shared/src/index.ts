@@ -33,7 +33,7 @@ export const MODELS: import('./types.js').Model[] = [
     contextWindow: 200000,
     outputTokenLimit: 800,
     settings: {
-      temperature: { min: 0, max: 1, default: 0.7, step: 0.1 },
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
       topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
       topK: { min: 1, max: 500, default: 40, step: 1 }
@@ -48,7 +48,7 @@ export const MODELS: import('./types.js').Model[] = [
     contextWindow: 200000,
     outputTokenLimit: 800,
     settings: {
-      temperature: { min: 0, max: 1, default: 0.7, step: 0.1 },
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
       topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
       topK: { min: 1, max: 500, default: 40, step: 1 }
@@ -63,7 +63,7 @@ export const MODELS: import('./types.js').Model[] = [
     contextWindow: 200000,
     outputTokenLimit: 800,
     settings: {
-      temperature: { min: 0, max: 1, default: 0.7, step: 0.1 },
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
       topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
       topK: { min: 1, max: 500, default: 40, step: 1 }
@@ -78,7 +78,7 @@ export const MODELS: import('./types.js').Model[] = [
     contextWindow: 100000,
     outputTokenLimit: 800,
     settings: {
-      temperature: { min: 0, max: 1, default: 0.7, step: 0.1 },
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
       topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
       topK: { min: 1, max: 500, default: 40, step: 1 }
@@ -93,7 +93,7 @@ export const MODELS: import('./types.js').Model[] = [
     contextWindow: 100000,
     outputTokenLimit: 800,
     settings: {
-      temperature: { min: 0, max: 1, default: 0.7, step: 0.1 },
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
       topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
       topK: { min: 1, max: 500, default: 40, step: 1 }
@@ -108,7 +108,7 @@ export const MODELS: import('./types.js').Model[] = [
     contextWindow: 100000,
     outputTokenLimit: 800,
     settings: {
-      temperature: { min: 0, max: 1, default: 0.7, step: 0.1 },
+      temperature: { min: 0, max: 1, default: 1.0, step: 0.1 },
       maxTokens: { min: 1, max: 4096, default: 1024 },
       topP: { min: 0, max: 1, default: 0.9, step: 0.01 },
       topK: { min: 1, max: 500, default: 40, step: 1 }

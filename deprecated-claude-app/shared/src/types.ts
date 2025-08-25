@@ -121,6 +121,12 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     content: z.string()
   }),
   z.object({
+    type: z.literal('delete'),
+    conversationId: z.string().uuid(),
+    messageId: z.string().uuid(),
+    branchId: z.string().uuid()
+  }),
+  z.object({
     type: z.literal('stream'),
     messageId: z.string().uuid(),
     branchId: z.string().uuid(),

@@ -43,7 +43,28 @@ wss.on('connection', (ws, req) => {
 
 const PORT = process.env.PORT || 3010;
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`WebSocket server ready`);
+// Start server
+async function startServer() {
+  try {
+    // Initialize database
+    await db.init();
+    console.log('Database initialized');
+    
+    server.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`WebSocket server ready`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Shutting down gracefully...');
+  await db.close();
+  process.exit(0);
 });
+
+startServer();
