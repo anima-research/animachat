@@ -545,7 +545,19 @@ async function regenerateMessage(messageId: string, branchId: string) {
 }
 
 async function editMessage(messageId: string, branchId: string, content: string) {
-  await store.editMessage(messageId, branchId, content);
+  // Pass the currently selected responder for multi-participant mode
+  let responderId: string | undefined;
+  
+  if (currentConversation.value?.format === 'standard') {
+    // For standard format, use default assistant
+    const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.name === 'Assistant');
+    responderId = defaultAssistant?.id;
+  } else {
+    // For other formats, use selected responder
+    responderId = selectedResponder.value || undefined;
+  }
+  
+  await store.editMessage(messageId, branchId, content, responderId);
 }
 
 function switchBranch(messageId: string, branchId: string) {

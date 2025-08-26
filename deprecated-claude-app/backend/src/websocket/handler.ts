@@ -497,12 +497,16 @@ async function handleEdit(
     
     // Determine which assistant should respond
     let responderId: string | undefined;
-    if (conversation.format === 'standard') {
+    
+    // Use the responderId from the message if provided (from frontend)
+    if (message.responderId) {
+      responderId = message.responderId;
+    } else if (conversation.format === 'standard') {
       // For standard format, always use the default assistant
       const defaultAssistant = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
       responderId = defaultAssistant?.id;
     } else {
-      // For other formats, use the first active assistant
+      // For other formats, use the first active assistant as fallback
       const defaultAssistant = participants.find(p => p.type === 'assistant' && p.isActive);
       responderId = defaultAssistant?.id;
     }

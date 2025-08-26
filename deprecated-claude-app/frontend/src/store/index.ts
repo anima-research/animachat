@@ -1,4 +1,4 @@
-import { reactive, computed, inject, InjectionKey, App } from 'vue';
+import { reactive, inject, InjectionKey, App } from 'vue';
 import type { User, Conversation, Message, Model } from '@deprecated-claude/shared';
 import { api } from '../services/api';
 import { WebSocketService } from '../services/websocket';
@@ -36,11 +36,13 @@ export interface Store {
   duplicateConversation(id: string): Promise<Conversation>;
   
   loadMessages(conversationId: string): Promise<void>;
-  sendMessage(content: string, participantId?: string, responderId?: string): Promise<void>;
+  sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>): Promise<void>;
+  continueGeneration(responderId?: string): Promise<void>;
   regenerateMessage(messageId: string, branchId: string): Promise<void>;
-  editMessage(messageId: string, branchId: string, content: string): Promise<void>;
+  editMessage(messageId: string, branchId: string, content: string, responderId?: string): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
+  getVisibleMessages(): Message[];
   
   loadModels(): Promise<void>;
   
@@ -283,7 +285,7 @@ export function createStore(): {
       }
       
       const messageData = {
-        type: 'chat',
+        type: 'chat' as const,
         conversationId: state.currentConversation.id,
         messageId: crypto.randomUUID(),
         content,
@@ -340,16 +342,17 @@ export function createStore(): {
       });
     },
     
-    async editMessage(messageId: string, branchId: string, content: string) {
+    async editMessage(messageId: string, branchId: string, content: string, responderId?: string) {
       if (!state.currentConversation || !state.wsService) return;
       
       state.wsService.sendMessage({
-        type: 'edit',
+        type: 'edit' as const,
         conversationId: state.currentConversation.id,
         messageId,
         branchId,
-        content
-      });
+        content,
+        responderId // Pass the currently selected responder
+      } as any);
     },
     
         switchBranch(messageId: string, branchId: string) {

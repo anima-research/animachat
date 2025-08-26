@@ -163,7 +163,8 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     conversationId: z.string().uuid(),
     messageId: z.string().uuid(),
     branchId: z.string().uuid(),
-    content: z.string()
+    content: z.string(),
+    responderId: z.string().uuid().optional() // Which assistant should respond after edit
   }),
   z.object({
     type: z.literal('delete'),
