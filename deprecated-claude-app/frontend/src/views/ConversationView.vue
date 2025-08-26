@@ -223,6 +223,21 @@
           />
         </div>
         
+        <!-- Attachments display -->
+        <div v-if="attachments.length > 0" class="mb-2">
+          <v-chip
+            v-for="(attachment, index) in attachments"
+            :key="index"
+            closable
+            @click:close="removeAttachment(index)"
+            class="mr-2 mb-2"
+          >
+            <v-icon start>mdi-paperclip</v-icon>
+            {{ attachment.fileName }}
+            <span class="ml-1 text-caption">({{ formatFileSize(attachment.fileSize) }})</span>
+          </v-chip>
+        </div>
+        
         <v-textarea
           v-model="messageInput"
           :disabled="isStreaming"
@@ -235,6 +250,16 @@
           @keydown.enter.exact.prevent="sendMessage"
         >
           <template v-slot:append-inner>
+            <!-- File attachment button -->
+            <v-btn
+              icon="mdi-paperclip"
+              size="small"
+              variant="text"
+              @click.stop="triggerFileInput($event)"
+              title="Attach file"
+              class="mr-1"
+            />
+            
             <v-btn
               :disabled="isStreaming"
               :color="currentConversation?.format === 'standard' ? 'grey' : 'secondary'"
@@ -253,6 +278,16 @@
             />
           </template>
         </v-textarea>
+        
+        <!-- Hidden file input -->
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp"
+          multiple
+          style="display: none"
+          @change="handleFileSelect"
+        />
       </v-container>
     </v-main>
 
@@ -306,6 +341,8 @@ const conversationSettingsDialog = ref(false);
 const participantsDialog = ref(false);
 const messageInput = ref('');
 const isStreaming = ref(false);
+const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string }>>([]);
+const fileInput = ref<HTMLInputElement>();
 const messagesContainer = ref<HTMLElement>();
 const participants = ref<Participant[]>([]);
 const selectedParticipant = ref<string>('');
@@ -433,7 +470,9 @@ async function sendMessage() {
   console.log('ConversationView sendMessage:', content);
   console.log('Current visible messages:', messages.value.length);
   
+  const attachmentsCopy = [...attachments.value];
   messageInput.value = '';
+  attachments.value = [];
   isStreaming.value = true;
   
   try {
@@ -453,7 +492,7 @@ async function sendMessage() {
       responderId = selectedResponder.value || undefined;
     }
       
-    await store.sendMessage(content, participantId, responderId);
+    await store.sendMessage(content, participantId, responderId, attachmentsCopy);
   } finally {
     isStreaming.value = false;
   }
@@ -533,6 +572,76 @@ async function exportConversation(id: string) {
   } catch (error) {
     console.error('Export failed:', error);
   }
+}
+
+// Attachment handling functions
+function triggerFileInput(event: Event) {
+  console.log('triggerFileInput called, event:', event);
+  event.preventDefault();
+  event.stopPropagation();
+  
+  // Create a new file input and click it immediately
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp';
+  input.multiple = true;
+  input.style.display = 'none';
+  
+  input.addEventListener('change', handleFileSelect);
+  
+  document.body.appendChild(input);
+  input.click();
+  
+  // Clean up after a short delay
+  setTimeout(() => {
+    document.body.removeChild(input);
+  }, 100);
+}
+
+async function handleFileSelect(event: Event) {
+  console.log('handleFileSelect called');
+  const input = event.target as HTMLInputElement;
+  if (!input.files) {
+    console.log('No files selected');
+    return;
+  }
+  
+  console.log(`Processing ${input.files.length} files`);
+  for (const file of Array.from(input.files)) {
+    console.log(`Reading file: ${file.name} (${file.size} bytes)`);
+    // Read file content as text
+    const content = await readFileAsText(file);
+    attachments.value.push({
+      fileName: file.name,
+      fileType: file.name.split('.').pop() || 'txt',
+      fileSize: file.size,
+      content
+    });
+    console.log(`Added attachment: ${file.name}`);
+  }
+  
+  console.log(`Total attachments: ${attachments.value.length}`);
+  // Reset input
+  input.value = '';
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result as string);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+function removeAttachment(index: number) {
+  attachments.value.splice(index, 1);
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 async function archiveConversation(id: string) {

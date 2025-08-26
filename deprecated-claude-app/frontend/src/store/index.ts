@@ -249,7 +249,7 @@ export function createStore(): {
       }
     },
     
-    async sendMessage(content: string, participantId?: string, responderId?: string) {
+    async sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string }>) {
       if (!state.currentConversation || !state.wsService) return;
       
       // Get the last visible message to determine the parent branch
@@ -282,15 +282,23 @@ export function createStore(): {
         console.log('Sending first message - no parent');
       }
       
-      state.wsService.sendMessage({
+      const messageData = {
         type: 'chat',
         conversationId: state.currentConversation.id,
         messageId: crypto.randomUUID(),
         content,
         parentBranchId,
         participantId,
-        responderId
-      });
+        responderId,
+        attachments
+      };
+      
+      console.log('Sending message with attachments:', attachments?.length || 0);
+      if (attachments && attachments.length > 0) {
+        console.log('Attachment details:', attachments.map(a => ({ fileName: a.fileName, size: a.content?.length })));
+      }
+      
+      state.wsService.sendMessage(messageData);
     },
     
     async continueGeneration(responderId?: string) {
@@ -428,9 +436,9 @@ export function createStore(): {
         const message = state.allMessages[i];
         const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
         
-        console.log(`Message ${i}:`, message.id, 'activeBranchId:', message.activeBranchId, 
-                    'branches:', message.branches.length, 
-                    'activeBranch parentBranchId:', activeBranch?.parentBranchId);
+        // console.log(`Message ${i}:`, message.id, 'activeBranchId:', message.activeBranchId, 
+        //             'branches:', message.branches.length, 
+        //             'activeBranch parentBranchId:', activeBranch?.parentBranchId);
         
         if (!activeBranch) {
           console.log('No active branch found for message:', message.id);
@@ -441,7 +449,7 @@ export function createStore(): {
         if (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root') {
           visibleMessages.push(message);
           branchPath.push(activeBranch.id);
-          console.log('Added root message:', message.id);
+          // console.log('Added root message:', message.id);
           continue;
         }
 
@@ -457,15 +465,15 @@ export function createStore(): {
           branchPath.length = parentIndex + 1;
           branchPath.push(activeBranch.id);
           
-          console.log('Message continues from branch at index', parentIndex, 'added branch:', activeBranch.id, 'branchPath now:', [...branchPath]);
+          // console.log('Message continues from branch at index', parentIndex, 'added branch:', activeBranch.id, 'branchPath now:', [...branchPath]);
         } else {
           // The active branch doesn't continue from our path
           // Look for any branch in this message that does
           let found = false;
           
-          console.log('Looking for branch that continues from path:', [...branchPath]);
+          // console.log('Looking for branch that continues from path:', [...branchPath]);
           for (const branch of message.branches) {
-            console.log('  Checking branch:', branch.id, 'parent:', branch.parentBranchId, 'in path?', branchPath.includes(branch.parentBranchId));
+            // console.log('  Checking branch:', branch.id, 'parent:', branch.parentBranchId, 'in path?', branchPath.includes(branch.parentBranchId));
             if (branch.parentBranchId && branchPath.includes(branch.parentBranchId)) {
               // Found a branch that continues from our path
               // Note: We should NOT modify message.activeBranchId in a computed property
@@ -482,20 +490,20 @@ export function createStore(): {
               branchPath.push(branch.id);
               
               found = true;
-              console.log('Found branch', branch.id, 'that continues from path, branchPath now:', [...branchPath]);
+              // console.log('Found branch', branch.id, 'that continues from path, branchPath now:', [...branchPath]);
               break;
             }
           }
           
           if (!found) {
-            console.log('No branch in message continues from current path - skipping this message');
+            // console.log('No branch in message continues from current path - skipping this message');
             // Don't break! There might be messages later that do connect to our path
             continue;
           }
         }
       }
       
-      console.log('Returning', visibleMessages.length, 'visible messages from', state.allMessages.length, 'total');
+      // console.log('Returning', visibleMessages.length, 'visible messages from', state.allMessages.length, 'total');
       return visibleMessages;
     },
     

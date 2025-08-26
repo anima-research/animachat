@@ -79,6 +79,18 @@ export const ParticipantSchema = z.object({
 
 export type Participant = z.infer<typeof ParticipantSchema>;
 
+// Attachment types
+export const AttachmentSchema = z.object({
+  id: z.string().uuid(),
+  fileName: z.string(),
+  fileSize: z.number(),
+  fileType: z.string(),
+  content: z.string(), // Base64 or text content
+  createdAt: z.date()
+});
+
+export type Attachment = z.infer<typeof AttachmentSchema>;
+
 // Message types
 export const MessageBranchSchema = z.object({
   id: z.string().uuid(),
@@ -88,7 +100,8 @@ export const MessageBranchSchema = z.object({
   createdAt: z.date(),
   model: z.string().optional(),
   parentBranchId: z.string().uuid().optional(),
-  isActive: z.boolean()
+  isActive: z.boolean(),
+  attachments: z.array(AttachmentSchema).optional() // Attachments for this branch
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;
@@ -132,7 +145,12 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     content: z.string(),
     parentBranchId: z.string().uuid().optional(),
     participantId: z.string().uuid().optional(),
-    responderId: z.string().uuid().optional() // Which assistant should respond (if any)
+    responderId: z.string().uuid().optional(), // Which assistant should respond (if any)
+    attachments: z.array(z.object({
+      fileName: z.string(),
+      fileType: z.string(),
+      content: z.string()
+    })).optional()
   }),
   z.object({
     type: z.literal('regenerate'),

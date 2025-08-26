@@ -110,6 +110,20 @@ async function handleChatMessage(
 
   // Create user message with specified parent if provided
   console.log('Creating user message with parentBranchId:', message.parentBranchId);
+  console.log('Received attachments:', message.attachments?.length || 0);
+  console.log('Message object keys:', Object.keys(message));
+  
+  // Process attachments if provided
+  const attachments = message.attachments?.map(att => ({
+    fileName: att.fileName,
+    fileType: att.fileType,
+    content: att.content,
+    fileSize: att.content.length
+  }));
+  
+  if (attachments && attachments.length > 0) {
+    console.log('Processing attachments:', attachments.map(a => ({ fileName: a.fileName, size: a.fileSize })));
+  }
   
   const userMessage = await db.createMessage(
     message.conversationId,
@@ -117,10 +131,12 @@ async function handleChatMessage(
     'user',
     undefined, // model
     message.parentBranchId, // explicit parent
-    message.participantId // participant ID
+    message.participantId, // participant ID
+    attachments
   );
   
   console.log('Created user message:', userMessage.id, 'with branch:', userMessage.branches[0]?.id, 'parent:', userMessage.branches[0]?.parentBranchId);
+  console.log('User message has attachments?', userMessage.branches[0]?.attachments?.length || 0);
 
   // Send confirmation
   ws.send(JSON.stringify({
@@ -201,7 +217,7 @@ async function handleChatMessage(
     // Add to beginning of history (we're building backwards)
     visibleHistory.unshift(parentMessage);
     const role = parentMessage.branches.find(b => b.id === currentParentBranchId)?.role || 'unknown';
-    console.log('Added to visible history:', parentMessage.id, 'role:', role);
+    // console.log('Added to visible history:', parentMessage.id, 'role:', role);
     
     // Find the branch and get its parent
     const branch = parentMessage.branches.find(b => b.id === currentParentBranchId);

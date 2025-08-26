@@ -557,7 +557,7 @@ export class Database {
   }
 
   // Message methods
-  async createMessage(conversationId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string): Promise<Message> {
+  async createMessage(conversationId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[]): Promise<Message> {
     // Get conversation messages to determine parent
     const existingMessages = await this.getConversationMessages(conversationId);
     
@@ -594,7 +594,15 @@ export class Database {
         createdAt: new Date(),
         model,
         isActive: true,
-        parentBranchId
+        parentBranchId,
+        attachments: attachments ? attachments.map(att => ({
+          id: uuidv4(),
+          fileName: att.fileName,
+          fileSize: att.fileSize || att.content.length,
+          fileType: att.fileType,
+          content: att.content,
+          createdAt: new Date()
+        })) : undefined
       }],
       activeBranchId: '',
       order: 0
@@ -603,6 +611,9 @@ export class Database {
     message.activeBranchId = message.branches[0].id;
     
     console.log(`Created message with branch parentBranchId: ${message.branches[0].parentBranchId}`);
+    if (message.branches[0].attachments) {
+      console.log(`Message has ${message.branches[0].attachments.length} attachments`);
+    }
     
     // Get current message count for ordering
     const convMessages = this.conversationMessages.get(conversationId) || [];
@@ -626,7 +637,7 @@ export class Database {
     return message;
   }
 
-  async addMessageBranch(messageId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string): Promise<Message | null> {
+  async addMessageBranch(messageId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[]): Promise<Message | null> {
     const message = this.messages.get(messageId);
     if (!message) return null;
 
@@ -638,7 +649,15 @@ export class Database {
       createdAt: new Date(),
       model,
       parentBranchId,
-      isActive: true
+      isActive: true,
+      attachments: attachments ? attachments.map(att => ({
+        id: uuidv4(),
+        fileName: att.fileName,
+        fileSize: att.fileSize || att.content.length,
+        fileType: att.fileType,
+        content: att.content,
+        createdAt: new Date()
+      })) : undefined
     };
 
     // Create new message object with added branch

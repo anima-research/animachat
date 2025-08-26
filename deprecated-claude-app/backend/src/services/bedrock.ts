@@ -150,10 +150,19 @@ export class BedrockService {
     for (const message of messages) {
       const activeBranch = getActiveBranch(message);
       if (activeBranch && activeBranch.role !== 'system') {
+        let content = activeBranch.content;
+        
+        // Append attachments to user messages
+        if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
+          for (const attachment of activeBranch.attachments) {
+            content += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
+          }
+        }
+        
         // Claude expects 'user' and 'assistant' roles only
         formattedMessages.push({
           role: activeBranch.role,
-          content: activeBranch.content
+          content
         });
       }
     }

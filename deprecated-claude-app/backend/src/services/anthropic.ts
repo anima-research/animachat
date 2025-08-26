@@ -117,10 +117,21 @@ export class AnthropicService {
     for (const message of messages) {
       const activeBranch = getActiveBranch(message);
       if (activeBranch && activeBranch.role !== 'system') {
+        let content = activeBranch.content;
+        
+        // Append attachments to user messages
+        if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
+          console.log(`Appending ${activeBranch.attachments.length} attachments to user message`);
+          for (const attachment of activeBranch.attachments) {
+            content += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
+            console.log(`Added attachment: ${attachment.fileName} (${attachment.content.length} chars)`);
+          }
+        }
+        
         // Anthropic expects 'user' and 'assistant' roles only
         formattedMessages.push({
           role: activeBranch.role as 'user' | 'assistant',
-          content: activeBranch.content
+          content
         });
       }
     }

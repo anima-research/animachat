@@ -70,6 +70,21 @@
         class="mb-2"
       />
       
+      <!-- Attachments display (for user messages) -->
+      <div v-if="currentBranch.role === 'user' && currentBranch.attachments && currentBranch.attachments.length > 0" class="mt-2">
+        <v-chip
+          v-for="attachment in currentBranch.attachments"
+          :key="attachment.id"
+          class="mr-2 mb-1"
+          size="small"
+          color="grey-lighten-2"
+        >
+          <v-icon start size="x-small">mdi-paperclip</v-icon>
+          {{ attachment.fileName }}
+          <span class="ml-1 text-caption">({{ formatFileSize(attachment.fileSize || 0) }})</span>
+        </v-chip>
+      </div>
+      
       <div v-if="isEditing" class="d-flex gap-2 mt-2">
         <v-btn
           size="small"
@@ -150,7 +165,11 @@ const branchIndex = computed(() => {
 });
 
 const currentBranch = computed(() => {
-  return props.message.branches[branchIndex.value];
+  const branch = props.message.branches[branchIndex.value];
+  if (branch?.attachments?.length > 0) {
+    console.log(`Message ${props.message.id} has ${branch.attachments.length} attachments:`, branch.attachments);
+  }
+  return branch;
 });
 
 // Get participant name for current branch
@@ -261,5 +280,11 @@ function getBranchLabel(index: number): string {
     return 'edited';
   }
   return 'regenerated';
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 </script>

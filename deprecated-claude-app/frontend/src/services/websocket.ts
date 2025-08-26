@@ -83,6 +83,7 @@ export class WebSocketService {
   
   sendMessage(message: WsMessage): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
+      console.log('WebSocket sending message:', message);
       this.ws.send(JSON.stringify(message));
     } else {
       // Queue message if not connected
