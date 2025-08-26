@@ -41,7 +41,7 @@ export class InferenceService {
     let stopSequences: string[] | undefined;
     if (format === 'prefill') {
       // Always include these common stop sequences
-      const baseStopSequences = ['User:', 'A:'];
+      const baseStopSequences = ['User:', 'A:', "Claude:"];
       // Add participant names as stop sequences
       const participantStopSequences = participants.map(p => `${p.name}:`);
       // Combine and deduplicate

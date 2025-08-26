@@ -1,7 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer } from 'ws';
-import { createServer } from 'http';
+import { createServer as createHttpServer } from 'http';
+import { createServer as createHttpsServer } from 'https';
+import { readFileSync, existsSync } from 'fs';
+import path from 'path';
 import dotenv from 'dotenv';
 import { authRouter } from './routes/auth.js';
 import { conversationRouter } from './routes/conversations.js';
@@ -15,11 +18,49 @@ import { authenticateToken } from './middleware/auth.js';
 dotenv.config();
 
 const app = express();
-const server = createServer(app);
-const wss = new WebSocketServer({ server });
 
 // Initialize database
 const db = new Database();
+
+// HTTPS configuration
+const USE_HTTPS = process.env.USE_HTTPS === 'true';
+const PORT = process.env.PORT || 3010;
+const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
+
+// Create appropriate server
+let server: ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>;
+if (USE_HTTPS) {
+  // Check for SSL certificate files
+  const certPath = process.env.SSL_CERT_PATH || path.join(process.cwd(), 'certs', 'cert.pem');
+  const keyPath = process.env.SSL_KEY_PATH || path.join(process.cwd(), 'certs', 'key.pem');
+  const caPath = process.env.SSL_CA_PATH || path.join(process.cwd(), 'certs', 'ca.pem');
+
+  if (!existsSync(certPath) || !existsSync(keyPath)) {
+    console.error('SSL certificate files not found! Please ensure the following files exist:');
+    console.error(`  - Certificate: ${certPath}`);
+    console.error(`  - Private Key: ${keyPath}`);
+    console.error('\nFor development, you can generate self-signed certificates with:');
+    console.error('  npm run generate-cert');
+    process.exit(1);
+  }
+
+  // HTTPS options
+  const httpsOptions: any = {
+    cert: readFileSync(certPath),
+    key: readFileSync(keyPath)
+  };
+
+  // Include CA bundle if it exists
+  if (existsSync(caPath)) {
+    httpsOptions.ca = readFileSync(caPath);
+  }
+
+  server = createHttpsServer(httpsOptions, app);
+} else {
+  server = createHttpServer(app);
+}
+
+const wss = new WebSocketServer({ server });
 
 // Middleware
 app.use(cors({
@@ -46,8 +87,6 @@ wss.on('connection', (ws, req) => {
   websocketHandler(ws, req, db);
 });
 
-const PORT = process.env.PORT || 3010;
-
 // Start server
 async function startServer() {
   try {
@@ -55,9 +94,19 @@ async function startServer() {
     await db.init();
     console.log('Database initialized');
     
-    server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      console.log(`WebSocket server ready`);
+    const listenPort = USE_HTTPS ? HTTPS_PORT : PORT;
+    const protocol = USE_HTTPS ? 'HTTPS' : 'HTTP';
+    
+    server.listen(listenPort, () => {
+      console.log(`${protocol} Server running on port ${listenPort}`);
+      console.log(`${USE_HTTPS ? 'Secure WebSocket (WSS)' : 'WebSocket'} server ready`);
+      if (USE_HTTPS) {
+        console.log(`API endpoint: https://localhost:${listenPort}/api`);
+        console.log(`WebSocket endpoint: wss://localhost:${listenPort}`);
+      } else {
+        console.log(`API endpoint: http://localhost:${listenPort}/api`);
+        console.log(`WebSocket endpoint: ws://localhost:${listenPort}`);
+      }
     });
   } catch (error) {
     console.error('Failed to start server:', error);

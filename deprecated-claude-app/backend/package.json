@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:https": "USE_HTTPS=true tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "start:https": "USE_HTTPS=true node dist/index.js",
+    "generate-cert": "mkdir -p certs && openssl req -x509 -newkey rsa:4096 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes -subj '/CN=localhost'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",

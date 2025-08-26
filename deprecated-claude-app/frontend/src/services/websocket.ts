@@ -26,7 +26,8 @@ export class WebSocketService {
     
     // For development, connect to backend port
     if (import.meta.env.DEV) {
-      wsUrl.port = '3010';
+      // Use HTTPS port if the page is served over HTTPS
+      wsUrl.port = wsUrl.protocol === 'wss:' ? '3443' : '3010';
       wsUrl.pathname = '/';
     }
     
