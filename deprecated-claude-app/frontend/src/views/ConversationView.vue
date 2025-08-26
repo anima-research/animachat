@@ -264,7 +264,7 @@
             <!-- File attachment button -->
             <v-btn
               icon="mdi-paperclip"
-              size="small"
+              color="grey"
               variant="text"
               @click.stop="triggerFileInput($event)"
               title="Attach file"
