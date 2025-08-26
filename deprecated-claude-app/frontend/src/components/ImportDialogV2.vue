@@ -452,6 +452,11 @@ async function previewImport() {
   error.value = '';
   
   try {
+    // Ensure models are loaded before preview
+    if (models.value.length === 0) {
+      await store.loadModels();
+    }
+    
     const content = isTextFormat.value ? textContent.value : fileContent.value;
     
     const response = await api.post('/import/preview', {
@@ -474,7 +479,30 @@ async function previewImport() {
     // Set suggested values
     conversationTitle.value = preview.value.title || 'Imported Conversation';
     conversationFormat.value = preview.value.suggestedFormat;
-    selectedModel.value = models.value[0]?.id || '';
+    
+    // Try to match the model from the import metadata
+    const importedModel = preview.value.metadata?.model;
+    if (importedModel) {
+      // Check if we have a direct match by ID
+      const matchingModel = models.value.find(m => m.id === importedModel);
+      if (matchingModel) {
+        selectedModel.value = matchingModel.id;
+      } else {
+        // Try to find a partial match (e.g., 'claude-sonnet-4' in 'claude-sonnet-4-20250514')
+        const partialMatch = models.value.find(m => 
+          m.id.includes(importedModel) || importedModel.includes(m.id)
+        );
+        if (partialMatch) {
+          selectedModel.value = partialMatch.id;
+        } else {
+          // Default to first model if no match found
+          selectedModel.value = models.value[0]?.id || '';
+        }
+      }
+    } else {
+      // Default to first model if no model specified
+      selectedModel.value = models.value[0]?.id || '';
+    }
     
     step.value = 2;
   } catch (err: any) {
