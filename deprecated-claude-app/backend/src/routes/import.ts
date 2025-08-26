@@ -95,8 +95,14 @@ export function importRouter(db: Database): Router {
         if (assistantParticipant) participantMap.set('Assistant', assistantParticipant.id);
       }
 
-      // Import messages
+      // Import messages with branch support
       let parentBranchId: string | undefined;
+      const messageIdMap = new Map<string, string>(); // originalUuid -> createdMessageId  
+      const branchIdMap = new Map<string, string>(); // originalUuid -> createdBranchId
+      // Track messages by their parent and role to group branches correctly
+      const messagesByParentAndRole = new Map<string, string>(); // "parentUuid:role" -> messageId
+      
+      console.log(`Importing ${preview.messages.length} messages to conversation ${conversation.id}`);
       
       for (const parsedMsg of preview.messages) {
         // Skip system messages for now
@@ -114,19 +120,82 @@ export function importRouter(db: Database): Router {
           }
         }
         
-        // Create message in database
-        const createdMessage = await db.createMessage(
-          conversation.id,
-          parsedMsg.content,
-          parsedMsg.role,
-          parsedMsg.model,
-          parentBranchId,
-          participantId
-        );
+        // Check if this is a branch (alternative response)
+        const branchInfo = (parsedMsg as any).__branchInfo;
+        const originalUuid = (parsedMsg as any).__uuid;
+        const parentUuid = (parsedMsg as any).__parentUuid;
+        const isActive = (parsedMsg as any).__isActive;
         
-        // Update parent for next message (use the created message's branch ID)
-        const createdBranch = createdMessage.branches.find(b => b.id === createdMessage.activeBranchId);
-        parentBranchId = createdBranch?.id;
+        // Key to identify messages that should be branches of each other
+        const messageKey = `${parentUuid}:${parsedMsg.role}`;
+        const existingMessageId = messagesByParentAndRole.get(messageKey);
+        
+        if (branchInfo && branchInfo.isAlternative && existingMessageId) {
+          // This is an alternative branch - add it to the existing message with the same parent and role
+          console.log(`Adding branch to existing message ${existingMessageId}`);
+          
+          const existingMessage = await db.getMessageById(existingMessageId);
+          if (existingMessage) {
+            // Find the parent branch from the previous message
+            const parentBranch = existingMessage.branches[0]; // Use the first branch's parent
+            const updatedMessage = await db.addMessageBranch(
+              existingMessageId,
+              parsedMsg.content,
+              parsedMsg.role,
+              parentBranch?.parentBranchId,  // Use same parent as the first branch
+              parsedMsg.model,
+              participantId
+            );
+            
+            if (updatedMessage) {
+              // Find the newly added branch (it's the last one and the active one)
+              const newBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
+              
+              if (newBranch) {
+                // Store the branch ID for future reference
+                if (originalUuid) {
+                  branchIdMap.set(originalUuid, newBranch.id);
+                }
+                
+                // If this branch is marked as active, set it
+                if (isActive) {
+                  await db.setActiveBranch(existingMessageId, newBranch.id);
+                  // Don't update parentBranchId here - we're on a sibling branch
+                }
+              }
+            }
+          }
+        } else {
+          // Regular message or first of its siblings
+          console.log(`Creating message: role=${parsedMsg.role}, parentBranchId=${parentBranchId}, participantId=${participantId}`);
+          const createdMessage = await db.createMessage(
+            conversation.id,
+            parsedMsg.content,
+            parsedMsg.role,
+            parsedMsg.model,
+            parentBranchId,
+            participantId
+          );
+          
+          console.log(`Created message ${createdMessage.id} with ${createdMessage.branches.length} branches`);
+          
+          // Store the message ID for future branch references
+          if (originalUuid) {
+            messageIdMap.set(originalUuid, createdMessage.id);
+          }
+          
+          // Store this message as the target for future branches with same parent and role
+          messagesByParentAndRole.set(messageKey, createdMessage.id);
+          
+          // Update parent for next message (use the created message's branch ID)
+          const createdBranch = createdMessage.branches.find(b => b.id === createdMessage.activeBranchId);
+          if (createdBranch) {
+            parentBranchId = createdBranch.id;
+            if (originalUuid) {
+              branchIdMap.set(originalUuid, createdBranch.id);
+            }
+          }
+        }
       }
 
       res.json({

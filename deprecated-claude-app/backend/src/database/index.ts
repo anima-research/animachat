@@ -561,11 +561,14 @@ export class Database {
     // Get conversation messages to determine parent
     const existingMessages = await this.getConversationMessages(conversationId);
     
+    console.log(`createMessage called with explicitParentBranchId: ${explicitParentBranchId} (type: ${typeof explicitParentBranchId})`);
+    
     // Determine parent branch ID
     let parentBranchId: string;
-    if (explicitParentBranchId !== undefined) {
+    if (explicitParentBranchId !== undefined && explicitParentBranchId !== null) {
       // Use explicitly provided parent
       parentBranchId = explicitParentBranchId;
+      console.log(`Using explicit parent: ${parentBranchId}`);
     } else {
       // Auto-determine parent
       parentBranchId = 'root'; // Default for first message
@@ -577,6 +580,7 @@ export class Database {
           parentBranchId = lastActiveBranch.id;
         }
       }
+      console.log(`Auto-determined parent: ${parentBranchId}`);
     }
     
     const message: Message = {
@@ -598,6 +602,8 @@ export class Database {
     
     message.activeBranchId = message.branches[0].id;
     
+    console.log(`Created message with branch parentBranchId: ${message.branches[0].parentBranchId}`);
+    
     // Get current message count for ordering
     const convMessages = this.conversationMessages.get(conversationId) || [];
     message.order = convMessages.length;
@@ -605,6 +611,8 @@ export class Database {
     this.messages.set(message.id, message);
     convMessages.push(message.id);
     this.conversationMessages.set(conversationId, convMessages);
+    
+    console.log(`Stored message ${message.id} for conversation ${conversationId}. Total messages: ${convMessages.length}`);
     
     // Update conversation timestamp
     const conversation = this.conversations.get(conversationId);
@@ -825,14 +833,21 @@ export class Database {
 
   async getConversationMessages(conversationId: string): Promise<Message[]> {
     const messageIds = this.conversationMessages.get(conversationId) || [];
-    return messageIds
+    console.log(`Getting messages for conversation ${conversationId}: found ${messageIds.length} message IDs`);
+    const messages = messageIds
       .map(id => this.messages.get(id))
       .filter((msg): msg is Message => msg !== undefined)
       .sort((a, b) => a.order - b.order);
+    console.log(`Returning ${messages.length} messages for conversation ${conversationId}`);
+    return messages;
   }
 
   async getMessage(id: string): Promise<Message | null> {
     return this.messages.get(id) || null;
+  }
+
+  async getMessageById(id: string): Promise<Message | null> {
+    return this.getMessage(id);
   }
   
   // Participant methods

@@ -162,6 +162,10 @@ export function conversationRouter(db: Database): Router {
       }
 
       const messages = await db.getConversationMessages(req.params.id);
+      console.log(`API returning ${messages.length} messages for conversation ${req.params.id}`);
+      if (messages.length > 0) {
+        console.log('First message structure:', JSON.stringify(messages[0], null, 2));
+      }
       res.json(messages);
     } catch (error) {
       console.error('Get messages error:', error);

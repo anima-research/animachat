@@ -145,7 +145,7 @@ export class ImportParser {
                 }
                 return '';
               })
-              .filter(text => text)
+              .filter((text: string) => text)
               .join('\n');
           }
         }
@@ -174,12 +174,152 @@ export class ImportParser {
   }
 
   private async parseChromeExtension(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
-    // Parse Chrome extension export format
-    // This will be implemented based on the actual export format of your Chrome extension
     const data = JSON.parse(content);
     
-    // For now, assume it's similar to basic JSON
-    return this.parseBasicJson(content);
+    // Extract basic conversation metadata
+    const title = data.name || data.summary || 'Imported Conversation';
+    const metadata: any = {
+      uuid: data.uuid,
+      model: data.model,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+      settings: data.settings,
+      is_starred: data.is_starred,
+      current_leaf_message_uuid: data.current_leaf_message_uuid
+    };
+
+    // Build a map of message UUID to message for easy parent lookup
+    const messageMap = new Map<string, any>();
+    const messages: ParsedMessage[] = [];
+    
+    // First pass: build message map
+    for (const msg of data.chat_messages || []) {
+      messageMap.set(msg.uuid, msg);
+    }
+
+    // Build parent-child relationships to detect branches
+    const messagesByParent = new Map<string, any[]>();
+    for (const msg of data.chat_messages || []) {
+      const parentId = msg.parent_message_uuid || '00000000-0000-4000-8000-000000000000';
+      if (!messagesByParent.has(parentId)) {
+        messagesByParent.set(parentId, []);
+      }
+      messagesByParent.get(parentId)!.push(msg);
+    }
+
+    // Process messages in order, tracking branches
+    const processedMessages = new Map<string, { messageIndex: number, branchIndex: number }>();
+    const rootParentId = '00000000-0000-4000-8000-000000000000';
+    const messageToParentMap = new Map<string, string>(); // messageUuid -> parentMessageUuid
+    
+    // Build a proper tree structure
+    for (const msg of data.chat_messages || []) {
+      if (msg.parent_message_uuid && msg.parent_message_uuid !== rootParentId) {
+        messageToParentMap.set(msg.uuid, msg.parent_message_uuid);
+      }
+    }
+    
+    // Process messages in chronological order, but track branches
+    const sortedMessages = [...(data.chat_messages || [])]
+      .sort((a, b) => {
+        // First sort by index
+        if (a.index !== b.index) return (a.index || 0) - (b.index || 0);
+        // Then by creation time for branches
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      });
+    
+    // Track which messages have been processed as branches
+    const processedAsAlternative = new Set<string>();
+    
+    for (const msg of sortedMessages) {
+      // Extract text content
+      let textContent = '';
+      if (msg.text) {
+        textContent = msg.text;
+      } else if (msg.content && Array.isArray(msg.content)) {
+        // Combine all text content blocks
+        textContent = msg.content
+          .filter((c: any) => c.type === 'text')
+          .map((c: any) => c.text || '')
+          .join('\n');
+      }
+
+      // Skip empty messages
+      if (!textContent.trim()) {
+        continue;
+      }
+
+      // Determine role
+      const role = msg.sender === 'human' ? 'user' : 
+                  msg.sender === 'assistant' ? 'assistant' : 
+                  'user';
+
+      // Check if this message shares a parent with another message (making it a branch)
+      const siblings = messagesByParent.get(msg.parent_message_uuid) || [];
+      const siblingIndex = siblings.findIndex(s => s.uuid === msg.uuid);
+      const isAlternativeBranch = siblings.length > 1 && siblingIndex > 0;
+      
+      if (siblings.length > 1) {
+        console.log(`Message ${msg.uuid} has ${siblings.length} siblings sharing parent ${msg.parent_message_uuid}`);
+        console.log(`This message is at index ${siblingIndex}, isAlternativeBranch: ${isAlternativeBranch}`);
+      }
+      
+      // Create parsed message
+      const parsedMessage: ParsedMessage = {
+        role,
+        content: textContent,
+        timestamp: msg.created_at ? new Date(msg.created_at) : undefined,
+        model: msg.model || data.model
+      };
+
+      // Add metadata for branch detection
+      if (isAlternativeBranch && !processedAsAlternative.has(msg.uuid)) {
+        // This is an alternative branch
+        (parsedMessage as any).__branchInfo = {
+          parentMessageUuid: msg.parent_message_uuid,
+          uuid: msg.uuid,
+          isAlternative: true,
+          inputMode: msg.input_mode
+        };
+        processedAsAlternative.add(msg.uuid);
+      }
+
+      // Store current message UUID for active branch detection
+      (parsedMessage as any).__uuid = msg.uuid;
+      (parsedMessage as any).__parentUuid = msg.parent_message_uuid;
+
+      messages.push(parsedMessage);
+      processedMessages.set(msg.uuid, { 
+        messageIndex: messages.length - 1, 
+        branchIndex: siblingIndex 
+      });
+    }
+
+    // Mark active branch based on current_leaf_message_uuid
+    if (data.current_leaf_message_uuid) {
+      // Trace back from leaf to root to identify active path
+      let currentUuid = data.current_leaf_message_uuid;
+      const activePath = new Set<string>();
+      
+      while (currentUuid && messageMap.has(currentUuid)) {
+        activePath.add(currentUuid);
+        const msg = messageMap.get(currentUuid);
+        currentUuid = msg.parent_message_uuid;
+      }
+
+      // Mark messages in active path
+      for (const msg of messages) {
+        if ((msg as any).__uuid && activePath.has((msg as any).__uuid)) {
+          (msg as any).__isActive = true;
+        }
+      }
+    }
+
+    return {
+      messages,
+      title,
+      metadata
+    };
   }
 
   private async parseOpenAI(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
