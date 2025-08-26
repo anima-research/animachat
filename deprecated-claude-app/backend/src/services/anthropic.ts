@@ -111,32 +111,72 @@ export class AnthropicService {
     }
   }
 
-  private formatMessagesForAnthropic(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: string }> {
-    const formattedMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  private formatMessagesForAnthropic(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: any }> {
+    const formattedMessages: Array<{ role: 'user' | 'assistant'; content: any }> = [];
 
     for (const message of messages) {
       const activeBranch = getActiveBranch(message);
       if (activeBranch && activeBranch.role !== 'system') {
-        let content = activeBranch.content;
-        
-        // Append attachments to user messages
+        // Handle attachments for user messages
         if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
-          console.log(`Appending ${activeBranch.attachments.length} attachments to user message`);
+          const contentParts: any[] = [{ type: 'text', text: activeBranch.content }];
+          
+          console.log(`Processing ${activeBranch.attachments.length} attachments for user message`);
           for (const attachment of activeBranch.attachments) {
-            content += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
-            console.log(`Added attachment: ${attachment.fileName} (${attachment.content.length} chars)`);
+            const isImage = this.isImageAttachment(attachment.fileName);
+            
+            if (isImage) {
+              // Add image as a separate content block for Claude API
+              const mediaType = this.getImageMediaType(attachment.fileName);
+              contentParts.push({
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mediaType,
+                  data: attachment.content
+                }
+              });
+              console.log(`Added image attachment: ${attachment.fileName} (${mediaType})`);
+            } else {
+              // Append text attachments to the text content
+              contentParts[0].text += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
+              console.log(`Added text attachment: ${attachment.fileName} (${attachment.content.length} chars)`);
+            }
           }
+          
+          formattedMessages.push({
+            role: 'user',
+            content: contentParts
+          });
+        } else {
+          // Simple text message
+          formattedMessages.push({
+            role: activeBranch.role as 'user' | 'assistant',
+            content: activeBranch.content
+          });
         }
-        
-        // Anthropic expects 'user' and 'assistant' roles only
-        formattedMessages.push({
-          role: activeBranch.role as 'user' | 'assistant',
-          content
-        });
       }
     }
 
     return formattedMessages;
+  }
+  
+  private isImageAttachment(fileName: string): boolean {
+    const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    return imageExtensions.includes(extension);
+  }
+  
+  private getImageMediaType(fileName: string): string {
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    const mediaTypes: { [key: string]: string } = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp'
+    };
+    return mediaTypes[extension] || 'image/jpeg';
   }
 
   // Demo mode simulation

@@ -72,17 +72,29 @@
       
       <!-- Attachments display (for user messages) -->
       <div v-if="currentBranch.role === 'user' && currentBranch.attachments && currentBranch.attachments.length > 0" class="mt-2">
-        <v-chip
-          v-for="attachment in currentBranch.attachments"
-          :key="attachment.id"
-          class="mr-2 mb-1"
-          size="small"
-          color="grey-lighten-2"
-        >
-          <v-icon start size="x-small">mdi-paperclip</v-icon>
-          {{ attachment.fileName }}
-          <span class="ml-1 text-caption">({{ formatFileSize(attachment.fileSize || 0) }})</span>
-        </v-chip>
+        <template v-for="attachment in currentBranch.attachments" :key="attachment.id">
+          <!-- Image attachments -->
+          <div v-if="isImageAttachment(attachment)" class="mb-2">
+            <img 
+              :src="getImageSrc(attachment)"
+              :alt="attachment.fileName"
+              style="max-width: 300px; max-height: 300px; border-radius: 8px; cursor: pointer;"
+              @click="openImageInNewTab(attachment)"
+            />
+            <div class="text-caption mt-1">{{ attachment.fileName }} ({{ formatFileSize(attachment.fileSize || 0) }})</div>
+          </div>
+          <!-- Text attachments -->
+          <v-chip
+            v-else
+            class="mr-2 mb-1"
+            size="small"
+            color="grey-lighten-2"
+          >
+            <v-icon start size="x-small">mdi-paperclip</v-icon>
+            {{ attachment.fileName }}
+            <span class="ml-1 text-caption">({{ formatFileSize(attachment.fileSize || 0) }})</span>
+          </v-chip>
+        </template>
       </div>
       
       <div v-if="isEditing" class="d-flex gap-2 mt-2">
@@ -286,5 +298,25 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function isImageAttachment(attachment: any): boolean {
+  const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
+  const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
+  return imageExtensions.includes(fileExtension);
+}
+
+function getImageSrc(attachment: any): string {
+  const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || 'png';
+  return `data:image/${fileExtension};base64,${attachment.content}`;
+}
+
+function openImageInNewTab(attachment: any): void {
+  const src = getImageSrc(attachment);
+  const newWindow = window.open();
+  if (newWindow) {
+    newWindow.document.write(`<img src="${src}" style="max-width: 100%; height: auto;" />`);
+    newWindow.document.title = attachment.fileName;
+  }
 }
 </script>

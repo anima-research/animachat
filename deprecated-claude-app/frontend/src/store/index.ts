@@ -249,7 +249,7 @@ export function createStore(): {
       }
     },
     
-    async sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string }>) {
+    async sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>) {
       if (!state.currentConversation || !state.wsService) return;
       
       // Get the last visible message to determine the parent branch
@@ -415,20 +415,20 @@ export function createStore(): {
 
     // Helper method to get visible messages based on current branch selections
     getVisibleMessages(): Message[] {
-      console.log('getVisibleMessages called, allMessages:', state.allMessages.length);
-      if (state.allMessages.length > 0) {
-        console.log('All messages:', state.allMessages.map(m => ({
-          id: m.id,
-          activeBranchId: m.activeBranchId,
-          branches: m.branches.map(b => ({
-            id: b.id,
-            parent: b.parentBranchId,
-            role: b.role,
-            isActive: b.id === m.activeBranchId,
-            content: b.content.substring(0, 20) + '...'
-          }))
-        })));
-      }
+      // console.log('getVisibleMessages called, allMessages:', state.allMessages.length);
+      // if (state.allMessages.length > 0) {
+      //   console.log('All messages:', state.allMessages.map(m => ({
+      //     id: m.id,
+      //     activeBranchId: m.activeBranchId,
+      //     branches: m.branches.map(b => ({
+      //       id: b.id,
+      //       parent: b.parentBranchId,
+      //       role: b.role,
+      //       isActive: b.id === m.activeBranchId,
+      //       content: b.content.substring(0, 20) + '...'
+      //     }))
+      //   })));
+      // }
       const visibleMessages: Message[] = [];
       const branchPath: string[] = []; // Track the current conversation path (branch IDs)
       

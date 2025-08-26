@@ -231,9 +231,20 @@
             closable
             @click:close="removeAttachment(index)"
             class="mr-2 mb-2"
+            :style="attachment.isImage ? 'height: auto; padding: 4px;' : ''"
           >
-            <v-icon start>mdi-paperclip</v-icon>
-            {{ attachment.fileName }}
+            <template v-if="attachment.isImage">
+              <img 
+                :src="`data:image/${attachment.fileType};base64,${attachment.content}`" 
+                :alt="attachment.fileName"
+                style="max-height: 60px; max-width: 100px; margin-right: 8px; border-radius: 4px;"
+              />
+              <span>{{ attachment.fileName }}</span>
+            </template>
+            <template v-else>
+              <v-icon start>mdi-paperclip</v-icon>
+              {{ attachment.fileName }}
+            </template>
             <span class="ml-1 text-caption">({{ formatFileSize(attachment.fileSize) }})</span>
           </v-chip>
         </div>
@@ -341,7 +352,7 @@ const conversationSettingsDialog = ref(false);
 const participantsDialog = ref(false);
 const messageInput = ref('');
 const isStreaming = ref(false);
-const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string }>>([]);
+const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
 const messagesContainer = ref<HTMLElement>();
 const participants = ref<Participant[]>([]);
@@ -583,7 +594,7 @@ function triggerFileInput(event: Event) {
   // Create a new file input and click it immediately
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp';
+  input.accept = '.txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp,.jpg,.jpeg,.png,.gif,.webp,.svg';
   input.multiple = true;
   input.style.display = 'none';
   
@@ -609,15 +620,28 @@ async function handleFileSelect(event: Event) {
   console.log(`Processing ${input.files.length} files`);
   for (const file of Array.from(input.files)) {
     console.log(`Reading file: ${file.name} (${file.size} bytes)`);
-    // Read file content as text
-    const content = await readFileAsText(file);
+    
+    const fileExtension = file.name.split('.').pop()?.toLowerCase() || '';
+    const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
+    const isImage = imageExtensions.includes(fileExtension);
+    
+    let content: string;
+    if (isImage) {
+      // Read image as base64
+      content = await readFileAsBase64(file);
+    } else {
+      // Read text files as text
+      content = await readFileAsText(file);
+    }
+    
     attachments.value.push({
       fileName: file.name,
-      fileType: file.name.split('.').pop() || 'txt',
+      fileType: fileExtension,
       fileSize: file.size,
-      content
+      content,
+      isImage
     });
-    console.log(`Added attachment: ${file.name}`);
+    console.log(`Added ${isImage ? 'image' : 'text'} attachment: ${file.name}`);
   }
   
   console.log(`Total attachments: ${attachments.value.length}`);
@@ -631,6 +655,20 @@ function readFileAsText(file: File): Promise<string> {
     reader.onload = (e) => resolve(e.target?.result as string);
     reader.onerror = reject;
     reader.readAsText(file);
+  });
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      // Extract base64 data (remove data:image/...;base64, prefix)
+      const base64 = result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
 }
 

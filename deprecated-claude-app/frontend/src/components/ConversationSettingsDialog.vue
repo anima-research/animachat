@@ -255,11 +255,6 @@ const settings = ref<any>({
 });
 
 const selectedModel = computed(() => {
-  console.log('Models in dropdown:', props.models.map(m => ({
-    id: m.id,
-    displayName: m.displayName,
-    provider: m.provider
-  })));
   return props.models.find(m => m.id === settings.value.model);
 });
 
