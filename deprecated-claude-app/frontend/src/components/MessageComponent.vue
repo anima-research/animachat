@@ -178,9 +178,9 @@ const branchIndex = computed(() => {
 
 const currentBranch = computed(() => {
   const branch = props.message.branches[branchIndex.value];
-  if (branch?.attachments?.length > 0) {
-    console.log(`Message ${props.message.id} has ${branch.attachments.length} attachments:`, branch.attachments);
-  }
+  // if (branch?.attachments?.length > 0) {
+  //   console.log(`Message ${props.message.id} has ${branch.attachments.length} attachments:`, branch.attachments);
+  // }
   return branch;
 });
 

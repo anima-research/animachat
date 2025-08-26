@@ -249,7 +249,12 @@ function confirmAddParticipant() {
     name: newParticipant.value.name,
     type: newParticipant.value.type,
     model: newParticipant.value.type === 'assistant' ? newParticipant.value.model : undefined,
-    isActive: true
+    isActive: true,
+    // Initialize settings for assistant participants
+    settings: newParticipant.value.type === 'assistant' ? {
+      temperature: 1.0,
+      maxTokens: 1024
+    } : undefined
   };
   
   participants.value.push(participant);
@@ -284,11 +289,14 @@ function getParticipantMaxTokens(participant: Participant): number {
   return participant.settings?.maxTokens ?? 1024;
 }
 
-function setParticipantMaxTokens(participant: Participant, value: number) {
+function setParticipantMaxTokens(participant: Participant, value: number | string) {
+  const numValue = typeof value === 'string' ? parseInt(value, 10) : value;
+  if (isNaN(numValue)) return;
+  
   if (!participant.settings) {
-    participant.settings = { temperature: 1.0, maxTokens: value };
+    participant.settings = { temperature: 1.0, maxTokens: numValue };
   } else {
-    participant.settings.maxTokens = value;
+    participant.settings.maxTokens = numValue;
   }
 }
 

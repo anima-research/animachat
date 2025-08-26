@@ -736,16 +736,37 @@ async function updateParticipants(updatedParticipants: Participant[]) {
     for (const existing of participants.value) {
       const updated = updatedParticipants.find(p => p.id === existing.id);
       if (!updated) {
-        // Participant was deleted
-        await api.delete(`/participants/${existing.id}`);
-      } else if (JSON.stringify(existing) !== JSON.stringify(updated)) {
-        // Participant was updated
-        await api.patch(`/participants/${existing.id}`, {
-          name: updated.name,
-          model: updated.model,
-          systemPrompt: updated.systemPrompt,
-          settings: updated.settings
-        });
+        // Participant was deleted (only if not a temp ID)
+        if (!existing.id.startsWith('temp-')) {
+          await api.delete(`/participants/${existing.id}`);
+        }
+      } else if (!existing.id.startsWith('temp-')) {
+        // Check if participant was actually updated by comparing relevant fields
+        const hasChanges = 
+          existing.name !== updated.name ||
+          existing.model !== updated.model ||
+          existing.systemPrompt !== updated.systemPrompt ||
+          existing.settings?.temperature !== updated.settings?.temperature ||
+          existing.settings?.maxTokens !== updated.settings?.maxTokens;
+        
+        if (hasChanges) {
+          // Participant was updated
+          const updateData = {
+            name: updated.name,
+            model: updated.model,
+            systemPrompt: updated.systemPrompt,
+            settings: updated.settings
+          };
+          
+          console.log('Updating participant:', existing.id, updateData);
+          
+          try {
+            await api.patch(`/participants/${existing.id}`, updateData);
+          } catch (error: any) {
+            console.error('Failed to update participant:', error.response?.data || error);
+            throw error;
+          }
+        }
       }
     }
     
@@ -753,14 +774,23 @@ async function updateParticipants(updatedParticipants: Participant[]) {
     for (const participant of updatedParticipants) {
       if (participant.id.startsWith('temp-')) {
         // New participant
-        await api.post('/participants', {
+        const createData = {
           conversationId: currentConversation.value.id,
           name: participant.name,
           type: participant.type,
           model: participant.model,
           systemPrompt: participant.systemPrompt,
           settings: participant.settings
-        });
+        };
+        
+        console.log('Creating participant:', createData);
+        
+        try {
+          await api.post('/participants', createData);
+        } catch (error: any) {
+          console.error('Failed to create participant:', error.response?.data || error);
+          throw error;
+        }
       }
     }
     

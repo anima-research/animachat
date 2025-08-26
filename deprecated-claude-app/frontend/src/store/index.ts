@@ -254,32 +254,32 @@ export function createStore(): {
       
       // Get the last visible message to determine the parent branch
       const visibleMessages = this.messages;
-      console.log('=== SENDING MESSAGE ===');
-      console.log('Visible messages count:', visibleMessages.length);
+      // console.log('=== SENDING MESSAGE ===');
+      // console.log('Visible messages count:', visibleMessages.length);
       
-      if (visibleMessages.length > 0) {
-        console.log('Visible messages:', visibleMessages.map((m, idx) => ({
-          index: idx,
-          id: m.id,
-          activeBranchId: m.activeBranchId,
-          content: m.branches.find(b => b.id === m.activeBranchId)?.content.substring(0, 30) + '...'
-        })));
-      }
+      // if (visibleMessages.length > 0) {
+      //   console.log('Visible messages:', visibleMessages.map((m, idx) => ({
+      //     index: idx,
+      //     id: m.id,
+      //     activeBranchId: m.activeBranchId,
+      //     content: m.branches.find(b => b.id === m.activeBranchId)?.content.substring(0, 30) + '...'
+      //   })));
+      // }
       
       let parentBranchId: string | undefined;
       
       if (visibleMessages.length > 0) {
         const lastMessage = visibleMessages[visibleMessages.length - 1];
-        console.log('Last visible message:', lastMessage.id, 'branches:', lastMessage.branches.map(b => ({
-          id: b.id,
-          parent: b.parentBranchId,
-          isActive: b.id === lastMessage.activeBranchId
-        })));
+        // console.log('Last visible message:', lastMessage.id, 'branches:', lastMessage.branches.map(b => ({
+        //   id: b.id,
+        //   parent: b.parentBranchId,
+        //   isActive: b.id === lastMessage.activeBranchId
+        // })));
         const activeBranch = lastMessage.branches.find(b => b.id === lastMessage.activeBranchId);
         parentBranchId = activeBranch?.id;
-        console.log('>>> PARENT BRANCH ID:', parentBranchId, 'from branch', activeBranch?.id, 'of message', lastMessage.id);
+        // console.log('>>> PARENT BRANCH ID:', parentBranchId, 'from branch', activeBranch?.id, 'of message', lastMessage.id);
       } else {
-        console.log('Sending first message - no parent');
+        // console.log('Sending first message - no parent');
       }
       
       const messageData = {
@@ -294,9 +294,9 @@ export function createStore(): {
       };
       
       console.log('Sending message with attachments:', attachments?.length || 0);
-      if (attachments && attachments.length > 0) {
-        console.log('Attachment details:', attachments.map(a => ({ fileName: a.fileName, size: a.content?.length })));
-      }
+      // if (attachments && attachments.length > 0) {
+      //   console.log('Attachment details:', attachments.map(a => ({ fileName: a.fileName, size: a.content?.length })));
+      // }
       
       state.wsService.sendMessage(messageData);
     },
@@ -306,8 +306,8 @@ export function createStore(): {
       
       // Get the last visible message to determine the parent branch
       const visibleMessages = this.messages;
-      console.log('=== CONTINUE GENERATION ===');
-      console.log('Visible messages count:', visibleMessages.length);
+      // console.log('=== CONTINUE GENERATION ===');
+      // console.log('Visible messages count:', visibleMessages.length);
       
       let parentBranchId: string | undefined;
       
@@ -315,9 +315,9 @@ export function createStore(): {
         const lastMessage = visibleMessages[visibleMessages.length - 1];
         const activeBranch = lastMessage.branches.find(b => b.id === lastMessage.activeBranchId);
         parentBranchId = activeBranch?.id;
-        console.log('>>> PARENT BRANCH ID:', parentBranchId, 'from branch', activeBranch?.id, 'of message', lastMessage.id);
+        // console.log('>>> PARENT BRANCH ID:', parentBranchId, 'from branch', activeBranch?.id, 'of message', lastMessage.id);
       } else {
-        console.log('Continuing with no parent - first message');
+        // console.log('Continuing with no parent - first message');
       }
       
       state.wsService.sendMessage({
@@ -357,8 +357,8 @@ export function createStore(): {
       if (messageIndex === -1) return;
       
       const message = state.allMessages[messageIndex];
-      console.log('=== SWITCHING BRANCH ===');
-      console.log('Message:', messageId, 'from branch:', message.activeBranchId, 'to branch:', branchId);
+      // console.log('=== SWITCHING BRANCH ===');
+      // console.log('Message:', messageId, 'from branch:', message.activeBranchId, 'to branch:', branchId);
       
       message.activeBranchId = branchId;
       
@@ -374,7 +374,7 @@ export function createStore(): {
         }
       }
       
-      console.log('Branch path after switch:', [...branchPath]);
+      // console.log('Branch path after switch:', [...branchPath]);
       
       // Update subsequent messages to follow the correct path
       for (let i = messageIndex + 1; i < state.allMessages.length; i++) {
@@ -384,7 +384,7 @@ export function createStore(): {
         for (const branch of msg.branches) {
           if (branch.parentBranchId && branchPath.includes(branch.parentBranchId)) {
             if (msg.activeBranchId !== branch.id) {
-              console.log(`Updating message ${i} activeBranchId from ${msg.activeBranchId} to ${branch.id}`);
+              // console.log(`Updating message ${i} activeBranchId from ${msg.activeBranchId} to ${branch.id}`);
               msg.activeBranchId = branch.id;
             }
             
@@ -512,12 +512,12 @@ export function createStore(): {
       try {
         const response = await api.get('/models');
         state.models = response.data;
-        console.log('Frontend loaded models:', state.models.map(m => ({
-          id: m.id,
-          name: m.name,
-          displayName: m.displayName,
-          provider: m.provider
-        })));
+        // console.log('Frontend loaded models:', state.models.map(m => ({
+        //   id: m.id,
+        //   name: m.name,
+        //   displayName: m.displayName,
+        //   provider: m.provider
+        // })));
       } catch (error) {
         console.error('Failed to load models:', error);
         throw error;
@@ -532,12 +532,12 @@ export function createStore(): {
       state.wsService = new WebSocketService(token);
       
       state.wsService.on('message_created', (data: any) => {
-        console.log('Store handling message_created:', data);
+        // console.log('Store handling message_created:', data);
         state.allMessages.push(data.message);
       });
       
       state.wsService.on('stream', (data: any) => {
-        console.log('Store handling stream:', data);
+        // console.log('Store handling stream:', data);
         const message = state.allMessages.find(m => m.id === data.messageId);
         if (message) {
           const branch = message.branches.find(b => b.id === data.branchId);
@@ -548,7 +548,7 @@ export function createStore(): {
       });
       
       state.wsService.on('message_edited', (data: any) => {
-        console.log('Store handling message_edited:', data);
+        // console.log('Store handling message_edited:', data);
         const index = state.allMessages.findIndex(m => m.id === data.message.id);
         if (index !== -1) {
           state.allMessages[index] = data.message;
@@ -557,7 +557,7 @@ export function createStore(): {
       });
       
       state.wsService.on('message_deleted', (data: any) => {
-        console.log('Store handling message_deleted:', data);
+        // console.log('Store handling message_deleted:', data);
         const { messageId, branchId, deletedMessages } = data;
         
         // If multiple messages were deleted (cascade delete)
