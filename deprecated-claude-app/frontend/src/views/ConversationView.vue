@@ -48,11 +48,19 @@
         <v-list-item
           v-for="conversation in conversations"
           :key="conversation.id"
-          :title="conversation.title"
-          :subtitle="formatDate(conversation.updatedAt)"
           :to="`/conversation/${conversation.id}`"
           class="conversation-list-item"
+          :lines="'three'"
         >
+          <template v-slot:title>
+            <div class="text-truncate">{{ conversation.title }}</div>
+          </template>
+          <template v-slot:subtitle>
+            <div>
+              <div class="text-caption text-primary">{{ getConversationModels(conversation) }}</div>
+              <div class="text-caption text-medium-emphasis">{{ formatDate(conversation.updatedAt) }}</div>
+            </div>
+          </template>
           <template v-slot:append>
             <v-menu>
               <template v-slot:activator="{ props }">
@@ -816,6 +824,72 @@ async function updateParticipants(updatedParticipants: Participant[]) {
 function logout() {
   store.logout();
   router.push('/login');
+}
+
+// Cache for conversation participants to avoid repeated API calls
+const conversationParticipantsCache = ref<Record<string, any[]>>({});
+
+async function loadConversationParticipants(conversationId: string) {
+  if (conversationParticipantsCache.value[conversationId]) {
+    return conversationParticipantsCache.value[conversationId];
+  }
+  
+  try {
+    const response = await api.get(`/participants/conversation/${conversationId}`);
+    const participants = response.data;
+    conversationParticipantsCache.value[conversationId] = participants;
+    return participants;
+  } catch (error) {
+    console.error('Failed to load participants for conversation:', conversationId, error);
+    return [];
+  }
+}
+
+function getConversationModels(conversation: Conversation): string {
+  if (!conversation) return '';
+  
+  // For standard conversations, show the model name
+  if (conversation.format === 'standard' || !conversation.format) {
+    const model = store.state.models.find(m => m.id === conversation.model);
+    if (model) {
+      // Shorten the display name if needed
+      return model.displayName
+        .replace('Claude ', '')
+        .replace(' (Bedrock)', ' B')
+        .replace(' (OpenRouter)', ' OR');
+    }
+    return conversation.model;
+  }
+  
+  // For multi-participant conversations, try to show participant models
+  const cachedParticipants = conversationParticipantsCache.value[conversation.id];
+  if (cachedParticipants) {
+    const assistants = cachedParticipants.filter(p => p.type === 'assistant' && p.isActive);
+    if (assistants.length > 0) {
+      const modelNames = assistants.map(a => {
+        const model = store.state.models.find(m => m.id === a.model);
+        if (model) {
+          return model.displayName
+            .replace('Claude ', '')
+            .replace(' (Bedrock)', ' B')
+            .replace(' (OpenRouter)', ' OR');
+        }
+        return a.model || 'Default';
+      });
+      
+      // Remove duplicates and join
+      const uniqueModels = [...new Set(modelNames)];
+      return `👥 ${uniqueModels.join(', ')}`;
+    }
+  }
+  
+  // Fallback - load participants async and trigger re-render
+  loadConversationParticipants(conversation.id).then(() => {
+    // This will trigger a re-render when the data is loaded
+    conversationParticipantsCache.value = { ...conversationParticipantsCache.value };
+  });
+  
+  return '👥 Multi-participant';
 }
 
 function formatDate(date: Date | string): string {
