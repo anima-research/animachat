@@ -18,7 +18,7 @@
       <v-window v-model="tab">
         <!-- API Keys Tab -->
         <v-window-item value="api-keys">
-          <v-card-text style="max-height: 400px; overflow-y: auto;">
+          <v-card-text style="max-height: 600px; overflow-y: auto;">
             <div class="text-body-2 mb-4">
               Manage your API keys for different providers. You can use your own keys or purchase credits at cost.
             </div>
@@ -167,7 +167,7 @@
         
         <!-- Appearance Tab -->
         <v-window-item value="appearance">
-          <v-card-text style="max-height: 400px; overflow-y: auto;">
+          <v-card-text style="max-height: 600px; overflow-y: auto;">
             <v-switch
               v-model="darkMode"
               label="Dark Mode"
@@ -189,7 +189,7 @@
         
         <!-- About Tab -->
         <v-window-item value="about">
-          <v-card-text style="max-height: 400px; overflow-y: auto;">
+          <v-card-text style="max-height: 600px; overflow-y: auto;">
             <h4 class="text-h6 mb-2">Deprecated Claude Models</h4>
             <p class="text-body-2 mb-4">
               Version 1.0.0
