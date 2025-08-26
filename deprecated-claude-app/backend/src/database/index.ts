@@ -59,6 +59,7 @@ export class Database {
     this.users.set(testUser.id, testUser);
     this.usersByEmail.set(testUser.email, testUser.id);
     this.userConversations.set(testUser.id, new Set());
+    this.passwordHashes.set(testUser.email, hashedPassword);
     
     this.logEvent('user_created', { user: testUser, passwordHash: hashedPassword });
     
@@ -346,6 +347,7 @@ export class Database {
     this.users.set(user.id, user);
     this.usersByEmail.set(email, user.id);
     this.userConversations.set(user.id, new Set());
+    this.passwordHashes.set(email, hashedPassword);
     
     // Store password separately (not in User object)
     this.logEvent('user_created', { user, passwordHash: hashedPassword });
