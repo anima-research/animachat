@@ -158,7 +158,21 @@ export class InferenceService {
     responderId?: string
   ): Message[] {
     if (format === 'standard') {
-      // Standard format - no changes needed
+      // Standard format - just log for debugging
+      console.log('\n========== STANDARD FORMAT MESSAGES ==========');
+      for (const message of messages) {
+        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+        if (activeBranch) {
+          const attachmentCount = activeBranch.attachments?.length || 0;
+          console.log(`${activeBranch.role}: ${activeBranch.content.substring(0, 50)}... (${attachmentCount} attachments)`);
+          if (attachmentCount > 0) {
+            activeBranch.attachments?.forEach(att => {
+              console.log(`  - ${att.fileName} (${att.content?.length || 0} chars)`);
+            });
+          }
+        }
+      }
+      console.log('========== END STANDARD FORMAT ==========\n');
       return messages;
     }
     
@@ -208,8 +222,32 @@ export class InferenceService {
           continue; // Skip empty assistant messages
         }
         
+        // Build the message content with attachments
+        let messageContent = activeBranch.content;
+        
+        // Append attachments for user messages
+        if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
+          console.log(`[PREFILL] Appending ${activeBranch.attachments.length} attachments to ${participantName}'s message`);
+          for (const attachment of activeBranch.attachments) {
+            // Check if it's an image
+            const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
+            const isImage = imageExtensions.includes(fileExtension);
+            
+            if (isImage) {
+              // For prefill format, we can't use image blocks, so describe it
+              messageContent += `\n\n[Image attachment: ${attachment.fileName}]`;
+              console.log(`[PREFILL] Added image reference: ${attachment.fileName}`);
+            } else {
+              // Add text attachments inline
+              messageContent += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
+              console.log(`[PREFILL] Added text attachment: ${attachment.fileName} (${attachment.content.length} chars)`);
+            }
+          }
+        }
+        
         // Always use participant name format: "Name: content"
-        conversationContent += `${participantName}: ${activeBranch.content}\n\n`;
+        conversationContent += `${participantName}: ${messageContent}\n\n`;
       }
       
       // If the last message was an empty assistant, append that assistant's name
@@ -240,6 +278,13 @@ export class InferenceService {
         order: 1
       };
       prefillMessages.push(assistantMessage);
+      
+      // Debug log the full prefill prompt
+      console.log('\n========== PREFILL PROMPT BEING SENT TO API ==========');
+      console.log('User message:', cmdMessage.branches[0].content);
+      console.log('Assistant prefill:');
+      console.log(conversationContent);
+      console.log('========== END PREFILL PROMPT ==========\n');
       
       return prefillMessages;
     }
