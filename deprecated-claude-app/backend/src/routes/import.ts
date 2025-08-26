@@ -96,13 +96,19 @@ export function importRouter(db: Database): Router {
       }
 
       // Import messages with branch support
-      let parentBranchId: string | undefined;
       const messageIdMap = new Map<string, string>(); // originalUuid -> createdMessageId  
       const branchIdMap = new Map<string, string>(); // originalUuid -> createdBranchId
       // Track messages by their parent and role to group branches correctly
       const messagesByParentAndRole = new Map<string, string>(); // "parentUuid:role" -> messageId
       
       console.log(`Importing ${preview.messages.length} messages to conversation ${conversation.id}`);
+      console.log('Messages with branch info:', preview.messages.map((m: any) => ({
+        uuid: m.__uuid,
+        parent: m.__parentUuid,
+        isBranch: !!m.__branchInfo?.isAlternative,
+        role: m.role,
+        content: m.content.substring(0, 30) + '...'
+      })));
       
       for (const parsedMsg of preview.messages) {
         // Skip system messages for now
@@ -160,13 +166,33 @@ export function importRouter(db: Database): Router {
                 // If this branch is marked as active, set it
                 if (isActive) {
                   await db.setActiveBranch(existingMessageId, newBranch.id);
-                  // Don't update parentBranchId here - we're on a sibling branch
                 }
               }
             }
           }
         } else {
-          // Regular message or first of its siblings
+          // Regular message - determine its parent based on the previous message's UUID
+          let parentBranchId: string | undefined;
+          
+          if (parentUuid && parentUuid !== '00000000-0000-4000-8000-000000000000') {
+            // Look up the parent branch ID from our mappings
+            parentBranchId = branchIdMap.get(parentUuid);
+            if (!parentBranchId) {
+              // If parent UUID is not in branch map, it might be a message ID
+              const parentMessageId = messageIdMap.get(parentUuid);
+              if (parentMessageId) {
+                // Get the active branch of that message
+                const parentMessage = await db.getMessageById(parentMessageId);
+                if (parentMessage) {
+                  const activeBranch = parentMessage.branches.find(b => b.id === parentMessage.activeBranchId);
+                  if (activeBranch) {
+                    parentBranchId = activeBranch.id;
+                  }
+                }
+              }
+            }
+          }
+          
           console.log(`Creating message: role=${parsedMsg.role}, parentBranchId=${parentBranchId}, participantId=${participantId}`);
           const createdMessage = await db.createMessage(
             conversation.id,
@@ -187,13 +213,10 @@ export function importRouter(db: Database): Router {
           // Store this message as the target for future branches with same parent and role
           messagesByParentAndRole.set(messageKey, createdMessage.id);
           
-          // Update parent for next message (use the created message's branch ID)
+          // Store the branch ID of the created message for children to reference
           const createdBranch = createdMessage.branches.find(b => b.id === createdMessage.activeBranchId);
-          if (createdBranch) {
-            parentBranchId = createdBranch.id;
-            if (originalUuid) {
-              branchIdMap.set(originalUuid, createdBranch.id);
-            }
+          if (createdBranch && originalUuid) {
+            branchIdMap.set(originalUuid, createdBranch.id);
           }
         }
       }
