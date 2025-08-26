@@ -25,9 +25,27 @@ body {
 
 // Message styling
 .message-content {
-  white-space: pre-wrap;
+  // white-space: pre-wrap;
   word-wrap: break-word;
+  line-height: 1.5;
   
+  ul, ol {
+    padding-left: 24px;
+    
+    li {      
+      margin-bottom: 0.25em;
+
+      &:last-child {
+        margin-bottom: 0;
+      }
+    }
+
+    ul, ol {
+      margin-top: 0.25em;
+    }
+  }
+  
+  // Code styling
   code {
     background: rgba(0, 0, 0, 0.1);
     padding: 2px 4px;
@@ -55,9 +73,6 @@ body {
     font-style: italic;
   }
   
-  ul, ol {
-    padding-left: 24px;
-  }
   
   a {
     color: inherit;
@@ -127,9 +142,5 @@ body {
 .settings-panel {
   .v-slider {
     margin-top: 8px;
-  }
-  
-  .v-input__details {
-    padding: 0 12px;
   }
 }
