@@ -74,12 +74,52 @@ export class AnthropicService {
       
       const stream = await this.client.messages.create(requestParams) as any;
 
+      let stopReason: string | undefined;
+      let usage: any = {};
+      
       for await (const chunk of stream) {
+        // Log all chunk types for debugging
+        console.log(`[Anthropic API] Chunk type: ${chunk.type}`, {
+          type: chunk.type,
+          ...(chunk.type === 'message_start' && { message: chunk.message }),
+          ...(chunk.type === 'content_block_start' && { content_block: chunk.content_block }),
+          ...(chunk.type === 'content_block_stop' && { index: chunk.index }),
+          ...(chunk.type === 'message_delta' && { 
+            stop_reason: chunk.delta?.stop_reason,
+            stop_sequence: chunk.delta?.stop_sequence,
+            usage: chunk.usage 
+          })
+        });
+        
         if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
           chunks.push(chunk.delta.text);
           await onChunk(chunk.delta.text, false);
+        } else if (chunk.type === 'message_delta') {
+          // Capture stop reason and usage
+          if (chunk.delta?.stop_reason) {
+            stopReason = chunk.delta.stop_reason;
+            console.log(`[Anthropic API] Stop reason: ${stopReason}`);
+            if (chunk.delta?.stop_sequence) {
+              console.log(`[Anthropic API] Stop sequence: "${chunk.delta.stop_sequence}"`);
+            }
+          }
+          if (chunk.usage) {
+            usage = chunk.usage;
+            console.log(`[Anthropic API] Token usage:`, usage);
+          }
         } else if (chunk.type === 'message_stop') {
           await onChunk('', true);
+          
+          // Log complete response summary
+          const fullResponse = chunks.join('');
+          console.log(`[Anthropic API] Response complete:`, {
+            model: requestParams.model,
+            totalLength: fullResponse.length,
+            stopReason,
+            usage,
+            truncated: stopReason === 'max_tokens',
+            lastChars: fullResponse.slice(-100)
+          });
           
           // Log the response
           const duration = Date.now() - startTime;

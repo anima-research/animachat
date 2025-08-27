@@ -234,5 +234,58 @@ export function importRouter(db: Database): Router {
     }
   });
 
+  // Import raw messages format (as returned by the messages API)
+  router.post('/messages-raw', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { conversationId, messages } = req.body;
+      if (!conversationId || !messages || !Array.isArray(messages)) {
+        return res.status(400).json({ error: 'Invalid data format. Expected conversationId and messages array.' });
+      }
+
+      // Check if conversation exists and belongs to user
+      const conversation = await db.getConversation(conversationId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+      if (conversation.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Clear existing messages for this conversation
+      const existingMessages = await db.getConversationMessages(conversationId);
+      console.log(`[Raw Import] Clearing ${existingMessages.length} existing messages`);
+      for (const msg of existingMessages) {
+        await db.deleteMessage(msg.id);
+      }
+
+      // Import the new messages directly
+      let importedCount = 0;
+      for (const message of messages) {
+        try {
+          // Directly save the message with all its branches
+          await db.importRawMessage(conversationId, message);
+          importedCount++;
+        } catch (error) {
+          console.error(`Failed to import message ${message.id}:`, error);
+        }
+      }
+
+      console.log(`[Raw Import] Imported ${importedCount} messages`);
+
+      res.json({ 
+        success: true, 
+        importedMessages: importedCount,
+        conversationId 
+      });
+    } catch (error) {
+      console.error('Raw messages import error:', error);
+      res.status(500).json({ error: 'Failed to import messages' });
+    }
+  });
+
   return router;
 }

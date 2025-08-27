@@ -245,6 +245,12 @@ export function createStore(): {
       try {
         const response = await api.get(`/conversations/${conversationId}/messages`);
         state.allMessages = response.data;
+        console.log(`Loaded ${state.allMessages.length} messages for conversation ${conversationId}`);
+        
+        // Log if this is multi-participant
+        if (state.currentConversation?.format !== 'standard') {
+          console.log('Multi-participant conversation format:', state.currentConversation?.format);
+        }
       } catch (error) {
         console.error('Failed to load messages:', error);
         throw error;
@@ -357,13 +363,36 @@ export function createStore(): {
     
         switchBranch(messageId: string, branchId: string) {
       const messageIndex = state.allMessages.findIndex(m => m.id === messageId);
-      if (messageIndex === -1) return;
+      if (messageIndex === -1) {
+        console.warn('switchBranch: Message not found:', messageId);
+        return;
+      }
       
       const message = state.allMessages[messageIndex];
-      // console.log('=== SWITCHING BRANCH ===');
-      // console.log('Message:', messageId, 'from branch:', message.activeBranchId, 'to branch:', branchId);
       
+      // Skip if already on this branch
+      if (message.activeBranchId === branchId) {
+        console.log('Already on branch:', branchId);
+        return;
+      }
+      
+      console.log('=== SWITCHING BRANCH ===');
+      console.log('Message:', messageId, 'from branch:', message.activeBranchId, 'to branch:', branchId);
+      
+      // First, update the local state
       message.activeBranchId = branchId;
+      
+      // Persist to backend immediately (but don't block on it)
+      if (state.currentConversation) {
+        api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
+          messageId,
+          branchId
+        }).then(() => {
+          console.log('Branch switch persisted to backend');
+        }).catch(error => {
+          console.error('Failed to persist branch switch:', error);
+        });
+      }
       
       // Update all subsequent messages to follow the new path
       const branchPath: string[] = [];
@@ -377,7 +406,7 @@ export function createStore(): {
         }
       }
       
-      // console.log('Branch path after switch:', [...branchPath]);
+      console.log('Branch path after switch:', [...branchPath]);
       
       // Update subsequent messages to follow the correct path
       for (let i = messageIndex + 1; i < state.allMessages.length; i++) {
@@ -387,8 +416,18 @@ export function createStore(): {
         for (const branch of msg.branches) {
           if (branch.parentBranchId && branchPath.includes(branch.parentBranchId)) {
             if (msg.activeBranchId !== branch.id) {
-              // console.log(`Updating message ${i} activeBranchId from ${msg.activeBranchId} to ${branch.id}`);
+              console.log(`Updating message ${i} activeBranchId from ${msg.activeBranchId} to ${branch.id}`);
               msg.activeBranchId = branch.id;
+              
+              // Also persist this change to backend (non-blocking)
+              if (state.currentConversation) {
+                api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
+                  messageId: msg.id,
+                  branchId: branch.id
+                }).catch(error => {
+                  console.error('Failed to persist downstream branch switch:', error);
+                });
+              }
             }
             
             // Add this branch to the path for checking further messages

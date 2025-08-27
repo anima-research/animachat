@@ -162,10 +162,6 @@ export function conversationRouter(db: Database): Router {
       }
 
       const messages = await db.getConversationMessages(req.params.id);
-      console.log(`API returning ${messages.length} messages for conversation ${req.params.id}`);
-      if (messages.length > 0) {
-        console.log('First message structure:', JSON.stringify(messages[0], null, 2));
-      }
       res.json(messages);
     } catch (error) {
       console.error('Get messages error:', error);
@@ -219,6 +215,70 @@ export function conversationRouter(db: Database): Router {
         return res.status(400).json({ error: 'Invalid input', details: error.errors });
       }
       console.error('Import conversation error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Set active branch for a message
+  router.post('/:id/set-active-branch', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      
+      const { messageId, branchId } = req.body;
+      if (!messageId || !branchId) {
+        return res.status(400).json({ error: 'messageId and branchId are required' });
+      }
+      
+      const conversation = await db.getConversation(req.params.id);
+      if (!conversation || conversation.userId !== req.userId) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+      
+      // Set the active branch
+      const success = await db.setActiveBranch(messageId, branchId);
+      
+      if (success) {
+        res.json({ success: true });
+      } else {
+        res.status(400).json({ error: 'Failed to set active branch' });
+      }
+    } catch (error) {
+      console.error('Set active branch error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  
+  // Analyze conversation branch structure (reports issues but doesn't auto-fix)
+  // Keeping this endpoint for debugging purposes
+  router.post('/:id/fix-branches', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      
+      const conversation = await db.getConversation(req.params.id);
+      if (!conversation || conversation.userId !== req.userId) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+      
+      // Import and run the fix functions
+      const { fixConversationBranches, validateActiveBranches } = await import('../database/fix-branches.js');
+      
+      await fixConversationBranches(db, req.params.id);
+      await validateActiveBranches(db, req.params.id);
+      
+      // Return the fixed conversation
+      const messages = await db.getConversationMessages(req.params.id);
+      res.json({ 
+        success: true, 
+        conversation,
+        messageCount: messages.length,
+        message: 'Branch structure fixed successfully'
+      });
+    } catch (error) {
+      console.error('Fix branches error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

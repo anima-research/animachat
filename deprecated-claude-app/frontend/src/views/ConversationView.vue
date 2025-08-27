@@ -167,6 +167,26 @@
           size="small"
           @click="conversationSettingsDialog = true"
         />
+        
+        <!-- Fix branches button (hidden - only for debugging) -->
+        <!-- <v-btn
+          v-if="currentConversation"
+          icon="mdi-wrench"
+          size="small"
+          color="orange"
+          @click="fixConversationBranches"
+          title="Fix branch structure issues"
+        /> -->
+        
+        <!-- Import raw messages button (temporary for debugging) -->
+        <v-btn
+          v-if="currentConversation"
+          icon="mdi-database-import"
+          size="small"
+          color="green"
+          @click="showRawImportDialog = true"
+          title="Import raw messages backup"
+        />
       </v-app-bar>
 
       <!-- Messages Area -->
@@ -315,6 +335,37 @@
       v-model="importDialog"
     />
     
+    <!-- Raw Import Dialog -->
+    <v-dialog v-model="showRawImportDialog" max-width="600">
+      <v-card>
+        <v-card-title>Import Raw Messages Backup</v-card-title>
+        <v-card-text>
+          <v-alert type="warning" class="mb-4">
+            This will replace ALL messages in the current conversation with the imported data.
+            Make sure you have the right conversation selected!
+          </v-alert>
+          <v-textarea
+            v-model="rawImportData"
+            label="Paste the messages JSON array here"
+            placeholder='[{"id": "...", "conversationId": "...", "branches": [...], ...}]'
+            rows="10"
+            variant="outlined"
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="showRawImportDialog = false">Cancel</v-btn>
+          <v-btn 
+            color="primary" 
+            @click="importRawMessages"
+            :disabled="!rawImportData.trim()"
+          >
+            Import
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+    
     <SettingsDialog
       v-model="settingsDialog"
     />
@@ -358,6 +409,8 @@ const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
 const participantsDialog = ref(false);
+const showRawImportDialog = ref(false);
+const rawImportData = ref('');
 const messageInput = ref('');
 const isStreaming = ref(false);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
@@ -828,6 +881,105 @@ function logout() {
 
 // Cache for conversation participants to avoid repeated API calls
 const conversationParticipantsCache = ref<Record<string, any[]>>({});
+
+// Branch structure analysis function (disabled - only reports issues, doesn't fix)
+// async function fixConversationBranches() {
+//   if (!currentConversation.value) return;
+  
+//   const conversationId = currentConversation.value.id;
+//   console.log(`Analyzing branch structure for conversation: ${conversationId}`);
+  
+//   try {
+//     const token = localStorage.getItem('token');
+//     if (!token) {
+//       alert('Not authenticated');
+//       return;
+//     }
+    
+//     const response = await fetch(`http://localhost:3010/api/conversations/${conversationId}/fix-branches`, {
+//       method: 'POST',
+//       headers: {
+//         'Authorization': `Bearer ${token}`,
+//         'Content-Type': 'application/json'
+//       }
+//     });
+    
+//     const result = await response.json();
+    
+//     if (response.ok) {
+//       console.log('Branch structure analysis:', result);
+//       alert(`Branch structure analysis complete!\n\nCheck console for details.`);
+      
+//       // Reload the conversation to see any changes
+//       await store.loadConversation(conversationId);
+//     } else {
+//       console.error('Failed to analyze branches:', result);
+//       alert(`Failed to analyze branches: ${result.error || 'Unknown error'}`);
+//     }
+//   } catch (error) {
+//     console.error('Error analyzing branches:', error);
+//     alert('Error analyzing branches. Check console for details.');
+//   }
+// }
+
+async function importRawMessages() {
+  if (!currentConversation.value || !rawImportData.value.trim()) return;
+  
+  const conversationId = currentConversation.value.id;
+  
+  try {
+    // Parse the JSON to validate it
+    const messages = JSON.parse(rawImportData.value);
+    if (!Array.isArray(messages)) {
+      alert('Invalid format: Expected a JSON array of messages');
+      return;
+    }
+    
+    console.log(`Importing ${messages.length} messages to conversation ${conversationId}`);
+    
+    const token = localStorage.getItem('token');
+    if (!token) {
+      alert('Not authenticated');
+      return;
+    }
+    
+    const response = await fetch(`http://localhost:3010/api/import/messages-raw`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        conversationId,
+        messages
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (response.ok) {
+      console.log('Messages imported:', result);
+      alert(`Successfully imported ${result.importedMessages} messages!`);
+      
+      // Clear the input and close dialog
+      rawImportData.value = '';
+      showRawImportDialog.value = false;
+      
+      // Reload the conversation to see the imported messages
+      await store.loadConversation(conversationId);
+    } else {
+      console.error('Failed to import messages:', result);
+      alert(`Failed to import messages: ${result.error || 'Unknown error'}`);
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      alert('Invalid JSON format. Please check your input.');
+    } else {
+      console.error('Error importing messages:', error);
+      alert('Error importing messages. Check console for details.');
+    }
+  }
+}
 
 async function loadConversationParticipants(conversationId: string) {
   if (conversationParticipantsCache.value[conversationId]) {

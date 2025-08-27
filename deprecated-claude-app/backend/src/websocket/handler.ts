@@ -81,8 +81,14 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
     }
   });
 
-  ws.on('close', () => {
+  ws.on('close', async () => {
     console.log(`WebSocket closed for user ${ws.userId}`);
+    
+    // Clean up any incomplete streaming messages
+    // This is handled by the streaming service, but we should log it
+    if (ws.userId) {
+      console.log(`User ${ws.userId} disconnected - any in-progress streams will be saved`);
+    }
   });
 
   ws.on('error', (error) => {
@@ -268,6 +274,15 @@ async function handleChatMessage(
         const currentBranch = assistantMessage.branches.find(b => b.id === assistantMessage.activeBranchId);
         if (currentBranch) {
           currentBranch.content += chunk;
+          
+          // Save partial content every 500 characters to prevent data loss on interruption
+          if (currentBranch.content.length % 500 === 0 || isComplete) {
+            await db.updateMessageContent(
+              assistantMessage.id,
+              assistantMessage.activeBranchId,
+              currentBranch.content
+            );
+          }
         }
 
         // Send stream update
@@ -279,13 +294,15 @@ async function handleChatMessage(
           isComplete
         }));
 
-        if (isComplete && currentBranch) {
-          // Persist the complete content to disk only when done
-          await db.updateMessageContent(
-            assistantMessage.id,
-            assistantMessage.activeBranchId,
-            currentBranch.content
-          );
+        if (isComplete) {
+          // Final save and update conversation timestamp
+          if (currentBranch) {
+            await db.updateMessageContent(
+              assistantMessage.id,
+              assistantMessage.activeBranchId,
+              currentBranch.content
+            );
+          }
           
           // Update conversation timestamp
           await db.updateConversation(conversation.id, { updatedAt: new Date() });
@@ -330,16 +347,24 @@ async function handleRegenerate(
   const parentUserMessage = targetMessageIndex > 0 ? allMessages[targetMessageIndex - 1] : null;
   const parentUserBranch = parentUserMessage ? parentUserMessage.branches.find(b => b.id === parentUserMessage.activeBranchId) : null;
 
-  // Get the participant ID from the branch we're regenerating
+  // Get the participant ID and parent branch from the branch we're regenerating
   const originalBranch = msg.branches.find(b => b.id === message.branchId);
   const participantId = originalBranch?.participantId;
   
-  // Create new branch
+  // IMPORTANT: Use the original branch's parentBranchId, not the branch itself
+  // This ensures all regenerated branches have the same parent (the user message branch)
+  const correctParentBranchId = originalBranch?.parentBranchId || parentUserBranch?.id || 'root';
+  
+  console.log('[Regenerate] Message:', message.messageId, 'Branch:', message.branchId);
+  console.log('[Regenerate] Original branch parent:', originalBranch?.parentBranchId);
+  console.log('[Regenerate] Using parent branch:', correctParentBranchId);
+  
+  // Create new branch with correct parent
   const updatedMessage = await db.addMessageBranch(
     message.messageId,
     '',
     'assistant',
-    parentUserBranch?.id || message.branchId,
+    correctParentBranchId,
     conversation.model,
     participantId
   );
@@ -406,6 +431,15 @@ async function handleRegenerate(
         const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
         if (currentBranch) {
           currentBranch.content += chunk;
+          
+          // Save partial content periodically to prevent data loss
+          if (currentBranch.content.length % 500 === 0 || isComplete) {
+            await db.updateMessageContent(
+              updatedMessage.id,
+              updatedMessage.activeBranchId,
+              currentBranch.content
+            );
+          }
         }
 
         ws.send(JSON.stringify({
@@ -415,15 +449,6 @@ async function handleRegenerate(
           content: chunk,
           isComplete
         }));
-
-        if (isComplete && currentBranch) {
-          // Persist the complete content to disk only when done
-          await db.updateMessageContent(
-            updatedMessage.id,
-            updatedMessage.activeBranchId,
-            currentBranch.content
-          );
-        }
       },
       conversation.format || 'standard',
       participants,
@@ -606,6 +631,15 @@ async function handleEdit(
           const currentBranch = targetMessage.branches.find(b => b.id === targetBranchId);
           if (currentBranch) {
             currentBranch.content += chunk;
+            
+            // Save partial content periodically
+            if (currentBranch.content.length % 500 === 0 || isComplete) {
+              await db.updateMessageContent(
+                targetMessage.id,
+                targetBranchId,
+                currentBranch.content
+              );
+            }
           }
 
           ws.send(JSON.stringify({
@@ -615,15 +649,6 @@ async function handleEdit(
             content: chunk,
             isComplete
           }));
-
-          if (isComplete && currentBranch) {
-            // Persist the complete content to disk only when done
-            await db.updateMessageContent(
-              targetMessage.id,
-              targetBranchId,
-              currentBranch.content
-            );
-          }
         },
         conversation.format || 'standard',
         participants,
@@ -759,6 +784,11 @@ async function handleContinue(
       async (chunk: string, isComplete: boolean) => {
         assistantBranch.content += chunk;
         
+        // Save partial content periodically
+        if (assistantBranch.content.length % 500 === 0 || isComplete) {
+          await db.updateMessageContent(assistantMessage.id, assistantBranch.id, assistantBranch.content);
+        }
+        
         ws.send(JSON.stringify({
           type: 'stream',
           messageId: assistantMessage.id,
@@ -768,7 +798,7 @@ async function handleContinue(
         }));
 
         if (isComplete) {
-          // Update the message in the database
+          // Final save
           await db.updateMessageContent(assistantMessage.id, assistantBranch.id, assistantBranch.content);
           
           // Send updated conversation

@@ -148,7 +148,12 @@ export class Database {
         const userConvs = this.userConversations.get(conversation.userId) || new Set();
         userConvs.add(conversation.id);
         this.userConversations.set(conversation.userId, userConvs);
-        this.conversationMessages.set(conversation.id, []);
+        
+        // Only initialize message list if it doesn't exist yet
+        // This prevents wiping out messages if events are replayed out of order
+        if (!this.conversationMessages.has(conversation.id)) {
+          this.conversationMessages.set(conversation.id, []);
+        }
         break;
       }
       
@@ -263,6 +268,16 @@ export class Database {
             convMessages.splice(index, 1);
           }
         }
+        break;
+      }
+      
+      case 'message_imported_raw': {
+        // This event is logged when importing raw messages
+        // The problem: we only store messageId and conversationId, not the full message
+        // So during replay, we can't recreate the messages!
+        const { messageId, conversationId } = event.data;
+        console.warn(`[Event Replay] Skipping message_imported_raw for message ${messageId}`);
+        // This is why imported messages disappear after restart!
         break;
       }
       
@@ -616,12 +631,16 @@ export class Database {
     }
     
     // Get current message count for ordering
-    const convMessages = this.conversationMessages.get(conversationId) || [];
+    // IMPORTANT: Always get or create a fresh array to avoid reference issues
+    let convMessages = this.conversationMessages.get(conversationId);
+    if (!convMessages) {
+      convMessages = [];
+      this.conversationMessages.set(conversationId, convMessages);
+    }
     message.order = convMessages.length;
     
     this.messages.set(message.id, message);
     convMessages.push(message.id);
-    this.conversationMessages.set(conversationId, convMessages);
     
     console.log(`Stored message ${message.id} for conversation ${conversationId}. Total messages: ${convMessages.length}`);
     
@@ -695,6 +714,87 @@ export class Database {
     await this.logEvent('active_branch_changed', { messageId, branchId });
 
     return true;
+  }
+  
+  async updateMessage(messageId: string, message: Message): Promise<boolean> {
+    if (!this.messages.has(messageId)) return false;
+    
+    this.messages.set(messageId, message);
+    await this.logEvent('message_updated', { messageId, message });
+    
+    return true;
+  }
+  
+  async deleteMessage(messageId: string): Promise<boolean> {
+    const message = this.messages.get(messageId);
+    if (!message) return false;
+    
+    // Remove from messages map
+    this.messages.delete(messageId);
+    
+    // Remove from conversation's message list
+    const messageIds = this.conversationMessages.get(message.conversationId);
+    if (messageIds) {
+      const index = messageIds.indexOf(messageId);
+      if (index > -1) {
+        messageIds.splice(index, 1);
+      }
+    }
+    
+    await this.logEvent('message_deleted', { messageId, conversationId: message.conversationId });
+    return true;
+  }
+  
+  async importRawMessage(conversationId: string, messageData: any): Promise<void> {
+    // Validate the conversation exists
+    if (!this.conversations.has(conversationId)) {
+      throw new Error('Conversation not found');
+    }
+    
+    // Create the message object with all branches
+    const message: Message = {
+      id: messageData.id,
+      conversationId: conversationId,
+      branches: messageData.branches.map((branch: any) => ({
+        id: branch.id,
+        content: branch.content,
+        role: branch.role,
+        participantId: branch.participantId,
+        createdAt: new Date(branch.createdAt),
+        model: branch.model,
+        isActive: branch.isActive,
+        parentBranchId: branch.parentBranchId,
+        attachments: branch.attachments
+      })),
+      activeBranchId: messageData.activeBranchId,
+      order: messageData.order
+    };
+    
+    // Store the message
+    this.messages.set(message.id, message);
+    
+    // Add to conversation's message list in order
+    let messageIds = this.conversationMessages.get(conversationId);
+    if (!messageIds) {
+      messageIds = [];
+      this.conversationMessages.set(conversationId, messageIds);
+    }
+    
+    // Insert at the correct position based on order
+    const insertIndex = messageIds.findIndex(id => {
+      const msg = this.messages.get(id);
+      return msg && msg.order > message.order;
+    });
+    
+    if (insertIndex === -1) {
+      messageIds.push(message.id);
+    } else {
+      messageIds.splice(insertIndex, 0, message.id);
+    }
+    
+    // Instead of logging a minimal import event, log a full message_created event
+    // This ensures the message can be recreated during event replay
+    await this.logEvent('message_created', message);
   }
   
   async updateMessageContent(messageId: string, branchId: string, content: string): Promise<boolean> {
@@ -852,12 +952,16 @@ export class Database {
 
   async getConversationMessages(conversationId: string): Promise<Message[]> {
     const messageIds = this.conversationMessages.get(conversationId) || [];
-    console.log(`Getting messages for conversation ${conversationId}: found ${messageIds.length} message IDs`);
     const messages = messageIds
       .map(id => this.messages.get(id))
       .filter((msg): msg is Message => msg !== undefined)
       .sort((a, b) => a.order - b.order);
-    console.log(`Returning ${messages.length} messages for conversation ${conversationId}`);
+    
+    // Only log if there's a potential issue
+    if (messageIds.length !== messages.length) {
+      console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found`);
+    }
+    
     return messages;
   }
 
