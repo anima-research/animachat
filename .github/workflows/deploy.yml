@@ -37,7 +37,7 @@ jobs:
       working-directory: deprecated-claude-app
       run: |
         # Create deployment structure
-        mkdir -p deploy/backend deploy/frontend
+        mkdir -p deploy/backend deploy/frontend deploy/shared
         
         # Copy frontend build
         cp -r frontend/dist/* deploy/frontend/
@@ -46,10 +46,9 @@ jobs:
         cp -r backend/dist/* deploy/backend/
         cp backend/package.json deploy/backend/
         
-        # Create proper node_modules structure for shared module
-        mkdir -p deploy/backend/node_modules/@deprecated-claude/shared
-        cp -r shared/dist/* deploy/backend/node_modules/@deprecated-claude/shared/
-        cp shared/package.json deploy/backend/node_modules/@deprecated-claude/shared/
+        # Copy shared module (to be copied into node_modules after npm install)
+        cp -r shared/dist/* deploy/shared/
+        cp shared/package.json deploy/shared/
 
     - name: Deploy to server
       uses: appleboy/ssh-action@v1.0.3
@@ -58,18 +57,13 @@ jobs:
         username: ${{ secrets.DEPLOY_USER }}
         key: ${{ secrets.DEPLOY_SSH_KEY }}
         script: |
-          # Stop the service
-          sudo systemctl stop claude-app
+          # Stop the service using passwordless sudo
+          sudo -n systemctl stop claude-app
           
-          # Backup current deployment
-          if [ -d /var/www/deprecated-claude-app/backend ]; then
-            rm -rf /var/www/deprecated-claude-app.backup
-            cp -r /var/www/deprecated-claude-app /var/www/deprecated-claude-app.backup
-          fi
-          
-          # Clean deployment directory
+          # Clean deployment directory (no backup needed with GitHub Actions)
           rm -rf /var/www/deprecated-claude-app/backend/*
           rm -rf /var/www/deprecated-claude-app/frontend/*
+          rm -rf /var/www/deprecated-claude-app/shared/*
 
     - name: Copy files to server
       uses: appleboy/scp-action@v0.1.7
@@ -93,26 +87,25 @@ jobs:
           # Install production dependencies
           npm install --omit=dev --no-audit --no-fund
           
-          # Ensure shared module wasn't removed by npm install
-          if [ ! -d "node_modules/@deprecated-claude/shared" ]; then
-            mkdir -p node_modules/@deprecated-claude/shared
-            cp -r /var/www/deprecated-claude-app.backup/backend/node_modules/@deprecated-claude/shared/* node_modules/@deprecated-claude/shared/
-          fi
+          # Copy shared module AFTER npm install (which removes it)
+          rm -rf node_modules/@deprecated-claude/shared
+          mkdir -p node_modules/@deprecated-claude/shared
+          cp -r /var/www/deprecated-claude-app/shared/* node_modules/@deprecated-claude/shared/
           
-          # Set correct permissions
-          sudo chown -R antra:www-data /var/www/deprecated-claude-app
+          # Set correct permissions (without sudo since we're already antra)
+          # The directory should already have correct permissions from server setup
           
-          # Start the service
-          sudo systemctl start claude-app
+          # Start the service using passwordless sudo
+          sudo -n systemctl start claude-app
           
           # Verify deployment
           sleep 2
-          if sudo systemctl is-active --quiet claude-app; then
+          if sudo -n systemctl is-active --quiet claude-app; then
             echo "✅ Deployment successful - claude-app is running"
-            sudo systemctl status claude-app --no-pager
+            sudo -n systemctl status claude-app --no-pager
           else
             echo "❌ Deployment failed - claude-app is not running"
-            sudo journalctl -u claude-app -n 50 --no-pager
+            sudo -n journalctl -u claude-app -n 50 --no-pager
             exit 1
           fi
 
