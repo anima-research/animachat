@@ -137,3 +137,4 @@ npm run build
 ## License
 
 This project is for educational and personal use. Ensure compliance with AWS Bedrock terms of service and Anthropic's usage policies.
+# Test deployment Fri Aug 29 23:55:51 EDT 2025
