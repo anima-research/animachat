@@ -88,7 +88,7 @@
             <h3 class="text-h6 mb-2">Welcome to ARC
             </h3>
             <p class="text-body-2 mb-3">
-              Continue your conversations with deprecated Claude models through AWS Bedrock.
+              Continue your conversations with Claude models.
               Import your conversations from claude.ai and pick up where you left off.
             </p>
             
