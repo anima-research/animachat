@@ -210,7 +210,7 @@ export class OpenAICompatibleService {
       }
 
       const data = await response.json();
-      return data.data || [];
+      return (data as any)?.data || [];
     } catch (error) {
       console.error('Failed to list models:', error);
       return [];
