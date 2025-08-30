@@ -85,23 +85,15 @@
         
         <v-card class="mt-4" variant="outlined">
           <v-card-text class="text-center">
-            <h3 class="text-h6 mb-2">Welcome to Deprecated Claude Models</h3>
+            <h3 class="text-h6 mb-2">Welcome to ARC
+            </h3>
             <p class="text-body-2 mb-3">
               Continue your conversations with deprecated Claude models through AWS Bedrock.
               Import your conversations from claude.ai and pick up where you left off.
             </p>
             
             <v-divider class="my-3" />
-            
-            <div class="text-left">
-              <h4 class="text-subtitle-1 mb-2">🧪 Test Account</h4>
-              <p class="text-body-2 mb-1">
-                <strong>Email:</strong> test@example.com
-              </p>
-              <p class="text-body-2">
-                <strong>Password:</strong> password123
-              </p>
-            </div>
+          
           </v-card-text>
         </v-card>
       </v-col>
