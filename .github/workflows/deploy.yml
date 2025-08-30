@@ -72,8 +72,8 @@ jobs:
         username: ${{ secrets.DEPLOY_USER }}
         key: ${{ secrets.DEPLOY_SSH_KEY }}
         source: "deprecated-claude-app/deploy/*"
-        target: "/var/www/deprecated-claude-app"
-        strip_components: 3  # Removes deprecated-claude-app/deploy/ prefix
+        target: "/var/www"
+        strip_components: 2  # Removes deprecated-claude-app/deploy/ prefix, keeps deprecated-claude-app/
 
     - name: Install production dependencies and start service
       uses: appleboy/ssh-action@v1.0.3
