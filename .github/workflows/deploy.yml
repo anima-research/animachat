@@ -1,0 +1,155 @@
+name: Deploy to arc.animalabs.ai
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'deprecated-claude-app/**'
+      - '.github/workflows/deploy.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22.14.0'
+        cache: 'npm'
+        cache-dependency-path: deprecated-claude-app/package-lock.json
+
+    - name: Install dependencies
+      working-directory: deprecated-claude-app
+      run: npm ci
+
+    - name: Build all workspaces
+      working-directory: deprecated-claude-app
+      run: |
+        npm run build -w shared
+        npm run build -w backend
+        npm run build -w frontend
+
+    - name: Prepare deployment artifacts
+      working-directory: deprecated-claude-app
+      run: |
+        # Create deployment structure
+        mkdir -p deploy/backend deploy/frontend
+        
+        # Copy frontend build
+        cp -r frontend/dist/* deploy/frontend/
+        
+        # Copy backend build and package.json
+        cp -r backend/dist/* deploy/backend/
+        cp backend/package.json deploy/backend/
+        
+        # Create proper node_modules structure for shared module
+        mkdir -p deploy/backend/node_modules/@deprecated-claude/shared
+        cp -r shared/dist/* deploy/backend/node_modules/@deprecated-claude/shared/
+        cp shared/package.json deploy/backend/node_modules/@deprecated-claude/shared/
+
+    - name: Deploy to server
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        script: |
+          # Stop the service
+          sudo systemctl stop claude-app
+          
+          # Backup current deployment
+          if [ -d /var/www/deprecated-claude-app/backend ]; then
+            rm -rf /var/www/deprecated-claude-app.backup
+            cp -r /var/www/deprecated-claude-app /var/www/deprecated-claude-app.backup
+          fi
+          
+          # Clean deployment directory
+          rm -rf /var/www/deprecated-claude-app/backend/*
+          rm -rf /var/www/deprecated-claude-app/frontend/*
+
+    - name: Copy files to server
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        source: "deprecated-claude-app/deploy/*"
+        target: "/var/www/deprecated-claude-app"
+        strip_components: 3  # Removes deprecated-claude-app/deploy/ prefix
+
+    - name: Install production dependencies and start service
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        script: |
+          cd /var/www/deprecated-claude-app/backend
+          
+          # Install production dependencies
+          npm install --omit=dev --no-audit --no-fund
+          
+          # Ensure shared module wasn't removed by npm install
+          if [ ! -d "node_modules/@deprecated-claude/shared" ]; then
+            mkdir -p node_modules/@deprecated-claude/shared
+            cp -r /var/www/deprecated-claude-app.backup/backend/node_modules/@deprecated-claude/shared/* node_modules/@deprecated-claude/shared/
+          fi
+          
+          # Set correct permissions
+          sudo chown -R antra:www-data /var/www/deprecated-claude-app
+          
+          # Start the service
+          sudo systemctl start claude-app
+          
+          # Verify deployment
+          sleep 2
+          if sudo systemctl is-active --quiet claude-app; then
+            echo "✅ Deployment successful - claude-app is running"
+            sudo systemctl status claude-app --no-pager
+          else
+            echo "❌ Deployment failed - claude-app is not running"
+            sudo journalctl -u claude-app -n 50 --no-pager
+            exit 1
+          fi
+
+    - name: Health check
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        script: |
+          # Check if the API is responding
+          if curl -f -s http://localhost:3010/api/health > /dev/null 2>&1; then
+            echo "✅ API health check passed"
+          else
+            echo "⚠️ API health check failed or endpoint not available"
+          fi
+          
+          # Check if frontend is accessible
+          if curl -f -s https://arc.animalabs.ai > /dev/null 2>&1; then
+            echo "✅ Frontend is accessible"
+          else
+            echo "❌ Frontend is not accessible"
+            exit 1
+          fi
+
+    - name: Cleanup on failure
+      if: failure()
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        script: |
+          # Restore backup if deployment failed
+          if [ -d /var/www/deprecated-claude-app.backup ]; then
+            echo "Restoring previous deployment..."
+            rm -rf /var/www/deprecated-claude-app
+            mv /var/www/deprecated-claude-app.backup /var/www/deprecated-claude-app
+            sudo systemctl restart claude-app
+          fi
