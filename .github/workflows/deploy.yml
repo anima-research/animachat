@@ -7,6 +7,10 @@ on:
       - 'deprecated-claude-app/**'
       - '.github/workflows/deploy.yml'
 
+concurrency:
+  group: deployment-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
