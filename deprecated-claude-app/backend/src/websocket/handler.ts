@@ -333,7 +333,7 @@ async function handleChatMessage(
       ws.userId,
       async (chunk: string, isComplete: boolean) => {
         // Update message content in memory (mutation is OK during streaming)
-        const currentBranch = assistantMessage.branches.find(b => b.id === assistantMessage.activeBranchId);
+        const currentBranch = assistantMessage.branches.find((b: any) => b.id === assistantMessage.activeBranchId);
         if (currentBranch) {
           currentBranch.content += chunk;
           

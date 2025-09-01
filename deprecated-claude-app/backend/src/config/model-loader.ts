@@ -33,8 +33,8 @@ export class ModelLoader {
       const modelsData = await readFile(this.modelConfigPath, 'utf-8');
       const parsed = JSON.parse(modelsData);
       this.models = parsed.models || [];
-      console.log(`Loaded ${this.models.length} models from ${this.modelConfigPath}`);
-      return this.models;
+      console.log(`Loaded ${this.models?.length || 0} models from ${this.modelConfigPath}`);
+      return this.models || [];
     } catch (error) {
       console.error(`Failed to load models from ${this.modelConfigPath}:`, error);
       // Return empty array as fallback

@@ -11,7 +11,7 @@ export function modelRouter(): Router {
       const models = await modelLoader.getAllModels();
       console.log('Available models:', models.map(m => ({
         id: m.id,
-        name: m.name,
+        providerModelId: m.providerModelId,
         displayName: m.displayName,
         provider: m.provider
       })));

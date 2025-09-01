@@ -35,10 +35,12 @@ export class InferenceService {
   ): Promise<void> {
     
     // Find the model configuration
+    console.log(`[InferenceService] Looking up model with ID: ${modelId}`);
     const model = await this.modelLoader.getModelById(modelId);
     if (!model) {
       throw new Error(`Model ${modelId} not found`);
     }
+    console.log(`[InferenceService] Found model: provider=${model.provider}, providerModelId=${model.providerModelId}`)
     
     // Format messages based on conversation format
     const formattedMessages = this.formatMessagesForConversation(messages, format, participants, responderId);
@@ -85,7 +87,7 @@ export class InferenceService {
       );
       
       await anthropicService.streamCompletion(
-        modelId,
+        model.providerModelId,
         formattedMessages,
         systemPrompt,
         settings,
@@ -95,7 +97,7 @@ export class InferenceService {
     } else if (model.provider === 'bedrock') {
       const bedrockService = new BedrockService(this.db, selectedKey.credentials);
       await bedrockService.streamCompletion(
-        modelId,
+        model.providerModelId,
         formattedMessages,
         systemPrompt,
         settings,
@@ -109,7 +111,7 @@ export class InferenceService {
       );
       
       await openRouterService.streamCompletion(
-        modelId,
+        model.providerModelId,
         formattedMessages,
         systemPrompt,
         settings,
@@ -125,7 +127,7 @@ export class InferenceService {
       );
       
       await openAIService.streamCompletion(
-        modelId,
+        model.providerModelId,
         formattedMessages,
         systemPrompt,
         settings,
@@ -154,7 +156,10 @@ export class InferenceService {
 
   private estimateTokens(messages: Message[]): number {
     // Rough token estimation
-    const text = messages.map(m => m.content).join(' ');
+    const text = messages.map(m => {
+      const activeBranch = m.branches.find(b => b.id === m.activeBranchId);
+      return activeBranch?.content || '';
+    }).join(' ');
     return Math.ceil(text.length / 4);
   }
 

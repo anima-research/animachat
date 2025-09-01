@@ -1,6 +1,6 @@
 import { Database } from '../database/index.js';
 import { ConfigLoader } from '../config/loader.js';
-import { ProviderProfile } from '../config/types.js';
+import { ProviderProfile, ModelCost } from '../config/types.js';
 import { ApiKey } from '@deprecated-claude/shared';
 
 export interface SelectedApiKey {
@@ -31,18 +31,25 @@ export class ApiKeyManager {
     provider: string,
     modelId: string
   ): Promise<SelectedApiKey | null> {
+    console.log(`[ApiKeyManager] Getting API key for: provider=${provider}, modelId=${modelId}, userId=${userId}`);
+    
     const config = await this.configLoader.loadConfig();
     
     // Check if user API keys are allowed
     if (config.features?.allowUserApiKeys) {
+      console.log('[ApiKeyManager] Checking for user API key (allowUserApiKeys=true)');
       const userKey = await this.getUserApiKey(userId, provider);
       if (userKey) {
+        console.log('[ApiKeyManager] Found user API key, using it');
         return {
           source: 'user',
           credentials: userKey.credentials,
           userKey
         };
       }
+      console.log('[ApiKeyManager] No user API key found');
+    } else {
+      console.log('[ApiKeyManager] User API keys not allowed (allowUserApiKeys=false or not set)');
     }
 
     // Get user info to determine tier/groups
@@ -54,19 +61,35 @@ export class ApiKeyManager {
     // TODO: When we have the PostgreSQL database, we'll get the user's groups
     // For now, we'll use a simple mapping based on some user property
     const userGroup = this.getUserGroup(user);
+    console.log(`[ApiKeyManager] User group: ${userGroup}`);
 
     // Try to find a suitable system API key profile
     const profile = await this.configLoader.getBestProfile(provider, modelId, userGroup);
     if (profile) {
+      const keyInfo = 'apiKey' in profile.credentials 
+        ? `API key ending in ...${profile.credentials.apiKey?.slice(-8)}`
+        : `AWS credentials`;
+      console.log(`[ApiKeyManager] Found config profile: ${profile.id} with ${keyInfo}`);
       return {
         source: 'config',
         credentials: profile.credentials,
         profile
       };
     }
+    console.log('[ApiKeyManager] No suitable config profile found');
 
     // Fallback to environment variables
-    return this.getEnvApiKey(provider);
+    console.log('[ApiKeyManager] Falling back to environment variables');
+    const envKey = this.getEnvApiKey(provider);
+    if (envKey) {
+      const keyInfo = 'apiKey' in envKey.credentials 
+        ? `API key ending in ...${envKey.credentials.apiKey?.slice(-8)}`
+        : `AWS credentials`;
+      console.log(`[ApiKeyManager] Using environment variable ${keyInfo}`);
+    } else {
+      console.log('[ApiKeyManager] No environment variable API key found');
+    }
+    return envKey;
   }
 
   private async getUserApiKey(userId: string, provider: string): Promise<ApiKey | null> {

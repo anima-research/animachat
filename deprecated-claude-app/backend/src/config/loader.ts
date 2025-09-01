@@ -65,27 +65,45 @@ export class ConfigLoader {
     modelId: string,
     userGroup?: string
   ): Promise<ProviderProfile | null> {
+    console.log(`[ConfigLoader] getBestProfile called with provider=${provider}, modelId=${modelId}, userGroup=${userGroup}`);
+    
     const config = await this.loadConfig();
     const profiles = config.providers[provider as keyof typeof config.providers];
     
     if (!profiles || profiles.length === 0) {
+      console.log(`[ConfigLoader] No profiles found for provider ${provider}`);
       return null;
     }
+    
+    console.log(`[ConfigLoader] Found ${profiles.length} profiles for provider ${provider}`);
 
-    // Filter eligible profiles
-    const eligibleProfiles = profiles.filter(profile => {
+    // Filter eligible profiles - need to use async filter
+    const eligibleProfiles = [];
+    for (const profile of profiles) {
+      console.log(`[ConfigLoader] Checking profile ${profile.id}:`);
+      
       // Check model compatibility
       // If allowedModels is specified, use it as explicit allow list
       if (profile.allowedModels && !profile.allowedModels.includes(modelId)) {
-        return false;
+        console.log(`[ConfigLoader]   - Rejected: model ${modelId} not in allowedModels`);
+        continue;
       }
       
       // If no allowedModels but modelCosts exists, check if model has cost configuration
       if (!profile.allowedModels && profile.modelCosts) {
-        const hasModelCost = profile.modelCosts.some(mc => mc.modelId === modelId);
+        // Need to get the actual provider model ID for this model to check costs
+        // The modelId passed here is the configuration ID, but costs are keyed by provider model ID
+        const { ModelLoader } = await import('../config/model-loader.js');
+        const modelLoader = ModelLoader.getInstance();
+        const modelConfig = await modelLoader.getModelById(modelId);
+        const providerModelId = modelConfig?.providerModelId || modelId;
+        
+        const hasModelCost = profile.modelCosts.some(mc => mc.modelId === providerModelId);
         if (!hasModelCost) {
+          console.log(`[ConfigLoader]   - Rejected: no cost configuration for model ${modelId} (provider model ID: ${providerModelId})`);
+          console.log(`[ConfigLoader]     Available model costs: ${profile.modelCosts.map(mc => mc.modelId).join(', ')}`);
           // No cost configuration for this model = not supported
-          return false;
+          continue;
         }
       }
       
@@ -93,13 +111,16 @@ export class ConfigLoader {
       
       // Check user group
       if (profile.allowedUserGroups && userGroup && !profile.allowedUserGroups.includes(userGroup)) {
-        return false;
+        console.log(`[ConfigLoader]   - Rejected: user group ${userGroup} not in allowedUserGroups`);
+        continue;
       }
       
-      return true;
-    });
+      console.log(`[ConfigLoader]   - Accepted`);
+      eligibleProfiles.push(profile);
+    }
 
     if (eligibleProfiles.length === 0) {
+      console.log(`[ConfigLoader] No eligible profiles found`);
       return null;
     }
 

@@ -19,9 +19,9 @@ export type User = z.infer<typeof UserSchema>;
 
 // Model types
 export const ModelSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  displayName: z.string(),
+  id: z.string(), // Unique identifier for this model configuration
+  providerModelId: z.string(), // The actual model ID to send to the provider API
+  displayName: z.string(), // User-facing display name
   provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible']),
   deprecated: z.boolean(),
   contextWindow: z.number(),

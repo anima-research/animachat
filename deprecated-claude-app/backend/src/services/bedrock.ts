@@ -59,7 +59,7 @@ export class BedrockService {
       
       // Build the request body based on model version
       const requestBody = this.buildRequestBody(modelId, claudeMessages, systemPrompt, settings, stopSequences);
-      bedrockModelId = this.getBedrockModelId(modelId);
+      bedrockModelId = modelId; // modelId is already the provider model ID from config
 
       requestId = `bedrock-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
@@ -178,7 +178,8 @@ export class BedrockService {
     stopSequences?: string[]
   ): any {
     // Claude 3 models use Messages API format
-    if (modelId.startsWith('claude-3')) {
+    // Check if it's a Claude 3 model by looking for the pattern in the Bedrock model ID
+    if (modelId.includes('claude-3')) {
       return {
         anthropic_version: 'bedrock-2023-05-31',
         messages,
@@ -218,35 +219,11 @@ export class BedrockService {
     };
   }
 
-  private getBedrockModelId(modelId: string): string {
-    // For Bedrock models, the ID is already the full Bedrock model ID
-    // If it starts with 'anthropic.', use it as-is, otherwise map it
-    if (modelId.startsWith('anthropic.')) {
-      return modelId;
-    }
-    
-          // Fallback mapping for any legacy IDs
-      const modelMap: Record<string, string> = {
-        'claude-opus-4-1-20250805': 'anthropic.claude-opus-4-1-20250805-v1:0',
-        'claude-opus-4-20250514': 'anthropic.claude-opus-4-20250514-v1:0',
-        'claude-sonnet-4-20250514': 'anthropic.claude-sonnet-4-20250514-v1:0',
-        'claude-3-7-sonnet-20250219': 'anthropic.claude-3-7-sonnet-20250219-v1:0',
-        'claude-3-5-haiku-20241022': 'anthropic.claude-3-5-haiku-20241022-v1:0',
-        'claude-3-5-sonnet-20240620': 'anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'claude-3-5-sonnet-20241022': 'anthropic.claude-3-5-sonnet-20241022-v1:0',    
-        'claude-3-opus-20240229': 'anthropic.claude-3-opus-20240229-v1:0',
-        'claude-3-sonnet-20240229': 'anthropic.claude-3-sonnet-20240229-v1:0',
-      'claude-2.1': 'anthropic.claude-v2:1',
-      'claude-2.0': 'anthropic.claude-v2',
-      'claude-instant-1.2': 'anthropic.claude-instant-v1'
-    };
 
-    return modelMap[modelId] || modelId;
-  }
 
   private extractContentFromChunk(modelId: string, chunkData: any): string | null {
-    // Claude 3 models
-    if (modelId.startsWith('claude-3')) {
+    // Claude 3 models - check if the Bedrock model ID contains 'claude-3'
+    if (modelId.includes('claude-3')) {
       if (chunkData.type === 'content_block_delta' && chunkData.delta?.text) {
         return chunkData.delta.text;
       }
@@ -261,8 +238,8 @@ export class BedrockService {
   }
 
   private isStreamComplete(modelId: string, chunkData: any): boolean {
-    // Claude 3 models
-    if (modelId.startsWith('claude-3')) {
+    // Claude 3 models - check if the Bedrock model ID contains 'claude-3'
+    if (modelId.includes('claude-3')) {
       return chunkData.type === 'message_stop';
     } else {
       // Claude 2 and Instant
