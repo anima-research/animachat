@@ -191,6 +191,23 @@
           @click="showRawImportDialog = true"
           title="Import raw messages backup"
         /> -->
+        
+        <v-btn
+          v-if="currentConversation"
+          icon="mdi-export"
+          variant="text"
+          @click="exportConversation(currentConversation.id)"
+          title="Export conversation"
+        />
+        
+        <v-btn
+          v-if="messages.length > 0"
+          :icon="treeDrawer ? 'mdi-graph' : 'mdi-graph-outline'"
+          :color="treeDrawer ? 'primary' : undefined"
+          variant="text"
+          @click="treeDrawer = !treeDrawer"
+          title="Toggle conversation tree"
+        />
       </v-app-bar>
 
       <!-- Messages Area -->
@@ -359,6 +376,41 @@
       </v-container>
     </v-main>
 
+    <!-- Right sidebar with conversation tree -->
+    <v-navigation-drawer
+      v-model="treeDrawer"
+      location="right"
+      :width="400"
+      permanent
+    >
+      <v-toolbar density="compact">
+        <v-toolbar-title>Conversation Tree</v-toolbar-title>
+        <v-spacer />
+        <v-btn
+          icon="mdi-close"
+          size="small"
+          variant="text"
+          @click="treeDrawer = false"
+        />
+      </v-toolbar>
+      
+      <ConversationTree
+        v-if="messages.length > 0"
+        :messages="messages"
+        :current-message-id="currentMessageId"
+        :current-branch-id="currentBranchId"
+        @navigate-to-branch="navigateToTreeBranch"
+        class="flex-grow-1"
+      />
+      
+      <v-container v-else class="d-flex align-center justify-center" style="height: calc(100% - 48px);">
+        <div class="text-center text-grey">
+          <v-icon size="48">mdi-graph-outline</v-icon>
+          <div class="mt-2">No messages yet</div>
+        </div>
+      </v-container>
+    </v-navigation-drawer>
+
     <!-- Dialogs -->
     <ImportDialogV2
       v-model="importDialog"
@@ -430,6 +482,7 @@ import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
+import ConversationTree from '@/components/ConversationTree.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -437,6 +490,7 @@ const store = useStore();
 
 const drawer = ref(true);
 const rail = ref(false);
+const treeDrawer = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
@@ -458,6 +512,25 @@ const selectedResponder = ref<string>('');
 const conversations = computed(() => store.state.conversations);
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
+
+// For tree view - identify current position
+const currentMessageId = computed(() => {
+  const visibleMessages = messages.value;
+  if (visibleMessages.length > 0) {
+    const lastMessage = visibleMessages[visibleMessages.length - 1];
+    return lastMessage.id;
+  }
+  return undefined;
+});
+
+const currentBranchId = computed(() => {
+  const visibleMessages = messages.value;
+  if (visibleMessages.length > 0) {
+    const lastMessage = visibleMessages[visibleMessages.length - 1];
+    return lastMessage.activeBranchId;
+  }
+  return undefined;
+});
 const currentModel = computed(() => store.currentModel);
 
 
@@ -679,6 +752,11 @@ async function editMessage(messageId: string, branchId: string, content: string)
 }
 
 function switchBranch(messageId: string, branchId: string) {
+  store.switchBranch(messageId, branchId);
+}
+
+function navigateToTreeBranch(messageId: string, branchId: string) {
+  console.log('Navigating to branch:', messageId, branchId);
   store.switchBranch(messageId, branchId);
 }
 
