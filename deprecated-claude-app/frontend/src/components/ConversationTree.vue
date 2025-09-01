@@ -110,13 +110,21 @@ const treeData = computed(() => {
     // Get participant name - similar to MessageComponent logic
     let participantName: string;
     
-    if (props.participants && branch.participantId) {
+    if (props.participants && props.participants.length > 0 && branch.participantId) {
       // Look up participant by ID
       const participant = props.participants.find(p => p.id === branch.participantId);
-      participantName = participant ? participant.name : branch.participantId;
+      if (participant) {
+        participantName = participant.name;
+      } else {
+        // If we have participants but can't find this one, use role-based fallback
+        participantName = branch.role === 'user' ? 'User' : (branch.model || 'Assistant');
+      }
+    } else if (branch.participantId && !props.participants) {
+      // Participants not loaded yet - use role-based naming instead of showing ID
+      participantName = branch.role === 'user' ? 'User' : (branch.model || 'Assistant');
     } else {
-      // Fallback to role-based naming
-      participantName = branch.role === 'user' ? 'User' : 'Assistant';
+      // Standard conversation - use role-based naming
+      participantName = branch.role === 'user' ? 'User' : (branch.model || 'Assistant');
     }
     
     const node: TreeNode = {
@@ -473,6 +481,7 @@ watch([
   () => props.currentBranchId,
   () => props.selectedParentMessageId,
   () => props.selectedParentBranchId,
+  () => props.participants,
   compactMode
 ], () => {
   renderTree();
