@@ -206,14 +206,18 @@
         
         <div v-else>
           <MessageComponent
-            v-for="message in messages"
+            v-for="(message, index) in messages"
             :key="message.id"
             :message="message"
             :participants="participants"
+            :is-selected-parent="selectedBranchForParent?.messageId === message.id && 
+                                 selectedBranchForParent?.branchId === message.activeBranchId"
+            :is-last-message="index === messages.length - 1"
             @regenerate="regenerateMessage"
             @edit="editMessage"
             @switch-branch="switchBranch"
             @delete="deleteMessage"
+            @select-as-parent="selectBranchAsParent"
           />
           
           <div v-if="isStreaming" class="d-flex align-center mt-4">
@@ -230,10 +234,23 @@
 
       <!-- Input Area -->
       <v-container v-if="currentConversation" class="pa-4">
+        <!-- Branch selection indicator -->
+        <v-alert
+          v-if="selectedBranchForParent"
+          type="info"
+          density="compact"
+          class="mb-3"
+          closable
+          @click:close="cancelBranchSelection"
+        >
+          <v-icon size="small" class="mr-2">mdi-source-branch</v-icon>
+          Branching from selected message. New messages will create alternative branches.
+        </v-alert>
+        
         <div v-if="currentConversation.format !== 'standard'" class="mb-2 d-flex gap-2">
           <v-select
             v-model="selectedParticipant"
-            :items="userParticipants"
+            :items="selectedBranchForParent ? allParticipants : userParticipants"
             item-title="name"
             item-value="id"
             label="Speaking as"
@@ -241,7 +258,15 @@
             variant="outlined"
             hide-details
             class="flex-grow-1"
-          />
+          >
+            <template v-if="selectedBranchForParent" v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:prepend>
+                  <v-icon :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'" />
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
           <v-select
             v-model="selectedResponder"
             :items="responderOptions"
@@ -422,6 +447,9 @@ const messageInput = ref('');
 const isStreaming = ref(false);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
+
+// Branch selection state
+const selectedBranchForParent = ref<{ messageId: string; branchId: string } | null>(null);
 const messagesContainer = ref<HTMLElement>();
 const participants = ref<Participant[]>([]);
 const selectedParticipant = ref<string>('');
@@ -440,6 +468,11 @@ const selectedResponderName = computed(() => {
 
 const userParticipants = computed(() => {
   return participants.value.filter(p => p.type === 'user' && p.isActive);
+});
+
+// For branching mode, allow sending as any participant
+const allParticipants = computed(() => {
+  return participants.value.filter(p => p.isActive);
 });
 
 const assistantParticipants = computed(() => {
@@ -551,6 +584,7 @@ async function sendMessage() {
   
   console.log('ConversationView sendMessage:', content);
   console.log('Current visible messages:', messages.value.length);
+  console.log('Selected parent branch:', selectedBranchForParent.value);
   
   const attachmentsCopy = [...attachments.value];
   messageInput.value = '';
@@ -573,8 +607,16 @@ async function sendMessage() {
       participantId = selectedParticipant.value || undefined;
       responderId = selectedResponder.value || undefined;
     }
+    
+    // Pass the selected parent branch if one is selected
+    const parentBranchId = selectedBranchForParent.value?.branchId;
       
-    await store.sendMessage(content, participantId, responderId, attachmentsCopy);
+    await store.sendMessage(content, participantId, responderId, attachmentsCopy, parentBranchId);
+    
+    // Clear selection after successful send
+    if (selectedBranchForParent.value) {
+      selectedBranchForParent.value = null;
+    }
   } finally {
     isStreaming.value = false;
   }
@@ -584,6 +626,7 @@ async function continueGeneration() {
   if (isStreaming.value) return;
   
   console.log('ConversationView continueGeneration');
+  console.log('Selected parent branch:', selectedBranchForParent.value);
   
   isStreaming.value = true;
   
@@ -599,8 +642,16 @@ async function continueGeneration() {
       responderId = selectedResponder.value || undefined;
     }
     
+    // Pass the selected parent branch if one is selected
+    const parentBranchId = selectedBranchForParent.value?.branchId;
+    
     // Send empty message to trigger AI response
-    await store.continueGeneration(responderId);
+    await store.continueGeneration(responderId, parentBranchId);
+    
+    // Clear selection after successful continue
+    if (selectedBranchForParent.value) {
+      selectedBranchForParent.value = null;
+    }
   } finally {
     isStreaming.value = false;
   }
@@ -789,6 +840,20 @@ async function deleteMessage(messageId: string, branchId: string) {
   if (confirm('Are you sure you want to delete this message and all its replies?')) {
     await store.deleteMessage(messageId, branchId);
   }
+}
+
+function selectBranchAsParent(messageId: string, branchId: string) {
+  // Toggle selection - if already selected, deselect
+  if (selectedBranchForParent.value?.messageId === messageId && 
+      selectedBranchForParent.value?.branchId === branchId) {
+    selectedBranchForParent.value = null;
+  } else {
+    selectedBranchForParent.value = { messageId, branchId };
+  }
+}
+
+function cancelBranchSelection() {
+  selectedBranchForParent.value = null;
 }
 
 async function loadParticipants() {

@@ -131,18 +131,56 @@ async function handleChatMessage(
     console.log('Processing attachments:', attachments.map(a => ({ fileName: a.fileName, size: a.fileSize })));
   }
   
-  const userMessage = await db.createMessage(
-    message.conversationId,
-    message.content,
-    'user',
-    undefined, // model
-    message.parentBranchId, // explicit parent
-    message.participantId, // participant ID
-    attachments
-  );
+  // Check if we should add to an existing message or create a new one
+  let userMessage: any;
   
-  console.log('Created user message:', userMessage.id, 'with branch:', userMessage.branches[0]?.id, 'parent:', userMessage.branches[0]?.parentBranchId);
-  console.log('User message has attachments?', userMessage.branches[0]?.attachments?.length || 0);
+  if (message.parentBranchId) {
+    // Check if this parent branch has siblings (i.e., we're branching from within history)
+    const allMessages = await db.getConversationMessages(message.conversationId);
+    const messageWithSiblings = allMessages.find(msg => 
+      msg.branches.some(b => b.parentBranchId === message.parentBranchId)
+    );
+    
+    if (messageWithSiblings) {
+      // Add as a new branch to the existing message that contains siblings
+      console.log('Adding branch to existing message:', messageWithSiblings.id);
+      userMessage = await db.addMessageBranch(
+        messageWithSiblings.id,
+        message.content,
+        'user',
+        message.parentBranchId,
+        undefined, // model
+        message.participantId,
+        attachments
+      );
+    } else {
+      // No siblings exist yet, create a new message
+      console.log('Creating new message (no siblings found)');
+      userMessage = await db.createMessage(
+        message.conversationId,
+        message.content,
+        'user',
+        undefined, // model
+        message.parentBranchId,
+        message.participantId,
+        attachments
+      );
+    }
+  } else {
+    // No parent specified, create new message as usual
+    userMessage = await db.createMessage(
+      message.conversationId,
+      message.content,
+      'user',
+      undefined, // model
+      message.parentBranchId,
+      message.participantId,
+      attachments
+    );
+  }
+  
+  console.log('Created/updated user message:', userMessage.id, 'with branch:', userMessage.branches[userMessage.branches.length - 1]?.id);
+  console.log('User message has attachments?', userMessage.branches[userMessage.branches.length - 1]?.attachments?.length || 0);
 
   // Send confirmation
   ws.send(JSON.stringify({
@@ -178,17 +216,41 @@ async function handleChatMessage(
   }
 
   // Create assistant message placeholder with correct parent
-  const userBranch = userMessage.branches[0];
-  const assistantMessage = await db.createMessage(
-    message.conversationId,
-    '',
-    'assistant',
-    responder.model || conversation.model,
-    userBranch?.id, // Parent is the user message branch we just created
-    responder.id // Responder's participant ID
+  const userBranch = userMessage.branches[userMessage.branches.length - 1]; // Get the last branch (the one we just added)
+  
+  // Check if we should add to an existing message or create a new one
+  let assistantMessage: any;
+  const allMessagesForAssistant = await db.getConversationMessages(message.conversationId);
+  const messageWithAssistantSiblings = allMessagesForAssistant.find(msg => 
+    msg.branches.some(b => b.parentBranchId === userBranch?.id)
   );
   
-  console.log('Created assistant message:', assistantMessage.id, 'with parent:', assistantMessage.branches[0]?.parentBranchId);
+  if (messageWithAssistantSiblings) {
+    // Add as a new branch to the existing message
+    console.log('Adding assistant branch to existing message:', messageWithAssistantSiblings.id);
+    assistantMessage = await db.addMessageBranch(
+      messageWithAssistantSiblings.id,
+      '',
+      'assistant',
+      userBranch?.id,
+      responder.model || conversation.model,
+      responder.id,
+      undefined // no attachments for assistant
+    );
+  } else {
+    // No siblings exist yet, create a new message
+    assistantMessage = await db.createMessage(
+      message.conversationId,
+      '',
+      'assistant',
+      responder.model || conversation.model,
+      userBranch?.id,
+      responder.id
+    );
+  }
+  
+  const assistantBranch = assistantMessage.branches[assistantMessage.branches.length - 1]; // Get the last branch we added
+  console.log('Created/updated assistant message:', assistantMessage.id, 'with branch:', assistantBranch?.id);
 
   // Send assistant message to frontend
   ws.send(JSON.stringify({
@@ -741,17 +803,52 @@ async function handleContinue(
     // Get messages and determine parent
     const messages = await db.getConversationMessages(conversationId);
     
-    // Create assistant message as a continuation
-    const assistantMessage = await db.createMessage(
-      conversationId,
-      '', // empty content initially
-      'assistant',
-      responder.model || conversation.model,
-      parentBranchId || undefined,
-      responder.id
-    );
+    // Check if we should add to an existing message or create a new one
+    let assistantMessage: any;
+    
+    if (parentBranchId) {
+      // Check if this parent branch has siblings
+      const messageWithSiblings = messages.find(msg => 
+        msg.branches.some(b => b.parentBranchId === parentBranchId)
+      );
+      
+      if (messageWithSiblings) {
+        // Add as a new branch to the existing message
+        console.log('Continue: Adding branch to existing message:', messageWithSiblings.id);
+        assistantMessage = await db.addMessageBranch(
+          messageWithSiblings.id,
+          '', // empty content initially
+          'assistant',
+          parentBranchId,
+          responder.model || conversation.model,
+          responder.id,
+          undefined // no attachments
+        );
+      } else {
+        // No siblings exist yet, create a new message
+        console.log('Continue: Creating new message (no siblings found)');
+        assistantMessage = await db.createMessage(
+          conversationId,
+          '', // empty content initially
+          'assistant',
+          responder.model || conversation.model,
+          parentBranchId,
+          responder.id
+        );
+      }
+    } else {
+      // No parent specified, create new message as usual
+      assistantMessage = await db.createMessage(
+        conversationId,
+        '', // empty content initially
+        'assistant',
+        responder.model || conversation.model,
+        undefined,
+        responder.id
+      );
+    }
 
-    const assistantBranch = assistantMessage.branches[0];
+    const assistantBranch = assistantMessage.branches[assistantMessage.branches.length - 1];
 
     // Send initial empty message
     ws.send(JSON.stringify({
@@ -768,8 +865,51 @@ async function handleContinue(
       model: responder.model || conversation.model
     });
 
+    // Build visible history backwards from the parent branch (same as in handleChatMessage)
+    const visibleHistory: Message[] = [];
+    
+    if (parentBranchId) {
+      console.log('Continue: Building visible history backwards from parentBranchId:', parentBranchId);
+      
+      // Build a map for quick lookup
+      const messagesByBranchId = new Map<string, Message>();
+      for (const msg of messages) {
+        for (const branch of msg.branches) {
+          messagesByBranchId.set(branch.id, msg);
+        }
+      }
+      
+      // Start from the specified parent and work backwards
+      let currentParentBranchId: string | undefined = parentBranchId;
+      
+      while (currentParentBranchId && currentParentBranchId !== 'root') {
+        const parentMessage = messagesByBranchId.get(currentParentBranchId);
+        if (!parentMessage) {
+          console.log('Could not find message for branch:', currentParentBranchId);
+          break;
+        }
+        
+        // Add to beginning of history (we're building backwards)
+        visibleHistory.unshift(parentMessage);
+        
+        // Find the branch and get its parent
+        const branch = parentMessage.branches.find(b => b.id === currentParentBranchId);
+        if (!branch) {
+          console.log('Could not find branch:', currentParentBranchId, 'in message:', parentMessage.id);
+          break;
+        }
+        
+        currentParentBranchId = branch.parentBranchId;
+      }
+      
+      console.log('Continue: Final visible history length:', visibleHistory.length);
+    } else {
+      // No parent specified, use all messages (default behavior)
+      visibleHistory.push(...messages);
+    }
+    
     // Include the new assistant message in the messages array for prefill formatting
-    const messagesWithNewAssistant = [...messages, assistantMessage];
+    const messagesWithNewAssistant = [...visibleHistory, assistantMessage];
 
     // Stream the completion
     await inferenceService.streamCompletion(

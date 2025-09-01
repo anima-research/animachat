@@ -2,11 +2,13 @@
   <v-card
     :class="[
       'mb-4',
-      message.branches[branchIndex].role === 'user' ? 'ml-auto' : 'mr-auto'
+      message.branches[branchIndex].role === 'user' ? 'ml-auto' : 'mr-auto',
+      isSelectedParent ? 'selected-parent' : ''
     ]"
     :style="{
       maxWidth: '80%',
-      alignSelf: message.branches[branchIndex].role === 'user' ? 'flex-end' : 'flex-start'
+      alignSelf: message.branches[branchIndex].role === 'user' ? 'flex-end' : 'flex-start',
+      border: isSelectedParent ? '2px solid rgb(var(--v-theme-info))' : undefined
     }"
     :color="message.branches[branchIndex].role === 'user' ? 'primary' : 'surface'"
     :variant="message.branches[branchIndex].role === 'user' ? 'tonal' : 'elevated'"
@@ -25,6 +27,16 @@
         <v-spacer />
         
         <div v-if="!isEditing" class="d-flex gap-1">
+          <v-btn
+            v-if="!isLastMessage"
+            :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
+            :color="isSelectedParent ? 'info' : undefined"
+            size="x-small"
+            variant="text"
+            @click="$emit('select-as-parent', message.id, currentBranch.id)"
+            title="Branch from here"
+          />
+          
           <v-btn
             icon="mdi-pencil"
             size="x-small"
@@ -160,6 +172,8 @@ import type { Message, MessageBranch, Participant } from '@deprecated-claude/sha
 const props = defineProps<{
   message: Message;
   participants?: Participant[];
+  isSelectedParent?: boolean;
+  isLastMessage?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -167,6 +181,7 @@ const emit = defineEmits<{
   edit: [messageId: string, branchId: string, content: string];
   'switch-branch': [messageId: string, branchId: string];
   delete: [messageId: string, branchId: string];
+  'select-as-parent': [messageId: string, branchId: string];
 }>();
 
 const isEditing = ref(false);
