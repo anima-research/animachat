@@ -116,7 +116,21 @@ export class Database {
         }
       
       case 'api_key_created': {
+        // Handle old event format (just apiKeyId, userId, provider)
+        // These events don't contain enough data to reconstruct the API key
+        // So we'll just skip them - the API keys will need to be re-added
+        if ('apiKeyId' in event.data && !('apiKey' in event.data)) {
+          console.warn(`Skipping old format api_key_created event for key ${event.data.apiKeyId} - API keys need to be re-added`);
+          break;
+        }
+        
+        // Handle new format (if we ever change to store full apiKey object)
         const { apiKey, userId, masked } = event.data;
+        if (!apiKey) {
+          console.error('Skipping corrupted api_key_created event - missing apiKey data');
+          break;
+        }
+        
         const apiKeyWithDates = {
           ...apiKey,
           createdAt: new Date(apiKey.createdAt)
