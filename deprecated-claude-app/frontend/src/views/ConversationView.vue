@@ -107,6 +107,11 @@
       <template v-slot:append>
         <v-list density="compact" nav>
           <v-list-item
+            prepend-icon="mdi-help-circle"
+            title="Getting Started"
+            @click="welcomeDialog = true"
+          />
+          <v-list-item
             prepend-icon="mdi-information"
             title="About The Arc"
             @click="$router.push('/about')"
@@ -393,6 +398,13 @@
       :current-participants="participants"
       @update="updateParticipants"
     />
+    
+    <WelcomeDialog
+      v-model="welcomeDialog"
+      @open-settings="settingsDialog = true"
+      @open-import="importDialog = true"
+      @new-conversation="createConversation"
+    />
   </v-layout>
 </template>
 
@@ -408,6 +420,7 @@ import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
 import ParticipantsDialog from '@/components/ParticipantsDialog.vue';
 import ArcLogo from '@/components/ArcLogo.vue';
+import WelcomeDialog from '@/components/WelcomeDialog.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -420,6 +433,7 @@ const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
 const participantsDialog = ref(false);
 const showRawImportDialog = ref(false);
+const welcomeDialog = ref(false);
 const rawImportData = ref('');
 const messageInput = ref('');
 const isStreaming = ref(false);
@@ -464,6 +478,12 @@ onMounted(async () => {
   await store.loadModels();
   await store.loadConversations();
   store.connectWebSocket();
+  
+  // Show welcome dialog on first visit
+  const hideWelcome = localStorage.getItem('hideWelcomeDialog');
+  if (!hideWelcome) {
+    welcomeDialog.value = true;
+  }
   
   // Load conversation from route
   if (route.params.id) {
