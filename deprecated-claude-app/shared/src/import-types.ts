@@ -48,6 +48,7 @@ export const ImportFormatSchema = z.enum([
   'basic_json',
   'anthropic',
   'chrome_extension',
+  'arc_chat',
   'openai',
   'colon_single',
   'colon_double'

@@ -22,6 +22,9 @@ export class ImportParser {
       case 'chrome_extension':
         ({ messages, title, metadata } = await this.parseChromeExtension(content));
         break;
+      case 'arc_chat':
+        ({ messages, title, metadata } = await this.parseArcChat(content));
+        break;
       case 'openai':
         ({ messages, title, metadata } = await this.parseOpenAI(content));
         break;
@@ -35,24 +38,42 @@ export class ImportParser {
         throw new Error(`Unsupported format: ${format}`);
     }
 
-    // Detect participants
-    const participantMap = new Map<string, { role: 'user' | 'assistant' | 'unknown', count: number }>();
+    // For Arc Chat format, use the exported participants directly
+    let detectedParticipants;
+    let suggestedFormat: 'standard' | 'prefill';
     
-    for (const msg of messages) {
-      const name = msg.participantName || (msg.role === 'user' ? 'User' : 'Assistant');
-      const existing = participantMap.get(name) || { role: msg.role === 'system' ? 'unknown' : msg.role, count: 0 };
-      existing.count++;
-      participantMap.set(name, existing);
+    if (format === 'arc_chat' && metadata?.participants) {
+      // Use the participants from the Arc Chat export
+      detectedParticipants = metadata.participants.map((p: any) => ({
+        name: p.name,
+        role: p.type as 'user' | 'assistant' | 'unknown',
+        messageCount: messages.filter(m => m.participantName === p.name).length,
+        model: p.model,
+        settings: p.settings
+      }));
+      
+      // Arc Chat exports already know their format
+      suggestedFormat = metadata.conversation?.format || (detectedParticipants.length > 2 ? 'prefill' : 'standard');
+    } else {
+      // Default participant detection for other formats
+      const participantMap = new Map<string, { role: 'user' | 'assistant' | 'unknown', count: number }>();
+      
+      for (const msg of messages) {
+        const name = msg.participantName || (msg.role === 'user' ? 'User' : 'Assistant');
+        const existing = participantMap.get(name) || { role: msg.role === 'system' ? 'unknown' : msg.role, count: 0 };
+        existing.count++;
+        participantMap.set(name, existing);
+      }
+
+      detectedParticipants = Array.from(participantMap.entries()).map(([name, data]) => ({
+        name,
+        role: data.role,
+        messageCount: data.count
+      }));
+      
+      // Suggest format based on participant count
+      suggestedFormat = detectedParticipants.length > 2 ? 'prefill' : 'standard';
     }
-
-    const detectedParticipants = Array.from(participantMap.entries()).map(([name, data]) => ({
-      name,
-      role: data.role,
-      messageCount: data.count
-    }));
-
-    // Suggest format based on participant count
-    const suggestedFormat = detectedParticipants.length > 2 ? 'prefill' : 'standard';
 
     return {
       format,
@@ -319,6 +340,67 @@ export class ImportParser {
       messages,
       title,
       metadata
+    };
+  }
+
+  private async parseArcChat(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
+    const data = JSON.parse(content);
+    
+    // Arc Chat export format includes conversation, messages, participants, and metadata
+    const conversation = data.conversation;
+    const exportedMessages = data.messages || [];
+    const participants = data.participants || [];
+    
+    const messages: ParsedMessage[] = [];
+    
+    // Process messages - they already have the branch structure
+    for (const msg of exportedMessages) {
+      // Get the active branch content
+      const activeBranch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
+      
+      if (activeBranch && activeBranch.content) {
+        // Find the participant name from the active branch
+        let participantName = activeBranch.participantName;
+        
+        // If no participant name in branch, try to find from participant ID
+        if (!participantName && activeBranch.participantId) {
+          const participant = participants.find((p: any) => p.id === activeBranch.participantId);
+          if (participant) {
+            participantName = participant.name;
+          }
+        }
+        
+        // Fallback to default names based on role
+        if (!participantName) {
+          participantName = activeBranch.role === 'user' ? 'User' : 'Assistant';
+        }
+        
+        const parsedMessage: ParsedMessage = {
+          role: activeBranch.role, // Use role from the branch, not the message
+          content: activeBranch.content,
+          timestamp: msg.createdAt ? new Date(msg.createdAt) : undefined,
+          model: activeBranch.model,
+          participantName: participantName,
+          metadata: {
+            messageId: msg.id,
+            branches: msg.branches,
+            activeBranchId: msg.activeBranchId,
+            attachments: activeBranch.attachments
+          }
+        };
+        messages.push(parsedMessage);
+      }
+    }
+    
+    return {
+      messages,
+      title: conversation?.title || 'Imported from Arc Chat',
+      metadata: {
+        conversation,
+        participants,
+        exportedAt: data.exportedAt,
+        version: data.version
+      }
     };
   }
 

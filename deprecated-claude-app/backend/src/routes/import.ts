@@ -66,8 +66,58 @@ export function importRouter(db: Database): Router {
       const participants = await db.getConversationParticipants(conversation.id);
       const participantMap = new Map<string, string>(); // sourceName -> participantId
 
+      // Special handling for Arc Chat format - restore participants with settings
+      if (importRequest.format === 'arc_chat' && preview.metadata?.participants) {
+        console.log('Arc Chat import - exported participants:', preview.metadata.participants);
+        
+        // Get fresh list of default participants
+        const defaultParticipants = await db.getConversationParticipants(conversation.id);
+        
+        // Remove default assistant participants
+        for (const p of defaultParticipants) {
+          if (p.type === 'assistant') {
+            await db.deleteParticipant(p.id);
+          }
+        }
+        
+        // Recreate participants from export
+        for (const exportedParticipant of preview.metadata.participants) {
+          if (exportedParticipant.type === 'user') {
+            // Map to existing user participant
+            const userParticipant = defaultParticipants.find(p => p.type === 'user');
+            if (userParticipant) {
+              // Update the user participant's name if needed
+              if (exportedParticipant.name !== userParticipant.name) {
+                await db.updateParticipant(userParticipant.id, {
+                  name: exportedParticipant.name
+                });
+              }
+              participantMap.set(exportedParticipant.name, userParticipant.id);
+              console.log(`Mapped user participant: ${exportedParticipant.name} -> ${userParticipant.id}`);
+            }
+          } else {
+            // Create assistant participant with settings
+            const newParticipant = await db.createParticipant(
+              conversation.id,
+              exportedParticipant.name,
+              exportedParticipant.type,
+              exportedParticipant.model
+            );
+            
+            // Update with settings if present
+            if (exportedParticipant.settings) {
+              await db.updateParticipant(newParticipant.id, {
+                settings: exportedParticipant.settings
+              });
+            }
+            
+            participantMap.set(exportedParticipant.name, newParticipant.id);
+            console.log(`Created assistant participant: ${exportedParticipant.name} -> ${newParticipant.id}`);
+          }
+        }
+      }
       // If mappings provided, create/update participants
-      if (importRequest.participantMappings && importRequest.participantMappings.length > 0) {
+      else if (importRequest.participantMappings && importRequest.participantMappings.length > 0) {
         for (const mapping of importRequest.participantMappings) {
           // Find existing participant or create new one
           let participant = participants.find(p => 
@@ -102,6 +152,138 @@ export function importRouter(db: Database): Router {
       const messagesByParentAndRole = new Map<string, string>(); // "parentUuid:role" -> messageId
       
       console.log(`Importing ${preview.messages.length} messages to conversation ${conversation.id}`);
+      
+      // Special handling for Arc Chat format - recreate full branch structure
+      if (importRequest.format === 'arc_chat' && preview.metadata?.conversation) {
+        const exportedMessages = JSON.parse(importRequest.content).messages || [];
+        const branchIdMapping = new Map<string, string>(); // old branch ID -> new branch ID
+        
+        console.log('Arc Chat import - participants map:', Array.from(participantMap.entries()));
+        console.log(`Arc Chat import - processing ${exportedMessages.length} messages`);
+        
+        // Process messages in order to maintain parent-child relationships
+        for (let msgIndex = 0; msgIndex < exportedMessages.length; msgIndex++) {
+          const exportedMsg = exportedMessages[msgIndex];
+          
+          // Create message with all branches
+          const firstBranch = exportedMsg.branches?.[0];
+          if (!firstBranch) {
+            console.log(`Message ${msgIndex} has no branches, skipping`);
+            continue;
+          }
+          
+          // Determine participant for first branch
+          let sourceName = firstBranch.participantName;
+          
+          // If no participant name in branch, try to find from participant ID
+          if (!sourceName && firstBranch.participantId) {
+            const participant = preview.metadata.participants?.find((p: any) => p.id === firstBranch.participantId);
+            if (participant) {
+              sourceName = participant.name;
+            }
+          }
+          
+          // Fallback to default names
+          if (!sourceName) {
+            sourceName = firstBranch.role === 'user' ? 'User' : 'Assistant';
+          }
+          
+          const participantId = participantMap.get(sourceName);
+          console.log(`Message ${msgIndex}: role=${firstBranch.role}, participant=${sourceName}, participantId=${participantId}`);
+          
+          // Map parent branch ID from previous message
+          let mappedParentBranchId = undefined;
+          if (firstBranch.parentBranchId && branchIdMapping.has(firstBranch.parentBranchId)) {
+            mappedParentBranchId = branchIdMapping.get(firstBranch.parentBranchId);
+          }
+          
+          // Create the message with first branch
+          const message = await db.createMessage(
+            conversation.id,
+            firstBranch.content,
+            firstBranch.role, // Use role from the branch
+            firstBranch.model,
+            mappedParentBranchId,
+            participantId,
+            firstBranch.attachments
+          );
+          
+          // Map the first branch ID
+          if (firstBranch.id && message.branches[0]) {
+            branchIdMapping.set(firstBranch.id, message.branches[0].id);
+          }
+          
+          // Track which branch index corresponds to the active branch
+          let activeBranchIndex = 0;
+          
+          // Add remaining branches
+          for (let i = 1; i < exportedMsg.branches.length; i++) {
+            const branch = exportedMsg.branches[i];
+            
+            // Determine participant for this branch
+            let branchParticipantName = branch.participantName;
+            
+            // If no participant name in branch, try to find from participant ID
+            if (!branchParticipantName && branch.participantId) {
+              const participant = preview.metadata.participants?.find((p: any) => p.id === branch.participantId);
+              if (participant) {
+                branchParticipantName = participant.name;
+              }
+            }
+            
+            // Fallback to default names
+            if (!branchParticipantName) {
+              branchParticipantName = branch.role === 'user' ? 'User' : 'Assistant';
+            }
+            
+            const branchParticipantId = participantMap.get(branchParticipantName);
+            
+            // Map parent branch ID for this branch
+            let branchParentId = undefined;
+            if (branch.parentBranchId && branchIdMapping.has(branch.parentBranchId)) {
+              branchParentId = branchIdMapping.get(branch.parentBranchId);
+            } else if (mappedParentBranchId) {
+              // Use the same parent as the first branch if not specified
+              branchParentId = mappedParentBranchId;
+            }
+            
+            const updatedMessage = await db.addMessageBranch(
+              message.id,
+              branch.content,
+              branch.role, // Use role from the branch
+              branchParentId,
+              branch.model,
+              branchParticipantId,
+              branch.attachments
+            );
+            
+            // Map this branch ID
+            if (branch.id && updatedMessage) {
+              const newBranch = updatedMessage.branches[updatedMessage.branches.length - 1];
+              if (newBranch) {
+                branchIdMapping.set(branch.id, newBranch.id);
+                
+                // Check if this is the active branch
+                if (branch.id === exportedMsg.activeBranchId) {
+                  activeBranchIndex = i;
+                }
+              }
+            }
+          }
+          
+          // Set active branch if different from default
+          if (exportedMsg.activeBranchId && activeBranchIndex > 0) {
+            const refetchedMessage = await db.getMessageById(message.id);
+            if (refetchedMessage && refetchedMessage.branches[activeBranchIndex]) {
+              await db.setActiveBranch(message.id, refetchedMessage.branches[activeBranchIndex].id);
+            }
+          }
+        }
+        
+        res.json({ conversationId: conversation.id });
+        return;
+      }
+      
       console.log('Messages with branch info:', preview.messages.map((m: any) => ({
         uuid: m.__uuid,
         parent: m.__parentUuid,

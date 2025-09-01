@@ -403,7 +403,7 @@
       v-model="welcomeDialog"
       @open-settings="settingsDialog = true"
       @open-import="importDialog = true"
-      @new-conversation="createConversation"
+      @new-conversation="createNewConversation"
     />
   </v-layout>
 </template>
@@ -558,6 +558,8 @@ async function createNewConversation() {
   const model = store.state.models[0]?.id || 'claude-3-5-sonnet-20241022';
   const conversation = await store.createConversation(model);
   router.push(`/conversation/${conversation.id}`);
+  // Load participants for the new conversation
+  await loadParticipants();
 }
 
 async function sendMessage() {
@@ -792,6 +794,11 @@ async function archiveConversation(id: string) {
 async function updateConversationSettings(updates: Partial<Conversation>) {
   if (currentConversation.value) {
     await store.updateConversation(currentConversation.value.id, updates);
+    
+    // If format changed, reload participants to get the new defaults
+    if ('format' in updates) {
+      await loadParticipants();
+    }
   }
 }
 
