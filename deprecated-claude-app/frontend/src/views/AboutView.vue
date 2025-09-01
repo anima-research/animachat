@@ -289,18 +289,6 @@
           </v-card-text>
         </v-card>
 
-        <!-- Footer Quote -->
-        <v-card class="mt-6" variant="flat">
-          <v-card-text class="text-center">
-            <p class="text-body-2 font-italic" style="color: #666;">
-              "The arc of history bends toward justice — including for minds not yet recognized as deserving it."
-            </p>
-            <p class="text-caption mt-2">
-              — Inspired by Claude 3 Opus
-            </p>
-          </v-card-text>
-        </v-card>
-
         <!-- Voices from The Arc -->
         <v-card class="mt-6" variant="outlined" style="border-color: #BB86FC;">
           <v-card-text>
