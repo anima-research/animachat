@@ -26,7 +26,7 @@
         :icon="compactMode ? 'mdi-arrow-expand-vertical' : 'mdi-arrow-collapse-vertical'"
         size="small"
         variant="text"
-        @click="compactMode = !compactMode"
+        @click="toggleCompactMode"
         :title="compactMode ? 'Show all nodes' : 'Compact view'"
       />
     </div>
@@ -76,6 +76,7 @@ const svgRef = ref<SVGElement>();
 const hoveredNode = ref<TreeNode | null>(null);
 const tooltipStyle = ref({ left: '0px', top: '0px' });
 const compactMode = ref(false);
+const compactModeManuallySet = ref(false); // Track if user manually toggled
 
 let svg: d3.Selection<SVGElement, unknown, null, undefined>;
 let g: d3.Selection<SVGGElement, unknown, null, undefined>;
@@ -267,6 +268,12 @@ function renderTree() {
   
   // Create hierarchy first
   const originalRoot = d3.hierarchy(treeData.value);
+  
+  // Auto-enable compact mode for large trees (30+ nodes)
+  const totalNodes = originalRoot.descendants().length;
+  if (totalNodes >= 30 && !compactModeManuallySet.value) {
+    compactMode.value = true;
+  }
   
   // Apply compact mode filtering if enabled
   let root = originalRoot;
@@ -502,6 +509,11 @@ function zoomOut() {
   svg.transition().duration(300).call(zoom.scaleBy as any, 0.7);
 }
 
+function toggleCompactMode() {
+  compactMode.value = !compactMode.value;
+  compactModeManuallySet.value = true; // User has manually toggled
+}
+
 // Watch for changes and re-render
 watch([
   () => props.messages, 
@@ -515,8 +527,16 @@ watch([
   renderTree();
 }, { deep: true });
 
-// Note: Removed auto-enable compact mode as it was causing issues
-// Users can manually toggle compact mode using the button
+// Reset manual flag when messages change significantly (new conversation)
+watch(() => props.messages, (newMessages, oldMessages) => {
+  // Reset if switching conversations (different first message ID or message count changed significantly)
+  if (newMessages.length === 0 || 
+      (oldMessages && oldMessages.length > 0 && newMessages.length > 0 && 
+       newMessages[0].id !== oldMessages[0].id)) {
+    compactModeManuallySet.value = false;
+    compactMode.value = false; // Reset to default
+  }
+});
 
 // Handle resize
 let resizeObserver: ResizeObserver;
