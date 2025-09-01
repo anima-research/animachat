@@ -281,11 +281,11 @@
               <div class="d-flex align-center">
                 <v-icon 
                   :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#9c27b0' : getModelColor(item.raw.model)"
+                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
                   size="small"
                   class="mr-2"
                 />
-                <span :style="item.raw.type === 'user' ? 'color: #9c27b0; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
                   {{ item.raw.name }}
                 </span>
               </div>
@@ -295,11 +295,11 @@
                 <template v-slot:prepend>
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                    :color="item.raw.type === 'user' ? '#9c27b0' : getModelColor(item.raw.model)"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
                   />
                 </template>
                 <template v-slot:title>
-                  <span :style="item.raw.type === 'user' ? 'color: #9c27b0; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
                 </template>
@@ -321,11 +321,11 @@
               <div class="d-flex align-center">
                 <v-icon 
                   :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#9c27b0' : getModelColor(item.raw.model)"
+                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
                   size="small"
                   class="mr-2"
                 />
-                <span :style="item.raw.type === 'user' ? 'color: #9c27b0; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
                   {{ item.raw.name }}
                 </span>
               </div>
@@ -335,11 +335,11 @@
                 <template v-slot:prepend>
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                    :color="item.raw.type === 'user' ? '#9c27b0' : getModelColor(item.raw.model)"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
                   />
                 </template>
                 <template v-slot:title>
-                  <span :style="item.raw.type === 'user' ? 'color: #9c27b0; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
                 </template>
@@ -398,7 +398,7 @@
             
             <v-btn
               :disabled="isStreaming"
-              :color="currentConversation?.format === 'standard' ? 'grey' : 'secondary'"
+              :color="continueButtonColor"
               icon="mdi-robot"
               variant="text"
               :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
@@ -605,13 +605,33 @@ const assistantParticipants = computed(() => {
 });
 
 const responderOptions = computed(() => {
-  const options = [{ id: '', name: 'No response' }];
-  // Map assistant participants to ensure we show their names
+  const options = [{ id: '', name: 'No response', type: 'none' as any }];
+  // Include full participant objects to have access to type and model
   const assistantOptions = assistantParticipants.value.map(p => ({
     id: p.id,
-    name: p.name
+    name: p.name,
+    type: p.type,
+    model: p.model
   }));
   return options.concat(assistantOptions);
+});
+
+const continueButtonColor = computed(() => {
+  if (currentConversation.value?.format === 'standard') {
+    // For standard conversations, use the model color
+    return getModelColor(currentConversation.value?.model);
+  }
+  
+  // For multi-participant, find the selected responder and get their color
+  if (selectedResponder.value) {
+    const responder = participants.value.find(p => p.id === selectedResponder.value);
+    if (responder && responder.type === 'assistant') {
+      return getModelColor(responder.model);
+    }
+  }
+  
+  // Default fallback
+  return '#9e9e9e';
 });
 
 // Watch for new conversations and load their participants

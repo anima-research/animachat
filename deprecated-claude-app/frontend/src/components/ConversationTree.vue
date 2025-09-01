@@ -319,11 +319,11 @@ function renderTree() {
     .style('stroke', d => {
       // Color edges based on whether they're in the active path
       const targetId = `${d.target.data.messageId}-${d.target.data.branchId}`;
-      return activePath.has(targetId) ? '#4caf50' : '#ccc';
+      return activePath.has(targetId) ? '#03dac6' : '#757575';
     })
     .style('stroke-width', d => {
       const targetId = `${d.target.data.messageId}-${d.target.data.branchId}`;
-      return activePath.has(targetId) ? 3 : 2;
+      return activePath.has(targetId) ? 4 : 2;
     });
   
   // Add nodes
@@ -340,7 +340,7 @@ function renderTree() {
     .style('fill', d => {
       // Node fill based on role and model
       if (d.data.role === 'user') {
-        return '#9c27b0'; // Purple for users
+        return '#412961'; // Primary theme color for users
       }
       
       // For assistants, use model color
@@ -375,18 +375,18 @@ function renderTree() {
       if (props.selectedParentMessageId && props.selectedParentBranchId &&
           d.data.messageId === props.selectedParentMessageId && 
           d.data.branchId === props.selectedParentBranchId) {
-        return '#1976d2'; // Selected parent - blue outline
+        return '#2196f3'; // Selected parent - blue outline
       }
       
       // If no selected parent, show current position
       if (!props.selectedParentMessageId && 
           d.data.messageId === props.currentMessageId && 
           d.data.branchId === props.currentBranchId) {
-        return '#1976d2'; // Current position - blue outline
+        return '#2196f3'; // Current position - blue outline
       }
       
       if (activePath.has(nodeId)) {
-        return '#4caf50'; // Active path - green outline
+        return '#03dac6'; // Active path - green outline
       }
       return 'none';
     })
