@@ -143,24 +143,16 @@ const treeData = computed(() => {
   }
   
   // Build tree from root branches
-  console.log('=== BUILDING TREE ===');
-  console.log('Total messages:', props.messages.length);
-  let totalBranches = 0;
   for (const message of props.messages) {
-    totalBranches += message.branches.length;
     for (const branch of message.branches) {
       if (!branch.parentBranchId || branch.parentBranchId === 'root') {
-        console.log(`Found root branch: ${branch.id} (role=${branch.role})`);
-        const node = buildNode(branch.id, 0);
+        const node = buildNode(branch.id);
         if (node) {
           rootBranches.push(node);
         }
       }
     }
   }
-  console.log(`Total branches in messages: ${totalBranches}`);
-  console.log(`Processed branches: ${processedBranches.size}`);
-  console.log(`Root branches found: ${rootBranches.length}`);
   
   // Return single root or create virtual root for multiple roots
   if (rootBranches.length === 1) {
@@ -259,41 +251,6 @@ function renderTree() {
   // Create hierarchy first
   const originalRoot = d3.hierarchy(treeData.value);
   
-  // Store ALL original data about nodes before any filtering
-  const originalNodeData = new Map<string, { totalChildCount: number, visibleChildCount: number }>();
-  
-  // First pass: count ALL children for each branch in the raw message data
-  if (props.messages) {
-    for (const message of props.messages) {
-      for (const branch of message.branches) {
-        const nodeId = `${message.id}-${branch.id}`;
-        
-        // Count ALL child branches this branch has (not just active ones)
-        let totalChildCount = 0;
-        let visibleChildCount = 0;
-        
-        // Look for ALL messages whose branches have this branch as parent
-        for (const otherMessage of props.messages) {
-          for (const otherBranch of otherMessage.branches) {
-            if (otherBranch.parentBranchId === branch.id) {
-              totalChildCount++;
-              // Count if this child is on the active path (will be visible in tree)
-              if (otherMessage.activeBranchId === otherBranch.id) {
-                visibleChildCount++;
-              }
-            }
-          }
-        }
-        
-        originalNodeData.set(nodeId, { totalChildCount, visibleChildCount });
-        
-        if (totalChildCount > 0) {
-          console.log(`Original data - Node ${nodeId}: total=${totalChildCount}, wouldBeVisible=${visibleChildCount}`);
-        }
-      }
-    }
-  }
-  
   // Apply compact mode filtering if enabled
   let root = originalRoot;
   if (compactMode.value) {
@@ -360,56 +317,11 @@ function renderTree() {
     .attr('class', 'node')
     .attr('transform', d => `translate(${d.x + 50},${d.y + 50})`);
   
-  // Determine which nodes have hidden children
-  const nodesWithHiddenChildren = new Set<string>();
-  
-  // First, count actual visible children for each node in current tree
-  const visibleChildCount = new Map<string, number>();
-  node.each(function(d) {
-    const nodeId = `${d.data.messageId}-${d.data.branchId}`;
-    visibleChildCount.set(nodeId, d.children ? d.children.length : 0);
-  });
-  
-  // Now check each node to see if it has hidden children
-  node.each(function(d) {
-    const nodeId = `${d.data.messageId}-${d.data.branchId}`;
-    const originalData = originalNodeData.get(nodeId);
-    const currentVisibleChildren = visibleChildCount.get(nodeId) || 0;
-    
-    let hasHiddenChildren = false;
-    
-    if (originalData) {
-      // In compact mode: check if we're hiding some of the visible children
-      if (compactMode.value) {
-        // Compare against what would normally be visible (not total)
-        if (originalData.visibleChildCount > currentVisibleChildren) {
-          hasHiddenChildren = true;
-          console.log(`Node ${nodeId}: HIDDEN (compact) - wouldBeVisible=${originalData.visibleChildCount}, currentVisible=${currentVisibleChildren}`);
-        }
-      } else {
-        // In normal mode: check if there are branches not on active path
-        if (originalData.totalChildCount > originalData.visibleChildCount) {
-          hasHiddenChildren = true;
-          console.log(`Node ${nodeId}: HIDDEN (collapsed branches) - total=${originalData.totalChildCount}, visible=${originalData.visibleChildCount}`);
-        }
-      }
-    }
-    
-    if (hasHiddenChildren) {
-      nodesWithHiddenChildren.add(nodeId);
-    }
-  });
-  
   // Add circles for nodes with outlines
   node.append('circle')
     .attr('r', baseNodeRadius)
     .style('fill', d => {
-      const nodeId = `${d.data.messageId}-${d.data.branchId}`;
-      // Make nodes with hidden children yellow for debugging
-      if (nodesWithHiddenChildren.has(nodeId)) {
-        return '#ffc107'; // Yellow for nodes with hidden children
-      }
-      // Node fill based on role
+      // Node fill based on role only
       return d.data.role === 'user' ? '#9c27b0' : '#757575';
     })
     .style('stroke', d => {
@@ -440,36 +352,6 @@ function renderTree() {
     .on('mouseleave', () => {
       hoveredNode.value = null;
     });
-  
-  // Add "+" indicator for nodes with hidden children
-  node.each(function(d) {
-    const nodeId = `${d.data.messageId}-${d.data.branchId}`;
-    if (nodesWithHiddenChildren.has(nodeId)) {
-      // Add a small indicator showing there are hidden children
-      d3.select(this)
-        .append('circle')
-        .attr('cx', baseNodeRadius * 0.7)
-        .attr('cy', baseNodeRadius * 0.7)
-        .attr('r', baseNodeRadius * 0.3)
-        .style('fill', '#ff9800')
-        .style('stroke', 'white')
-        .style('stroke-width', 1)
-        .style('pointer-events', 'none');
-      
-      // Add a small "+" to indicate expandable
-      d3.select(this)
-        .append('text')
-        .attr('x', baseNodeRadius * 0.7)
-        .attr('y', baseNodeRadius * 0.7)
-        .attr('text-anchor', 'middle')
-        .attr('dominant-baseline', 'central')
-        .style('fill', 'white')
-        .style('font-size', `${baseNodeRadius * 0.5}px`)
-        .style('font-weight', 'bold')
-        .style('pointer-events', 'none')
-        .text('+');
-    }
-  });
   
   // Add icons using SVG paths instead of font icons
   const iconScale = baseNodeRadius / 20; // Scale icons based on node size

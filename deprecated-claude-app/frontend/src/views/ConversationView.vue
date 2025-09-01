@@ -759,7 +759,44 @@ function switchBranch(messageId: string, branchId: string) {
 
 function navigateToTreeBranch(messageId: string, branchId: string) {
   console.log('Navigating to branch:', messageId, branchId);
-  store.switchBranch(messageId, branchId);
+  
+  // Build path from target branch back to root
+  const pathToRoot: { messageId: string, branchId: string }[] = [];
+  
+  // Find the target branch and trace back to root
+  let currentBranchId: string | undefined = branchId;
+  
+  while (currentBranchId && currentBranchId !== 'root') {
+    // Find the message containing this branch
+    const message = allMessages.value.find(m => 
+      m.branches.some(b => b.id === currentBranchId)
+    );
+    
+    if (!message) {
+      console.error('Could not find message for branch:', currentBranchId);
+      break;
+    }
+    
+    // Add to path
+    pathToRoot.unshift({ messageId: message.id, branchId: currentBranchId });
+    
+    // Find the branch to get its parent
+    const branch = message.branches.find(b => b.id === currentBranchId);
+    if (!branch) break;
+    
+    currentBranchId = branch.parentBranchId;
+  }
+  
+  console.log('Path to switch:', pathToRoot);
+  
+  // Switch branches along the path
+  for (const { messageId: msgId, branchId: brId } of pathToRoot) {
+    const message = allMessages.value.find(m => m.id === msgId);
+    if (message && message.activeBranchId !== brId) {
+      console.log('Switching branch:', msgId, brId);
+      store.switchBranch(msgId, brId);
+    }
+  }
 }
 
 async function renameConversation(conversation: Conversation) {
