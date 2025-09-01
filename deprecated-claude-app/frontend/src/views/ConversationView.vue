@@ -281,11 +281,11 @@
               <div class="d-flex align-center">
                 <v-icon 
                   :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'assistant' ? getModelColor(item.raw.model) : undefined"
+                  :color="item.raw.type === 'user' ? '#9c27b0' : getModelColor(item.raw.model)"
                   size="small"
                   class="mr-2"
                 />
-                <span :style="item.raw.type === 'assistant' ? `color: ${getModelColor(item.raw.model)}; font-weight: 500;` : ''">
+                <span :style="item.raw.type === 'user' ? 'color: #9c27b0; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
                   {{ item.raw.name }}
                 </span>
               </div>
@@ -295,11 +295,11 @@
                 <template v-slot:prepend>
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                    :color="item.raw.type === 'assistant' ? getModelColor(item.raw.model) : undefined"
+                    :color="item.raw.type === 'user' ? '#9c27b0' : getModelColor(item.raw.model)"
                   />
                 </template>
                 <template v-slot:title>
-                  <span :style="item.raw.type === 'assistant' ? `color: ${getModelColor(item.raw.model)}; font-weight: 500;` : ''">
+                  <span :style="item.raw.type === 'user' ? 'color: #9c27b0; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
                 </template>
@@ -321,11 +321,11 @@
               <div class="d-flex align-center">
                 <v-icon 
                   :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'assistant' ? getModelColor(item.raw.model) : undefined"
+                  :color="item.raw.type === 'user' ? '#9c27b0' : getModelColor(item.raw.model)"
                   size="small"
                   class="mr-2"
                 />
-                <span :style="item.raw.type === 'assistant' ? `color: ${getModelColor(item.raw.model)}; font-weight: 500;` : ''">
+                <span :style="item.raw.type === 'user' ? 'color: #9c27b0; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
                   {{ item.raw.name }}
                 </span>
               </div>
@@ -335,11 +335,11 @@
                 <template v-slot:prepend>
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                    :color="item.raw.type === 'assistant' ? getModelColor(item.raw.model) : undefined"
+                    :color="item.raw.type === 'user' ? '#9c27b0' : getModelColor(item.raw.model)"
                   />
                 </template>
                 <template v-slot:title>
-                  <span :style="item.raw.type === 'assistant' ? `color: ${getModelColor(item.raw.model)}; font-weight: 500;` : ''">
+                  <span :style="item.raw.type === 'user' ? 'color: #9c27b0; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
                 </template>

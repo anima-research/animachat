@@ -1,11 +1,11 @@
 // Model color definitions
 export const MODEL_COLORS: Record<string, string> = {
-  // Anthropic Claude models - Blue shades
-  'claude-3-5-sonnet-20241022': '#1976d2',  // Primary blue
-  'claude-3-5-haiku-20241022': '#42a5f5',   // Light blue
-  'claude-3-opus-20240229': '#0d47a1',      // Deep blue
-  'claude-3-sonnet-20240229': '#1565c0',    // Medium blue
-  'claude-3-haiku-20240307': '#64b5f6',     // Sky blue
+  // Anthropic Claude models - Distinct colors
+  'claude-3-5-sonnet-20241022': '#1976d2',  // Classic blue (flagship)
+  'claude-3-5-haiku-20241022': '#00897b',   // Teal (fast & light)
+  'claude-3-opus-20240229': '#7b1fa2',      // Deep purple (most capable)
+  'claude-3-sonnet-20240229': '#0277bd',    // Ocean blue (balanced)
+  'claude-3-haiku-20240307': '#43a047',     // Green (efficient)
   
   // OpenAI GPT models - Green shades
   'gpt-4o': '#2e7d32',                      // Forest green
@@ -58,8 +58,10 @@ export function getModelColor(model: string | undefined): string {
   // Claude variants
   if (modelLower.includes('claude')) {
     if (modelLower.includes('opus')) return MODEL_COLORS['claude-3-opus-20240229'];
-    if (modelLower.includes('sonnet')) return MODEL_COLORS['claude-3-5-sonnet-20241022'];
-    if (modelLower.includes('haiku')) return MODEL_COLORS['claude-3-5-haiku-20241022'];
+    if (modelLower.includes('3-5-sonnet') || modelLower.includes('3.5-sonnet')) return MODEL_COLORS['claude-3-5-sonnet-20241022'];
+    if (modelLower.includes('3-5-haiku') || modelLower.includes('3.5-haiku')) return MODEL_COLORS['claude-3-5-haiku-20241022'];
+    if (modelLower.includes('sonnet')) return MODEL_COLORS['claude-3-sonnet-20240229'];
+    if (modelLower.includes('haiku')) return MODEL_COLORS['claude-3-haiku-20240307'];
     return MODEL_COLORS['claude-3-5-sonnet-20241022']; // Default Claude color
   }
   
