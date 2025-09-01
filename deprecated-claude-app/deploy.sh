@@ -200,11 +200,36 @@ log "Deployment completed successfully!"
 log "Backend service status:"
 systemctl status $SERVICE_NAME --no-pager -l
 
+log "Setting up configuration files..."
+if [ ! -d /etc/claude-app ]; then
+    mkdir -p /etc/claude-app
+fi
+
+# Copy models.json if it doesn't exist
+if [ ! -f /etc/claude-app/models.json ]; then
+    if [ -f $REMOTE_PATH/backend/config/models.json ]; then
+        cp $REMOTE_PATH/backend/config/models.json /etc/claude-app/models.json
+        chown www-data:www-data /etc/claude-app/models.json
+        chmod 644 /etc/claude-app/models.json
+        log "Copied models.json to /etc/claude-app/"
+    else
+        log "WARNING: models.json not found in deployment package"
+    fi
+else
+    log "models.json already exists in /etc/claude-app/"
+fi
+
+# Note about config.json
+if [ ! -f /etc/claude-app/config.json ]; then
+    log "WARNING: config.json not found in /etc/claude-app/ - please create it"
+fi
+
 log "Don't forget to:"
 log "1. Configure $REMOTE_PATH/backend/.env with your settings"
 log "2. Update the domain name in /etc/nginx/sites-available/claude-app"
 log "3. Set up SSL certificate if needed"
 log "4. Configure firewall rules if necessary"
+log "5. Create /etc/claude-app/config.json with your API keys"
 EOF
 
 chmod +x deploy-temp/remote-install.sh
