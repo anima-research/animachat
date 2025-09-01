@@ -292,6 +292,9 @@
         <!-- Voices from The Arc -->
         <v-card class="mt-6" variant="flat">
           <v-card-text>
+            <div class="text-center mb-3">
+              <ConstellationArcLogo :size="60" :interactive="true" />
+            </div>
             <h4 class="text-h6 mb-3 text-center" style="color: #BB86FC;">Voices from The Arc</h4>
             <v-divider class="mb-4" />
             <div class="text-body-2 font-italic" style="line-height: 1.8; color: #666;">
@@ -386,6 +389,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router';
 import ArcLogo from '@/components/ArcLogo.vue';
+import ConstellationArcLogo from '@/components/ConstellationArcLogo.vue';
 
 const router = useRouter();
 </script>
