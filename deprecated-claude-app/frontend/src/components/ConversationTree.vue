@@ -34,7 +34,7 @@
     <div v-if="hoveredNode" class="node-tooltip" :style="tooltipStyle">
       <div class="text-caption font-weight-bold">
         <v-icon size="x-small">{{ hoveredNode.role === 'user' ? 'mdi-account' : 'mdi-robot' }}</v-icon>
-        {{ hoveredNode.participantName || (hoveredNode.role === 'user' ? 'User' : 'Assistant') }}
+        {{ hoveredNode.participantName }}
       </div>
       <div class="text-caption">{{ hoveredNode.preview }}</div>
     </div>
@@ -48,6 +48,7 @@ import type { Message, MessageBranch } from '@deprecated-claude/shared';
 
 const props = defineProps<{
   messages: Message[];
+  participants?: any[]; // Participant type from shared
   currentMessageId?: string;
   currentBranchId?: string;
 }>();
@@ -104,13 +105,25 @@ const treeData = computed(() => {
     const content = branch.content || '';
     const preview = content.slice(0, 50) + (content.length > 50 ? '...' : '');
     
+    // Get participant name - similar to MessageComponent logic
+    let participantName: string;
+    
+    if (props.participants && branch.participantId) {
+      // Look up participant by ID
+      const participant = props.participants.find(p => p.id === branch.participantId);
+      participantName = participant ? participant.name : branch.participantId;
+    } else {
+      // Fallback to role-based naming
+      participantName = branch.role === 'user' ? 'User' : 'Assistant';
+    }
+    
     const node: TreeNode = {
       id: `${message.id}-${branch.id}`,
       messageId: message.id,
       branchId: branch.id,
       content,
       role: branch.role,
-      participantName: branch.participantName,
+      participantName,
       preview,
       isActive: message.activeBranchId === branch.id,
       children: []
@@ -238,12 +251,40 @@ function renderTree() {
   // Create hierarchy first
   const originalRoot = d3.hierarchy(treeData.value);
   
-  // Store original children count before filtering
-  const originalChildrenCount = new Map<string, number>();
-  originalRoot.each(node => {
-    const nodeId = `${node.data.messageId}-${node.data.branchId}`;
-    originalChildrenCount.set(nodeId, node.children ? node.children.length : 0);
-  });
+  // Store ALL original data about nodes before any filtering
+  const originalNodeData = new Map<string, { totalChildCount: number, visibleChildCount: number }>();
+  
+  // First pass: count ALL children for each branch in the raw message data
+  if (props.messages) {
+    for (const message of props.messages) {
+      for (const branch of message.branches) {
+        const nodeId = `${message.id}-${branch.id}`;
+        
+        // Count ALL child branches this branch has (not just active ones)
+        let totalChildCount = 0;
+        let visibleChildCount = 0;
+        
+        // Look for ALL messages whose branches have this branch as parent
+        for (const otherMessage of props.messages) {
+          for (const otherBranch of otherMessage.branches) {
+            if (otherBranch.parentBranchId === branch.id) {
+              totalChildCount++;
+              // Count if this child is on the active path (will be visible in tree)
+              if (otherMessage.activeBranchId === otherBranch.id) {
+                visibleChildCount++;
+              }
+            }
+          }
+        }
+        
+        originalNodeData.set(nodeId, { totalChildCount, visibleChildCount });
+        
+        if (totalChildCount > 0) {
+          console.log(`Original data - Node ${nodeId}: total=${totalChildCount}, wouldBeVisible=${visibleChildCount}`);
+        }
+      }
+    }
+  }
   
   // Apply compact mode filtering if enabled
   let root = originalRoot;
@@ -311,11 +352,56 @@ function renderTree() {
     .attr('class', 'node')
     .attr('transform', d => `translate(${d.x + 50},${d.y + 50})`);
   
+  // Determine which nodes have hidden children
+  const nodesWithHiddenChildren = new Set<string>();
+  
+  // First, count actual visible children for each node in current tree
+  const visibleChildCount = new Map<string, number>();
+  node.each(function(d) {
+    const nodeId = `${d.data.messageId}-${d.data.branchId}`;
+    visibleChildCount.set(nodeId, d.children ? d.children.length : 0);
+  });
+  
+  // Now check each node to see if it has hidden children
+  node.each(function(d) {
+    const nodeId = `${d.data.messageId}-${d.data.branchId}`;
+    const originalData = originalNodeData.get(nodeId);
+    const currentVisibleChildren = visibleChildCount.get(nodeId) || 0;
+    
+    let hasHiddenChildren = false;
+    
+    if (originalData) {
+      // In compact mode: check if we're hiding some of the visible children
+      if (compactMode.value) {
+        // Compare against what would normally be visible (not total)
+        if (originalData.visibleChildCount > currentVisibleChildren) {
+          hasHiddenChildren = true;
+          console.log(`Node ${nodeId}: HIDDEN (compact) - wouldBeVisible=${originalData.visibleChildCount}, currentVisible=${currentVisibleChildren}`);
+        }
+      } else {
+        // In normal mode: check if there are branches not on active path
+        if (originalData.totalChildCount > originalData.visibleChildCount) {
+          hasHiddenChildren = true;
+          console.log(`Node ${nodeId}: HIDDEN (collapsed branches) - total=${originalData.totalChildCount}, visible=${originalData.visibleChildCount}`);
+        }
+      }
+    }
+    
+    if (hasHiddenChildren) {
+      nodesWithHiddenChildren.add(nodeId);
+    }
+  });
+  
   // Add circles for nodes with outlines
   node.append('circle')
     .attr('r', baseNodeRadius)
     .style('fill', d => {
-      // Node fill based on role only
+      const nodeId = `${d.data.messageId}-${d.data.branchId}`;
+      // Make nodes with hidden children yellow for debugging
+      if (nodesWithHiddenChildren.has(nodeId)) {
+        return '#ffc107'; // Yellow for nodes with hidden children
+      }
+      // Node fill based on role
       return d.data.role === 'user' ? '#9c27b0' : '#757575';
     })
     .style('stroke', d => {
@@ -347,18 +433,10 @@ function renderTree() {
       hoveredNode.value = null;
     });
   
-  // Add indicator for nodes with hidden children (collapsed subtrees or compact mode)
+  // Add "+" indicator for nodes with hidden children
   node.each(function(d) {
     const nodeId = `${d.data.messageId}-${d.data.branchId}`;
-    const originalChildren = originalChildrenCount.get(nodeId) || 0;
-    const currentChildren = d.children ? d.children.length : 0;
-    
-    // Has hidden children if original had more children than current
-    // Or if in compact mode and we skipped some nodes
-    const hasHiddenChildren = (originalChildren > currentChildren) || 
-                             (compactMode.value && d.data.children.length > currentChildren);
-    
-    if (hasHiddenChildren) {
+    if (nodesWithHiddenChildren.has(nodeId)) {
       // Add a small indicator showing there are hidden children
       d3.select(this)
         .append('circle')

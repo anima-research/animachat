@@ -397,6 +397,7 @@
       <ConversationTree
         v-if="messages.length > 0"
         :messages="messages"
+        :participants="participants"
         :current-message-id="currentMessageId"
         :current-branch-id="currentBranchId"
         @navigate-to-branch="navigateToTreeBranch"
