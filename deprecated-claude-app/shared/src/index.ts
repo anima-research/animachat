@@ -117,7 +117,7 @@ export const MODELS: import('./types.js').Model[] = [
     }
   },
   {
-    id: 'claude-3-5-sonnet-20240610',
+    id: 'claude-3-5-sonnet-20240620',
     name: 'claude-3-5-sonnet',
     displayName: 'Claude 3.5 Sonnet',
     provider: 'anthropic',
