@@ -151,7 +151,7 @@
           @click="conversationSettingsDialog = true"
         >
           {{ currentModel?.displayName || 'Select Model' }}
-          <v-icon size="x-small" class="ml-1">mdi-cog-outline</v-icon>
+          <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
           <v-tooltip activator="parent" location="bottom">
             Click to change model and settings
           </v-tooltip>
@@ -166,7 +166,7 @@
           @click="conversationSettingsDialog = true"
         >
           Multi-Participant Mode
-          <v-icon size="x-small" class="ml-1">mdi-cog-outline</v-icon>
+          <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
           <v-tooltip activator="parent" location="bottom">
             Click to configure participants and settings
           </v-tooltip>
@@ -182,15 +182,15 @@
           title="Fix branch structure issues"
         /> -->
         
-        <!-- Import raw messages button (temporary for debugging) -->
-        <v-btn
+        <!-- Import raw messages button (hidden - kept for potential debugging use) -->
+        <!-- <v-btn
           v-if="currentConversation"
           icon="mdi-database-import"
           size="small"
           color="green"
           @click="showRawImportDialog = true"
           title="Import raw messages backup"
-        />
+        /> -->
       </v-app-bar>
 
       <!-- Messages Area -->
