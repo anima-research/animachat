@@ -219,7 +219,7 @@ async function handleChatMessage(
   const userBranch = userMessage.branches[userMessage.branches.length - 1]; // Get the last branch (the one we just added)
   
   // Check if we should add to an existing message or create a new one
-  let assistantMessage: any;
+  let assistantMessage: Message;
   const allMessagesForAssistant = await db.getConversationMessages(message.conversationId);
   const messageWithAssistantSiblings = allMessagesForAssistant.find(msg => 
     msg.branches.some(b => b.parentBranchId === userBranch?.id)
@@ -804,7 +804,7 @@ async function handleContinue(
     const messages = await db.getConversationMessages(conversationId);
     
     // Check if we should add to an existing message or create a new one
-    let assistantMessage: any;
+    let assistantMessage: Message;
     
     if (parentBranchId) {
       // Check if this parent branch has siblings
