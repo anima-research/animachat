@@ -219,7 +219,7 @@ async function handleChatMessage(
   const userBranch = userMessage.branches[userMessage.branches.length - 1]; // Get the last branch (the one we just added)
   
   // Check if we should add to an existing message or create a new one
-  let assistantMessage: Message;
+  let assistantMessage: Message | null;
   const allMessagesForAssistant = await db.getConversationMessages(message.conversationId);
   const messageWithAssistantSiblings = allMessagesForAssistant.find(msg => 
     msg.branches.some(b => b.parentBranchId === userBranch?.id)
@@ -247,6 +247,15 @@ async function handleChatMessage(
       userBranch?.id,
       responder.id
     );
+  }
+  
+  if (!assistantMessage) {
+    console.error('Failed to create assistant message');
+    ws.send(JSON.stringify({
+      type: 'error',
+      error: 'Failed to create assistant message'
+    }));
+    return;
   }
   
   const assistantBranch = assistantMessage.branches[assistantMessage.branches.length - 1]; // Get the last branch we added
@@ -804,7 +813,7 @@ async function handleContinue(
     const messages = await db.getConversationMessages(conversationId);
     
     // Check if we should add to an existing message or create a new one
-    let assistantMessage: Message;
+    let assistantMessage: Message | null;
     
     if (parentBranchId) {
       // Check if this parent branch has siblings
@@ -846,6 +855,15 @@ async function handleContinue(
         undefined,
         responder.id
       );
+    }
+
+    if (!assistantMessage) {
+      console.error('Failed to create assistant message for continue');
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: 'Failed to create assistant message'
+      }));
+      return;
     }
 
     const assistantBranch = assistantMessage.branches[assistantMessage.branches.length - 1];
