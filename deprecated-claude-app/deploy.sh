@@ -76,6 +76,13 @@ cp shared/package.json deploy-temp/shared/
 cp nginx.conf deploy-temp/
 cp backend/.env.example deploy-temp/env.example
 
+# Copy configuration files
+if [ -f backend/config/models.json ]; then
+    mkdir -p deploy-temp/backend/config
+    cp backend/config/models.json deploy-temp/backend/config/
+    log "Including models.json in deployment package"
+fi
+
 # Create systemd service file
 cat > deploy-temp/claude-app.service << EOF
 [Unit]
@@ -138,6 +145,30 @@ if [ ! -f .env ]; then
     log "Created .env file from example - please configure it"
 else
     log ".env file already exists"
+fi
+
+log "Setting up configuration files..."
+if [ ! -d /etc/claude-app ]; then
+    mkdir -p /etc/claude-app
+fi
+
+# Copy models.json if it doesn't exist
+if [ ! -f /etc/claude-app/models.json ]; then
+    if [ -f $REMOTE_PATH/backend/config/models.json ]; then
+        cp $REMOTE_PATH/backend/config/models.json /etc/claude-app/models.json
+        chown www-data:www-data /etc/claude-app/models.json
+        chmod 644 /etc/claude-app/models.json
+        log "Copied models.json to /etc/claude-app/"
+    else
+        log "WARNING: models.json not found in deployment package"
+    fi
+else
+    log "models.json already exists in /etc/claude-app/"
+fi
+
+# Note about config.json
+if [ ! -f /etc/claude-app/config.json ]; then
+    log "WARNING: config.json not found in /etc/claude-app/ - please create it"
 fi
 
 log "Setting up systemd service..."
