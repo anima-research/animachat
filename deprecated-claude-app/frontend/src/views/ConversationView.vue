@@ -169,13 +169,6 @@
           </v-tooltip>
         </v-chip>
         
-        <v-btn 
-          v-if="currentConversation && currentConversation.format !== 'standard'"
-          icon="mdi-account-multiple"
-          size="small"
-          @click="participantsDialog = true"
-        />
-        
         <v-btn
           icon="mdi-cog-outline"
           size="small"
@@ -389,15 +382,10 @@
       :conversation="currentConversation"
       :models="store.state.models"
       @update="updateConversationSettings"
+      @update-participants="updateParticipants"
     />
     
-    <ParticipantsDialog
-      v-model="participantsDialog"
-      :conversation="currentConversation"
-      :models="store.state.models"
-      :current-participants="participants"
-      @update="updateParticipants"
-    />
+
     
     <WelcomeDialog
       v-model="welcomeDialog"
@@ -418,7 +406,6 @@ import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
-import ParticipantsDialog from '@/components/ParticipantsDialog.vue';
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
 
@@ -431,7 +418,6 @@ const rail = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
-const participantsDialog = ref(false);
 const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
 const rawImportData = ref('');
