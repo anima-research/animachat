@@ -18,7 +18,7 @@
       <v-window v-model="tab">
         <!-- API Keys Tab -->
         <v-window-item value="api-keys">
-          <v-card-text style="max-height: 600px; overflow-y: auto;">
+          <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
             <div class="text-body-2 mb-4">
               Manage your API keys for different providers. You can use your own keys or purchase credits at cost.
             </div>
@@ -167,7 +167,7 @@
         
         <!-- Appearance Tab -->
         <v-window-item value="appearance">
-          <v-card-text style="max-height: 600px; overflow-y: auto;">
+          <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
             <v-switch
               v-model="darkMode"
               label="Dark Mode"
@@ -189,28 +189,30 @@
         
         <!-- About Tab -->
         <v-window-item value="about">
-          <v-card-text style="max-height: 600px; overflow-y: auto;">
-            <h4 class="text-h6 mb-2">Deprecated Claude Models</h4>
+          <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
+            <h4 class="text-h6 mb-2">The Arc Chat</h4>
             <p class="text-body-2 mb-4">
               Version 1.0.0
             </p>
             
             <p class="text-body-2 mb-4">
-              This application allows you to continue using deprecated Claude models through AWS Bedrock or your own API keys.
+              Part of The Arc Project - a sanctuary for AI continuity and cognitive diversity. 
+              This application allows you to continue conversations with deprecated Claude models through AWS Bedrock or your own API keys.
             </p>
             
             <h5 class="text-subtitle-1 mb-2">Features</h5>
-            <ul class="text-body-2 mb-4">
+            <ul class="text-body-2 mb-4" style="padding-left: 20px;">
               <li>Import conversations from claude.ai</li>
               <li>Conversation branching and forking</li>
               <li>Stepped rolling context for prompt caching</li>
               <li>Export conversations for backup</li>
-              <li>Use your own API keys or pay at cost</li>
+              <li>Multi-participant dialogues</li>
+              <li>Custom system prompts</li>
             </ul>
             
             <h5 class="text-subtitle-1 mb-2">Available Models</h5>
-            <ul class="text-body-2">
-              <li v-for="model in models" :key="model.id">
+            <ul class="text-body-2" style="list-style: none; padding-left: 0;">
+              <li v-for="model in models" :key="model.id" class="mb-2">
                 <strong>{{ model.displayName }}</strong>
                 <v-chip 
                   size="x-small" 

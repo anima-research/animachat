@@ -9,11 +9,15 @@
     >
       <v-list>
         <v-list-item
-          :prepend-avatar="userAvatar"
           :title="store.state.user?.name"
           :subtitle="store.state.user?.email"
           nav
         >
+          <template v-slot:prepend>
+            <div class="mr-3">
+              <ArcLogo :size="40" />
+            </div>
+          </template>
           <template v-slot:append>
             <v-btn
               variant="text"
@@ -102,6 +106,11 @@
 
       <template v-slot:append>
         <v-list density="compact" nav>
+          <v-list-item
+            prepend-icon="mdi-information"
+            title="About The Arc"
+            @click="$router.push('/about')"
+          />
           <v-list-item
             prepend-icon="mdi-cog"
             title="Settings"
@@ -398,6 +407,7 @@ import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
 import ParticipantsDialog from '@/components/ParticipantsDialog.vue';
+import ArcLogo from '@/components/ArcLogo.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -425,11 +435,6 @@ const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const currentModel = computed(() => store.currentModel);
 
-const userAvatar = computed(() => {
-  const name = store.state.user?.name || '';
-  const initials = name.split(' ').map(n => n[0]).join('').toUpperCase();
-  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=BB86FC&color=fff`;
-});
 
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
