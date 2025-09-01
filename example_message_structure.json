@@ -1,0 +1,39 @@
+{
+  "message": {
+    "id": "msg-123",
+    "conversationId": "conv-456",
+    "branches": [
+      {
+        "id": "branch-1",
+        "content": "Hello from User",
+        "role": "user",
+        "participantId": "user-participant-id",
+        "createdAt": "2024-01-01T00:00:00Z",
+        "parentBranchId": "previous-branch-id",
+        "isActive": true
+      },
+      {
+        "id": "branch-2",
+        "content": "Hello from Assistant A",
+        "role": "assistant",
+        "participantId": "assistant-A-id",
+        "model": "claude-3-opus",
+        "createdAt": "2024-01-01T00:01:00Z",
+        "parentBranchId": "previous-branch-id",
+        "isActive": false
+      },
+      {
+        "id": "branch-3",
+        "content": "Hello from Assistant B",
+        "role": "assistant",
+        "participantId": "assistant-B-id",
+        "model": "gpt-4",
+        "createdAt": "2024-01-01T00:02:00Z",
+        "parentBranchId": "previous-branch-id",
+        "isActive": false
+      }
+    ],
+    "activeBranchId": "branch-1",
+    "order": 0
+  }
+}

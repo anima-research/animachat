@@ -618,7 +618,7 @@ export class Database {
         participantId,
         createdAt: new Date(),
         model,
-        isActive: true,
+        // isActive removed - deprecated field not used
         parentBranchId,
         attachments: attachments ? attachments.map(att => ({
           id: uuidv4(),
@@ -678,7 +678,7 @@ export class Database {
       createdAt: new Date(),
       model,
       parentBranchId,
-      isActive: true,
+      // isActive removed - deprecated field not used
       attachments: attachments ? attachments.map(att => ({
         id: uuidv4(),
         fileName: att.fileName,
@@ -772,7 +772,7 @@ export class Database {
         participantId: branch.participantId,
         createdAt: new Date(branch.createdAt),
         model: branch.model,
-        isActive: branch.isActive,
+        // isActive: branch.isActive, // Deprecated field - ignored on import
         parentBranchId: branch.parentBranchId,
         attachments: branch.attachments
       })),
