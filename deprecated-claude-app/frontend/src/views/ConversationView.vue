@@ -144,36 +144,33 @@
         
         <v-chip 
           v-if="currentConversation?.format === 'standard'"
-          class="mr-2" 
+          class="mr-2 clickable-chip" 
           size="small" 
           variant="outlined"
           :color="currentModel?.provider === 'anthropic' ? 'primary' : 'secondary'"
+          @click="conversationSettingsDialog = true"
         >
           {{ currentModel?.displayName || 'Select Model' }}
+          <v-icon size="x-small" class="ml-1">mdi-cog-outline</v-icon>
           <v-tooltip activator="parent" location="bottom">
-            Provider: {{ currentModel?.provider === 'anthropic' ? 'Anthropic API' : 'AWS Bedrock' }}
-            {{ currentModel?.deprecated ? ' (Deprecated)' : '' }}
+            Click to change model and settings
           </v-tooltip>
         </v-chip>
         
         <v-chip 
           v-else
-          class="mr-2" 
+          class="mr-2 clickable-chip" 
           size="small" 
           variant="outlined"
           color="info"
+          @click="conversationSettingsDialog = true"
         >
           Multi-Participant Mode
+          <v-icon size="x-small" class="ml-1">mdi-cog-outline</v-icon>
           <v-tooltip activator="parent" location="bottom">
-            Configure models and settings for each participant
+            Click to configure participants and settings
           </v-tooltip>
         </v-chip>
-        
-        <v-btn
-          icon="mdi-cog-outline"
-          size="small"
-          @click="conversationSettingsDialog = true"
-        />
         
         <!-- Fix branches button (hidden - only for debugging) -->
         <!-- <v-btn
@@ -1118,5 +1115,20 @@ function formatDate(date: Date | string): string {
 
 .messages-container {
   overflow-y: scroll !important; /* Force scrollbar to always show */
+}
+
+/* Clickable chip styles */
+.clickable-chip {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.clickable-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.clickable-chip:active {
+  transform: translateY(0);
 }
 </style>
