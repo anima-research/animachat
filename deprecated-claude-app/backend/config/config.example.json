@@ -1,0 +1,239 @@
+{
+  "providers": {
+    "anthropic": [
+      {
+        "id": "anthropic-free",
+        "name": "Free Tier Anthropic",
+        "description": "Rate-limited API key for free users",
+        "priority": 10,
+        "credentials": {
+          "apiKey": "sk-ant-..."
+        },
+        "limits": {
+          "requestsPerMinute": 10,
+          "requestsPerDay": 100,
+          "tokensPerMinute": 10000,
+          "tokensPerDay": 100000
+        },
+        "allowedUserGroups": ["free"],
+        "allowedModels": ["claude-3-haiku-20240307"],
+        "modelCosts": [
+          {
+            "modelId": "claude-3-haiku-20240307",
+            "providerCost": {
+              "inputTokensPerMillion": 0.25,
+              "outputTokensPerMillion": 1.25
+            },
+            "billedCost": {
+              "inputTokensPerMillion": 0.50,
+              "outputTokensPerMillion": 2.50
+            }
+          }
+        ]
+      },
+      {
+        "id": "anthropic-premium",
+        "name": "Premium Anthropic",
+        "description": "Higher rate limits for premium users",
+        "priority": 5,
+        "credentials": {
+          "apiKey": "sk-ant-..."
+        },
+        "limits": {
+          "requestsPerMinute": 50,
+          "requestsPerDay": 5000
+        },
+        "allowedUserGroups": ["premium", "enterprise"],
+        "modelCosts": [
+          {
+            "modelId": "claude-3-haiku-20240307",
+            "providerCost": {
+              "inputTokensPerMillion": 0.25,
+              "outputTokensPerMillion": 1.25
+            },
+            "billedCost": {
+              "inputTokensPerMillion": 0.30,
+              "outputTokensPerMillion": 1.50
+            }
+          },
+          {
+            "modelId": "claude-3-sonnet-20240229",
+            "providerCost": {
+              "inputTokensPerMillion": 3.00,
+              "outputTokensPerMillion": 15.00
+            },
+            "billedCost": {
+              "inputTokensPerMillion": 3.60,
+              "outputTokensPerMillion": 18.00
+            }
+          },
+          {
+            "modelId": "claude-3-opus-20240229",
+            "providerCost": {
+              "inputTokensPerMillion": 15.00,
+              "outputTokensPerMillion": 75.00
+            },
+            "billedCost": {
+              "inputTokensPerMillion": 18.00,
+              "outputTokensPerMillion": 90.00
+            }
+          }
+        ]
+      },
+      {
+        "id": "anthropic-enterprise",
+        "name": "Enterprise Anthropic",
+        "description": "Unlimited API key for enterprise",
+        "priority": 1,
+        "credentials": {
+          "apiKey": "sk-ant-..."
+        },
+        "allowedUserGroups": ["enterprise"],
+        "modelCosts": [
+          {
+            "modelId": "claude-3-haiku-20240307",
+            "providerCost": {
+              "inputTokensPerMillion": 0.25,
+              "outputTokensPerMillion": 1.25
+            }
+          },
+          {
+            "modelId": "claude-3-sonnet-20240229",
+            "providerCost": {
+              "inputTokensPerMillion": 3.00,
+              "outputTokensPerMillion": 15.00
+            }
+          },
+          {
+            "modelId": "claude-3-opus-20240229",
+            "providerCost": {
+              "inputTokensPerMillion": 15.00,
+              "outputTokensPerMillion": 75.00
+            }
+          }
+        ]
+      }
+    ],
+    "bedrock": [
+      {
+        "id": "bedrock-us-east-1",
+        "name": "AWS Bedrock US East",
+        "priority": 10,
+        "credentials": {
+          "accessKeyId": "AKIA...",
+          "secretAccessKey": "...",
+          "region": "us-east-1"
+        },
+        "modelCosts": [
+          {
+            "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
+            "providerCost": {
+              "inputTokensPerMillion": 0.25,
+              "outputTokensPerMillion": 1.25
+            }
+          },
+          {
+            "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+            "providerCost": {
+              "inputTokensPerMillion": 3.00,
+              "outputTokensPerMillion": 15.00
+            }
+          }
+        ]
+      },
+      {
+        "id": "bedrock-us-west-2",
+        "name": "AWS Bedrock US West",
+        "priority": 10,
+        "credentials": {
+          "accessKeyId": "AKIA...",
+          "secretAccessKey": "...",
+          "region": "us-west-2"
+        },
+        "modelCosts": [
+          {
+            "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
+            "providerCost": {
+              "inputTokensPerMillion": 0.25,
+              "outputTokensPerMillion": 1.25
+            }
+          },
+          {
+            "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+            "providerCost": {
+              "inputTokensPerMillion": 3.00,
+              "outputTokensPerMillion": 15.00
+            }
+          }
+        ]
+      },
+      {
+        "id": "bedrock-eu-central-1",
+        "name": "AWS Bedrock EU",
+        "priority": 10,
+        "credentials": {
+          "accessKeyId": "AKIA...",
+          "secretAccessKey": "...",
+          "region": "eu-central-1"
+        },
+        "modelCosts": [
+          {
+            "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
+            "providerCost": {
+              "inputTokensPerMillion": 0.25,
+              "outputTokensPerMillion": 1.25
+            }
+          },
+          {
+            "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+            "providerCost": {
+              "inputTokensPerMillion": 3.00,
+              "outputTokensPerMillion": 15.00
+            }
+          }
+        ]
+      }
+    ],
+    "openrouter": [
+      {
+        "id": "openrouter-community",
+        "name": "OpenRouter Community",
+        "priority": 10,
+        "credentials": {
+          "apiKey": "sk-or-..."
+        },
+        "limits": {
+          "requestsPerMinute": 20,
+          "requestsPerDay": 1000
+        }
+      }
+    ],
+    "openai-compatible": [
+      {
+        "id": "local-llm",
+        "name": "Local LLM Server",
+        "description": "Self-hosted LLM for testing",
+        "priority": 100,
+        "credentials": {
+          "apiKey": "not-needed",
+          "baseUrl": "http://localhost:8080/v1"
+        },
+        "allowedUserGroups": ["admin", "developer"]
+      }
+    ]
+  },
+  "defaultProfiles": {
+    "anthropic": "anthropic-free",
+    "bedrock": "bedrock-default",
+    "openrouter": "openrouter-community"
+  },
+  "features": {
+    "allowUserApiKeys": true,
+    "enforceRateLimits": true,
+    "trackUsage": true,
+    "billUsers": false
+  },
+  "loadBalancing": {
+    "strategy": "round-robin"
+  }
+}

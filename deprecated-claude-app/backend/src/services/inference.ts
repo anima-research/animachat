@@ -1,17 +1,23 @@
-import { Message, MODELS, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
 import { OpenRouterService } from './openrouter.js';
 import { OpenAICompatibleService } from './openai-compatible.js';
+import { ApiKeyManager } from './api-key-manager.js';
+import { ModelLoader } from '../config/model-loader.js';
 
 export class InferenceService {
   private bedrockService: BedrockService;
   private anthropicService: AnthropicService;
+  private apiKeyManager: ApiKeyManager;
+  private modelLoader: ModelLoader;
   private db: Database;
 
   constructor(db: Database) {
     this.db = db;
+    this.apiKeyManager = new ApiKeyManager(db);
+    this.modelLoader = ModelLoader.getInstance();
     this.bedrockService = new BedrockService(db);
     this.anthropicService = new AnthropicService(db);
   }
@@ -29,7 +35,7 @@ export class InferenceService {
   ): Promise<void> {
     
     // Find the model configuration
-    const model = MODELS.find(m => m.id === modelId);
+    const model = await this.modelLoader.getModelById(modelId);
     if (!model) {
       throw new Error(`Model ${modelId} not found`);
     }
@@ -49,71 +55,73 @@ export class InferenceService {
     }
 
     // Route to appropriate service based on provider
+    // Get API key configuration
+    const selectedKey = await this.apiKeyManager.getApiKeyForRequest(userId, model.provider, modelId);
+    if (!selectedKey) {
+      throw new Error(`No API key available for provider: ${model.provider}`);
+    }
+
+    // Check rate limits if using system key
+    if (selectedKey.source === 'config' && selectedKey.profile) {
+      const rateLimitCheck = await this.apiKeyManager.checkRateLimits(userId, model.provider, selectedKey.profile);
+      if (!rateLimitCheck.allowed) {
+        throw new Error(`Rate limit exceeded. Try again in ${rateLimitCheck.retryAfter} seconds.`);
+      }
+    }
+
+    // Track token usage
+    let inputTokens = 0;
+    let outputTokens = 0;
+    const trackingOnChunk = async (chunk: string, isComplete: boolean) => {
+      await onChunk(chunk, isComplete);
+      // TODO: Implement accurate token counting
+      outputTokens += chunk.length / 4; // Rough estimate
+    };
+
     if (model.provider === 'anthropic') {
-      // Try to get user's Anthropic API key
-      const apiKey = await this.getUserApiKey(userId, 'anthropic');
-      const apiKeyStr = apiKey && 'apiKey' in apiKey.credentials ? apiKey.credentials.apiKey : undefined;
-      const anthropicService = new AnthropicService(this.db, apiKeyStr);
+      const anthropicService = new AnthropicService(
+        this.db, 
+        selectedKey.credentials.apiKey
+      );
       
       await anthropicService.streamCompletion(
         modelId,
         formattedMessages,
         systemPrompt,
         settings,
-        onChunk,
+        trackingOnChunk,
         stopSequences
       );
     } else if (model.provider === 'bedrock') {
-      // Try to get user's Bedrock credentials
-      const apiKey = await this.getUserApiKey(userId, 'bedrock');
-      if (apiKey && 'accessKeyId' in apiKey.credentials) {
-        // Use user credentials
-        const bedrockService = new BedrockService(this.db, apiKey.credentials);
-        await bedrockService.streamCompletion(
-          modelId,
-          formattedMessages,
-          systemPrompt,
-          settings,
-          onChunk,
-          stopSequences
-        );
-      } else {
-        // Fall back to system credentials
-        await this.bedrockService.streamCompletion(
-          modelId,
-          formattedMessages,
-          systemPrompt,
-          settings,
-          onChunk,
-          stopSequences
-        );
-      }
+      const bedrockService = new BedrockService(this.db, selectedKey.credentials);
+      await bedrockService.streamCompletion(
+        modelId,
+        formattedMessages,
+        systemPrompt,
+        settings,
+        trackingOnChunk,
+        stopSequences
+      );
     } else if (model.provider === 'openrouter') {
-      // Try to get user's OpenRouter API key
-      const apiKey = await this.getUserApiKey(userId, 'openrouter');
-      const apiKeyStr = apiKey && 'apiKey' in apiKey.credentials ? apiKey.credentials.apiKey : undefined;
-      const openRouterService = new OpenRouterService(this.db, apiKeyStr);
+      const openRouterService = new OpenRouterService(
+        this.db, 
+        selectedKey.credentials.apiKey
+      );
       
       await openRouterService.streamCompletion(
         modelId,
         formattedMessages,
         systemPrompt,
         settings,
-        onChunk,
+        trackingOnChunk,
         stopSequences
       );
     } else if (model.provider === 'openai-compatible') {
-      // OpenAI-compatible APIs require user credentials
-      const apiKey = await this.getUserApiKey(userId, 'openai-compatible');
-      if (!apiKey || !('apiKey' in apiKey.credentials) || !('baseUrl' in apiKey.credentials)) {
-        throw new Error('OpenAI-compatible API requires API key and base URL');
-      }
-      
       const openAIService = new OpenAICompatibleService(
         this.db,
-        apiKey.credentials.apiKey,
-        apiKey.credentials.baseUrl,
-        apiKey.credentials.modelPrefix
+        selectedKey.credentials.apiKey,
+        selectedKey.credentials.baseUrl,
+        selectedKey.credentials.modelPrefix
       );
       
       await openAIService.streamCompletion(
@@ -121,12 +129,33 @@ export class InferenceService {
         formattedMessages,
         systemPrompt,
         settings,
-        onChunk,
+        trackingOnChunk,
         stopSequences
       );
     } else {
       throw new Error(`Unsupported provider: ${model.provider}`);
     }
+
+    // TODO: Get accurate token counts from the service
+    inputTokens = this.estimateTokens(formattedMessages);
+
+    // Track usage after completion
+    if (selectedKey.source === 'config' && selectedKey.profile) {
+      await this.apiKeyManager.trackUsage(
+        userId,
+        model.provider,
+        modelId,
+        inputTokens,
+        outputTokens,
+        selectedKey.profile
+      );
+    }
+  }
+
+  private estimateTokens(messages: Message[]): number {
+    // Rough token estimation
+    const text = messages.map(m => m.content).join(' ');
+    return Math.ceil(text.length / 4);
   }
 
   private async getUserApiKey(userId: string, provider: string): Promise<ApiKey | undefined> {

@@ -1,29 +1,41 @@
 import { Router } from 'express';
-import { MODELS } from '@deprecated-claude/shared';
+import { ModelLoader } from '../config/model-loader.js';
 
 export function modelRouter(): Router {
   const router = Router();
+  const modelLoader = ModelLoader.getInstance();
 
   // Get available models
-  router.get('/', (req, res) => {
-    console.log('Available models:', MODELS.map(m => ({
-      id: m.id,
-      name: m.name,
-      displayName: m.displayName,
-      provider: m.provider
-    })));
-    res.json(MODELS);
+  router.get('/', async (req, res) => {
+    try {
+      const models = await modelLoader.getAllModels();
+      console.log('Available models:', models.map(m => ({
+        id: m.id,
+        name: m.name,
+        displayName: m.displayName,
+        provider: m.provider
+      })));
+      res.json(models);
+    } catch (error) {
+      console.error('Error loading models:', error);
+      res.status(500).json({ error: 'Failed to load models' });
+    }
   });
 
   // Get specific model info
-  router.get('/:id', (req, res) => {
-    const model = MODELS.find(m => m.id === req.params.id);
-    
-    if (!model) {
-      return res.status(404).json({ error: 'Model not found' });
-    }
+  router.get('/:id', async (req, res) => {
+    try {
+      const model = await modelLoader.getModelById(req.params.id);
+      
+      if (!model) {
+        return res.status(404).json({ error: 'Model not found' });
+      }
 
-    res.json(model);
+      res.json(model);
+    } catch (error) {
+      console.error('Error loading model:', error);
+      res.status(500).json({ error: 'Failed to load model' });
+    }
   });
 
   return router;

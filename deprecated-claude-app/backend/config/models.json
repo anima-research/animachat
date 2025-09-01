@@ -1,0 +1,208 @@
+{
+  "models": [
+    {
+      "id": "claude-3-5-sonnet-20241022",
+      "name": "claude-3-5-sonnet",
+      "displayName": "Claude 3.5 Sonnet",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "settings": {
+        "temperature": { "min": 0, "max": 1, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 8192, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 },
+        "topK": { "min": 1, "max": 500, "default": 40, "step": 1 }
+      }
+    },
+    {
+      "id": "claude-3-opus-20240229",
+      "name": "claude-3-opus",
+      "displayName": "Claude 3 Opus",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 1, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 },
+        "topK": { "min": 1, "max": 500, "default": 40, "step": 1 }
+      }
+    },
+    {
+      "id": "claude-3-sonnet-20240229",
+      "name": "claude-3-sonnet",
+      "displayName": "Claude 3 Sonnet",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 1, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 },
+        "topK": { "min": 1, "max": 500, "default": 40, "step": 1 }
+      }
+    },
+    {
+      "id": "claude-3-haiku-20240307",
+      "name": "claude-3-haiku",
+      "displayName": "Claude 3 Haiku",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 1, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 },
+        "topK": { "min": 1, "max": 500, "default": 40, "step": 1 }
+      }
+    },
+    {
+      "id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      "name": "claude-3-5-sonnet-bedrock",
+      "displayName": "Claude 3.5 Sonnet (Bedrock)",
+      "provider": "bedrock",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "settings": {
+        "temperature": { "min": 0, "max": 1, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 8192, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 },
+        "topK": { "min": 1, "max": 500, "default": 40, "step": 1 }
+      }
+    },
+    {
+      "id": "anthropic.claude-3-opus-20240229-v1:0",
+      "name": "claude-3-opus-bedrock",
+      "displayName": "Claude 3 Opus (Bedrock)",
+      "provider": "bedrock",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 1, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 },
+        "topK": { "min": 1, "max": 500, "default": 40, "step": 1 }
+      }
+    },
+    {
+      "id": "anthropic.claude-3-sonnet-20240229-v1:0",
+      "name": "claude-3-sonnet-bedrock",
+      "displayName": "Claude 3 Sonnet (Bedrock)",
+      "provider": "bedrock",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 1, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 },
+        "topK": { "min": 1, "max": 500, "default": 40, "step": 1 }
+      }
+    },
+    {
+      "id": "anthropic.claude-3-haiku-20240307-v1:0",
+      "name": "claude-3-haiku-bedrock",
+      "displayName": "Claude 3 Haiku (Bedrock)",
+      "provider": "bedrock",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 1, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 },
+        "topK": { "min": 1, "max": 500, "default": 40, "step": 1 }
+      }
+    },
+    {
+      "id": "anthropic/claude-3.5-sonnet",
+      "name": "claude-3-5-sonnet-openrouter",
+      "displayName": "Claude 3.5 Sonnet (OpenRouter)",
+      "provider": "openrouter",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "settings": {
+        "temperature": { "min": 0, "max": 2, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 8192, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 }
+      }
+    },
+    {
+      "id": "anthropic/claude-3-opus",
+      "name": "claude-3-opus-openrouter",
+      "displayName": "Claude 3 Opus (OpenRouter)",
+      "provider": "openrouter",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 2, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 }
+      }
+    },
+    {
+      "id": "anthropic/claude-3-haiku",
+      "name": "claude-3-haiku-openrouter",
+      "displayName": "Claude 3 Haiku (OpenRouter)",
+      "provider": "openrouter",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 2, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 }
+      }
+    },
+    {
+      "id": "openai/gpt-4-turbo-preview",
+      "name": "gpt-4-turbo-openrouter",
+      "displayName": "GPT-4 Turbo (OpenRouter)",
+      "provider": "openrouter",
+      "deprecated": false,
+      "contextWindow": 128000,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 2, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 }
+      }
+    },
+    {
+      "id": "openai/gpt-3.5-turbo",
+      "name": "gpt-3-5-turbo-openrouter",
+      "displayName": "GPT-3.5 Turbo (OpenRouter)",
+      "provider": "openrouter",
+      "deprecated": false,
+      "contextWindow": 16385,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 2, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 }
+      }
+    },
+    {
+      "id": "meta-llama/llama-3.1-70b-instruct",
+      "name": "llama-3-1-70b-openrouter",
+      "displayName": "Llama 3.1 70B (OpenRouter)",
+      "provider": "openrouter",
+      "deprecated": false,
+      "contextWindow": 131072,
+      "outputTokenLimit": 4096,
+      "settings": {
+        "temperature": { "min": 0, "max": 2, "default": 1.0, "step": 0.1 },
+        "maxTokens": { "min": 1, "max": 4096, "default": 1024 },
+        "topP": { "min": 0, "max": 1, "default": 0.9, "step": 0.01 }
+      }
+    }
+  ]
+}
