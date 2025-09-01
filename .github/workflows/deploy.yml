@@ -50,6 +50,10 @@ jobs:
         cp -r backend/dist/* deploy/backend/
         cp backend/package.json deploy/backend/
         
+        # Copy configuration files
+        mkdir -p deploy/backend/config
+        cp backend/config/models.json deploy/backend/config/
+        
         # Copy shared module (to be copied into node_modules after npm install)
         cp -r shared/dist/* deploy/shared/
         cp shared/package.json deploy/shared/
@@ -108,6 +112,13 @@ jobs:
           rm -rf node_modules/@deprecated-claude/shared
           mkdir -p node_modules/@deprecated-claude/shared
           cp -r /var/www/deprecated-claude-app/shared/* node_modules/@deprecated-claude/shared/
+          
+          # Create config directory and copy models.json
+          sudo -n mkdir -p /etc/claude-app
+          sudo -n cp /var/www/deprecated-claude-app/backend/config/models.json /etc/claude-app/models.json
+          sudo -n chown www-data:www-data /etc/claude-app/models.json
+          sudo -n chmod 644 /etc/claude-app/models.json
+          echo "✅ Copied models.json to /etc/claude-app/"
           
           # Set correct permissions (without sudo since we're already antra)
           # The directory should already have correct permissions from server setup
