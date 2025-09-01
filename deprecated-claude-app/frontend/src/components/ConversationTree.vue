@@ -185,9 +185,9 @@ function renderTree() {
   const width = svgRef.value?.clientWidth || 400;
   const height = svgRef.value?.clientHeight || 600;
   
-  // Create tree layout
+  // Create tree layout - vertical orientation
   const treeLayout = d3.tree<TreeNode>()
-    .size([height - 100, width - 100]);
+    .size([width - 100, height - 100]);
   
   // Create hierarchy
   const root = d3.hierarchy(treeData.value);
@@ -196,19 +196,39 @@ function renderTree() {
   // Clear previous render
   g.selectAll('*').remove();
   
-  // Add links (edges)
+  // Determine which branches are in the active path
+  const activePath = new Set<string>();
+  let currentNode = treeNodes.descendants().find(d => 
+    d.data.messageId === props.currentMessageId && 
+    d.data.branchId === props.currentBranchId
+  );
+  
+  // Trace back to root to find active path
+  while (currentNode) {
+    activePath.add(`${currentNode.data.messageId}-${currentNode.data.branchId}`);
+    currentNode = currentNode.parent;
+  }
+  
+  // Add links (edges) - vertical links
   g.selectAll('.link')
     .data(treeNodes.links())
     .enter()
     .append('path')
     .attr('class', 'link')
-    .attr('d', d3.linkHorizontal<any, any>()
-      .x(d => d.y + 50)
-      .y(d => d.x + 50)
+    .attr('d', d3.linkVertical<any, any>()
+      .x(d => d.x + 50)
+      .y(d => d.y + 50)
     )
     .style('fill', 'none')
-    .style('stroke', '#ccc')
-    .style('stroke-width', 2);
+    .style('stroke', d => {
+      // Color edges based on whether they're in the active path
+      const targetId = `${d.target.data.messageId}-${d.target.data.branchId}`;
+      return activePath.has(targetId) ? '#4caf50' : '#ccc';
+    })
+    .style('stroke-width', d => {
+      const targetId = `${d.target.data.messageId}-${d.target.data.branchId}`;
+      return activePath.has(targetId) ? 3 : 2;
+    });
   
   // Add nodes
   const node = g.selectAll('.node')
@@ -216,22 +236,28 @@ function renderTree() {
     .enter()
     .append('g')
     .attr('class', 'node')
-    .attr('transform', d => `translate(${d.y + 50},${d.x + 50})`);
+    .attr('transform', d => `translate(${d.x + 50},${d.y + 50})`);
   
-  // Add circles for nodes
+  // Add circles for nodes with outlines
   node.append('circle')
     .attr('r', 20)
     .style('fill', d => {
-      const nodeData = d.data;
-      if (nodeData.messageId === props.currentMessageId && 
-          nodeData.branchId === props.currentBranchId) {
-        return '#1976d2'; // Current node - primary color
-      }
-      if (nodeData.isActive) {
-        return '#4caf50'; // Active branch - green
-      }
-      return nodeData.role === 'user' ? '#9c27b0' : '#757575'; // Purple for user, grey for assistant
+      // Node fill based on role only
+      return d.data.role === 'user' ? '#9c27b0' : '#757575';
     })
+    .style('stroke', d => {
+      // Outline based on current position and active path
+      const nodeId = `${d.data.messageId}-${d.data.branchId}`;
+      if (d.data.messageId === props.currentMessageId && 
+          d.data.branchId === props.currentBranchId) {
+        return '#1976d2'; // Current position - blue outline
+      }
+      if (activePath.has(nodeId)) {
+        return '#4caf50'; // Active path - green outline
+      }
+      return 'none';
+    })
+    .style('stroke-width', 4)
     .style('cursor', 'pointer')
     .on('click', (event, d) => {
       emit('navigate-to-branch', d.data.messageId, d.data.branchId);
@@ -248,15 +274,45 @@ function renderTree() {
       hoveredNode.value = null;
     });
   
-  // Add icons
-  node.append('text')
-    .attr('text-anchor', 'middle')
-    .attr('dominant-baseline', 'central')
-    .style('fill', 'white')
-    .style('font-family', 'Material Design Icons')
-    .style('font-size', '20px')
-    .style('pointer-events', 'none')
-    .text(d => d.data.role === 'user' ? '\uF0004' : '\uF0599'); // MDI account and robot icons
+  // Add icons using SVG paths instead of font icons
+  const iconSize = 24;
+  node.each(function(d) {
+    const g = d3.select(this);
+    
+    if (d.data.role === 'user') {
+      // User icon (simplified person shape)
+      g.append('path')
+        .attr('d', 'M -8,-8 A 8,8 0 0,1 8,-8 A 8,8 0 0,1 8,0 L 8,8 L -8,8 L -8,0 A 8,8 0 0,1 -8,-8')
+        .attr('transform', 'scale(0.8)')
+        .style('fill', 'white')
+        .style('pointer-events', 'none');
+    } else {
+      // Robot icon (simplified robot shape)
+      g.append('rect')
+        .attr('x', -10)
+        .attr('y', -10)
+        .attr('width', 20)
+        .attr('height', 20)
+        .attr('rx', 4)
+        .style('fill', 'white')
+        .style('pointer-events', 'none');
+      
+      // Robot eyes
+      g.append('circle')
+        .attr('cx', -5)
+        .attr('cy', -3)
+        .attr('r', 2)
+        .style('fill', '#757575')
+        .style('pointer-events', 'none');
+      
+      g.append('circle')
+        .attr('cx', 5)
+        .attr('cy', -3)
+        .attr('r', 2)
+        .style('fill', '#757575')
+        .style('pointer-events', 'none');
+    }
+  });
   
   // Center the tree initially
   centerTree();
