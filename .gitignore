@@ -4,3 +4,4 @@
 deprecated-claude-app/frontend/node_modules/**
 deprecated-claude-app/shared/dist/**
 .idea/**
+deprecated-claude-app/backend/config/config.json
