@@ -250,7 +250,7 @@
         <div v-if="currentConversation.format !== 'standard'" class="mb-2 d-flex gap-2">
           <v-select
             v-model="selectedParticipant"
-            :items="selectedBranchForParent ? allParticipants : userParticipants"
+            :items="allParticipants"
             item-title="name"
             item-value="id"
             label="Speaking as"
@@ -259,7 +259,7 @@
             hide-details
             class="flex-grow-1"
           >
-            <template v-if="selectedBranchForParent" v-slot:item="{ props, item }">
+            <template v-slot:item="{ props, item }">
               <v-list-item v-bind="props">
                 <template v-slot:prepend>
                   <v-icon :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'" />
@@ -466,11 +466,7 @@ const selectedResponderName = computed(() => {
   return responder?.name || 'Assistant';
 });
 
-const userParticipants = computed(() => {
-  return participants.value.filter(p => p.type === 'user' && p.isActive);
-});
-
-// For branching mode, allow sending as any participant
+// Allow sending as any participant type (user or assistant)
 const allParticipants = computed(() => {
   return participants.value.filter(p => p.isActive);
 });
