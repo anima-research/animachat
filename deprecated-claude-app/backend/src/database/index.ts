@@ -94,21 +94,26 @@ export class Database {
   }
   
   private async replayEvent(event: Event): Promise<void> {
-    switch (event.type) {
-      case 'user_created': {
-        const { user, passwordHash } = event.data;
-        const userWithDates = {
-          ...user,
-          createdAt: new Date(user.createdAt)
-        };
-        this.users.set(user.id, userWithDates);
-        this.usersByEmail.set(user.email, user.id);
-        this.userConversations.set(user.id, new Set());
-        if (passwordHash) {
-          this.passwordHashes.set(user.email, passwordHash);
+    try {
+      switch (event.type) {
+        case 'user_created': {
+          const { user, passwordHash } = event.data;
+          if (!user) {
+            console.error('Skipping corrupted user_created event - missing user data');
+            return;
+          }
+          const userWithDates = {
+            ...user,
+            createdAt: new Date(user.createdAt)
+          };
+          this.users.set(user.id, userWithDates);
+          this.usersByEmail.set(user.email, user.id);
+          this.userConversations.set(user.id, new Set());
+          if (passwordHash) {
+            this.passwordHashes.set(user.email, passwordHash);
+          }
+          break;
         }
-        break;
-      }
       
       case 'api_key_created': {
         const { apiKey, userId, masked } = event.data;
@@ -341,6 +346,11 @@ export class Database {
       }
       
       // Add more cases as needed
+      }
+    } catch (error) {
+      console.error(`Error replaying event ${event.type}:`, error);
+      console.error('Event data:', JSON.stringify(event.data, null, 2));
+      // Continue processing other events instead of crashing
     }
   }
 
