@@ -51,6 +51,8 @@ const props = defineProps<{
   participants?: any[]; // Participant type from shared
   currentMessageId?: string;
   currentBranchId?: string;
+  selectedParentMessageId?: string;
+  selectedParentBranchId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -185,12 +187,17 @@ function filterCompactNodes(originalRoot: d3.HierarchyNode<TreeNode>): d3.Hierar
       };
     }
     
+    // Always keep the selected parent node if it exists
+    const isSelectedParent = props.selectedParentMessageId && props.selectedParentBranchId &&
+                            node.data.messageId === props.selectedParentMessageId &&
+                            node.data.branchId === props.selectedParentBranchId;
+    
     const hasMultipleChildren = node.children && node.children.length > 1;
     const hasSiblings = node.parent.children && node.parent.children.length > 1;
     const isLeaf = !node.children || node.children.length === 0;
     
-    // Keep this node if it's a decision point or leaf
-    if (hasMultipleChildren || hasSiblings || isLeaf) {
+    // Keep this node if it's a decision point, leaf, or selected parent
+    if (hasMultipleChildren || hasSiblings || isLeaf || isSelectedParent) {
       return {
         ...node.data,
         children: node.children ? node.children.map(c => simplifyNode(c)).filter(c => c !== null) as TreeNode[] : []
@@ -325,18 +332,47 @@ function renderTree() {
       return d.data.role === 'user' ? '#9c27b0' : '#757575';
     })
     .style('stroke', d => {
-      // Outline based on current position and active path
+      // Outline based on selected parent or current position
       const nodeId = `${d.data.messageId}-${d.data.branchId}`;
-      if (d.data.messageId === props.currentMessageId && 
+      
+      // Check if this is the selected parent (for branching)
+      if (props.selectedParentMessageId && props.selectedParentBranchId &&
+          d.data.messageId === props.selectedParentMessageId && 
+          d.data.branchId === props.selectedParentBranchId) {
+        return '#1976d2'; // Selected parent - blue outline
+      }
+      
+      // If no selected parent, show current position
+      if (!props.selectedParentMessageId && 
+          d.data.messageId === props.currentMessageId && 
           d.data.branchId === props.currentBranchId) {
         return '#1976d2'; // Current position - blue outline
       }
+      
       if (activePath.has(nodeId)) {
         return '#4caf50'; // Active path - green outline
       }
       return 'none';
     })
-    .style('stroke-width', Math.max(2, baseNodeRadius / 5))
+    .style('stroke-width', d => {
+      // Make blue outline thicker for better visibility
+      const nodeId = `${d.data.messageId}-${d.data.branchId}`;
+      
+      // Check if this node has the blue outline
+      const hasBlueOutline = 
+        (props.selectedParentMessageId && props.selectedParentBranchId &&
+         d.data.messageId === props.selectedParentMessageId && 
+         d.data.branchId === props.selectedParentBranchId) ||
+        (!props.selectedParentMessageId && 
+         d.data.messageId === props.currentMessageId && 
+         d.data.branchId === props.currentBranchId);
+      
+      if (hasBlueOutline) {
+        return Math.max(4, baseNodeRadius / 3); // Thicker for blue outline
+      }
+      
+      return Math.max(2, baseNodeRadius / 5); // Normal thickness
+    })
     .style('cursor', 'pointer')
     .on('click', (event, d) => {
       emit('navigate-to-branch', d.data.messageId, d.data.branchId);

@@ -224,6 +224,7 @@
         <div v-else>
           <MessageComponent
             v-for="(message, index) in messages"
+            :id="`message-${message.id}`"
             :key="message.id"
             :message="message"
             :participants="participants"
@@ -400,6 +401,8 @@
         :participants="participants"
         :current-message-id="currentMessageId"
         :current-branch-id="currentBranchId"
+        :selected-parent-message-id="selectedBranchForParent?.messageId"
+        :selected-parent-branch-id="selectedBranchForParent?.branchId"
         @navigate-to-branch="navigateToTreeBranch"
         class="flex-grow-1"
       />
@@ -757,7 +760,7 @@ function switchBranch(messageId: string, branchId: string) {
   store.switchBranch(messageId, branchId);
 }
 
-function navigateToTreeBranch(messageId: string, branchId: string) {
+async function navigateToTreeBranch(messageId: string, branchId: string) {
   console.log('Navigating to branch:', messageId, branchId);
   
   // Build path from target branch back to root
@@ -797,6 +800,20 @@ function navigateToTreeBranch(messageId: string, branchId: string) {
       store.switchBranch(msgId, brId);
     }
   }
+  
+  // Wait for DOM to update, then scroll to the clicked message
+  await nextTick();
+  setTimeout(() => {
+    const messageElement = document.getElementById(`message-${messageId}`);
+    if (messageElement) {
+      messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Add a brief highlight effect
+      messageElement.classList.add('highlight-message');
+      setTimeout(() => {
+        messageElement.classList.remove('highlight-message');
+      }, 2000);
+    }
+  }, 100); // Small delay to ensure messages are rendered
 }
 
 async function renameConversation(conversation: Conversation) {
@@ -1304,6 +1321,22 @@ function formatDate(date: Date | string): string {
 .clickable-chip:hover {
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.highlight-message {
+  animation: highlight-pulse 2s ease-out;
+}
+
+@keyframes highlight-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(25, 118, 210, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 20px 10px rgba(25, 118, 210, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(25, 118, 210, 0);
+  }
 }
 
 .clickable-chip:active {
