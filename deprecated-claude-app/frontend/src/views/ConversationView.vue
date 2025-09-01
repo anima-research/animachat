@@ -61,7 +61,7 @@
           </template>
           <template v-slot:subtitle>
             <div>
-              <div class="text-caption text-primary">{{ getConversationModels(conversation) }}</div>
+              <div class="text-caption" v-html="getConversationModelsHtml(conversation)"></div>
               <div class="text-caption text-medium-emphasis">{{ formatDate(conversation.updatedAt) }}</div>
             </div>
           </template>
@@ -145,9 +145,9 @@
         <v-chip 
           v-if="currentConversation?.format === 'standard'"
           class="mr-2 clickable-chip" 
-          size="small" 
+          size="small"
           variant="outlined"
-          :color="currentModel?.provider === 'anthropic' ? 'primary' : 'secondary'"
+          :color="getModelColor(currentConversation?.model)"
           @click="conversationSettingsDialog = true"
         >
           {{ currentModel?.displayName || 'Select Model' }}
@@ -277,10 +277,31 @@
             hide-details
             class="flex-grow-1"
           >
+            <template v-slot:selection="{ item }">
+              <div class="d-flex align-center">
+                <v-icon 
+                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                  :color="item.raw.type === 'assistant' ? getModelColor(item.raw.model) : undefined"
+                  size="small"
+                  class="mr-2"
+                />
+                <span :style="item.raw.type === 'assistant' ? `color: ${getModelColor(item.raw.model)}; font-weight: 500;` : ''">
+                  {{ item.raw.name }}
+                </span>
+              </div>
+            </template>
             <template v-slot:item="{ props, item }">
               <v-list-item v-bind="props">
                 <template v-slot:prepend>
-                  <v-icon :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'" />
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'assistant' ? getModelColor(item.raw.model) : undefined"
+                  />
+                </template>
+                <template v-slot:title>
+                  <span :style="item.raw.type === 'assistant' ? `color: ${getModelColor(item.raw.model)}; font-weight: 500;` : ''">
+                    {{ item.raw.name }}
+                  </span>
                 </template>
               </v-list-item>
             </template>
@@ -295,7 +316,36 @@
             variant="outlined"
             hide-details
             class="flex-grow-1"
-          />
+          >
+            <template v-slot:selection="{ item }">
+              <div class="d-flex align-center">
+                <v-icon 
+                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                  :color="item.raw.type === 'assistant' ? getModelColor(item.raw.model) : undefined"
+                  size="small"
+                  class="mr-2"
+                />
+                <span :style="item.raw.type === 'assistant' ? `color: ${getModelColor(item.raw.model)}; font-weight: 500;` : ''">
+                  {{ item.raw.name }}
+                </span>
+              </div>
+            </template>
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:prepend>
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'assistant' ? getModelColor(item.raw.model) : undefined"
+                  />
+                </template>
+                <template v-slot:title>
+                  <span :style="item.raw.type === 'assistant' ? `color: ${getModelColor(item.raw.model)}; font-weight: 500;` : ''">
+                    {{ item.raw.name }}
+                  </span>
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
         </div>
         
         <!-- Attachments display -->
@@ -487,6 +537,7 @@ import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
+import { getModelColor } from '@/utils/modelColors';
 
 const route = useRoute();
 const router = useRouter();
@@ -563,11 +614,27 @@ const responderOptions = computed(() => {
   return options.concat(assistantOptions);
 });
 
+// Watch for new conversations and load their participants
+watch(conversations, (newConversations) => {
+  for (const conversation of newConversations) {
+    if (conversation.format === 'prefill' && !conversationParticipantsCache.value[conversation.id]) {
+      loadConversationParticipants(conversation.id);
+    }
+  }
+});
+
 // Load initial data
 onMounted(async () => {
   await store.loadModels();
   await store.loadConversations();
   store.connectWebSocket();
+  
+  // Load participants for multi-participant conversations
+  for (const conversation of conversations.value) {
+    if (conversation.format === 'prefill') {
+      loadConversationParticipants(conversation.id);
+    }
+  }
   
   // Show welcome dialog on first visit
   const hideWelcome = localStorage.getItem('hideWelcomeDialog');
@@ -1205,6 +1272,44 @@ async function loadConversationParticipants(conversationId: string) {
     console.error('Failed to load participants for conversation:', conversationId, error);
     return [];
   }
+}
+
+function getConversationModelsHtml(conversation: Conversation): string {
+  if (!conversation) return '';
+  
+  // For standard conversations, show the model name
+  if (conversation.format === 'standard' || !conversation.format) {
+    const model = store.state.models.find(m => m.id === conversation.model);
+    const modelName = model ? model.displayName
+      .replace('Claude ', '')
+      .replace(' (Bedrock)', ' B')
+      .replace(' (OpenRouter)', ' OR') : conversation.model;
+    
+    const color = getModelColor(conversation.model);
+    return `<span style="color: ${color}; font-weight: 500;">${modelName}</span>`;
+  }
+  
+  // For multi-participant conversations, try to show participant models
+  const cachedParticipants = conversationParticipantsCache.value[conversation.id];
+  if (cachedParticipants) {
+    const assistants = cachedParticipants.filter(p => p.type === 'assistant' && p.isActive);
+    if (assistants.length > 0) {
+      const modelSpans = assistants.map(a => {
+        const model = store.state.models.find(m => m.id === a.model);
+        const modelName = model ? model.displayName
+          .replace('Claude ', '')
+          .replace(' (Bedrock)', ' B')
+          .replace(' (OpenRouter)', ' OR') : (a.model || 'Default');
+        
+        const color = getModelColor(a.model);
+        return `<span style="color: ${color}; font-weight: 500;">${modelName}</span>`;
+      });
+      
+      return modelSpans.join(' • ');
+    }
+  }
+  
+  return '<span style="color: #757575; font-weight: 500;">Multi-participant</span>';
 }
 
 function getConversationModels(conversation: Conversation): string {

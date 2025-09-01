@@ -17,10 +17,11 @@
       <div class="d-flex align-start mb-2">
         <v-icon
           :icon="message.branches[branchIndex].role === 'user' ? 'mdi-account' : 'mdi-robot'"
+          :color="participantColor"
           size="small"
           class="mr-2"
         />
-        <div class="text-caption">
+        <div class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
           {{ participantName }}
         </div>
         
@@ -168,6 +169,7 @@ import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Message, MessageBranch, Participant } from '@deprecated-claude/shared';
+import { getModelColor } from '@/utils/modelColors';
 
 const props = defineProps<{
   message: Message;
@@ -216,6 +218,30 @@ const participantName = computed(() => {
   
   // Fallback if participant not found
   return branch.role === 'user' ? 'You' : branch.model || 'Assistant';
+});
+
+const participantColor = computed(() => {
+  const branch = currentBranch.value;
+  
+  // Only color assistant messages
+  if (branch.role !== 'assistant') {
+    return undefined;
+  }
+  
+  // Try to get model from participant or branch
+  let model: string | undefined;
+  
+  if (props.participants && branch.participantId) {
+    const participant = props.participants.find(p => p.id === branch.participantId);
+    model = participant?.model;
+  }
+  
+  // Fallback to branch model
+  if (!model) {
+    model = branch.model;
+  }
+  
+  return getModelColor(model);
 });
 
 // Get all sibling branches (branches that share the same parent)

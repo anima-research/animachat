@@ -45,6 +45,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import * as d3 from 'd3';
 import type { Message, MessageBranch } from '@deprecated-claude/shared';
+import { getModelColor } from '@/utils/modelColors';
 
 const props = defineProps<{
   messages: Message[];
@@ -79,15 +80,16 @@ const compactMode = ref(false);
 let svg: d3.Selection<SVGElement, unknown, null, undefined>;
 let g: d3.Selection<SVGGElement, unknown, null, undefined>;
 let zoom: d3.ZoomBehavior<SVGElement, unknown>;
+let branchToMessageMap: Map<string, { message: Message, branch: MessageBranch }> = new Map();
 
 const treeData = computed(() => {
   if (!props.messages || props.messages.length === 0) return null;
   
   // Build a map of branch ID to message for quick lookup
-  const branchToMessage = new Map<string, { message: Message, branch: MessageBranch }>();
+  branchToMessageMap.clear();
   for (const message of props.messages) {
     for (const branch of message.branches) {
-      branchToMessage.set(branch.id, { message, branch });
+      branchToMessageMap.set(branch.id, { message, branch });
     }
   }
   
@@ -100,7 +102,7 @@ const treeData = computed(() => {
     if (processedBranches.has(branchId)) return null;
     processedBranches.add(branchId);
     
-    const data = branchToMessage.get(branchId);
+    const data = branchToMessageMap.get(branchId);
     if (!data) return null;
     
     const { message, branch } = data;
@@ -140,7 +142,7 @@ const treeData = computed(() => {
     };
     
     // Find children (branches that have this branch as parent)
-    for (const [childBranchId, childData] of branchToMessage) {
+    for (const [childBranchId, childData] of branchToMessageMap) {
       if (childData.branch.parentBranchId === branchId) {
         const childNode = buildNode(childBranchId);
         if (childNode) {
@@ -336,8 +338,34 @@ function renderTree() {
   node.append('circle')
     .attr('r', baseNodeRadius)
     .style('fill', d => {
-      // Node fill based on role only
-      return d.data.role === 'user' ? '#9c27b0' : '#757575';
+      // Node fill based on role and model
+      if (d.data.role === 'user') {
+        return '#9c27b0'; // Purple for users
+      }
+      
+      // For assistants, use model color
+      // Try to get model from the branch data
+      const branchData = branchToMessageMap.get(d.data.branchId);
+      if (branchData) {
+        const { branch } = branchData;
+        
+        // Try to get model from participant or branch
+        let model: string | undefined;
+        
+        if (props.participants && branch.participantId) {
+          const participant = props.participants.find(p => p.id === branch.participantId);
+          model = participant?.model;
+        }
+        
+        // Fallback to branch model
+        if (!model) {
+          model = branch.model;
+        }
+        
+        return getModelColor(model);
+      }
+      
+      return '#757575'; // Default grey
     })
     .style('stroke', d => {
       // Outline based on selected parent or current position
