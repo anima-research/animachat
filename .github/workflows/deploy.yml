@@ -64,10 +64,23 @@ jobs:
           # Stop the service using passwordless sudo
           sudo -n systemctl stop claude-app
           
+          # Backup data directory if it exists
+          if [ -d /var/www/deprecated-claude-app/backend/data ]; then
+            echo "Backing up data directory..."
+            cp -r /var/www/deprecated-claude-app/backend/data /tmp/claude-app-data-backup
+          fi
+          
           # Clean deployment directory (no backup needed with GitHub Actions)
           rm -rf /var/www/deprecated-claude-app/backend/*
           rm -rf /var/www/deprecated-claude-app/frontend/*
           rm -rf /var/www/deprecated-claude-app/shared/*
+          
+          # Restore data directory if backup exists
+          if [ -d /tmp/claude-app-data-backup ]; then
+            echo "Restoring data directory..."
+            mkdir -p /var/www/deprecated-claude-app/backend
+            mv /tmp/claude-app-data-backup /var/www/deprecated-claude-app/backend/data
+          fi
 
     - name: Copy files to server
       uses: appleboy/scp-action@v0.1.7
