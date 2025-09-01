@@ -161,47 +161,45 @@ const treeData = computed(() => {
 });
 
 // Filter nodes for compact mode - only show branch points and leaves
-function filterCompactNodes(root: d3.HierarchyNode<TreeNode>) {
-  // Mark nodes to keep: branch points (multiple children) and leaves
-  const nodesToKeep = new Set<d3.HierarchyNode<TreeNode>>();
-  
-  root.each(node => {
-    // Always keep root
+function filterCompactNodes(originalRoot: d3.HierarchyNode<TreeNode>): d3.HierarchyNode<TreeNode> {
+  // Build a simplified tree that collapses linear chains
+  function simplifyNode(node: d3.HierarchyNode<TreeNode>): TreeNode | null {
+    // Always keep the root
     if (!node.parent) {
-      nodesToKeep.add(node);
-      return;
+      return {
+        ...node.data,
+        children: node.children ? node.children.map(c => simplifyNode(c)).filter(c => c !== null) as TreeNode[] : []
+      };
     }
     
-    // Keep if it's a branch point (has siblings or multiple children)
-    const hasSiblings = node.parent.children && node.parent.children.length > 1;
     const hasMultipleChildren = node.children && node.children.length > 1;
+    const hasSiblings = node.parent.children && node.parent.children.length > 1;
     const isLeaf = !node.children || node.children.length === 0;
     
-    if (hasSiblings || hasMultipleChildren || isLeaf) {
-      nodesToKeep.add(node);
-    }
-  });
-  
-  // Create filtered tree
-  function filterNode(node: d3.HierarchyNode<TreeNode>): d3.HierarchyNode<TreeNode> | null {
-    if (!nodesToKeep.has(node)) return null;
-    
-    const filteredNode = d3.hierarchy(node.data);
-    
-    if (node.children) {
-      const filteredChildren = node.children
-        .map(child => filterNode(child))
-        .filter(child => child !== null) as d3.HierarchyNode<TreeNode>[];
-      
-      if (filteredChildren.length > 0) {
-        filteredNode.children = filteredChildren;
-      }
+    // Keep this node if it's a decision point or leaf
+    if (hasMultipleChildren || hasSiblings || isLeaf) {
+      return {
+        ...node.data,
+        children: node.children ? node.children.map(c => simplifyNode(c)).filter(c => c !== null) as TreeNode[] : []
+      };
     }
     
-    return filteredNode;
+    // This is a linear chain node with exactly one child - skip it
+    if (node.children && node.children.length === 1) {
+      // Skip this node and return its child instead
+      return simplifyNode(node.children[0]);
+    }
+    
+    return null;
   }
   
-  return filterNode(root) || root;
+  const simplifiedTree = simplifyNode(originalRoot);
+  if (!simplifiedTree) {
+    // Shouldn't happen, but fallback to original
+    return originalRoot;
+  }
+  
+  return d3.hierarchy(simplifiedTree);
 }
 
 function initializeTree() {
@@ -237,17 +235,26 @@ function renderTree() {
   const width = svgRef.value?.clientWidth || 400;
   const height = svgRef.value?.clientHeight || 600;
   
-  // Create hierarchy first to determine tree size
-  let root = d3.hierarchy(treeData.value);
+  // Create hierarchy first
+  const originalRoot = d3.hierarchy(treeData.value);
   
-  // In compact mode, filter to only show branch points and leaves
+  // Store original children count before filtering
+  const originalChildrenCount = new Map<string, number>();
+  originalRoot.each(node => {
+    const nodeId = `${node.data.messageId}-${node.data.branchId}`;
+    originalChildrenCount.set(nodeId, node.children ? node.children.length : 0);
+  });
+  
+  // Apply compact mode filtering if enabled
+  let root = originalRoot;
   if (compactMode.value) {
-    root = filterCompactNodes(root);
+    console.log('Applying compact mode filter');
+    root = filterCompactNodes(originalRoot);
   }
   
   // Count total nodes to determine sizing
   const nodeCount = root.descendants().length;
-  const autoCompact = nodeCount > 30; // Auto-enable compact for large trees
+  console.log(`Tree has ${nodeCount} nodes (compact: ${compactMode.value})`);
   
   // Dynamic node size based on tree size
   const baseNodeRadius = Math.max(10, Math.min(20, 400 / Math.sqrt(nodeCount)));
@@ -340,11 +347,16 @@ function renderTree() {
       hoveredNode.value = null;
     });
   
-  // Add indicator for nodes with hidden children (collapsed subtrees)
+  // Add indicator for nodes with hidden children (collapsed subtrees or compact mode)
   node.each(function(d) {
-    const nodeData = d.data;
-    const hasHiddenChildren = nodeData.children.length > 0 && 
-                             (!d.children || d.children.length === 0);
+    const nodeId = `${d.data.messageId}-${d.data.branchId}`;
+    const originalChildren = originalChildrenCount.get(nodeId) || 0;
+    const currentChildren = d.children ? d.children.length : 0;
+    
+    // Has hidden children if original had more children than current
+    // Or if in compact mode and we skipped some nodes
+    const hasHiddenChildren = (originalChildren > currentChildren) || 
+                             (compactMode.value && d.data.children.length > currentChildren);
     
     if (hasHiddenChildren) {
       // Add a small indicator showing there are hidden children
@@ -455,21 +467,8 @@ watch([() => props.messages, () => props.currentMessageId, () => props.currentBr
   renderTree();
 }, { deep: true });
 
-// Auto-enable compact mode for large trees
-watch(() => props.messages, (messages) => {
-  if (!messages) return;
-  
-  // Count total nodes
-  let nodeCount = 0;
-  for (const message of messages) {
-    nodeCount += message.branches.length;
-  }
-  
-  // Auto-enable compact mode if tree is large
-  if (nodeCount > 30 && !compactMode.value) {
-    compactMode.value = true;
-  }
-}, { immediate: true });
+// Note: Removed auto-enable compact mode as it was causing issues
+// Users can manually toggle compact mode using the button
 
 // Handle resize
 let resizeObserver: ResizeObserver;
