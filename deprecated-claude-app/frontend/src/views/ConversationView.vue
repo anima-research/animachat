@@ -9,11 +9,15 @@
     >
       <v-list>
         <v-list-item
-          :prepend-avatar="userAvatar"
           :title="store.state.user?.name"
           :subtitle="store.state.user?.email"
           nav
         >
+          <template v-slot:prepend>
+            <div class="mr-3">
+              <ArcLogo :size="40" />
+            </div>
+          </template>
           <template v-slot:append>
             <v-btn
               variant="text"
@@ -57,7 +61,7 @@
           </template>
           <template v-slot:subtitle>
             <div>
-              <div class="text-caption text-primary">{{ getConversationModels(conversation) }}</div>
+              <div class="text-caption" v-html="getConversationModelsHtml(conversation)"></div>
               <div class="text-caption text-medium-emphasis">{{ formatDate(conversation.updatedAt) }}</div>
             </div>
           </template>
@@ -103,6 +107,16 @@
       <template v-slot:append>
         <v-list density="compact" nav>
           <v-list-item
+            prepend-icon="mdi-help-circle"
+            title="Getting Started"
+            @click="welcomeDialog = true"
+          />
+          <v-list-item
+            prepend-icon="mdi-information"
+            title="About The Arc"
+            @click="$router.push('/about')"
+          />
+          <v-list-item
             prepend-icon="mdi-cog"
             title="Settings"
             @click="settingsDialog = true"
@@ -130,43 +144,33 @@
         
         <v-chip 
           v-if="currentConversation?.format === 'standard'"
-          class="mr-2" 
-          size="small" 
+          class="mr-2 clickable-chip" 
+          size="small"
           variant="outlined"
-          :color="currentModel?.provider === 'anthropic' ? 'primary' : 'secondary'"
+          :color="getModelColor(currentConversation?.model)"
+          @click="conversationSettingsDialog = true"
         >
           {{ currentModel?.displayName || 'Select Model' }}
+          <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
           <v-tooltip activator="parent" location="bottom">
-            Provider: {{ currentModel?.provider === 'anthropic' ? 'Anthropic API' : 'AWS Bedrock' }}
-            {{ currentModel?.deprecated ? ' (Deprecated)' : '' }}
+            Click to change model and settings
           </v-tooltip>
         </v-chip>
         
         <v-chip 
           v-else
-          class="mr-2" 
+          class="mr-2 clickable-chip" 
           size="small" 
           variant="outlined"
           color="info"
+          @click="conversationSettingsDialog = true"
         >
           Multi-Participant Mode
+          <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
           <v-tooltip activator="parent" location="bottom">
-            Configure models and settings for each participant
+            Click to configure participants and settings
           </v-tooltip>
         </v-chip>
-        
-        <v-btn 
-          v-if="currentConversation && currentConversation.format !== 'standard'"
-          icon="mdi-account-multiple"
-          size="small"
-          @click="participantsDialog = true"
-        />
-        
-        <v-btn
-          icon="mdi-cog-outline"
-          size="small"
-          @click="conversationSettingsDialog = true"
-        />
         
         <!-- Fix branches button (hidden - only for debugging) -->
         <!-- <v-btn
@@ -178,14 +182,31 @@
           title="Fix branch structure issues"
         /> -->
         
-        <!-- Import raw messages button (temporary for debugging) -->
-        <v-btn
+        <!-- Import raw messages button (hidden - kept for potential debugging use) -->
+        <!-- <v-btn
           v-if="currentConversation"
           icon="mdi-database-import"
           size="small"
           color="green"
           @click="showRawImportDialog = true"
           title="Import raw messages backup"
+        /> -->
+        
+        <v-btn
+          v-if="currentConversation"
+          icon="mdi-export"
+          variant="text"
+          @click="exportConversation(currentConversation.id)"
+          title="Export conversation"
+        />
+        
+        <v-btn
+          v-if="allMessages.length > 0"
+          :icon="treeDrawer ? 'mdi-graph' : 'mdi-graph-outline'"
+          :color="treeDrawer ? 'primary' : undefined"
+          variant="text"
+          @click="treeDrawer = !treeDrawer"
+          title="Toggle conversation tree"
         />
       </v-app-bar>
 
@@ -202,14 +223,19 @@
         
         <div v-else>
           <MessageComponent
-            v-for="message in messages"
+            v-for="(message, index) in messages"
+            :id="`message-${message.id}`"
             :key="message.id"
             :message="message"
             :participants="participants"
+            :is-selected-parent="selectedBranchForParent?.messageId === message.id && 
+                                 selectedBranchForParent?.branchId === message.activeBranchId"
+            :is-last-message="index === messages.length - 1"
             @regenerate="regenerateMessage"
             @edit="editMessage"
             @switch-branch="switchBranch"
             @delete="deleteMessage"
+            @select-as-parent="selectBranchAsParent"
           />
           
           <div v-if="isStreaming" class="d-flex align-center mt-4">
@@ -226,10 +252,23 @@
 
       <!-- Input Area -->
       <v-container v-if="currentConversation" class="pa-4">
+        <!-- Branch selection indicator -->
+        <v-alert
+          v-if="selectedBranchForParent"
+          type="info"
+          density="compact"
+          class="mb-3"
+          closable
+          @click:close="cancelBranchSelection"
+        >
+          <v-icon size="small" class="mr-2">mdi-source-branch</v-icon>
+          Branching from selected message. New messages will create alternative branches.
+        </v-alert>
+        
         <div v-if="currentConversation.format !== 'standard'" class="mb-2 d-flex gap-2">
           <v-select
             v-model="selectedParticipant"
-            :items="userParticipants"
+            :items="allParticipants"
             item-title="name"
             item-value="id"
             label="Speaking as"
@@ -237,7 +276,36 @@
             variant="outlined"
             hide-details
             class="flex-grow-1"
-          />
+          >
+            <template v-slot:selection="{ item }">
+              <div class="d-flex align-center">
+                <v-icon 
+                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
+                  size="small"
+                  class="mr-2"
+                />
+                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                  {{ item.raw.name }}
+                </span>
+              </div>
+            </template>
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:prepend>
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
+                  />
+                </template>
+                <template v-slot:title>
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                    {{ item.raw.name }}
+                  </span>
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
           <v-select
             v-model="selectedResponder"
             :items="responderOptions"
@@ -248,7 +316,36 @@
             variant="outlined"
             hide-details
             class="flex-grow-1"
-          />
+          >
+            <template v-slot:selection="{ item }">
+              <div class="d-flex align-center">
+                <v-icon 
+                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
+                  size="small"
+                  class="mr-2"
+                />
+                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                  {{ item.raw.name }}
+                </span>
+              </div>
+            </template>
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:prepend>
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
+                  />
+                </template>
+                <template v-slot:title>
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                    {{ item.raw.name }}
+                  </span>
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
         </div>
         
         <!-- Attachments display -->
@@ -301,7 +398,7 @@
             
             <v-btn
               :disabled="isStreaming"
-              :color="currentConversation?.format === 'standard' ? 'grey' : 'secondary'"
+              :color="continueButtonColor"
               icon="mdi-robot"
               variant="text"
               :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
@@ -329,6 +426,44 @@
         />
       </v-container>
     </v-main>
+
+    <!-- Right sidebar with conversation tree -->
+    <v-navigation-drawer
+      v-model="treeDrawer"
+      location="right"
+      :width="400"
+      permanent
+    >
+      <v-toolbar density="compact">
+        <v-toolbar-title>Conversation Tree</v-toolbar-title>
+        <v-spacer />
+        <v-btn
+          icon="mdi-close"
+          size="small"
+          variant="text"
+          @click="treeDrawer = false"
+        />
+      </v-toolbar>
+      
+      <ConversationTree
+        v-if="allMessages.length > 0"
+        :messages="allMessages"
+        :participants="participants"
+        :current-message-id="currentMessageId"
+        :current-branch-id="currentBranchId"
+        :selected-parent-message-id="selectedBranchForParent?.messageId"
+        :selected-parent-branch-id="selectedBranchForParent?.branchId"
+        @navigate-to-branch="navigateToTreeBranch"
+        class="flex-grow-1"
+      />
+      
+      <v-container v-else class="d-flex align-center justify-center" style="height: calc(100% - 48px);">
+        <div class="text-center text-grey">
+          <v-icon size="48">mdi-graph-outline</v-icon>
+          <div class="mt-2">No messages yet</div>
+        </div>
+      </v-container>
+    </v-navigation-drawer>
 
     <!-- Dialogs -->
     <ImportDialogV2
@@ -375,14 +510,16 @@
       :conversation="currentConversation"
       :models="store.state.models"
       @update="updateConversationSettings"
+      @update-participants="updateParticipants"
     />
     
-    <ParticipantsDialog
-      v-model="participantsDialog"
-      :conversation="currentConversation"
-      :models="store.state.models"
-      :current-participants="participants"
-      @update="updateParticipants"
+
+    
+    <WelcomeDialog
+      v-model="welcomeDialog"
+      @open-settings="settingsDialog = true"
+      @open-import="importDialog = true"
+      @new-conversation="createNewConversation"
     />
   </v-layout>
 </template>
@@ -397,7 +534,10 @@ import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
-import ParticipantsDialog from '@/components/ParticipantsDialog.vue';
+import ArcLogo from '@/components/ArcLogo.vue';
+import WelcomeDialog from '@/components/WelcomeDialog.vue';
+import ConversationTree from '@/components/ConversationTree.vue';
+import { getModelColor } from '@/utils/modelColors';
 
 const route = useRoute();
 const router = useRouter();
@@ -405,16 +545,20 @@ const store = useStore();
 
 const drawer = ref(true);
 const rail = ref(false);
+const treeDrawer = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
-const participantsDialog = ref(false);
 const showRawImportDialog = ref(false);
+const welcomeDialog = ref(false);
 const rawImportData = ref('');
 const messageInput = ref('');
 const isStreaming = ref(false);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
+
+// Branch selection state
+const selectedBranchForParent = ref<{ messageId: string; branchId: string } | null>(null);
 const messagesContainer = ref<HTMLElement>();
 const participants = ref<Participant[]>([]);
 const selectedParticipant = ref<string>('');
@@ -423,21 +567,37 @@ const selectedResponder = ref<string>('');
 const conversations = computed(() => store.state.conversations);
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
+const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
+
+// For tree view - identify current position
+const currentMessageId = computed(() => {
+  const visibleMessages = messages.value;
+  if (visibleMessages.length > 0) {
+    const lastMessage = visibleMessages[visibleMessages.length - 1];
+    return lastMessage.id;
+  }
+  return undefined;
+});
+
+const currentBranchId = computed(() => {
+  const visibleMessages = messages.value;
+  if (visibleMessages.length > 0) {
+    const lastMessage = visibleMessages[visibleMessages.length - 1];
+    return lastMessage.activeBranchId;
+  }
+  return undefined;
+});
 const currentModel = computed(() => store.currentModel);
 
-const userAvatar = computed(() => {
-  const name = store.state.user?.name || '';
-  const initials = name.split(' ').map(n => n[0]).join('').toUpperCase();
-  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=BB86FC&color=fff`;
-});
 
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
   return responder?.name || 'Assistant';
 });
 
-const userParticipants = computed(() => {
-  return participants.value.filter(p => p.type === 'user' && p.isActive);
+// Allow sending as any participant type (user or assistant)
+const allParticipants = computed(() => {
+  return participants.value.filter(p => p.isActive);
 });
 
 const assistantParticipants = computed(() => {
@@ -445,13 +605,42 @@ const assistantParticipants = computed(() => {
 });
 
 const responderOptions = computed(() => {
-  const options = [{ id: '', name: 'No response' }];
-  // Map assistant participants to ensure we show their names
+  const options = [{ id: '', name: 'No response', type: 'none' as any }];
+  // Include full participant objects to have access to type and model
   const assistantOptions = assistantParticipants.value.map(p => ({
     id: p.id,
-    name: p.name
+    name: p.name,
+    type: p.type,
+    model: p.model
   }));
   return options.concat(assistantOptions);
+});
+
+const continueButtonColor = computed(() => {
+  if (currentConversation.value?.format === 'standard') {
+    // For standard conversations, use the model color
+    return getModelColor(currentConversation.value?.model);
+  }
+  
+  // For multi-participant, find the selected responder and get their color
+  if (selectedResponder.value) {
+    const responder = participants.value.find(p => p.id === selectedResponder.value);
+    if (responder && responder.type === 'assistant') {
+      return getModelColor(responder.model);
+    }
+  }
+  
+  // Default fallback
+  return '#9e9e9e';
+});
+
+// Watch for new conversations and load their participants
+watch(conversations, (newConversations) => {
+  for (const conversation of newConversations) {
+    if (conversation.format === 'prefill' && !conversationParticipantsCache.value[conversation.id]) {
+      loadConversationParticipants(conversation.id);
+    }
+  }
 });
 
 // Load initial data
@@ -459,6 +648,19 @@ onMounted(async () => {
   await store.loadModels();
   await store.loadConversations();
   store.connectWebSocket();
+  
+  // Load participants for multi-participant conversations
+  for (const conversation of conversations.value) {
+    if (conversation.format === 'prefill') {
+      loadConversationParticipants(conversation.id);
+    }
+  }
+  
+  // Show welcome dialog on first visit
+  const hideWelcome = localStorage.getItem('hideWelcomeDialog');
+  if (!hideWelcome) {
+    welcomeDialog.value = true;
+  }
   
   // Load conversation from route
   if (route.params.id) {
@@ -533,6 +735,8 @@ async function createNewConversation() {
   const model = store.state.models[0]?.id || 'claude-3-5-sonnet-20241022';
   const conversation = await store.createConversation(model);
   router.push(`/conversation/${conversation.id}`);
+  // Load participants for the new conversation
+  await loadParticipants();
 }
 
 async function sendMessage() {
@@ -541,6 +745,7 @@ async function sendMessage() {
   
   console.log('ConversationView sendMessage:', content);
   console.log('Current visible messages:', messages.value.length);
+  console.log('Selected parent branch:', selectedBranchForParent.value);
   
   const attachmentsCopy = [...attachments.value];
   messageInput.value = '';
@@ -563,8 +768,16 @@ async function sendMessage() {
       participantId = selectedParticipant.value || undefined;
       responderId = selectedResponder.value || undefined;
     }
+    
+    // Pass the selected parent branch if one is selected
+    const parentBranchId = selectedBranchForParent.value?.branchId;
       
-    await store.sendMessage(content, participantId, responderId, attachmentsCopy);
+    await store.sendMessage(content, participantId, responderId, attachmentsCopy, parentBranchId);
+    
+    // Clear selection after successful send
+    if (selectedBranchForParent.value) {
+      selectedBranchForParent.value = null;
+    }
   } finally {
     isStreaming.value = false;
   }
@@ -574,6 +787,7 @@ async function continueGeneration() {
   if (isStreaming.value) return;
   
   console.log('ConversationView continueGeneration');
+  console.log('Selected parent branch:', selectedBranchForParent.value);
   
   isStreaming.value = true;
   
@@ -589,8 +803,16 @@ async function continueGeneration() {
       responderId = selectedResponder.value || undefined;
     }
     
+    // Pass the selected parent branch if one is selected
+    const parentBranchId = selectedBranchForParent.value?.branchId;
+    
     // Send empty message to trigger AI response
-    await store.continueGeneration(responderId);
+    await store.continueGeneration(responderId, parentBranchId);
+    
+    // Clear selection after successful continue
+    if (selectedBranchForParent.value) {
+      selectedBranchForParent.value = null;
+    }
   } finally {
     isStreaming.value = false;
   }
@@ -623,6 +845,62 @@ async function editMessage(messageId: string, branchId: string, content: string)
 
 function switchBranch(messageId: string, branchId: string) {
   store.switchBranch(messageId, branchId);
+}
+
+async function navigateToTreeBranch(messageId: string, branchId: string) {
+  console.log('Navigating to branch:', messageId, branchId);
+  
+  // Build path from target branch back to root
+  const pathToRoot: { messageId: string, branchId: string }[] = [];
+  
+  // Find the target branch and trace back to root
+  let currentBranchId: string | undefined = branchId;
+  
+  while (currentBranchId && currentBranchId !== 'root') {
+    // Find the message containing this branch
+    const message = allMessages.value.find(m => 
+      m.branches.some(b => b.id === currentBranchId)
+    );
+    
+    if (!message) {
+      console.error('Could not find message for branch:', currentBranchId);
+      break;
+    }
+    
+    // Add to path
+    pathToRoot.unshift({ messageId: message.id, branchId: currentBranchId });
+    
+    // Find the branch to get its parent
+    const branch = message.branches.find(b => b.id === currentBranchId);
+    if (!branch) break;
+    
+    currentBranchId = branch.parentBranchId;
+  }
+  
+  console.log('Path to switch:', pathToRoot);
+  
+  // Switch branches along the path
+  for (const { messageId: msgId, branchId: brId } of pathToRoot) {
+    const message = allMessages.value.find(m => m.id === msgId);
+    if (message && message.activeBranchId !== brId) {
+      console.log('Switching branch:', msgId, brId);
+      store.switchBranch(msgId, brId);
+    }
+  }
+  
+  // Wait for DOM to update, then scroll to the clicked message
+  await nextTick();
+  setTimeout(() => {
+    const messageElement = document.getElementById(`message-${messageId}`);
+    if (messageElement) {
+      messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Add a brief highlight effect
+      messageElement.classList.add('highlight-message');
+      setTimeout(() => {
+        messageElement.classList.remove('highlight-message');
+      }, 2000);
+    }
+  }, 100); // Small delay to ensure messages are rendered
 }
 
 async function renameConversation(conversation: Conversation) {
@@ -767,6 +1045,11 @@ async function archiveConversation(id: string) {
 async function updateConversationSettings(updates: Partial<Conversation>) {
   if (currentConversation.value) {
     await store.updateConversation(currentConversation.value.id, updates);
+    
+    // If format changed, reload participants to get the new defaults
+    if ('format' in updates) {
+      await loadParticipants();
+    }
   }
 }
 
@@ -774,6 +1057,20 @@ async function deleteMessage(messageId: string, branchId: string) {
   if (confirm('Are you sure you want to delete this message and all its replies?')) {
     await store.deleteMessage(messageId, branchId);
   }
+}
+
+function selectBranchAsParent(messageId: string, branchId: string) {
+  // Toggle selection - if already selected, deselect
+  if (selectedBranchForParent.value?.messageId === messageId && 
+      selectedBranchForParent.value?.branchId === branchId) {
+    selectedBranchForParent.value = null;
+  } else {
+    selectedBranchForParent.value = { messageId, branchId };
+  }
+}
+
+function cancelBranchSelection() {
+  selectedBranchForParent.value = null;
 }
 
 async function loadParticipants() {
@@ -997,6 +1294,44 @@ async function loadConversationParticipants(conversationId: string) {
   }
 }
 
+function getConversationModelsHtml(conversation: Conversation): string {
+  if (!conversation) return '';
+  
+  // For standard conversations, show the model name
+  if (conversation.format === 'standard' || !conversation.format) {
+    const model = store.state.models.find(m => m.id === conversation.model);
+    const modelName = model ? model.displayName
+      .replace('Claude ', '')
+      .replace(' (Bedrock)', ' B')
+      .replace(' (OpenRouter)', ' OR') : conversation.model;
+    
+    const color = getModelColor(conversation.model);
+    return `<span style="color: ${color}; font-weight: 500;">${modelName}</span>`;
+  }
+  
+  // For multi-participant conversations, try to show participant models
+  const cachedParticipants = conversationParticipantsCache.value[conversation.id];
+  if (cachedParticipants) {
+    const assistants = cachedParticipants.filter(p => p.type === 'assistant' && p.isActive);
+    if (assistants.length > 0) {
+      const modelSpans = assistants.map(a => {
+        const model = store.state.models.find(m => m.id === a.model);
+        const modelName = model ? model.displayName
+          .replace('Claude ', '')
+          .replace(' (Bedrock)', ' B')
+          .replace(' (OpenRouter)', ' OR') : (a.model || 'Default');
+        
+        const color = getModelColor(a.model);
+        return `<span style="color: ${color}; font-weight: 500;">${modelName}</span>`;
+      });
+      
+      return modelSpans.join(' • ');
+    }
+  }
+  
+  return '<span style="color: #757575; font-weight: 500;">Multi-participant</span>';
+}
+
 function getConversationModels(conversation: Conversation): string {
   if (!conversation) return '';
   
@@ -1100,5 +1435,36 @@ function formatDate(date: Date | string): string {
 
 .messages-container {
   overflow-y: scroll !important; /* Force scrollbar to always show */
+}
+
+/* Clickable chip styles */
+.clickable-chip {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.clickable-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.highlight-message {
+  animation: highlight-pulse 2s ease-out;
+}
+
+@keyframes highlight-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(25, 118, 210, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 20px 10px rgba(25, 118, 210, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(25, 118, 210, 0);
+  }
+}
+
+.clickable-chip:active {
+  transform: translateY(0);
 }
 </style>

@@ -100,7 +100,7 @@ export const MessageBranchSchema = z.object({
   createdAt: z.date(),
   model: z.string().optional(),
   parentBranchId: z.string().uuid().optional(),
-  isActive: z.boolean(),
+  isActive: z.boolean().optional(), // Deprecated - not used, kept for backward compatibility
   attachments: z.array(AttachmentSchema).optional() // Attachments for this branch
 });
 

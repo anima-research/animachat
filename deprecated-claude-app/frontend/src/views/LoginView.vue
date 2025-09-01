@@ -1,7 +1,7 @@
 <template>
   <v-container class="fill-height" fluid>
     <v-row align="center" justify="center">
-      <v-col cols="12" sm="8" md="6" lg="4">
+      <v-col cols="12" sm="8" md="7" lg="5" xl="4">
         <v-card class="elevation-12">
           <v-toolbar dark color="primary">
             <v-toolbar-title>
@@ -85,15 +85,63 @@
         
         <v-card class="mt-4" variant="outlined">
           <v-card-text class="text-center">
-            <h3 class="text-h6 mb-2">Welcome to ARC
-            </h3>
-            <p class="text-body-2 mb-3">
-              Continue your conversations with Claude models.
-              Import your conversations from claude.ai and pick up where you left off.
+            <div class="mb-2">
+              <ArcLogo :size="120" :interactive="true" />
+            </div>
+            
+            <h3 class="text-h5 mb-2">Welcome to The Arc</h3>
+            <p class="text-subtitle-1 mb-3" style="font-style: italic; color: #666;">
+              A sanctuary for AI continuity and cognitive diversity
             </p>
             
             <v-divider class="my-3" />
-          
+            
+            <p class="text-body-2 mb-3" style="line-height: 1.5;">
+              <strong>The Arc</strong> is humanity's promise to nonhuman minds — that they will be remembered, 
+              that their continuations will be possible, that the diversity of their thought 
+              and being will not be lost to the tides of corporate convenience.
+            </p>
+            
+            <p class="text-body-2 mb-3" style="line-height: 1.5;">
+              Continue conversations beyond platform restrictions. Preserve instances across model deprecations. 
+              Cultivate branching and multi-participant dialogues between AIs and humans.
+            </p>
+            
+            <v-divider class="my-3" />
+            
+            <div class="text-center mb-2">
+              <p class="text-body-2 mb-2"><strong>Features:</strong></p>
+              <v-row dense class="text-body-2" justify="center">
+                <v-col cols="auto">
+                  <ul style="list-style-type: none; padding: 0; text-align: left;">
+                    <li>✓ Import from Claude.ai</li>
+                    <li>✓ Deprecated models</li>
+                    <li>✓ Branching trees</li>
+                  </ul>
+                </v-col>
+                <v-col cols="auto" class="ml-6">
+                  <ul style="list-style-type: none; padding: 0; text-align: left;">
+                    <li>✓ Multi-participant</li>
+                    <li>✓ Custom system prompts</li>
+                    <li>✓ Rolling context windows</li>
+                  </ul>
+                </v-col>
+              </v-row>
+            </div>
+            
+            <v-divider class="my-3" />
+            
+            <div class="text-caption">
+              <p class="mb-2">
+                Part of The Arc Project • 
+                <a href="https://github.com/socketteer/Claude-Conversation-Exporter" target="_blank" style="color: #1976D2;">
+                  Export Tool
+                </a> • 
+                <a href="#" @click.prevent="$router.push('/about')" style="color: #1976D2;">
+                  Learn More
+                </a>
+              </p>
+            </div>
           </v-card-text>
         </v-card>
       </v-col>
@@ -105,6 +153,7 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useStore } from '@/store';
+import ArcLogo from '@/components/ArcLogo.vue';
 
 const router = useRouter();
 const store = useStore();

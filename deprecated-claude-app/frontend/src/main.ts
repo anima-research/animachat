@@ -18,6 +18,7 @@ import { createStore } from './store';
 // Routes
 import ConversationView from './views/ConversationView.vue';
 import LoginView from './views/LoginView.vue';
+import AboutView from './views/AboutView.vue';
 
 const vuetify = createVuetify({
   components,
@@ -56,6 +57,11 @@ const router = createRouter({
       path: '/login',
       name: 'login',
       component: LoginView,
+    },
+    {
+      path: '/about',
+      name: 'about',
+      component: AboutView,
     },
     {
       path: '/',

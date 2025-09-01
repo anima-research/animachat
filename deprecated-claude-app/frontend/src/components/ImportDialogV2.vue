@@ -352,9 +352,14 @@ const loading = ref(false);
 // Format options
 const formatOptions = [
   {
-    value: 'basic_json',
-    label: 'Basic JSON',
-    description: 'Simple {"messages": [...]} format'
+    value: 'chrome_extension',
+    label: 'Claude Conversation Exporter',
+    description: 'Export from our Claude Conversation Exporter Chrome extension'
+  },
+  {
+    value: 'arc_chat',
+    label: 'Arc Chat',
+    description: 'Export from Arc Chat (this app)'
   },
   {
     value: 'anthropic',
@@ -362,9 +367,9 @@ const formatOptions = [
     description: 'Export from Claude.ai or Anthropic API'
   },
   {
-    value: 'chrome_extension',
-    label: 'Chrome Extension',
-    description: 'Export from our Chrome extension'
+    value: 'basic_json',
+    label: 'Basic JSON',
+    description: 'Simple {"messages": [...]} format'
   },
   {
     value: 'openai',
@@ -386,7 +391,8 @@ const formatOptions = [
 const formatLabels: Record<string, string> = {
   basic_json: 'JSON',
   anthropic: 'Anthropic',
-  chrome_extension: 'Chrome Extension',
+  chrome_extension: 'Claude Conversation Exporter',
+  arc_chat: 'Arc Chat',
   openai: 'OpenAI',
   colon_single: 'text',
   colon_double: 'text'
@@ -417,6 +423,7 @@ const acceptedFileTypes = computed(() => {
   if (selectedFormat.value === 'basic_json' || 
       selectedFormat.value === 'anthropic' ||
       selectedFormat.value === 'chrome_extension' ||
+      selectedFormat.value === 'arc_chat' ||
       selectedFormat.value === 'openai') {
     return '.json,application/json';
   }
@@ -480,28 +487,48 @@ async function previewImport() {
     conversationTitle.value = preview.value.title || 'Imported Conversation';
     conversationFormat.value = preview.value.suggestedFormat;
     
-    // Try to match the model from the import metadata
-    const importedModel = preview.value.metadata?.model;
-    if (importedModel) {
-      // Check if we have a direct match by ID
-      const matchingModel = models.value.find(m => m.id === importedModel);
-      if (matchingModel) {
-        selectedModel.value = matchingModel.id;
-      } else {
-        // Try to find a partial match (e.g., 'claude-sonnet-4' in 'claude-sonnet-4-20250514')
-        const partialMatch = models.value.find(m => 
-          m.id.includes(importedModel) || importedModel.includes(m.id)
-        );
-        if (partialMatch) {
-          selectedModel.value = partialMatch.id;
-        } else {
-          // Default to first model if no match found
-          selectedModel.value = models.value[0]?.id || '';
+    // For Arc Chat format, get model from participants or conversation
+    if (selectedFormat.value === 'arc_chat') {
+      // Use conversation format from metadata
+      if (preview.value.metadata?.conversation?.format) {
+        conversationFormat.value = preview.value.metadata.conversation.format;
+      }
+      
+      // Get primary model from participants or conversation
+      const participants = preview.value.metadata?.participants || [];
+      const assistantParticipant = participants.find((p: any) => p.type === 'assistant');
+      const importedModel = assistantParticipant?.model || preview.value.metadata?.conversation?.model;
+      
+      if (importedModel) {
+        const matchingModel = models.value.find(m => m.id === importedModel);
+        if (matchingModel) {
+          selectedModel.value = matchingModel.id;
         }
       }
     } else {
-      // Default to first model if no model specified
-      selectedModel.value = models.value[0]?.id || '';
+      // Try to match the model from the import metadata for other formats
+      const importedModel = preview.value.metadata?.model;
+      if (importedModel) {
+        // Check if we have a direct match by ID
+        const matchingModel = models.value.find(m => m.id === importedModel);
+        if (matchingModel) {
+          selectedModel.value = matchingModel.id;
+        } else {
+          // Try to find a partial match (e.g., 'claude-sonnet-4' in 'claude-sonnet-4-20250514')
+          const partialMatch = models.value.find(m => 
+            m.id.includes(importedModel) || importedModel.includes(m.id)
+          );
+          if (partialMatch) {
+            selectedModel.value = partialMatch.id;
+          } else {
+            // Default to first model if no match found
+            selectedModel.value = models.value[0]?.id || '';
+          }
+        }
+      } else {
+        // Default to first model if no model specified
+        selectedModel.value = models.value[0]?.id || '';
+      }
     }
     
     step.value = 2;

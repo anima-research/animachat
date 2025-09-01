@@ -64,14 +64,13 @@
           <h4 class="text-h6 mb-4">Model Parameters</h4>
         </div>
         
-        <v-alert
-          v-else
-          type="info"
-          density="compact"
-          class="mt-4"
-        >
-          In multi-participant mode, configure models and settings for each assistant in the Participants dialog.
-        </v-alert>
+        <!-- Multi-participant mode: Show participants section -->
+        <div v-else class="mt-4">
+          <ParticipantsSection
+            v-model="localParticipants"
+            :models="models"
+          />
+        </div>
         
         <div v-if="selectedModel && settings.format === 'standard'">
           <!-- Temperature -->
@@ -211,8 +210,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
-import type { Conversation, Model } from '@deprecated-claude/shared';
+import { ref, computed, watch, onMounted } from 'vue';
+import type { Conversation, Model, Participant } from '@deprecated-claude/shared';
+import ParticipantsSection from './ParticipantsSection.vue';
+import { api } from '@/services/api';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -223,6 +224,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
   update: [updates: Partial<Conversation>];
+  'update-participants': [participants: Participant[]];
 }>();
 
 const topPEnabled = ref(false);
@@ -254,12 +256,14 @@ const settings = ref<any>({
   }
 });
 
+const localParticipants = ref<Participant[]>([]);
+
 const selectedModel = computed(() => {
   return props.models.find(m => m.id === settings.value.model);
 });
 
 // Watch for conversation changes
-watch(() => props.conversation, (conversation) => {
+watch(() => props.conversation, async (conversation) => {
   if (conversation) {
     settings.value = {
       title: conversation.title,
@@ -272,8 +276,81 @@ watch(() => props.conversation, (conversation) => {
     // Set checkbox states based on whether values are defined
     topPEnabled.value = conversation.settings?.topP !== undefined;
     topKEnabled.value = conversation.settings?.topK !== undefined;
+    
+    // Load participants if in multi-participant mode
+    if (conversation.format === 'prefill') {
+      try {
+        const response = await api.get(`/participants/conversation/${conversation.id}`);
+        localParticipants.value = response.data;
+      } catch (error) {
+        console.error('Failed to load participants:', error);
+        localParticipants.value = [];
+      }
+    } else {
+      localParticipants.value = [];
+    }
   }
 }, { immediate: true });
+
+// Watch for format changes
+watch(() => settings.value.format, async (newFormat, oldFormat) => {
+  if (newFormat === 'prefill' && oldFormat === 'standard' && props.conversation) {
+    // Switching to multi-participant mode - load or create default participants
+    try {
+      const response = await api.get(`/participants/conversation/${props.conversation.id}`);
+      localParticipants.value = response.data;
+      
+      // If no participants exist, create defaults
+      if (localParticipants.value.length === 0) {
+        localParticipants.value = [
+          {
+            id: 'temp-user',
+            conversationId: props.conversation.id,
+            type: 'user',
+            name: 'User',
+            isActive: true
+          },
+          {
+            id: 'temp-assistant',
+            conversationId: props.conversation.id,
+            type: 'assistant',
+            name: 'Assistant',
+            model: settings.value.model,
+            isActive: true,
+            settings: {
+              temperature: 1.0,
+              maxTokens: 1024
+            }
+          }
+        ];
+      }
+    } catch (error) {
+      console.error('Failed to load participants:', error);
+      // Create default participants
+      localParticipants.value = [
+        {
+          id: 'temp-user',
+          conversationId: props.conversation?.id || '',
+          type: 'user',
+          name: 'User',
+          isActive: true
+        },
+        {
+          id: 'temp-assistant',
+          conversationId: props.conversation?.id || '',
+          type: 'assistant',
+          name: 'Assistant',
+          model: settings.value.model,
+          isActive: true,
+          settings: {
+            temperature: 1.0,
+            maxTokens: 1024
+          }
+        }
+      ];
+    }
+  }
+});
 
 // Update settings when model changes
 watch(() => settings.value.model, (modelId) => {
@@ -337,6 +414,7 @@ function save() {
     ...(topKEnabled.value && settings.value.settings.topK !== undefined && { topK: settings.value.settings.topK })
   };
   
+  // Update conversation settings
   emit('update', {
     title: settings.value.title,
     model: settings.value.model,
@@ -344,6 +422,12 @@ function save() {
     systemPrompt: settings.value.systemPrompt || undefined,
     settings: finalSettings
   });
+  
+  // If in multi-participant mode, emit participants for parent to update
+  if (settings.value.format === 'prefill') {
+    emit('update-participants', localParticipants.value);
+  }
+  
   emit('update:modelValue', false);
 }
 </script>

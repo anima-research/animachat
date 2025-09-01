@@ -38,7 +38,8 @@ export const ParsedMessageSchema = z.object({
     url: z.string().optional(),
     base64: z.string().optional(),
     mimeType: z.string().optional()
-  })).optional()
+  })).optional(),
+  metadata: z.record(z.any()).optional() // Additional metadata for format-specific data
 });
 
 export type ParsedMessage = z.infer<typeof ParsedMessageSchema>;
@@ -48,6 +49,7 @@ export const ImportFormatSchema = z.enum([
   'basic_json',
   'anthropic',
   'chrome_extension',
+  'arc_chat',
   'openai',
   'colon_single',
   'colon_double'

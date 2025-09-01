@@ -513,6 +513,16 @@ export class Database {
     this.conversations.set(id, updated);
     await this.logEvent('conversation_updated', { id, updates });
 
+    // If the model was updated and this is a standard conversation, 
+    // update the default assistant participant's model too
+    if (updates.model && conversation.format === 'standard') {
+      const participants = await this.getConversationParticipants(id);
+      const defaultAssistant = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+      if (defaultAssistant) {
+        await this.updateParticipant(defaultAssistant.id, { model: updates.model });
+      }
+    }
+
     return updated;
   }
 
@@ -608,7 +618,7 @@ export class Database {
         participantId,
         createdAt: new Date(),
         model,
-        isActive: true,
+        // isActive removed - deprecated field not used
         parentBranchId,
         attachments: attachments ? attachments.map(att => ({
           id: uuidv4(),
@@ -668,7 +678,7 @@ export class Database {
       createdAt: new Date(),
       model,
       parentBranchId,
-      isActive: true,
+      // isActive removed - deprecated field not used
       attachments: attachments ? attachments.map(att => ({
         id: uuidv4(),
         fileName: att.fileName,
@@ -762,7 +772,7 @@ export class Database {
         participantId: branch.participantId,
         createdAt: new Date(branch.createdAt),
         model: branch.model,
-        isActive: branch.isActive,
+        // isActive: branch.isActive, // Deprecated field - ignored on import
         parentBranchId: branch.parentBranchId,
         attachments: branch.attachments
       })),
@@ -1059,11 +1069,14 @@ export class Database {
     if (!conversation) return null;
 
     const messages = await this.getConversationMessages(conversationId);
+    const participants = await this.getConversationParticipants(conversationId);
 
     return {
       conversation,
       messages,
-      exportedAt: new Date()
+      participants,
+      exportedAt: new Date(),
+      version: '1.0' // Version for future compatibility
     };
   }
 

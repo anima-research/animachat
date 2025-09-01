@@ -37,7 +37,7 @@ export interface Store {
   
   loadMessages(conversationId: string): Promise<void>;
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>): Promise<void>;
-  continueGeneration(responderId?: string): Promise<void>;
+  continueGeneration(responderId?: string, explicitParentBranchId?: string): Promise<void>;
   regenerateMessage(messageId: string, branchId: string): Promise<void>;
   editMessage(messageId: string, branchId: string, content: string, responderId?: string): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
@@ -257,37 +257,24 @@ export function createStore(): {
       }
     },
     
-    async sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>) {
+    async sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string) {
       if (!state.currentConversation || !state.wsService) return;
-      
-      // Get the last visible message to determine the parent branch
-      const visibleMessages = this.messages;
-      // console.log('=== SENDING MESSAGE ===');
-      // console.log('Visible messages count:', visibleMessages.length);
-      
-      // if (visibleMessages.length > 0) {
-      //   console.log('Visible messages:', visibleMessages.map((m, idx) => ({
-      //     index: idx,
-      //     id: m.id,
-      //     activeBranchId: m.activeBranchId,
-      //     content: m.branches.find(b => b.id === m.activeBranchId)?.content.substring(0, 30) + '...'
-      //   })));
-      // }
       
       let parentBranchId: string | undefined;
       
-      if (visibleMessages.length > 0) {
-        const lastMessage = visibleMessages[visibleMessages.length - 1];
-        // console.log('Last visible message:', lastMessage.id, 'branches:', lastMessage.branches.map(b => ({
-        //   id: b.id,
-        //   parent: b.parentBranchId,
-        //   isActive: b.id === lastMessage.activeBranchId
-        // })));
-        const activeBranch = lastMessage.branches.find(b => b.id === lastMessage.activeBranchId);
-        parentBranchId = activeBranch?.id;
-        // console.log('>>> PARENT BRANCH ID:', parentBranchId, 'from branch', activeBranch?.id, 'of message', lastMessage.id);
+      if (explicitParentBranchId) {
+        // User has selected a specific branch to branch from
+        parentBranchId = explicitParentBranchId;
+        console.log('Using explicit parent branch:', parentBranchId);
       } else {
-        // console.log('Sending first message - no parent');
+        // Default behavior: get the last visible message to determine the parent branch
+        const visibleMessages = this.messages;
+        
+        if (visibleMessages.length > 0) {
+          const lastMessage = visibleMessages[visibleMessages.length - 1];
+          const activeBranch = lastMessage.branches.find(b => b.id === lastMessage.activeBranchId);
+          parentBranchId = activeBranch?.id;
+        }
       }
       
       const messageData = {
@@ -309,23 +296,24 @@ export function createStore(): {
       state.wsService.sendMessage(messageData);
     },
     
-    async continueGeneration(responderId?: string) {
+    async continueGeneration(responderId?: string, explicitParentBranchId?: string) {
       if (!state.currentConversation || !state.wsService) return;
-      
-      // Get the last visible message to determine the parent branch
-      const visibleMessages = this.messages;
-      // console.log('=== CONTINUE GENERATION ===');
-      // console.log('Visible messages count:', visibleMessages.length);
       
       let parentBranchId: string | undefined;
       
-      if (visibleMessages.length > 0) {
-        const lastMessage = visibleMessages[visibleMessages.length - 1];
-        const activeBranch = lastMessage.branches.find(b => b.id === lastMessage.activeBranchId);
-        parentBranchId = activeBranch?.id;
-        // console.log('>>> PARENT BRANCH ID:', parentBranchId, 'from branch', activeBranch?.id, 'of message', lastMessage.id);
+      if (explicitParentBranchId) {
+        // User has selected a specific branch to continue from
+        parentBranchId = explicitParentBranchId;
+        console.log('Using explicit parent branch for continue:', parentBranchId);
       } else {
-        // console.log('Continuing with no parent - first message');
+        // Default behavior: get the last visible message to determine the parent branch
+        const visibleMessages = this.messages;
+        
+        if (visibleMessages.length > 0) {
+          const lastMessage = visibleMessages[visibleMessages.length - 1];
+          const activeBranch = lastMessage.branches.find(b => b.id === lastMessage.activeBranchId);
+          parentBranchId = activeBranch?.id;
+        }
       }
       
       state.wsService.sendMessage({
@@ -575,7 +563,15 @@ export function createStore(): {
       
       state.wsService.on('message_created', (data: any) => {
         // console.log('Store handling message_created:', data);
-        state.allMessages.push(data.message);
+        // Check if this message already exists (branch was added to existing message)
+        const existingIndex = state.allMessages.findIndex(m => m.id === data.message.id);
+        if (existingIndex !== -1) {
+          // Update existing message (new branch was added)
+          state.allMessages[existingIndex] = data.message;
+        } else {
+          // Add new message
+          state.allMessages.push(data.message);
+        }
       });
       
       state.wsService.on('stream', (data: any) => {

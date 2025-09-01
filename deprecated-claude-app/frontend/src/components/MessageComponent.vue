@@ -2,11 +2,13 @@
   <v-card
     :class="[
       'mb-4',
-      message.branches[branchIndex].role === 'user' ? 'ml-auto' : 'mr-auto'
+      message.branches[branchIndex].role === 'user' ? 'ml-auto' : 'mr-auto',
+      isSelectedParent ? 'selected-parent' : ''
     ]"
     :style="{
       maxWidth: '80%',
-      alignSelf: message.branches[branchIndex].role === 'user' ? 'flex-end' : 'flex-start'
+      alignSelf: message.branches[branchIndex].role === 'user' ? 'flex-end' : 'flex-start',
+      border: isSelectedParent ? '2px solid rgb(var(--v-theme-info))' : undefined
     }"
     :color="message.branches[branchIndex].role === 'user' ? 'primary' : 'surface'"
     :variant="message.branches[branchIndex].role === 'user' ? 'tonal' : 'elevated'"
@@ -15,16 +17,27 @@
       <div class="d-flex align-start mb-2">
         <v-icon
           :icon="message.branches[branchIndex].role === 'user' ? 'mdi-account' : 'mdi-robot'"
+          :color="participantColor"
           size="small"
           class="mr-2"
         />
-        <div class="text-caption">
+        <div class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
           {{ participantName }}
         </div>
         
         <v-spacer />
         
         <div v-if="!isEditing" class="d-flex gap-1">
+          <v-btn
+            v-if="!isLastMessage"
+            :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
+            :color="isSelectedParent ? 'info' : undefined"
+            size="x-small"
+            variant="text"
+            @click="$emit('select-as-parent', message.id, currentBranch.id)"
+            title="Branch from here"
+          />
+          
           <v-btn
             icon="mdi-pencil"
             size="x-small"
@@ -156,10 +169,13 @@ import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Message, MessageBranch, Participant } from '@deprecated-claude/shared';
+import { getModelColor } from '@/utils/modelColors';
 
 const props = defineProps<{
   message: Message;
   participants?: Participant[];
+  isSelectedParent?: boolean;
+  isLastMessage?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -167,6 +183,7 @@ const emit = defineEmits<{
   edit: [messageId: string, branchId: string, content: string];
   'switch-branch': [messageId: string, branchId: string];
   delete: [messageId: string, branchId: string];
+  'select-as-parent': [messageId: string, branchId: string];
 }>();
 
 const isEditing = ref(false);
@@ -201,6 +218,30 @@ const participantName = computed(() => {
   
   // Fallback if participant not found
   return branch.role === 'user' ? 'You' : branch.model || 'Assistant';
+});
+
+const participantColor = computed(() => {
+  const branch = currentBranch.value;
+  
+  // Only color assistant messages
+  if (branch.role !== 'assistant') {
+    return undefined;
+  }
+  
+  // Try to get model from participant or branch
+  let model: string | undefined;
+  
+  if (props.participants && branch.participantId) {
+    const participant = props.participants.find(p => p.id === branch.participantId);
+    model = participant?.model;
+  }
+  
+  // Fallback to branch model
+  if (!model) {
+    model = branch.model;
+  }
+  
+  return getModelColor(model);
 });
 
 // Get all sibling branches (branches that share the same parent)
