@@ -467,7 +467,14 @@ function zoomOut() {
 }
 
 // Watch for changes and re-render
-watch([() => props.messages, () => props.currentMessageId, () => props.currentBranchId, compactMode], () => {
+watch([
+  () => props.messages, 
+  () => props.currentMessageId, 
+  () => props.currentBranchId,
+  () => props.selectedParentMessageId,
+  () => props.selectedParentBranchId,
+  compactMode
+], () => {
   renderTree();
 }, { deep: true });
 
