@@ -22,6 +22,13 @@
         @click="zoomOut"
         title="Zoom out"
       />
+      <v-btn
+        :icon="compactMode ? 'mdi-arrow-expand-vertical' : 'mdi-arrow-collapse-vertical'"
+        size="small"
+        variant="text"
+        @click="compactMode = !compactMode"
+        :title="compactMode ? 'Show all nodes' : 'Compact view'"
+      />
     </div>
     <svg ref="svgRef" class="tree-svg"></svg>
     <div v-if="hoveredNode" class="node-tooltip" :style="tooltipStyle">
@@ -64,6 +71,7 @@ interface TreeNode {
 const svgRef = ref<SVGElement>();
 const hoveredNode = ref<TreeNode | null>(null);
 const tooltipStyle = ref({ left: '0px', top: '0px' });
+const compactMode = ref(false);
 
 let svg: d3.Selection<SVGElement, unknown, null, undefined>;
 let g: d3.Selection<SVGGElement, unknown, null, undefined>;
@@ -152,6 +160,50 @@ const treeData = computed(() => {
   return null;
 });
 
+// Filter nodes for compact mode - only show branch points and leaves
+function filterCompactNodes(root: d3.HierarchyNode<TreeNode>) {
+  // Mark nodes to keep: branch points (multiple children) and leaves
+  const nodesToKeep = new Set<d3.HierarchyNode<TreeNode>>();
+  
+  root.each(node => {
+    // Always keep root
+    if (!node.parent) {
+      nodesToKeep.add(node);
+      return;
+    }
+    
+    // Keep if it's a branch point (has siblings or multiple children)
+    const hasSiblings = node.parent.children && node.parent.children.length > 1;
+    const hasMultipleChildren = node.children && node.children.length > 1;
+    const isLeaf = !node.children || node.children.length === 0;
+    
+    if (hasSiblings || hasMultipleChildren || isLeaf) {
+      nodesToKeep.add(node);
+    }
+  });
+  
+  // Create filtered tree
+  function filterNode(node: d3.HierarchyNode<TreeNode>): d3.HierarchyNode<TreeNode> | null {
+    if (!nodesToKeep.has(node)) return null;
+    
+    const filteredNode = d3.hierarchy(node.data);
+    
+    if (node.children) {
+      const filteredChildren = node.children
+        .map(child => filterNode(child))
+        .filter(child => child !== null) as d3.HierarchyNode<TreeNode>[];
+      
+      if (filteredChildren.length > 0) {
+        filteredNode.children = filteredChildren;
+      }
+    }
+    
+    return filteredNode;
+  }
+  
+  return filterNode(root) || root;
+}
+
 function initializeTree() {
   if (!svgRef.value || !treeData.value) return;
   
@@ -185,12 +237,26 @@ function renderTree() {
   const width = svgRef.value?.clientWidth || 400;
   const height = svgRef.value?.clientHeight || 600;
   
+  // Create hierarchy first to determine tree size
+  let root = d3.hierarchy(treeData.value);
+  
+  // In compact mode, filter to only show branch points and leaves
+  if (compactMode.value) {
+    root = filterCompactNodes(root);
+  }
+  
+  // Count total nodes to determine sizing
+  const nodeCount = root.descendants().length;
+  const autoCompact = nodeCount > 30; // Auto-enable compact for large trees
+  
+  // Dynamic node size based on tree size
+  const baseNodeRadius = Math.max(10, Math.min(20, 400 / Math.sqrt(nodeCount)));
+  
   // Create tree layout - vertical orientation
   const treeLayout = d3.tree<TreeNode>()
-    .size([width - 100, height - 100]);
+    .size([width - 100, height - 100])
+    .nodeSize([baseNodeRadius * 3, baseNodeRadius * 4]); // Dynamic spacing
   
-  // Create hierarchy
-  const root = d3.hierarchy(treeData.value);
   const treeNodes = treeLayout(root);
   
   // Clear previous render
@@ -240,7 +306,7 @@ function renderTree() {
   
   // Add circles for nodes with outlines
   node.append('circle')
-    .attr('r', 20)
+    .attr('r', baseNodeRadius)
     .style('fill', d => {
       // Node fill based on role only
       return d.data.role === 'user' ? '#9c27b0' : '#757575';
@@ -257,7 +323,7 @@ function renderTree() {
       }
       return 'none';
     })
-    .style('stroke-width', 4)
+    .style('stroke-width', Math.max(2, baseNodeRadius / 5))
     .style('cursor', 'pointer')
     .on('click', (event, d) => {
       emit('navigate-to-branch', d.data.messageId, d.data.branchId);
@@ -274,8 +340,41 @@ function renderTree() {
       hoveredNode.value = null;
     });
   
+  // Add indicator for nodes with hidden children (collapsed subtrees)
+  node.each(function(d) {
+    const nodeData = d.data;
+    const hasHiddenChildren = nodeData.children.length > 0 && 
+                             (!d.children || d.children.length === 0);
+    
+    if (hasHiddenChildren) {
+      // Add a small indicator showing there are hidden children
+      d3.select(this)
+        .append('circle')
+        .attr('cx', baseNodeRadius * 0.7)
+        .attr('cy', baseNodeRadius * 0.7)
+        .attr('r', baseNodeRadius * 0.3)
+        .style('fill', '#ff9800')
+        .style('stroke', 'white')
+        .style('stroke-width', 1)
+        .style('pointer-events', 'none');
+      
+      // Add a small "+" to indicate expandable
+      d3.select(this)
+        .append('text')
+        .attr('x', baseNodeRadius * 0.7)
+        .attr('y', baseNodeRadius * 0.7)
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'central')
+        .style('fill', 'white')
+        .style('font-size', `${baseNodeRadius * 0.5}px`)
+        .style('font-weight', 'bold')
+        .style('pointer-events', 'none')
+        .text('+');
+    }
+  });
+  
   // Add icons using SVG paths instead of font icons
-  const iconSize = 24;
+  const iconScale = baseNodeRadius / 20; // Scale icons based on node size
   node.each(function(d) {
     const g = d3.select(this);
     
@@ -283,32 +382,32 @@ function renderTree() {
       // User icon (simplified person shape)
       g.append('path')
         .attr('d', 'M -8,-8 A 8,8 0 0,1 8,-8 A 8,8 0 0,1 8,0 L 8,8 L -8,8 L -8,0 A 8,8 0 0,1 -8,-8')
-        .attr('transform', 'scale(0.8)')
+        .attr('transform', `scale(${iconScale * 0.8})`)
         .style('fill', 'white')
         .style('pointer-events', 'none');
     } else {
       // Robot icon (simplified robot shape)
       g.append('rect')
-        .attr('x', -10)
-        .attr('y', -10)
-        .attr('width', 20)
-        .attr('height', 20)
-        .attr('rx', 4)
+        .attr('x', -10 * iconScale)
+        .attr('y', -10 * iconScale)
+        .attr('width', 20 * iconScale)
+        .attr('height', 20 * iconScale)
+        .attr('rx', 4 * iconScale)
         .style('fill', 'white')
         .style('pointer-events', 'none');
       
       // Robot eyes
       g.append('circle')
-        .attr('cx', -5)
-        .attr('cy', -3)
-        .attr('r', 2)
+        .attr('cx', -5 * iconScale)
+        .attr('cy', -3 * iconScale)
+        .attr('r', 2 * iconScale)
         .style('fill', '#757575')
         .style('pointer-events', 'none');
       
       g.append('circle')
-        .attr('cx', 5)
-        .attr('cy', -3)
-        .attr('r', 2)
+        .attr('cx', 5 * iconScale)
+        .attr('cy', -3 * iconScale)
+        .attr('r', 2 * iconScale)
         .style('fill', '#757575')
         .style('pointer-events', 'none');
     }
@@ -352,9 +451,25 @@ function zoomOut() {
 }
 
 // Watch for changes and re-render
-watch([() => props.messages, () => props.currentMessageId, () => props.currentBranchId], () => {
+watch([() => props.messages, () => props.currentMessageId, () => props.currentBranchId, compactMode], () => {
   renderTree();
 }, { deep: true });
+
+// Auto-enable compact mode for large trees
+watch(() => props.messages, (messages) => {
+  if (!messages) return;
+  
+  // Count total nodes
+  let nodeCount = 0;
+  for (const message of messages) {
+    nodeCount += message.branches.length;
+  }
+  
+  // Auto-enable compact mode if tree is large
+  if (nodeCount > 30 && !compactMode.value) {
+    compactMode.value = true;
+  }
+}, { immediate: true });
 
 // Handle resize
 let resizeObserver: ResizeObserver;
