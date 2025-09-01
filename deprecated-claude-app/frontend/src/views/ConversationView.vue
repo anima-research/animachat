@@ -201,7 +201,7 @@
         />
         
         <v-btn
-          v-if="messages.length > 0"
+          v-if="allMessages.length > 0"
           :icon="treeDrawer ? 'mdi-graph' : 'mdi-graph-outline'"
           :color="treeDrawer ? 'primary' : undefined"
           variant="text"
@@ -395,8 +395,8 @@
       </v-toolbar>
       
       <ConversationTree
-        v-if="messages.length > 0"
-        :messages="messages"
+        v-if="allMessages.length > 0"
+        :messages="allMessages"
         :participants="participants"
         :current-message-id="currentMessageId"
         :current-branch-id="currentBranchId"
@@ -513,6 +513,7 @@ const selectedResponder = ref<string>('');
 const conversations = computed(() => store.state.conversations);
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
+const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
 
 // For tree view - identify current position
 const currentMessageId = computed(() => {

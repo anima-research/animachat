@@ -143,16 +143,24 @@ const treeData = computed(() => {
   }
   
   // Build tree from root branches
+  console.log('=== BUILDING TREE ===');
+  console.log('Total messages:', props.messages.length);
+  let totalBranches = 0;
   for (const message of props.messages) {
+    totalBranches += message.branches.length;
     for (const branch of message.branches) {
       if (!branch.parentBranchId || branch.parentBranchId === 'root') {
-        const node = buildNode(branch.id);
+        console.log(`Found root branch: ${branch.id} (role=${branch.role})`);
+        const node = buildNode(branch.id, 0);
         if (node) {
           rootBranches.push(node);
         }
       }
     }
   }
+  console.log(`Total branches in messages: ${totalBranches}`);
+  console.log(`Processed branches: ${processedBranches.size}`);
+  console.log(`Root branches found: ${rootBranches.length}`);
   
   // Return single root or create virtual root for multiple roots
   if (rootBranches.length === 1) {
