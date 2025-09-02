@@ -235,5 +235,12 @@
   },
   "loadBalancing": {
     "strategy": "round-robin"
-  }
+  },
+  "groupChatSuggestedModels": [
+    "claude-opus-4.1",
+    "claude-3.5-sonnet",
+    "claude-3.5-haiku",
+    "claude-3-opus",
+    "claude-3.5-sonnet-openrouter"
+  ]
 }

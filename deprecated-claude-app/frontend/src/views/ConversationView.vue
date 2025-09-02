@@ -281,6 +281,53 @@
           Branching from selected message. New messages will create alternative branches.
         </v-alert>
         
+        <!-- Model Quick Access Bar -->
+        <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
+             class="mb-3">
+          <div class="d-flex align-center gap-2 flex-wrap">
+            
+            <!-- Existing participants sorted by last spoken -->
+            <v-chip
+              v-for="participant in participantsByLastSpoken"
+              :key="participant.id"
+              :color="getModelColor(participant.model || '')"
+              size="small"
+              variant="outlined"
+              @click="triggerParticipantResponse(participant)"
+              :disabled="isStreaming"
+              class="clickable-chip"
+            >
+              <v-icon size="x-small" start>mdi-robot</v-icon>
+              {{ participant.name }}
+            </v-chip>
+            
+            <!-- Divider between participants and suggested models -->
+            <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
+                       vertical 
+                       class="mx-1" 
+                       style="height: 20px" />
+            
+            <!-- Suggested models that aren't participants yet -->
+            <template v-for="model in suggestedNonParticipantModels" :key="model?.id">
+              <v-chip
+                v-if="model"
+                color="grey"
+                size="small"
+                variant="outlined"
+                @click="triggerModelResponse(model)"
+                :disabled="isStreaming"
+                class="clickable-chip"
+              >
+                <v-icon size="x-small" start>mdi-robot-outline</v-icon>
+                {{ model.displayName }}
+                <v-tooltip activator="parent" location="top">
+                  Add {{ model.displayName }} to conversation
+                </v-tooltip>
+              </v-chip>
+            </template>
+          </div>
+        </div>
+        
         <div v-if="currentConversation.format !== 'standard'" class="mb-2 d-flex gap-2">
           <v-select
             v-model="selectedParticipant"
@@ -297,11 +344,11 @@
               <div class="d-flex align-center">
                 <v-icon 
                   :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
+                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
                   size="small"
                   class="mr-2"
                 />
-                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
                   {{ item.raw.name }}
                 </span>
               </div>
@@ -311,11 +358,11 @@
                 <template v-slot:prepend>
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
                   />
                 </template>
                 <template v-slot:title>
-                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
                 </template>
@@ -337,11 +384,11 @@
               <div class="d-flex align-center">
                 <v-icon 
                   :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
+                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
                   size="small"
                   class="mr-2"
                 />
-                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
                   {{ item.raw.name }}
                 </span>
               </div>
@@ -351,11 +398,11 @@
                 <template v-slot:prepend>
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model)"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
                   />
                 </template>
                 <template v-slot:title>
-                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model)}; font-weight: 500;`">
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
                 </template>
@@ -545,7 +592,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
-import type { Conversation, Message, Participant } from '@deprecated-claude/shared';
+import type { Conversation, Message, Participant, Model } from '@deprecated-claude/shared';
 import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
@@ -621,13 +668,13 @@ const assistantParticipants = computed(() => {
 });
 
 const responderOptions = computed(() => {
-  const options = [{ id: '', name: 'No response', type: 'none' as any }];
+  const options = [{ id: '', name: 'No response', type: 'none' as any, model: '' }];
   // Include full participant objects to have access to type and model
   const assistantOptions = assistantParticipants.value.map(p => ({
     id: p.id,
     name: p.name,
     type: p.type,
-    model: p.model
+    model: p.model || ''
   }));
   return options.concat(assistantOptions);
 });
@@ -650,6 +697,63 @@ const continueButtonColor = computed(() => {
   return '#9e9e9e';
 });
 
+// Track participants by last speaking order
+const participantsByLastSpoken = computed(() => {
+  if (!currentConversation.value || currentConversation.value.format === 'standard') {
+    return [];
+  }
+  
+  const participantLastSpoken = new Map<string, Date>();
+  
+  // Go through all messages in reverse order to find last time each participant spoke
+  const allMsgs = [...messages.value].reverse();
+  for (const message of allMsgs) {
+    for (const branch of message.branches) {
+      if (branch.participantId && !participantLastSpoken.has(branch.participantId)) {
+        // Ensure createdAt is a Date object
+        const createdAt = branch.createdAt instanceof Date 
+          ? branch.createdAt 
+          : new Date(branch.createdAt);
+        participantLastSpoken.set(branch.participantId, createdAt);
+      }
+    }
+  }
+  
+  // Get assistant participants and sort by last spoken (most recent first)
+  const assistants = participants.value
+    .filter(p => p.type === 'assistant')
+    .map(p => ({
+      participant: p,
+      lastSpoken: participantLastSpoken.get(p.id) || new Date(0)
+    }))
+    .sort((a, b) => b.lastSpoken.getTime() - a.lastSpoken.getTime())
+    .map(item => item.participant);
+    
+  return assistants;
+});
+
+// System configuration
+const systemConfig = ref<{ features?: any; groupChatSuggestedModels?: string[] }>({});
+
+// Get suggested models that aren't already participants
+const suggestedNonParticipantModels = computed(() => {
+  if (!currentConversation.value || currentConversation.value.format === 'standard') {
+    return [];
+  }
+  
+  const suggestedModelIds = systemConfig.value.groupChatSuggestedModels || [];
+  
+  const participantModelIds = new Set(participants.value
+    .filter(p => p.type === 'assistant')
+    .map(p => p.model)
+    .filter(Boolean));
+    
+  return suggestedModelIds
+    .filter(modelId => !participantModelIds.has(modelId))
+    .map(modelId => store.state.models.find(m => m.id === modelId))
+    .filter(Boolean);
+});
+
 // Watch for new conversations and load their participants
 watch(conversations, (newConversations) => {
   for (const conversation of newConversations) {
@@ -663,6 +767,17 @@ watch(conversations, (newConversations) => {
 onMounted(async () => {
   await store.loadModels();
   await store.loadConversations();
+  
+  // Load system configuration
+  try {
+    const response = await fetch('/api/system/config');
+    if (response.ok) {
+      systemConfig.value = await response.json();
+    }
+  } catch (error) {
+    console.error('Failed to load system config:', error);
+  }
+  
   store.connectWebSocket();
   
   // Load participants for multi-participant conversations
@@ -832,6 +947,73 @@ async function continueGeneration() {
   } finally {
     isStreaming.value = false;
   }
+}
+
+async function triggerModelResponse(model: Model) {
+  if (isStreaming.value || !currentConversation.value) return;
+  
+  console.log('Triggering response from model:', model.displayName);
+  
+  try {
+    // Check if this model is already a participant
+    let participant = participants.value.find(p => 
+      p.type === 'assistant' && p.model === model.id
+    );
+    
+    if (!participant) {
+      // Create a new participant for this model
+      console.log('Creating new participant for model:', model.displayName);
+      
+      const response = await fetch(`/api/participants`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          conversationId: currentConversation.value.id,
+          name: model.displayName,
+          type: 'assistant',
+          model: model.id,
+          settings: {
+            temperature: 1.0,
+            maxTokens: 1024
+          }
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to create participant');
+      }
+      
+      participant = await response.json();
+      
+      // Reload participants to ensure UI is in sync
+      await loadParticipants();
+    }
+    
+    // Set the responder to this participant
+    if (participant) {
+      selectedResponder.value = participant.id;
+      
+      // Trigger the response
+      await continueGeneration();
+    }
+  } catch (error) {
+    console.error('Error triggering model response:', error);
+  }
+}
+
+async function triggerParticipantResponse(participant: Participant) {
+  if (isStreaming.value || !currentConversation.value) return;
+  
+  console.log('Triggering response from participant:', participant.name);
+  
+  // Set the responder to this participant
+  selectedResponder.value = participant.id;
+  
+  // Trigger the response
+  await continueGeneration();
 }
 
 async function regenerateMessage(messageId: string, branchId: string) {

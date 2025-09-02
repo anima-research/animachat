@@ -114,4 +114,7 @@ export interface AppConfig {
     // For round-robin: tracks last used index per provider
     // For least-used: would need to track usage counts
   };
+  
+  // Suggested models for group chat quick access
+  groupChatSuggestedModels?: string[]; // Model IDs to show in quick access bar
 }

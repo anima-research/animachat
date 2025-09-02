@@ -210,7 +210,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch } from 'vue';
 import type { Conversation, Model, Participant } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
 import { api } from '@/services/api';
@@ -262,6 +262,22 @@ const selectedModel = computed(() => {
   return props.models.find(m => m.id === settings.value.model);
 });
 
+// Function to load participants
+async function loadParticipants() {
+  if (!props.conversation || props.conversation.format !== 'prefill') {
+    localParticipants.value = [];
+    return;
+  }
+  
+  try {
+    const response = await api.get(`/participants/conversation/${props.conversation.id}`);
+    localParticipants.value = response.data;
+  } catch (error) {
+    console.error('Failed to load participants:', error);
+    localParticipants.value = [];
+  }
+}
+
 // Watch for conversation changes
 watch(() => props.conversation, async (conversation) => {
   if (conversation) {
@@ -278,40 +294,16 @@ watch(() => props.conversation, async (conversation) => {
     topKEnabled.value = conversation.settings?.topK !== undefined;
     
     // Load participants if in multi-participant mode
-    if (conversation.format === 'prefill') {
-      try {
-        const response = await api.get(`/participants/conversation/${conversation.id}`);
-        localParticipants.value = response.data;
-        
-        // If we have participants, check if any need their names updated
-        if (localParticipants.value.length > 0) {
-          const model = props.models.find(m => m.id === settings.value.model);
-          const modelName = model?.displayName || 'Assistant';
-          
-          // Replace any existing 'assistant' or 'claude' participants with the actual model name
-          localParticipants.value = localParticipants.value.map(participant => {
-            if (participant.type === 'assistant' && 
-                (participant.name.toLowerCase() === 'assistant' || 
-                 participant.name.toLowerCase() === 'claude' ||
-                 participant.name.toLowerCase().startsWith('claude'))) {
-              return {
-                ...participant,
-                name: modelName,
-                model: settings.value.model
-              };
-            }
-            return participant;
-          });
-        }
-      } catch (error) {
-        console.error('Failed to load participants:', error);
-        localParticipants.value = [];
-      }
-    } else {
-      localParticipants.value = [];
-    }
+    await loadParticipants();
   }
 }, { immediate: true });
+
+// Reload participants when dialog is opened
+watch(() => props.modelValue, async (isOpen) => {
+  if (isOpen && props.conversation?.format === 'prefill') {
+    await loadParticipants();
+  }
+});
 
 // Watch for format changes
 watch(() => settings.value.format, async (newFormat, oldFormat) => {
@@ -354,22 +346,8 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             }
           }
         ];
-      } else {
-        // Replace any existing 'assistant' or 'claude' participants with the actual model name
-        localParticipants.value = localParticipants.value.map(participant => {
-          if (participant.type === 'assistant' && 
-              (participant.name.toLowerCase() === 'assistant' || 
-               participant.name.toLowerCase() === 'claude' ||
-               participant.name.toLowerCase().startsWith('claude'))) {
-            return {
-              ...participant,
-              name: modelName,
-              model: settings.value.model
-            };
-          }
-          return participant;
-        });
       }
+      // Don't modify existing participants - let them keep their original data
     } catch (error) {
       console.error('Failed to load participants:', error);
       // Create default participants

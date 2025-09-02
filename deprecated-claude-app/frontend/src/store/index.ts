@@ -36,7 +36,7 @@ export interface Store {
   duplicateConversation(id: string): Promise<Conversation>;
   
   loadMessages(conversationId: string): Promise<void>;
-  sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>): Promise<void>;
+  sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string): Promise<void>;
   continueGeneration(responderId?: string, explicitParentBranchId?: string): Promise<void>;
   regenerateMessage(messageId: string, branchId: string): Promise<void>;
   editMessage(messageId: string, branchId: string, content: string, responderId?: string): Promise<void>;
