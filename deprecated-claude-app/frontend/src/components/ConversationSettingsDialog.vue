@@ -181,6 +181,79 @@
         
         <v-divider class="my-4" />
         
+        <!-- Context Management Settings -->
+        <div v-if="settings.format === 'standard'">
+          <h4 class="text-h6 mb-4">Context Management</h4>
+          
+          <v-select
+            v-model="contextStrategy"
+            :items="contextStrategies"
+            item-title="title"
+            item-value="value"
+            label="Context Strategy"
+            variant="outlined"
+            density="compact"
+            class="mb-4"
+          >
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:subtitle>
+                  {{ item.raw.description }}
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
+          
+          <!-- Rolling Strategy Settings -->
+          <div v-if="contextStrategy === 'rolling'" class="ml-4">
+            <v-text-field
+              v-model.number="rollingMaxTokens"
+              type="number"
+              label="Max Tokens"
+              variant="outlined"
+              density="compact"
+              :min="1000"
+              :max="200000"
+              class="mb-3"
+            >
+              <template v-slot:append-inner>
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small">
+                      mdi-help-circle-outline
+                    </v-icon>
+                  </template>
+                  Maximum tokens to keep in context. Older messages beyond this limit will be dropped.
+                </v-tooltip>
+              </template>
+            </v-text-field>
+            
+            <v-text-field
+              v-model.number="rollingGraceTokens"
+              type="number"
+              label="Grace Tokens"
+              variant="outlined"
+              density="compact"
+              :min="0"
+              :max="50000"
+              class="mb-3"
+            >
+              <template v-slot:append-inner>
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small">
+                      mdi-help-circle-outline
+                    </v-icon>
+                  </template>
+                  Additional tokens allowed before truncation. Helps maintain cache efficiency.
+                </v-tooltip>
+              </template>
+            </v-text-field>
+          </div>
+        </div>
+        
+        <v-divider class="my-4" />
+        
         <v-btn
           variant="text"
           @click="resetToDefaults"
@@ -230,6 +303,10 @@ const emit = defineEmits<{
 const topPEnabled = ref(false);
 const topKEnabled = ref(false);
 
+const contextStrategy = ref('append');
+const rollingMaxTokens = ref(50000);
+const rollingGraceTokens = ref(10000);
+
 const formatOptions = [
   {
     value: 'standard',
@@ -240,6 +317,19 @@ const formatOptions = [
     value: 'prefill',
     title: 'Group Chat',
     description: 'Supports multiple participants with "Name: message" format'
+  }
+];
+
+const contextStrategies = [
+  {
+    value: 'append',
+    title: 'Append (Default)',
+    description: 'Keeps all messages, moves cache marker forward every 10k tokens'
+  },
+  {
+    value: 'rolling',
+    title: 'Rolling Window',
+    description: 'Maintains a sliding window of recent messages, drops older ones'
   }
 ];
 
@@ -292,6 +382,19 @@ watch(() => props.conversation, async (conversation) => {
     // Set checkbox states based on whether values are defined
     topPEnabled.value = conversation.settings?.topP !== undefined;
     topKEnabled.value = conversation.settings?.topK !== undefined;
+    
+    // Load context management settings
+    if (conversation.contextManagement) {
+      contextStrategy.value = conversation.contextManagement.strategy;
+      if (conversation.contextManagement.strategy === 'rolling') {
+        rollingMaxTokens.value = conversation.contextManagement.maxTokens;
+        rollingGraceTokens.value = conversation.contextManagement.maxGraceTokens;
+      }
+    } else {
+      contextStrategy.value = 'append';
+      rollingMaxTokens.value = 50000;
+      rollingGraceTokens.value = 10000;
+    }
     
     // Load participants if in multi-participant mode
     await loadParticipants();
@@ -438,13 +541,33 @@ function save() {
     ...(topKEnabled.value && settings.value.settings.topK !== undefined && { topK: settings.value.settings.topK })
   };
   
+  // Build context management settings
+  let contextManagement: any = undefined;
+  if (settings.value.format === 'standard') {
+    if (contextStrategy.value === 'append') {
+      contextManagement = {
+        strategy: 'append',
+        cacheInterval: 10000
+      };
+    } else if (contextStrategy.value === 'rolling') {
+      contextManagement = {
+        strategy: 'rolling',
+        maxTokens: rollingMaxTokens.value,
+        maxGraceTokens: rollingGraceTokens.value,
+        cacheMinTokens: 5000,
+        cacheDepthFromEnd: 5
+      };
+    }
+  }
+  
   // Update conversation settings
   emit('update', {
     title: settings.value.title,
     model: settings.value.model,
     format: settings.value.format,
     systemPrompt: settings.value.systemPrompt || undefined,
-    settings: finalSettings
+    settings: finalSettings,
+    contextManagement
   });
   
   // If in multi-participant mode, emit participants for parent to update

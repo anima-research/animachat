@@ -1,16 +1,21 @@
-import { Message, Conversation } from '@deprecated-claude/shared';
+import { Message, Conversation, ContextManagement, DEFAULT_CONTEXT_MANAGEMENT, Participant } from '@deprecated-claude/shared';
 import { 
   ContextStrategy, 
-  ContextWindow, 
-  RollingContextStrategy, 
+  ContextWindow,
+  CacheMarker,
+  AppendContextStrategy,
+  RollingContextStrategy,
+  LegacyRollingContextStrategy,
   StaticContextStrategy,
   AdaptiveContextStrategy 
 } from './context-strategies.js';
 
 interface ContextState {
   conversationId: string;
+  participantId?: string;
   strategy: string;
   lastWindow?: ContextWindow;
+  cacheMarker?: CacheMarker;
   cacheKeys: Map<string, string>; // message ID -> cache key
   statistics: {
     cacheHits: number;
@@ -28,7 +33,7 @@ export interface ContextManagerConfig {
 
 export class ContextManager {
   private strategies: Map<string, ContextStrategy>;
-  private states: Map<string, ContextState>;
+  private states: Map<string, ContextState>; // key is conversationId or conversationId:participantId
   private config: ContextManagerConfig;
   
   constructor(config: Partial<ContextManagerConfig> = {}) {
@@ -39,8 +44,9 @@ export class ContextManager {
       ...config
     };
     
-    this.strategies = new Map([
-      ['rolling', new RollingContextStrategy()],
+    // Initialize with legacy strategies for backward compatibility
+    this.strategies = new Map<string, ContextStrategy>([
+      ['rolling', new LegacyRollingContextStrategy()],
       ['static', new StaticContextStrategy()],
       ['adaptive', new AdaptiveContextStrategy()],
     ]);
@@ -51,32 +57,44 @@ export class ContextManager {
   async prepareContext(
     conversation: Conversation,
     messages: Message[],
-    newMessage?: Message
+    newMessage?: Message,
+    participant?: Participant
   ): Promise<{
     formattedMessages: any[]; // Provider-specific format
     cacheKey?: string;
     window: ContextWindow;
   }> {
-    const strategyName = conversation.settings?.contextStrategy || this.config.defaultStrategy;
-    const strategy = this.strategies.get(strategyName) || this.strategies.get(this.config.defaultStrategy)!;
+    // Determine context management settings (participant overrides conversation)
+    const contextManagement = participant?.contextManagement || 
+                             conversation.contextManagement || 
+                             DEFAULT_CONTEXT_MANAGEMENT;
+    
+    // Get or create appropriate strategy
+    const strategy = this.getOrCreateStrategy(contextManagement);
     
     // Get or create state
-    const state = this.getOrCreateState(conversation.id, strategyName);
+    const stateKey = participant ? `${conversation.id}:${participant.id}` : conversation.id;
+    const state = this.getOrCreateState(stateKey, contextManagement.strategy);
     
     // Prepare context window
-    const window = strategy.prepareContext(messages, newMessage);
+    const window = strategy.prepareContext(messages, newMessage, state.cacheMarker);
+    
+    // Update cache marker if changed
+    if (window.cacheMarker?.messageId !== state.cacheMarker?.messageId) {
+      state.cacheMarker = window.cacheMarker;
+    }
     
     // Check if we should rotate
     if (state.lastWindow && strategy.shouldRotate(window)) {
       state.statistics.rotationCount++;
-      console.log(`Context rotation triggered for conversation ${conversation.id}`);
+      console.log(`Context rotation triggered for ${stateKey}`);
     }
     
     // Generate cache key for the cacheable prefix
     const cacheKey = this.generateCacheKey(window.cacheablePrefix);
     
     // Check if this is a cache hit
-    if (state.lastWindow?.metadata.cacheKey === cacheKey) {
+    if (state.lastWindow?.metadata.cacheKey === cacheKey && cacheKey) {
       state.statistics.cacheHits++;
     } else {
       state.statistics.cacheMisses++;
@@ -86,7 +104,7 @@ export class ContextManager {
     state.lastWindow = window;
     window.metadata.cacheKey = cacheKey;
     
-    // Format messages for the provider (will be enhanced later)
+    // Format messages for the provider
     const formattedMessages = this.formatMessages(window.messages, conversation);
     
     return {
@@ -102,9 +120,11 @@ export class ContextManager {
       cacheHit: boolean;
       tokensUsed: number;
       cachedTokens?: number;
-    }
+    },
+    participantId?: string
   ): void {
-    const state = this.states.get(conversationId);
+    const stateKey = participantId ? `${conversationId}:${participantId}` : conversationId;
+    const state = this.states.get(stateKey);
     if (!state) return;
     
     if (response.cachedTokens) {
@@ -112,27 +132,58 @@ export class ContextManager {
     }
   }
   
-  getStatistics(conversationId: string): ContextState['statistics'] | null {
-    const state = this.states.get(conversationId);
+  getStatistics(conversationId: string, participantId?: string): ContextState['statistics'] | null {
+    const stateKey = participantId ? `${conversationId}:${participantId}` : conversationId;
+    const state = this.states.get(stateKey);
     return state?.statistics || null;
   }
   
-  setStrategy(conversationId: string, strategyName: string): void {
-    const strategy = this.strategies.get(strategyName);
-    if (!strategy) {
-      throw new Error(`Unknown strategy: ${strategyName}`);
-    }
-    
-    const state = this.getOrCreateState(conversationId, strategyName);
-    state.strategy = strategyName;
-    // Reset window to force recalculation
-    state.lastWindow = undefined;
+  getCacheMarker(conversationId: string, participantId?: string): CacheMarker | undefined {
+    const stateKey = participantId ? `${conversationId}:${participantId}` : conversationId;
+    const state = this.states.get(stateKey);
+    return state?.cacheMarker;
   }
   
-  private getOrCreateState(conversationId: string, strategy: string): ContextState {
-    if (!this.states.has(conversationId)) {
-      this.states.set(conversationId, {
+  setContextManagement(conversationId: string, contextManagement: ContextManagement, participantId?: string): void {
+    const stateKey = participantId ? `${conversationId}:${participantId}` : conversationId;
+    const strategy = this.getOrCreateStrategy(contextManagement);
+    
+    const state = this.getOrCreateState(stateKey, contextManagement.strategy);
+    state.strategy = contextManagement.strategy;
+    // Reset window and cache marker to force recalculation
+    state.lastWindow = undefined;
+    state.cacheMarker = undefined;
+  }
+  
+  private getOrCreateStrategy(contextManagement: ContextManagement): ContextStrategy {
+    const key = JSON.stringify(contextManagement);
+    
+    if (!this.strategies.has(key)) {
+      let strategy: ContextStrategy;
+      
+      switch (contextManagement.strategy) {
+        case 'append':
+          strategy = new AppendContextStrategy(contextManagement);
+          break;
+        case 'rolling':
+          strategy = new RollingContextStrategy(contextManagement);
+          break;
+        default:
+          throw new Error(`Unknown context strategy: ${(contextManagement as any).strategy}`);
+      }
+      
+      this.strategies.set(key, strategy);
+    }
+    
+    return this.strategies.get(key)!;
+  }
+  
+  private getOrCreateState(stateKey: string, strategy: string): ContextState {
+    if (!this.states.has(stateKey)) {
+      const [conversationId, participantId] = stateKey.split(':');
+      this.states.set(stateKey, {
         conversationId,
+        participantId,
         strategy,
         cacheKeys: new Map(),
         statistics: {
@@ -143,14 +194,18 @@ export class ContextManager {
         },
       });
     }
-    return this.states.get(conversationId)!;
+    return this.states.get(stateKey)!;
   }
   
   private generateCacheKey(messages: Message[]): string {
     if (messages.length === 0) return '';
     
     // Simple cache key generation - in production this would be more sophisticated
-    const content = messages.map(m => `${m.role}:${m.content}`).join('|');
+    const content = messages.map(m => {
+      const branch = m.branches.find(b => b.id === m.activeBranchId);
+      return branch ? `${branch.role}:${branch.content}` : '';
+    }).join('|');
+    
     const hash = this.simpleHash(content);
     return `${this.config.cachePrefix}-${hash}`;
   }
@@ -168,11 +223,16 @@ export class ContextManager {
   private formatMessages(messages: Message[], conversation: Conversation): any[] {
     // This will be enhanced to handle provider-specific formatting
     // For now, return a simple format
-    return messages.map(msg => ({
-      role: msg.role,
-      content: msg.content,
-      cacheControl: msg.role === 'system' ? { type: 'ephemeral' } : undefined,
-    }));
+    return messages.map(msg => {
+      const branch = msg.branches.find(b => b.id === msg.activeBranchId);
+      if (!branch) return null;
+      
+      return {
+        role: branch.role,
+        content: branch.content,
+        cacheControl: branch.role === 'system' ? { type: 'ephemeral' } : undefined,
+      };
+    }).filter(Boolean);
   }
   
   // For testing and debugging
@@ -182,17 +242,26 @@ export class ContextManager {
       result[key] = {
         ...state,
         cacheKeys: Array.from(state.cacheKeys.entries()),
+        cacheMarker: state.cacheMarker,
       };
     });
     return result;
   }
   
-  clearState(conversationId?: string): void {
+  clearState(conversationId?: string, participantId?: string): void {
     if (conversationId) {
-      this.states.delete(conversationId);
+      const stateKey = participantId ? `${conversationId}:${participantId}` : conversationId;
+      this.states.delete(stateKey);
+      
+      // Also clear any participant-specific states if clearing conversation state
+      if (!participantId) {
+        const prefix = `${conversationId}:`;
+        Array.from(this.states.keys())
+          .filter(key => key.startsWith(prefix))
+          .forEach(key => this.states.delete(key));
+      }
     } else {
       this.states.clear();
     }
   }
 }
-

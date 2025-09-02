@@ -37,7 +37,8 @@ export function conversationRouter(db: Database): Router {
         data.model,
         data.systemPrompt,
         data.settings,
-        data.format
+        data.format,
+        data.contextManagement
       );
 
       res.json(conversation);
@@ -279,6 +280,41 @@ export function conversationRouter(db: Database): Router {
       });
     } catch (error) {
       console.error('Fix branches error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Get cache metrics for conversation
+  router.get('/:id/cache-metrics', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id);
+      
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      if (conversation.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Get cache metrics from the enhanced inference service if available
+      // For now, return a placeholder
+      const metrics = {
+        conversationId: req.params.id,
+        cacheHits: 0,
+        cacheMisses: 0,
+        totalTokensSaved: 0,
+        totalCostSaved: 0,
+        contextStrategy: conversation.contextManagement?.strategy || 'append'
+      };
+
+      res.json(metrics);
+    } catch (error) {
+      console.error('Get cache metrics error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

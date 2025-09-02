@@ -239,6 +239,57 @@
             :max="200000"
           />
           
+          <v-divider class="my-4" />
+          
+          <h4 class="text-subtitle-1 mb-3">Context Management</h4>
+          
+          <v-checkbox
+            v-model="participantContextOverride"
+            label="Override conversation context settings"
+            density="compact"
+            hide-details
+            class="mb-3"
+          />
+          
+          <div v-if="participantContextOverride" class="ml-4">
+            <v-select
+              v-model="participantContextStrategy"
+              :items="contextStrategies"
+              item-title="title"
+              item-value="value"
+              label="Context Strategy"
+              variant="outlined"
+              density="compact"
+              hide-details
+              class="mb-3"
+            />
+            
+            <div v-if="participantContextStrategy === 'rolling'">
+              <v-text-field
+                v-model.number="participantRollingMaxTokens"
+                type="number"
+                label="Max Tokens"
+                variant="outlined"
+                density="compact"
+                hide-details
+                :min="1000"
+                :max="200000"
+                class="mb-3"
+              />
+              
+              <v-text-field
+                v-model.number="participantRollingGraceTokens"
+                type="number"
+                label="Grace Tokens"
+                variant="outlined"
+                density="compact"
+                hide-details
+                :min="0"
+                :max="50000"
+              />
+            </div>
+          </div>
+          
           <v-alert
             type="info"
             variant="tonal"
@@ -295,6 +346,25 @@ const newParticipant = ref<any>({
   name: '',
   model: ''
 });
+
+// Context management settings for participant
+const participantContextOverride = ref(false);
+const participantContextStrategy = ref('append');
+const participantRollingMaxTokens = ref(50000);
+const participantRollingGraceTokens = ref(10000);
+
+const contextStrategies = [
+  {
+    value: 'append',
+    title: 'Append',
+    description: 'Keeps all messages, moves cache marker forward'
+  },
+  {
+    value: 'rolling',
+    title: 'Rolling Window',
+    description: 'Maintains a sliding window of recent messages'
+  }
+];
 
 function getParticipantTemperature(participant: Participant): number {
   return participant.settings?.temperature ?? 1.0;
@@ -380,10 +450,48 @@ function removeParticipant(id: string) {
 
 function openSettings(participant: Participant) {
   editingParticipant.value = participant;
+  
+  // Load context management settings
+  if (participant.contextManagement) {
+    participantContextOverride.value = true;
+    participantContextStrategy.value = participant.contextManagement.strategy;
+    if (participant.contextManagement.strategy === 'rolling') {
+      participantRollingMaxTokens.value = participant.contextManagement.maxTokens;
+      participantRollingGraceTokens.value = participant.contextManagement.maxGraceTokens;
+    }
+  } else {
+    participantContextOverride.value = false;
+    participantContextStrategy.value = 'append';
+    participantRollingMaxTokens.value = 50000;
+    participantRollingGraceTokens.value = 10000;
+  }
+  
   showSettingsDialog.value = true;
 }
 
 function closeSettings() {
+  // Save context management settings
+  if (editingParticipant.value) {
+    if (participantContextOverride.value) {
+      if (participantContextStrategy.value === 'append') {
+        editingParticipant.value.contextManagement = {
+          strategy: 'append',
+          cacheInterval: 10000
+        };
+      } else if (participantContextStrategy.value === 'rolling') {
+        editingParticipant.value.contextManagement = {
+          strategy: 'rolling',
+          maxTokens: participantRollingMaxTokens.value,
+          maxGraceTokens: participantRollingGraceTokens.value,
+          cacheMinTokens: 5000,
+          cacheDepthFromEnd: 5
+        };
+      }
+    } else {
+      editingParticipant.value.contextManagement = undefined;
+    }
+  }
+  
   showSettingsDialog.value = false;
   editingParticipant.value = null;
 }

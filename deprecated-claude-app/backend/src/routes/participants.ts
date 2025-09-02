@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { ContextManagementSchema } from '@deprecated-claude/shared';
 
 const CreateParticipantSchema = z.object({
   conversationId: z.string().uuid(),
@@ -14,7 +15,8 @@ const CreateParticipantSchema = z.object({
     maxTokens: z.number(),
     topP: z.number().optional(),
     topK: z.number().optional()
-  }).optional()
+  }).optional(),
+  contextManagement: ContextManagementSchema.optional()
 });
 
 const UpdateParticipantSchema = z.object({
@@ -27,6 +29,7 @@ const UpdateParticipantSchema = z.object({
     topP: z.number().optional(),
     topK: z.number().optional()
   }).optional(),
+  contextManagement: ContextManagementSchema.optional(),
   isActive: z.boolean().optional()
 });
 
@@ -75,7 +78,8 @@ export function participantRouter(db: Database): Router {
         data.type,
         data.model,
         data.systemPrompt,
-        data.settings
+        data.settings,
+        data.contextManagement
       );
 
       res.json(participant);

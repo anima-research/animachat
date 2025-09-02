@@ -37,13 +37,41 @@ export class AnthropicService {
       // Convert messages to Anthropic format
       const anthropicMessages = this.formatMessagesForAnthropic(messages);
       
+      // Debug logging
+      console.log(`Total messages to Anthropic: ${anthropicMessages.length}`);
+      if (anthropicMessages.length > 160) {
+        console.log(`Message 160-165 content lengths:`, 
+          anthropicMessages.slice(160, 165).map((m, i) => ({
+            index: 160 + i,
+            role: m.role,
+            contentLength: typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length
+          }))
+        );
+      }
+      
+      // Check if we need to cache the system prompt
+      let systemContent: any = systemPrompt;
+      if (systemPrompt && messages.length > 0) {
+        // Check if first message has cache control (indicating it's the cache boundary)
+        const firstMessage = messages[0];
+        const firstBranch = getActiveBranch(firstMessage);
+        if (firstBranch && (firstBranch as any)._cacheControl) {
+          // System prompt should also be cached
+          systemContent = [{
+            type: 'text',
+            text: systemPrompt,
+            cache_control: { type: 'ephemeral' as const }
+          }];
+        }
+      }
+      
       requestParams = {
         model: modelId,
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
         ...(settings.topP !== undefined && { top_p: settings.topP }),
         ...(settings.topK !== undefined && { top_k: settings.topK }),
-        ...(systemPrompt && { system: systemPrompt }),
+        ...(systemContent && { system: systemContent }),
         ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences }),
         messages: anthropicMessages,
         stream: true
@@ -76,6 +104,10 @@ export class AnthropicService {
 
       let stopReason: string | undefined;
       let usage: any = {};
+      let cacheMetrics = {
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0
+      };
       
       for await (const chunk of stream) {
         // Log all chunk types for debugging
@@ -90,6 +122,14 @@ export class AnthropicService {
             usage: chunk.usage 
           })
         });
+        
+        // Capture cache metrics from message_start
+        if (chunk.type === 'message_start' && chunk.message?.usage) {
+          const messageUsage = chunk.message.usage;
+          cacheMetrics.cacheCreationInputTokens = messageUsage.cache_creation_input_tokens || 0;
+          cacheMetrics.cacheReadInputTokens = messageUsage.cache_read_input_tokens || 0;
+          console.log('[Anthropic API] Cache metrics:', cacheMetrics);
+        }
         
         if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
           chunks.push(chunk.delta.text);
@@ -121,6 +161,9 @@ export class AnthropicService {
             lastChars: fullResponse.slice(-100)
           });
           
+          // Calculate cost savings
+          const costSaved = this.calculateCacheSavings(requestParams.model, cacheMetrics.cacheReadInputTokens);
+          
           // Log the response
           const duration = Date.now() - startTime;
           await llmLogger.logResponse({
@@ -130,6 +173,26 @@ export class AnthropicService {
             chunks,
             duration
           });
+          
+          // Log cache metrics separately
+          if (cacheMetrics.cacheReadInputTokens > 0 || cacheMetrics.cacheCreationInputTokens > 0) {
+            console.log(`[Anthropic API] Cache metrics:`, {
+              cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
+              cacheReadInputTokens: cacheMetrics.cacheReadInputTokens,
+              costSaved: `$${costSaved.toFixed(4)}`
+            });
+            
+            // Log as a separate entry for tracking
+            await llmLogger.logCustom({
+              timestamp: new Date().toISOString(),
+              type: 'CACHE_METRICS',
+              requestId,
+              model: requestParams.model,
+              cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
+              cacheReadInputTokens: cacheMetrics.cacheReadInputTokens,
+              costSaved
+            });
+          }
           break;
         }
       }
@@ -156,7 +219,7 @@ export class AnthropicService {
 
     for (const message of messages) {
       const activeBranch = getActiveBranch(message);
-      if (activeBranch && activeBranch.role !== 'system') {
+      if (activeBranch && activeBranch.role !== 'system' && activeBranch.content.trim() !== '') {
         // Handle attachments for user messages
         if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
           const contentParts: any[] = [{ type: 'text', text: activeBranch.content }];
@@ -184,16 +247,35 @@ export class AnthropicService {
             }
           }
           
+          // Add cache control to the last content part if present
+          if ((activeBranch as any)._cacheControl && contentParts.length > 0) {
+            // Add cache control to the last content block
+            contentParts[contentParts.length - 1].cache_control = (activeBranch as any)._cacheControl;
+          }
+          
           formattedMessages.push({
             role: 'user',
             content: contentParts
           });
         } else {
           // Simple text message
-          formattedMessages.push({
-            role: activeBranch.role as 'user' | 'assistant',
-            content: activeBranch.content
-          });
+          if ((activeBranch as any)._cacheControl) {
+            // Need to convert to content block format to add cache control
+            formattedMessages.push({
+              role: activeBranch.role as 'user' | 'assistant',
+              content: [{
+                type: 'text',
+                text: activeBranch.content,
+                cache_control: (activeBranch as any)._cacheControl
+              }]
+            });
+          } else {
+            // Regular string content
+            formattedMessages.push({
+              role: activeBranch.role as 'user' | 'assistant',
+              content: activeBranch.content
+            });
+          }
         }
       }
     }
@@ -273,5 +355,22 @@ export class AnthropicService {
       console.error('Anthropic API key validation error:', error);
       return false;
     }
+  }
+  
+  private calculateCacheSavings(modelId: string, cachedTokens: number): number {
+    // Anthropic pricing per 1M tokens (as of late 2024)
+    const pricingPer1M: Record<string, number> = {
+      'claude-3-5-sonnet-20241022': 3.00,  // $3 per 1M input tokens
+      'claude-3-5-haiku-20241022': 0.25,   // $0.25 per 1M input tokens
+      'claude-3-opus-20240229': 15.00,     // $15 per 1M input tokens
+      'claude-3-sonnet-20240229': 3.00,    // $3 per 1M input tokens
+      'claude-3-haiku-20240307': 0.25      // $0.25 per 1M input tokens
+    };
+    
+    const pricePerToken = (pricingPer1M[modelId] || 3.00) / 1_000_000;
+    // Cached tokens are 90% cheaper
+    const savings = cachedTokens * pricePerToken * 0.9;
+    
+    return savings;
   }
 }

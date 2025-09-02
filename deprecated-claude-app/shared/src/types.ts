@@ -66,6 +66,28 @@ export const ModelSettingsSchema = z.object({
 
 export type ModelSettings = z.infer<typeof ModelSettingsSchema>;
 
+// Context management settings
+export const ContextManagementSchema = z.discriminatedUnion('strategy', [
+  z.object({
+    strategy: z.literal('append'),
+    cacheInterval: z.number().default(10000) // Move cache marker every 10k tokens
+  }),
+  z.object({
+    strategy: z.literal('rolling'),
+    maxTokens: z.number(),
+    maxGraceTokens: z.number(),
+    cacheMinTokens: z.number().default(5000), // Min tokens before setting cache marker
+    cacheDepthFromEnd: z.number().default(5) // Messages from end where cache marker is placed
+  })
+]);
+
+export type ContextManagement = z.infer<typeof ContextManagementSchema>;
+
+export const DEFAULT_CONTEXT_MANAGEMENT: ContextManagement = {
+  strategy: 'append',
+  cacheInterval: 10000
+};
+
 // Participant types
 export const ParticipantSchema = z.object({
   id: z.string().uuid(),
@@ -75,6 +97,7 @@ export const ParticipantSchema = z.object({
   model: z.string().optional(), // Only for assistant participants
   systemPrompt: z.string().optional(), // Only for assistant participants
   settings: ModelSettingsSchema.optional(), // Only for assistant participants
+  contextManagement: ContextManagementSchema.optional(), // Only for assistant participants
   isActive: z.boolean().default(true)
 });
 
@@ -132,7 +155,8 @@ export const ConversationSchema = z.object({
   createdAt: z.date(),
   updatedAt: z.date(),
   archived: z.boolean().default(false),
-  settings: ModelSettingsSchema
+  settings: ModelSettingsSchema,
+  contextManagement: ContextManagementSchema.optional() // Conversation-level default
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;
@@ -201,7 +225,8 @@ export const CreateConversationRequestSchema = z.object({
   model: z.string(),
   format: ConversationFormatSchema.optional(),
   systemPrompt: z.string().optional(),
-  settings: ModelSettingsSchema.optional()
+  settings: ModelSettingsSchema.optional(),
+  contextManagement: ContextManagementSchema.optional()
 });
 
 export type CreateConversationRequest = z.infer<typeof CreateConversationRequestSchema>;

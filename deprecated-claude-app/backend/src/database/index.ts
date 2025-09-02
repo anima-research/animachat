@@ -471,7 +471,7 @@ export class Database {
   }
 
   // Conversation methods
-  async createConversation(userId: string, title: string, model: string, systemPrompt?: string, settings?: any, format?: 'standard' | 'prefill'): Promise<Conversation> {
+  async createConversation(userId: string, title: string, model: string, systemPrompt?: string, settings?: any, format?: 'standard' | 'prefill', contextManagement?: any): Promise<Conversation> {
     const conversation: Conversation = {
       id: uuidv4(),
       userId,
@@ -486,7 +486,8 @@ export class Database {
         temperature: 1.0,
         maxTokens: 1024
         // topP and topK are intentionally omitted to use API defaults
-      }
+      },
+      contextManagement
     };
 
     this.conversations.set(conversation.id, conversation);
@@ -1028,7 +1029,8 @@ export class Database {
     type: 'user' | 'assistant', 
     model?: string,
     systemPrompt?: string,
-    settings?: any
+    settings?: any,
+    contextManagement?: any
   ): Promise<Participant> {
     const participant: Participant = {
       id: uuidv4(),
@@ -1038,6 +1040,7 @@ export class Database {
       model,
       systemPrompt,
       settings,
+      contextManagement,
       isActive: true
     };
     

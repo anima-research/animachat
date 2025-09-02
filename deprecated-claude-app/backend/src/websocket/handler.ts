@@ -4,7 +4,10 @@ import { WsMessageSchema, WsMessage, Message, Participant } from '@deprecated-cl
 import { Database } from '../database/index.js';
 import { verifyToken } from '../middleware/auth.js';
 import { InferenceService } from '../services/inference.js';
+import { EnhancedInferenceService } from '../services/enhanced-inference.js';
+import { ContextManager } from '../services/context-manager.js';
 import { llmLogger } from '../utils/llmLogger.js';
+import { ModelLoader } from '../config/model-loader.js';
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -37,7 +40,9 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
     ws.isAlive = true;
   });
 
-  const inferenceService = new InferenceService(db);
+  const baseInferenceService = new InferenceService(db);
+  const contextManager = new ContextManager();
+  const inferenceService = new EnhancedInferenceService(baseInferenceService, contextManager);
 
   ws.on('message', async (data) => {
     try {
@@ -103,7 +108,7 @@ async function handleChatMessage(
   ws: AuthenticatedWebSocket,
   message: Extract<WsMessage, { type: 'chat' }>,
   db: Database,
-  inferenceService: InferenceService
+  inferenceService: EnhancedInferenceService
 ) {
   if (!ws.userId) return;
 
@@ -334,10 +339,16 @@ async function handleChatMessage(
       format: conversation.format
     });
     
+    const modelLoader = ModelLoader.getInstance();
+    const modelConfig = await modelLoader.getModelById(inferenceModel);
+    if (!modelConfig) {
+      throw new Error(`Model ${inferenceModel} not found`);
+    }
+    
     await inferenceService.streamCompletion(
-      inferenceModel,
+      modelConfig,
       messagesForInference,
-      inferenceSystemPrompt,
+      inferenceSystemPrompt || '',
       inferenceSettings,
       ws.userId,
       async (chunk: string, isComplete: boolean) => {
@@ -379,9 +390,8 @@ async function handleChatMessage(
           await db.updateConversation(conversation.id, { updatedAt: new Date() });
         }
       },
-      conversation.format || 'standard',
-      participants,
-      responder.id
+      conversation,
+      responder
     );
   } catch (error) {
     console.error('Inference streaming error:', error);
@@ -396,7 +406,7 @@ async function handleRegenerate(
   ws: AuthenticatedWebSocket,
   message: Extract<WsMessage, { type: 'regenerate' }>,
   db: Database,
-  inferenceService: InferenceService
+  inferenceService: EnhancedInferenceService
 ) {
   if (!ws.userId) return;
 
@@ -492,10 +502,19 @@ async function handleRegenerate(
       format: conversation.format
     });
     
+    const modelLoader = ModelLoader.getInstance();
+    const modelConfig = await modelLoader.getModelById(responderModel);
+    if (!modelConfig) {
+      throw new Error(`Model ${responderModel} not found`);
+    }
+    
+    // Get the responder participant object
+    const responderParticipant = responderId ? participants.find(p => p.id === responderId) : undefined;
+    
     await inferenceService.streamCompletion(
-      responderModel,
+      modelConfig,
       historyMessages,
-      responderSystemPrompt,
+      responderSystemPrompt || '',
       responderSettings,
       ws.userId,
       async (chunk: string, isComplete: boolean) => {
@@ -521,9 +540,8 @@ async function handleRegenerate(
           isComplete
         }));
       },
-      conversation.format || 'standard',
-      participants,
-      responderId
+      conversation,
+      responderParticipant
     );
   } catch (error) {
     console.error('Regeneration error:', error);
@@ -538,7 +556,7 @@ async function handleEdit(
   ws: AuthenticatedWebSocket,
   message: Extract<WsMessage, { type: 'edit' }>,
   db: Database,
-  inferenceService: InferenceService
+  inferenceService: EnhancedInferenceService
 ) {
   if (!ws.userId) return;
 
@@ -666,13 +684,14 @@ async function handleEdit(
     let responderSettings = conversation.settings;
     let responderSystemPrompt = conversation.systemPrompt;
     let responderModel = conversation.model;
+    let responderParticipant: Participant | undefined;
     
     if (responderId && participants.length > 0) {
-      const responder = participants.find(p => p.id === responderId);
-      if (responder) {
-        responderModel = responder.model || conversation.model;
-        responderSystemPrompt = responder.systemPrompt || conversation.systemPrompt;
-        responderSettings = responder.settings || conversation.settings;
+      responderParticipant = participants.find(p => p.id === responderId);
+      if (responderParticipant) {
+        responderModel = responderParticipant.model || conversation.model;
+        responderSystemPrompt = responderParticipant.systemPrompt || conversation.systemPrompt;
+        responderSettings = responderParticipant.settings || conversation.settings;
       }
     }
     
@@ -692,10 +711,16 @@ async function handleEdit(
         format: conversation.format
       });
       
+      const modelLoader = ModelLoader.getInstance();
+    const modelConfig = await modelLoader.getModelById(responderModel);
+      if (!modelConfig) {
+        throw new Error(`Model ${responderModel} not found`);
+      }
+      
       await inferenceService.streamCompletion(
-        responderModel,
+        modelConfig,
         historyMessages,
-        responderSystemPrompt,
+        responderSystemPrompt || '',
         responderSettings,
         ws.userId,
         async (chunk: string, isComplete: boolean) => {
@@ -721,9 +746,8 @@ async function handleEdit(
             isComplete
           }));
         },
-        conversation.format || 'standard',
-        participants,
-        responderId
+        conversation,
+        responderParticipant
       );
     } catch (error) {
       console.error('Error generating response to edited message:', error);
@@ -773,7 +797,7 @@ async function handleContinue(
   ws: AuthenticatedWebSocket,
   message: Extract<WsMessage, { type: 'continue' }>,
   db: Database,
-  inferenceService: InferenceService
+  inferenceService: EnhancedInferenceService
 ) {
   if (!ws.userId) return;
 
@@ -930,10 +954,17 @@ async function handleContinue(
     const messagesWithNewAssistant = [...visibleHistory, assistantMessage];
 
     // Stream the completion
+    const modelId = responder.model || conversation.model;
+    const modelLoader = ModelLoader.getInstance();
+    const modelConfig = await modelLoader.getModelById(modelId);
+    if (!modelConfig) {
+      throw new Error(`Model ${modelId} not found`);
+    }
+    
     await inferenceService.streamCompletion(
-      responder.model || conversation.model,
+      modelConfig,
       messagesWithNewAssistant,
-      responder.systemPrompt || conversation.systemPrompt,
+      responder.systemPrompt || conversation.systemPrompt || '',
       responder.settings || conversation.settings || {
         temperature: 1.0,
         maxTokens: 1024
@@ -969,9 +1000,8 @@ async function handleContinue(
           }
         }
       },
-      conversation.format,
-      participants,
-      responder.id
+      conversation,
+      responder
     );
 
   } catch (error) {

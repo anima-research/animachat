@@ -1,9 +1,11 @@
 import { Message, Conversation, Model, ModelSettings, Participant } from '@deprecated-claude/shared';
 import { ContextManager } from './context-manager.js';
 import { InferenceService } from './inference.js';
+import { ContextWindow } from './context-strategies.js';
 
 interface CacheMetrics {
   conversationId: string;
+  participantId?: string;
   timestamp: Date;
   provider: string;
   model: string;
@@ -40,12 +42,12 @@ export class EnhancedInferenceService {
     userId: string,
     streamCallback: (chunk: string, isComplete: boolean) => Promise<void>,
     conversation?: Conversation,
-    responderId?: string
+    participant?: Participant
   ): Promise<void> {
     // If no conversation provided, fall back to original behavior
     if (!conversation) {
       return this.inferenceService.streamCompletion(
-        model,
+        model.id,
         messages,
         systemPrompt,
         settings,
@@ -57,8 +59,16 @@ export class EnhancedInferenceService {
     // Prepare context using context manager
     const { formattedMessages, cacheKey, window } = await this.contextManager.prepareContext(
       conversation,
-      messages
+      messages,
+      undefined, // newMessage is already included in messages
+      participant
     );
+    
+    // Debug logging
+    console.log(`Enhanced inference: ${window.messages.length} messages in window, ${window.cacheablePrefix.length} cacheable`);
+    if (window.metadata.windowStart > 0) {
+      console.log(`Context window: dropped ${window.metadata.windowStart} messages from beginning`);
+    }
     
     // Track metrics
     const startTime = Date.now();
@@ -78,9 +88,10 @@ export class EnhancedInferenceService {
         // Log metrics
         const metric: CacheMetrics = {
           conversationId: conversation.id,
+          participantId: participant?.id,
           timestamp: new Date(),
           provider: model.provider,
-          model: model.name,
+          model: model.displayName,
           cacheHit,
           inputTokens,
           cachedTokens,
@@ -91,39 +102,40 @@ export class EnhancedInferenceService {
         this.metricsLog.push(metric);
         
         // Update context manager statistics
-        this.contextManager.updateAfterInference(conversation.id, {
-          cacheHit,
-          tokensUsed: inputTokens + outputTokens,
-          cachedTokens,
-        });
+        this.contextManager.updateAfterInference(
+          conversation.id, 
+          {
+            cacheHit,
+            tokensUsed: inputTokens + outputTokens,
+            cachedTokens,
+          },
+          participant?.id
+        );
+        
+        // Log cache efficiency
+        if (cachedTokens > 0) {
+          const cacheEfficiency = (cachedTokens / inputTokens) * 100;
+          console.log(`[Enhanced Inference] Cache efficiency: ${cacheEfficiency.toFixed(1)}% (${cachedTokens}/${inputTokens} tokens cached)`);
+        }
       }
     };
     
-    // For Anthropic models, add cache control
-    if (model.provider === 'anthropic' && cacheKey) {
-      // Enhance messages with cache control for Anthropic
-      const anthropicMessages = this.addAnthropicCacheControl(formattedMessages, window);
-      
-      // Track approximate input tokens
-      inputTokens = this.estimateTokens(formattedMessages);
-      cachedTokens = this.estimateTokens(window.cacheablePrefix);
-      cacheHit = window.metadata.cacheKey === cacheKey;
-      
-      // Call original service with enhanced messages
-      return this.inferenceService.streamCompletion(
-        model,
-        anthropicMessages as Message[],
-        systemPrompt,
-        settings,
-        userId,
-        enhancedCallback
-      );
+    // Track approximate input tokens
+    inputTokens = window.metadata.totalTokens;
+    cachedTokens = this.estimateTokens(window.cacheablePrefix);
+    cacheHit = window.metadata.cacheKey === cacheKey;
+    
+    // For Anthropic models, we need to add cache control metadata
+    let messagesToSend = window.messages;
+    if (model.provider === 'anthropic' && window.cacheablePrefix.length > 0) {
+      // Clone messages and add cache control to the last cacheable message
+      messagesToSend = this.addCacheControlToMessages(window);
     }
     
-    // For other providers, use formatted messages as-is
+    // Use the original messages from the window with cache control added if needed
     return this.inferenceService.streamCompletion(
-      model,
-      formattedMessages as Message[],
+      model.id,
+      messagesToSend,
       systemPrompt,
       settings,
       userId,
@@ -131,17 +143,20 @@ export class EnhancedInferenceService {
     );
   }
   
-  private addAnthropicCacheControl(messages: any[], window: ContextWindow): any[] {
-    // Add cache_control to the last message in the cacheable prefix
+  private addCacheControlToMessages(window: ContextWindow): Message[] {
+    // Clone messages and add cache control metadata to the last cacheable message
     const cacheBreakpoint = window.cacheablePrefix.length;
     
-    return messages.map((msg, idx) => {
+    return window.messages.map((msg, idx) => {
       if (idx === cacheBreakpoint - 1 && cacheBreakpoint > 0) {
-        // This is the last cacheable message
-        return {
-          ...msg,
-          cache_control: { type: 'ephemeral' }
-        };
+        // This is the last cacheable message - add cache control to its active branch
+        const clonedMsg = JSON.parse(JSON.stringify(msg)); // Deep clone
+        const activeBranch = clonedMsg.branches.find((b: any) => b.id === clonedMsg.activeBranchId);
+        if (activeBranch) {
+          // Add cache control metadata to the branch
+          activeBranch._cacheControl = { type: 'ephemeral' };
+        }
+        return clonedMsg;
       }
       return msg;
     });
@@ -173,9 +188,12 @@ export class EnhancedInferenceService {
   }
   
   // Analytics methods
-  getCacheMetrics(conversationId?: string): CacheMetrics[] {
+  getCacheMetrics(conversationId?: string, participantId?: string): CacheMetrics[] {
     if (conversationId) {
-      return this.metricsLog.filter(m => m.conversationId === conversationId);
+      return this.metricsLog.filter(m => 
+        m.conversationId === conversationId && 
+        (!participantId || m.participantId === participantId)
+      );
     }
     return [...this.metricsLog];
   }
@@ -204,13 +222,20 @@ export class EnhancedInferenceService {
     return { totalSaved, byModel, cacheHitRate };
   }
   
-  // Context strategy management
+  // Context strategy management (deprecated - use setContextManagement instead)
   setContextStrategy(conversationId: string, strategy: 'rolling' | 'static' | 'adaptive'): void {
-    this.contextManager.setStrategy(conversationId, strategy);
+    console.warn('setContextStrategy is deprecated. Use setContextManagement instead.');
   }
   
-  getContextStatistics(conversationId: string) {
-    return this.contextManager.getStatistics(conversationId);
+  setContextManagement(conversationId: string, contextManagement: any, participantId?: string): void {
+    this.contextManager.setContextManagement(conversationId, contextManagement, participantId);
+  }
+  
+  getContextStatistics(conversationId: string, participantId?: string) {
+    return this.contextManager.getStatistics(conversationId, participantId);
+  }
+  
+  getCacheMarker(conversationId: string, participantId?: string) {
+    return this.contextManager.getCacheMarker(conversationId, participantId);
   }
 }
-

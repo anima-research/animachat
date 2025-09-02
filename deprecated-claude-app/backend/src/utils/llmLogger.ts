@@ -113,6 +113,23 @@ export class LLMLogger {
       console.error('Failed to log WebSocket event:', error);
     }
   }
+  
+  async logCustom(data: any): Promise<void> {
+    await this.ensureLogDirectory();
+    
+    const logEntry = {
+      timestamp: this.formatTimestamp(),
+      ...data
+    };
+    
+    const logLine = JSON.stringify(logEntry) + '\n';
+    
+    try {
+      await fs.appendFile(this.getLogFilePath('requests'), logLine);
+    } catch (error) {
+      console.error('Failed to log custom entry:', error);
+    }
+  }
 }
 
 // Singleton instance
