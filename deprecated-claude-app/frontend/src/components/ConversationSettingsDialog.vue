@@ -316,7 +316,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
     
     // Get the actual model name for the assistant participant
     const model = props.models.find(m => m.id === settings.value.model);
-    const modelName = model?.displayName || 'Assistant';
+    const modelName = model?.shortName || model?.displayName || 'Assistant';
     
     // Switching to group chat mode - load or create default participants
     try {

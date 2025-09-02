@@ -297,7 +297,7 @@
               :disabled="isStreaming"
               class="clickable-chip"
             >
-              <v-icon size="x-small" start>mdi-robot</v-icon>
+              <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
               {{ participant.name }}
             </v-chip>
             
@@ -318,8 +318,8 @@
                 :disabled="isStreaming"
                 class="clickable-chip"
               >
-                <v-icon size="x-small" start>mdi-robot-outline</v-icon>
-                {{ model.displayName }}
+                <v-icon size="x-small" start>{{ getProviderIcon(model.provider) }}</v-icon>
+                {{ model.shortName || model.displayName }}
                 <v-tooltip activator="parent" location="top">
                   Add {{ model.displayName }} to conversation
                 </v-tooltip>
@@ -972,7 +972,7 @@ async function triggerModelResponse(model: Model) {
         },
         body: JSON.stringify({
           conversationId: currentConversation.value.id,
-          name: model.displayName,
+          name: model.shortName || model.displayName,
           type: 'assistant',
           model: model.id,
           settings: {
@@ -1279,6 +1279,36 @@ function selectBranchAsParent(messageId: string, branchId: string) {
 
 function cancelBranchSelection() {
   selectedBranchForParent.value = null;
+}
+
+function getProviderIcon(provider: string): string {
+  switch (provider) {
+    case 'anthropic':
+      return 'mdi-asterisk';
+    case 'bedrock':
+      return 'mdi-aws';
+    case 'openrouter':
+      return 'mdi-router';
+    case 'openai':
+    case 'openai-compatible':
+      return 'mdi-camera-iris';
+    default:
+      return 'mdi-robot-outline';
+  }
+}
+
+function getParticipantIcon(participant: Participant): string {
+  if (participant.type === 'user') {
+    return 'mdi-account';
+  }
+  
+  // For assistants, find the model to get the provider
+  const model = store.state.models.find(m => m.id === participant.model);
+  if (model) {
+    return getProviderIcon(model.provider);
+  }
+  
+  return 'mdi-robot-outline';
 }
 
 async function loadParticipants() {

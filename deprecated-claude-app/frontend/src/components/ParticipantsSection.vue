@@ -9,106 +9,84 @@
         variant="elevated"
         @click="addParticipant"
       >
+        <v-icon icon="mdi-plus" start />
         Add Participant
       </v-btn>
     </div>
     
-    <!-- Participants List -->
-    <div class="participants-list">
-      <v-card
-        v-for="(participant, index) in participants"
-        :key="participant.id"
-        variant="outlined"
-        class="participant-card mb-3"
-      >
-        <div class="participant-header d-flex align-center pa-3">
-          <v-icon 
-            :icon="participant.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-            class="mr-3"
-          />
-          
-          <v-text-field
-            v-model="participant.name"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="flex-grow-1"
-          />
-          
-          <v-btn
-            v-if="participants.length > 2"
-            icon="mdi-delete"
-            size="small"
-            variant="text"
-            color="error"
-            class="ml-2"
-            @click="removeParticipant(participant.id)"
-          />
-        </div>
-        
-        <!-- Assistant-specific settings -->
-        <div v-if="participant.type === 'assistant'" class="px-3 pb-3">
-          <v-select
-            v-model="participant.model"
-            :items="models"
-            item-title="displayName"
-            item-value="id"
-            label="Model"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="mb-2"
-          />
-          
-          <v-expansion-panels
-            flat
-            class="advanced-settings"
-          >
-            <v-expansion-panel>
-              <v-expansion-panel-title class="text-caption pa-2">
-                <v-icon size="small" class="mr-2">mdi-cog</v-icon>
-                Advanced Settings
-              </v-expansion-panel-title>
-              <v-expansion-panel-text>
-                <v-textarea
-                  v-model="participant.systemPrompt"
-                  label="System Prompt"
-                  density="compact"
-                  variant="outlined"
-                  rows="3"
-                  hide-details
-                  class="mb-3"
-                  placeholder="You are a helpful AI assistant..."
-                />
-                
-                <v-slider
-                  :model-value="getParticipantTemperature(participant)"
-                  @update:model-value="(val) => setParticipantTemperature(participant, val)"
-                  :min="0"
-                  :max="2"
-                  :step="0.1"
-                  thumb-label
-                  label="Temperature"
-                  hide-details
-                  class="mb-3"
-                  color="primary"
-                />
-                
-                <v-text-field
-                  :model-value="getParticipantMaxTokens(participant)"
-                  @update:model-value="(val) => setParticipantMaxTokens(participant, val)"
-                  type="number"
-                  label="Max Tokens"
-                  density="compact"
-                  variant="outlined"
-                  hide-details
-                />
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </v-expansion-panels>
-        </div>
-      </v-card>
-    </div>
+    <!-- Participants Table -->
+    <v-table
+      density="compact"
+      class="participants-table"
+    >
+      <thead>
+        <tr>
+          <th width="40">Type</th>
+          <th width="200">Name</th>
+          <th width="250">Model</th>
+          <th width="100">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          v-for="participant in participants"
+          :key="participant.id"
+          class="participant-row"
+        >
+          <td>
+            <v-icon
+              :icon="participant.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+              :color="participant.type === 'user' ? 'primary' : 'secondary'"
+              size="small"
+            />
+          </td>
+          <td>
+            <v-text-field
+              v-model="participant.name"
+              density="compact"
+              variant="plain"
+              hide-details
+              single-line
+              class="table-input"
+            />
+          </td>
+          <td>
+            <v-select
+              v-if="participant.type === 'assistant'"
+              v-model="participant.model"
+              :items="models"
+              item-title="displayName"
+              item-value="id"
+              density="compact"
+              variant="plain"
+              hide-details
+              single-line
+              class="table-input"
+            />
+            <span v-else class="text-disabled">—</span>
+          </td>
+          <td>
+            <v-btn
+              v-if="participant.type === 'assistant'"
+              icon="mdi-cog"
+              size="x-small"
+              variant="text"
+              @click="openSettings(participant)"
+              title="Advanced Settings"
+            />
+            <v-btn
+              v-if="participants.length > 2"
+              icon="mdi-delete"
+              size="x-small"
+              variant="text"
+              color="error"
+              @click="removeParticipant(participant.id)"
+              title="Remove Participant"
+            />
+          </td>
+        </tr>
+      </tbody>
+    </v-table>
     
     <!-- Add Participant Dialog -->
     <v-dialog
@@ -126,7 +104,7 @@
             class="mb-4"
           >
             <v-radio label="User" value="user" />
-            <v-radio label="LLM" value="assistant" />
+            <v-radio label="Assistant" value="assistant" />
           </v-radio-group>
           
           <v-text-field
@@ -146,6 +124,7 @@
             label="Model"
             variant="outlined"
             density="compact"
+            @update:model-value="onModelSelected"
           />
         </v-card-text>
         
@@ -164,6 +143,92 @@
             @click="confirmAddParticipant"
           >
             Add
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+    
+    <!-- Advanced Settings Dialog -->
+    <v-dialog
+      v-model="showSettingsDialog"
+      max-width="600"
+    >
+      <v-card v-if="editingParticipant">
+        <v-card-title>
+          <div class="d-flex align-center">
+            <v-icon icon="mdi-cog" class="mr-2" />
+            Advanced Settings - {{ editingParticipant.name }}
+          </div>
+        </v-card-title>
+        
+        <v-card-text>
+          <v-textarea
+            v-model="editingParticipant.systemPrompt"
+            label="System Prompt"
+            variant="outlined"
+            rows="4"
+            hide-details
+            class="mb-4"
+            placeholder="You are a helpful AI assistant..."
+          />
+          
+          <v-slider
+            :model-value="editingParticipant ? getParticipantTemperature(editingParticipant) : 1.0"
+            @update:model-value="(val) => editingParticipant && setParticipantTemperature(editingParticipant, val)"
+            :min="0"
+            :max="2"
+            :step="0.1"
+            thumb-label
+            label="Temperature"
+            hide-details
+            class="mb-4"
+            color="primary"
+          >
+            <template v-slot:append>
+              <v-text-field
+                :model-value="editingParticipant ? getParticipantTemperature(editingParticipant) : 1.0"
+                @update:model-value="(val) => editingParticipant && setParticipantTemperature(editingParticipant, val)"
+                type="number"
+                density="compact"
+                style="width: 70px"
+                variant="outlined"
+                hide-details
+                single-line
+                :min="0"
+                :max="2"
+                :step="0.1"
+              />
+            </template>
+          </v-slider>
+          
+          <v-text-field
+            :model-value="editingParticipant ? getParticipantMaxTokens(editingParticipant) : 1024"
+            @update:model-value="(val) => editingParticipant && setParticipantMaxTokens(editingParticipant, val)"
+            type="number"
+            label="Max Tokens"
+            variant="outlined"
+            hide-details
+            :min="1"
+            :max="200000"
+          />
+          
+          <v-alert
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mt-4"
+          >
+            These settings override the default model parameters for this participant.
+          </v-alert>
+        </v-card-text>
+        
+        <v-card-actions>
+          <v-spacer />
+          <v-btn
+            variant="text"
+            @click="closeSettings"
+          >
+            Close
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -196,6 +261,8 @@ const participants = computed({
 });
 
 const showAddDialog = ref(false);
+const showSettingsDialog = ref(false);
+const editingParticipant = ref<Participant | null>(null);
 const newParticipant = ref<any>({
   type: 'assistant',
   name: '',
@@ -208,9 +275,13 @@ function getParticipantTemperature(participant: Participant): number {
 
 function setParticipantTemperature(participant: Participant, value: number) {
   if (!participant.settings) {
-    participant.settings = {};
+    participant.settings = {
+      temperature: value,
+      maxTokens: 1024
+    };
+  } else {
+    participant.settings.temperature = value;
   }
-  participant.settings.temperature = value;
 }
 
 function getParticipantMaxTokens(participant: Participant): number {
@@ -219,9 +290,13 @@ function getParticipantMaxTokens(participant: Participant): number {
 
 function setParticipantMaxTokens(participant: Participant, value: string | number) {
   if (!participant.settings) {
-    participant.settings = {};
+    participant.settings = {
+      temperature: 1.0,
+      maxTokens: parseInt(value.toString())
+    };
+  } else {
+    participant.settings.maxTokens = parseInt(value.toString());
   }
-  participant.settings.maxTokens = parseInt(value.toString());
 }
 
 function addParticipant() {
@@ -275,6 +350,26 @@ function removeParticipant(id: string) {
   const updated = participants.value.filter(p => p.id !== id);
   emit('update:modelValue', updated);
 }
+
+function openSettings(participant: Participant) {
+  editingParticipant.value = participant;
+  showSettingsDialog.value = true;
+}
+
+function closeSettings() {
+  showSettingsDialog.value = false;
+  editingParticipant.value = null;
+}
+
+function onModelSelected(modelId: string) {
+  // If the name is empty or hasn't been customized, set it to the model's shortName
+  if (!newParticipant.value.name || newParticipant.value.name === '') {
+    const model = props.models.find(m => m.id === modelId);
+    if (model) {
+      newParticipant.value.name = model.shortName || model.displayName;
+    }
+  }
+}
 </script>
 
 <style scoped>
@@ -282,30 +377,57 @@ function removeParticipant(id: string) {
   margin-top: 1rem;
 }
 
-.participant-card {
-  transition: all 0.2s;
+.participants-table {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 4px;
+  overflow: hidden;
 }
 
-.participant-card:hover {
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.participant-header {
-  border-bottom: 1px solid rgba(0,0,0,0.08);
-}
-
-.advanced-settings {
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-.advanced-settings .v-expansion-panel {
-  background: rgba(0,0,0,0.02);
-}
-
-.advanced-settings .v-expansion-panel-title {
-  min-height: 36px !important;
-  padding: 8px 12px !important;
+.participants-table th {
+  font-weight: 600;
   font-size: 0.875rem;
+  text-align: left;
+  padding: 12px 16px !important;
+  background: rgba(var(--v-theme-surface-variant), 0.5);
+}
+
+.participants-table td {
+  padding: 8px 16px !important;
+  vertical-align: middle;
+}
+
+.participant-row {
+  transition: background-color 0.2s;
+}
+
+.participant-row:hover {
+  background-color: rgba(var(--v-theme-on-surface), 0.04);
+}
+
+.table-input {
+  margin-top: -4px;
+  margin-bottom: -4px;
+}
+
+.table-input :deep(.v-field) {
+  padding: 0;
+}
+
+.table-input :deep(.v-field__input) {
+  padding: 4px 0;
+  min-height: 32px;
+}
+
+.table-input :deep(.v-field__append-inner) {
+  padding-top: 4px;
+}
+
+.table-input :deep(.v-input__details) {
+  display: none;
+}
+
+/* Make select dropdown more compact */
+.table-input :deep(.v-select__selection) {
+  margin: 0;
 }
 </style>
