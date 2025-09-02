@@ -126,7 +126,7 @@
             class="mb-4"
           >
             <v-radio label="User" value="user" />
-            <v-radio label="Assistant" value="assistant" />
+            <v-radio label="LLM" value="assistant" />
           </v-radio-group>
           
           <v-text-field

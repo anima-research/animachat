@@ -233,12 +233,12 @@ const topKEnabled = ref(false);
 const formatOptions = [
   {
     value: 'standard',
-    title: 'Standard',
+    title: 'One-on-One',
     description: 'Traditional user/assistant conversation format'
   },
   {
     value: 'prefill',
-    title: 'Multi-Participant (Prefill)',
+    title: 'Group Chat',
     description: 'Supports multiple participants with "Name: message" format'
   }
 ];
@@ -282,6 +282,27 @@ watch(() => props.conversation, async (conversation) => {
       try {
         const response = await api.get(`/participants/conversation/${conversation.id}`);
         localParticipants.value = response.data;
+        
+        // If we have participants, check if any need their names updated
+        if (localParticipants.value.length > 0) {
+          const model = props.models.find(m => m.id === settings.value.model);
+          const modelName = model?.displayName || 'Assistant';
+          
+          // Replace any existing 'assistant' or 'claude' participants with the actual model name
+          localParticipants.value = localParticipants.value.map(participant => {
+            if (participant.type === 'assistant' && 
+                (participant.name.toLowerCase() === 'assistant' || 
+                 participant.name.toLowerCase() === 'claude' ||
+                 participant.name.toLowerCase().startsWith('claude'))) {
+              return {
+                ...participant,
+                name: modelName,
+                model: settings.value.model
+              };
+            }
+            return participant;
+          });
+        }
       } catch (error) {
         console.error('Failed to load participants:', error);
         localParticipants.value = [];
@@ -295,7 +316,17 @@ watch(() => props.conversation, async (conversation) => {
 // Watch for format changes
 watch(() => settings.value.format, async (newFormat, oldFormat) => {
   if (newFormat === 'prefill' && oldFormat === 'standard' && props.conversation) {
-    // Switching to multi-participant mode - load or create default participants
+    // Check if participants have already been loaded by the conversation watcher
+    if (localParticipants.value.length > 0) {
+      // Participants already loaded, no need to reload
+      return;
+    }
+    
+    // Get the actual model name for the assistant participant
+    const model = props.models.find(m => m.id === settings.value.model);
+    const modelName = model?.displayName || 'Assistant';
+    
+    // Switching to group chat mode - load or create default participants
     try {
       const response = await api.get(`/participants/conversation/${props.conversation.id}`);
       localParticipants.value = response.data;
@@ -314,7 +345,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             id: 'temp-assistant',
             conversationId: props.conversation.id,
             type: 'assistant',
-            name: 'Assistant',
+            name: modelName,
             model: settings.value.model,
             isActive: true,
             settings: {
@@ -323,6 +354,21 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             }
           }
         ];
+      } else {
+        // Replace any existing 'assistant' or 'claude' participants with the actual model name
+        localParticipants.value = localParticipants.value.map(participant => {
+          if (participant.type === 'assistant' && 
+              (participant.name.toLowerCase() === 'assistant' || 
+               participant.name.toLowerCase() === 'claude' ||
+               participant.name.toLowerCase().startsWith('claude'))) {
+            return {
+              ...participant,
+              name: modelName,
+              model: settings.value.model
+            };
+          }
+          return participant;
+        });
       }
     } catch (error) {
       console.error('Failed to load participants:', error);
@@ -339,7 +385,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
           id: 'temp-assistant',
           conversationId: props.conversation?.id || '',
           type: 'assistant',
-          name: 'Assistant',
+          name: modelName,
           model: settings.value.model,
           isActive: true,
           settings: {

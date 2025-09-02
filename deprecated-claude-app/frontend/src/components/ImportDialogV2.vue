@@ -269,7 +269,7 @@
                 density="compact"
                 class="mt-4"
               >
-                Multi-participant conversation detected. The prefill format is recommended for better support.
+                Group chat conversation detected. The group chat format is recommended for better support.
               </v-alert>
             </v-card-text>
 
@@ -406,7 +406,7 @@ const conversationFormatOptions = [
   },
   {
     value: 'prefill',
-    label: 'Multi-Participant (Prefill)',
+    label: 'Group Chat',
     description: 'Supports multiple participants with custom names'
   }
 ];

@@ -195,8 +195,8 @@ async function handleChatMessage(
   let responder: typeof participants[0] | undefined;
   
   if (conversation.format === 'standard') {
-    // For standard format, always use the default assistant
-    responder = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+    // For standard format, use the assistant participant (there should only be one)
+    responder = participants.find(p => p.type === 'assistant');
     if (!responder) {
       ws.send(JSON.stringify({ type: 'error', error: 'No assistant participant found' }));
       return;
@@ -460,8 +460,8 @@ async function handleRegenerate(
   // Determine the responder ID for streaming
   let responderId = participantId;
   if (conversation.format === 'standard') {
-    // For standard format, always use the default assistant
-    const defaultAssistant = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+    // For standard format, use the assistant participant (there should only be one)
+    const defaultAssistant = participants.find(p => p.type === 'assistant');
     responderId = defaultAssistant?.id;
   }
   
@@ -598,8 +598,8 @@ async function handleEdit(
     if (message.responderId) {
       responderId = message.responderId;
     } else if (conversation.format === 'standard') {
-      // For standard format, always use the default assistant
-      const defaultAssistant = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+      // For standard format, use the assistant participant (there should only be one)
+      const defaultAssistant = participants.find(p => p.type === 'assistant');
       responderId = defaultAssistant?.id;
     } else {
       // For other formats, use the first active assistant as fallback
@@ -793,8 +793,8 @@ async function handleContinue(
     // Determine the responder
     let responder: Participant | undefined;
     if (conversation.format === 'standard') {
-      // For standard format, always use default Assistant
-      responder = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+      // For standard format, use the assistant participant (there should only be one)
+      responder = participants.find(p => p.type === 'assistant');
     } else {
       // For other formats, use the specified responder
       responder = participants.find(p => p.id === responderId);

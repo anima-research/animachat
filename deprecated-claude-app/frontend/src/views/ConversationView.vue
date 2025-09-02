@@ -142,6 +142,22 @@
         
         <v-spacer />
         
+        <!-- Group Chat Mode Button -->
+        <v-btn
+          v-if="currentConversation?.format === 'standard'"
+          size="small"
+          variant="text"
+          color="primary"
+          class="mr-2"
+          @click="switchToGroupChat"
+        >
+          <v-icon size="small" class="mr-1">mdi-account-group</v-icon>
+          Group Chat
+          <v-tooltip activator="parent" location="bottom">
+            Switch to Group Chat mode
+          </v-tooltip>
+        </v-btn>
+        
         <v-chip 
           v-if="currentConversation?.format === 'standard'"
           class="mr-2 clickable-chip" 
@@ -165,7 +181,7 @@
           color="info"
           @click="conversationSettingsDialog = true"
         >
-          Multi-Participant Mode
+          Group Chat Mode
           <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
           <v-tooltip activator="parent" location="bottom">
             Click to configure participants and settings
@@ -1053,6 +1069,16 @@ async function updateConversationSettings(updates: Partial<Conversation>) {
   }
 }
 
+async function switchToGroupChat() {
+  if (!currentConversation.value) return;
+  
+  // Update the conversation format to 'prefill' (multi-participant)
+  await updateConversationSettings({ format: 'prefill' });
+  
+  // Open the settings dialog to configure participants
+  conversationSettingsDialog.value = true;
+}
+
 async function deleteMessage(messageId: string, branchId: string) {
   if (confirm('Are you sure you want to delete this message and all its replies?')) {
     await store.deleteMessage(messageId, branchId);
@@ -1329,7 +1355,7 @@ function getConversationModelsHtml(conversation: Conversation): string {
     }
   }
   
-  return '<span style="color: #757575; font-weight: 500;">Multi-participant</span>';
+  return '<span style="color: #757575; font-weight: 500;">Group Chat</span>';
 }
 
 function getConversationModels(conversation: Conversation): string {
@@ -1376,7 +1402,7 @@ function getConversationModels(conversation: Conversation): string {
     conversationParticipantsCache.value = { ...conversationParticipantsCache.value };
   });
   
-  return '👥 Multi-participant';
+  return '👥 Group Chat';
 }
 
 function formatDate(date: Date | string): string {

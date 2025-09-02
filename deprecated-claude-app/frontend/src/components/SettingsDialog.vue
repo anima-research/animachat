@@ -206,7 +206,7 @@
               <li>Conversation branching and forking</li>
               <li>Stepped rolling context for prompt caching</li>
               <li>Export conversations for backup</li>
-              <li>Multi-participant dialogues</li>
+              <li>Group chat dialogues</li>
               <li>Custom system prompts</li>
             </ul>
             

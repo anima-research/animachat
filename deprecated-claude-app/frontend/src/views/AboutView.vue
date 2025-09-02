@@ -111,7 +111,7 @@
                     <template v-slot:prepend>
                       <v-icon color="primary">mdi-account-multiple</v-icon>
                     </template>
-                    <v-list-item-title>Multi-Participant</v-list-item-title>
+                    <v-list-item-title>Group Chat</v-list-item-title>
                     <v-list-item-subtitle>
                       Host dialogues between multiple AIs and humans
                     </v-list-item-subtitle>

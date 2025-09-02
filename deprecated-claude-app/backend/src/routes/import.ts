@@ -137,12 +137,23 @@ export function importRouter(db: Database): Router {
           participantMap.set(mapping.sourceName, participant.id);
         }
       } else if (importRequest.conversationFormat === 'standard') {
-        // For standard format, use default User and Assistant
+        // For standard format, map common names to the actual participants
         const userParticipant = participants.find(p => p.type === 'user');
         const assistantParticipant = participants.find(p => p.type === 'assistant');
         
-        if (userParticipant) participantMap.set('User', userParticipant.id);
-        if (assistantParticipant) participantMap.set('Assistant', assistantParticipant.id);
+        if (userParticipant) {
+          participantMap.set('User', userParticipant.id);
+          participantMap.set('user', userParticipant.id);
+        }
+        if (assistantParticipant) {
+          // Map common assistant names to the actual assistant participant
+          participantMap.set('Assistant', assistantParticipant.id);
+          participantMap.set('assistant', assistantParticipant.id);
+          participantMap.set(assistantParticipant.name, assistantParticipant.id);
+          // Also map common Claude variations
+          participantMap.set('Claude', assistantParticipant.id);
+          participantMap.set('claude', assistantParticipant.id);
+        }
       }
 
       // Import messages with branch support

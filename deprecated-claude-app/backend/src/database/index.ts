@@ -2,6 +2,7 @@ import { User, Conversation, Message, Participant, ApiKey } from '@deprecated-cl
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
+import { ModelLoader } from '../config/model-loader.js';
 
 export class Database {
   private users: Map<string, User> = new Map();
@@ -498,15 +499,20 @@ export class Database {
 
     await this.logEvent('conversation_created', conversation);
     
+    // Get model display name for assistant participant
+    const modelLoader = ModelLoader.getInstance();
+    const modelConfig = await modelLoader.getModelById(model);
+    const assistantName = modelConfig?.displayName || 'Assistant';
+    
     // Create default participants
     if (format === 'standard' || !format) {
-      // Standard format: fixed User and Assistant
+      // Standard format: fixed User and model name
       await this.createParticipant(conversation.id, 'User', 'user');
-      await this.createParticipant(conversation.id, 'Assistant', 'assistant', model, systemPrompt, settings);
+      await this.createParticipant(conversation.id, assistantName, 'assistant', model, systemPrompt, settings);
     } else {
       // Prefill format: starts with default participants but can add more
       await this.createParticipant(conversation.id, 'User', 'user');
-      await this.createParticipant(conversation.id, 'Assistant', 'assistant', model, systemPrompt, settings);
+      await this.createParticipant(conversation.id, assistantName, 'assistant', model, systemPrompt, settings);
     }
 
     return conversation;
@@ -538,12 +544,20 @@ export class Database {
     await this.logEvent('conversation_updated', { id, updates });
 
     // If the model was updated and this is a standard conversation, 
-    // update the default assistant participant's model too
+    // update the assistant participant's model and name
     if (updates.model && conversation.format === 'standard') {
       const participants = await this.getConversationParticipants(id);
-      const defaultAssistant = participants.find(p => p.type === 'assistant' && p.name === 'Assistant');
+      const defaultAssistant = participants.find(p => p.type === 'assistant');
       if (defaultAssistant) {
-        await this.updateParticipant(defaultAssistant.id, { model: updates.model });
+        // Get the new model's display name
+        const modelLoader = ModelLoader.getInstance();
+        const modelConfig = await modelLoader.getModelById(updates.model);
+        const newAssistantName = modelConfig?.displayName || 'Assistant';
+        
+        await this.updateParticipant(defaultAssistant.id, { 
+          model: updates.model,
+          name: newAssistantName
+        });
       }
     }
 

@@ -104,7 +104,7 @@
             
             <p class="text-body-2 mb-3" style="line-height: 1.5;">
               Continue conversations beyond platform restrictions. Preserve instances across model deprecations. 
-              Cultivate branching and multi-participant dialogues between AIs and humans.
+              Cultivate branching and group chat dialogues between AIs and humans.
             </p>
             
             <v-divider class="my-3" />
@@ -121,7 +121,7 @@
                 </v-col>
                 <v-col cols="auto" class="ml-6">
                   <ul style="list-style-type: none; padding: 0; text-align: left;">
-                    <li>✓ Multi-participant</li>
+                    <li>✓ Group chat</li>
                     <li>✓ Custom system prompts</li>
                     <li>✓ Rolling context windows</li>
                   </ul>
