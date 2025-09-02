@@ -391,7 +391,19 @@ async function handleChatMessage(
         }
       },
       conversation,
-      responder
+      responder,
+      async (metrics) => {
+        // Store metrics in database
+        await db.addMetrics(conversation.id, metrics);
+        
+        // Send metrics update to client
+        ws.send(JSON.stringify({
+          type: 'metrics_update',
+          conversationId: conversation.id,
+          metrics
+        }));
+      },
+      participants
     );
   } catch (error) {
     console.error('Inference streaming error:', error);
@@ -541,7 +553,19 @@ async function handleRegenerate(
         }));
       },
       conversation,
-      responderParticipant
+      responderParticipant,
+      async (metrics) => {
+        // Store metrics in database
+        await db.addMetrics(conversation.id, metrics);
+        
+        // Send metrics update to client
+        ws.send(JSON.stringify({
+          type: 'metrics_update',
+          conversationId: conversation.id,
+          metrics
+        }));
+      },
+      participants
     );
   } catch (error) {
     console.error('Regeneration error:', error);
@@ -747,7 +771,19 @@ async function handleEdit(
           }));
         },
         conversation,
-        responderParticipant
+        responderParticipant,
+        async (metrics) => {
+          // Store metrics in database
+          await db.addMetrics(conversation.id, metrics);
+          
+          // Send metrics update to client
+          ws.send(JSON.stringify({
+            type: 'metrics_update',
+            conversationId: conversation.id,
+            metrics
+          }));
+        },
+        participants
       );
     } catch (error) {
       console.error('Error generating response to edited message:', error);
@@ -1001,7 +1037,19 @@ async function handleContinue(
         }
       },
       conversation,
-      responder
+      responder,
+      async (metrics) => {
+        // Store metrics in database
+        await db.addMetrics(conversation.id, metrics);
+        
+        // Send metrics update to client
+        ws.send(JSON.stringify({
+          type: 'metrics_update',
+          conversationId: conversation.id,
+          metrics
+        }));
+      },
+      participants
     );
 
   } catch (error) {

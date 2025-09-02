@@ -247,3 +247,37 @@ export const ImportConversationRequestSchema = z.object({
 });
 
 export type ImportConversationRequest = z.infer<typeof ImportConversationRequestSchema>;
+
+// Conversation metrics types
+export interface ConversationMetrics {
+  conversationId: string;
+  lastCompletion?: {
+    timestamp: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    cost: number;
+    cacheSavings: number;
+    responseTime: number;
+  };
+  totals: {
+    messageCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    totalCost: number;
+    totalSavings: number;
+    completionCount: number;
+  };
+  contextManagement: {
+    strategy: 'append' | 'rolling';
+    currentWindowSize: number;
+    cacheMarkerPosition?: number;
+    parameters?: {
+      maxTokens?: number;
+      maxGraceTokens?: number;
+      cacheInterval?: number;
+    };
+  };
+}

@@ -12,6 +12,7 @@ interface StoreState {
   isLoading: boolean;
   error: string | null;
   wsService: WebSocketService | null;
+  lastMetricsUpdate: { conversationId: string; metrics: any } | null;
 }
 
 export interface Store {
@@ -64,6 +65,7 @@ export function createStore(): {
     isLoading: false,
     error: null,
     wsService: null,
+    lastMetricsUpdate: null
   });
 
   const store: Store = {
@@ -81,6 +83,14 @@ export function createStore(): {
 
     get messages() {
       return this.getVisibleMessages();
+    },
+    
+    get token() {
+      return localStorage.getItem('token');
+    },
+    
+    get lastMetricsUpdate() {
+      return state.lastMetricsUpdate;
     },
     
     // User actions
@@ -583,6 +593,14 @@ export function createStore(): {
             branch.content += data.content;
           }
         }
+      });
+      
+      state.wsService.on('metrics_update', (data: any) => {
+        // console.log('Store handling metrics_update:', data);
+        state.lastMetricsUpdate = {
+          conversationId: data.conversationId,
+          metrics: data.metrics
+        };
       });
       
       state.wsService.on('message_edited', (data: any) => {

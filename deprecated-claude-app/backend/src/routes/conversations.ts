@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
 import { AuthRequest } from '../middleware/auth.js';
-import { CreateConversationRequestSchema, ImportConversationRequestSchema } from '@deprecated-claude/shared';
+import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics } from '@deprecated-claude/shared';
 
 export function conversationRouter(db: Database): Router {
   const router = Router();
@@ -315,6 +315,53 @@ export function conversationRouter(db: Database): Router {
       res.json(metrics);
     } catch (error) {
       console.error('Get cache metrics error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  
+  // Get conversation metrics
+  router.get('/:id/metrics', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id);
+      
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      if (conversation.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Get metrics summary from database
+      const summary = await db.getConversationMetricsSummary(req.params.id);
+      
+      // Add context management info
+      const contextInfo = {
+        strategy: conversation.contextManagement?.strategy || 'append',
+        currentWindowSize: 0, // Would need to get from context manager
+        parameters: conversation.contextManagement?.strategy === 'rolling' ? {
+          maxTokens: (conversation.contextManagement as any)?.maxTokens,
+          maxGraceTokens: (conversation.contextManagement as any)?.maxGraceTokens,
+          cacheInterval: (conversation.contextManagement as any)?.cacheInterval
+        } : {
+          cacheInterval: (conversation.contextManagement as any)?.cacheInterval || 10000
+        }
+      };
+      
+      const metrics: ConversationMetrics = {
+        conversationId: req.params.id,
+        lastCompletion: summary.lastCompletion,
+        totals: summary.totals,
+        contextManagement: contextInfo
+      };
+
+      res.json(metrics);
+    } catch (error) {
+      console.error('Get metrics error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

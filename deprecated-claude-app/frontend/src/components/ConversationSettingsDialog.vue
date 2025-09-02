@@ -3,13 +3,14 @@
     :model-value="modelValue"
     @update:model-value="$emit('update:modelValue', $event)"
     max-width="600"
+    max-height="90vh"
   >
-    <v-card v-if="conversation">
+    <v-card v-if="conversation" style="display: flex; flex-direction: column; max-height: 90vh;">
       <v-card-title>
         Conversation Settings
       </v-card-title>
       
-      <v-card-text class="settings-panel">
+      <v-card-text class="settings-panel" style="overflow-y: auto; flex: 1;">
         <v-text-field
           v-model="settings.title"
           label="Title"
@@ -182,8 +183,11 @@
         <v-divider class="my-4" />
         
         <!-- Context Management Settings -->
-        <div v-if="settings.format === 'standard'">
+        <div>
           <h4 class="text-h6 mb-4">Context Management</h4>
+          <p class="text-caption text-grey mb-3">
+            These settings control how conversation history is managed for all participant, but can be overridden by participant-specific settings.
+          </p>
           
           <v-select
             v-model="contextStrategy"
@@ -543,21 +547,19 @@ function save() {
   
   // Build context management settings
   let contextManagement: any = undefined;
-  if (settings.value.format === 'standard') {
-    if (contextStrategy.value === 'append') {
-      contextManagement = {
-        strategy: 'append',
-        cacheInterval: 10000
-      };
-    } else if (contextStrategy.value === 'rolling') {
-      contextManagement = {
-        strategy: 'rolling',
-        maxTokens: rollingMaxTokens.value,
-        maxGraceTokens: rollingGraceTokens.value,
-        cacheMinTokens: 5000,
-        cacheDepthFromEnd: 5
-      };
-    }
+  if (contextStrategy.value === 'append') {
+    contextManagement = {
+      strategy: 'append',
+      cacheInterval: 10000
+    };
+  } else if (contextStrategy.value === 'rolling') {
+    contextManagement = {
+      strategy: 'rolling',
+      maxTokens: rollingMaxTokens.value,
+      maxGraceTokens: rollingGraceTokens.value,
+      cacheMinTokens: 5000,
+      cacheDepthFromEnd: 5
+    };
   }
   
   // Update conversation settings

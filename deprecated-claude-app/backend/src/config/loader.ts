@@ -202,4 +202,12 @@ export class ConfigLoader {
     this.config = null;
     await this.loadConfig();
   }
+  
+  /**
+   * Get the default model for new conversations
+   */
+  async getDefaultModel(): Promise<string> {
+    const config = await this.loadConfig();
+    return config.defaultModel || 'claude-3-5-sonnet-20241022';
+  }
 }

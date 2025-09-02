@@ -13,7 +13,8 @@ export function systemRouter(): Router {
       // Only send safe/public configuration data
       const publicConfig = {
         features: config.features,
-        groupChatSuggestedModels: config.groupChatSuggestedModels || []
+        groupChatSuggestedModels: config.groupChatSuggestedModels || [],
+        defaultModel: config.defaultModel || 'claude-3-5-sonnet-20241022'
       };
       
       res.json(publicConfig);

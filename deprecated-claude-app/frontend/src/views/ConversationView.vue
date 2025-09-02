@@ -142,6 +142,13 @@
         
         <v-spacer />
         
+        <!-- Metrics Display -->
+        <MetricsDisplay 
+          v-if="currentConversation"
+          :conversation-id="currentConversation.id"
+          class="mr-4"
+        />
+        
         <!-- Group Chat Mode Button -->
         <v-btn
           v-if="currentConversation?.format === 'standard'"
@@ -600,6 +607,7 @@ import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
+import MetricsDisplay from '@/components/MetricsDisplay.vue';
 import { getModelColor } from '@/utils/modelColors';
 
 const route = useRoute();

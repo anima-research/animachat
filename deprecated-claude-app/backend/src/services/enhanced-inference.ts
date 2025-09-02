@@ -42,7 +42,9 @@ export class EnhancedInferenceService {
     userId: string,
     streamCallback: (chunk: string, isComplete: boolean) => Promise<void>,
     conversation?: Conversation,
-    participant?: Participant
+    participant?: Participant,
+    onMetrics?: (metrics: any) => Promise<void>,
+    participants?: Participant[]
   ): Promise<void> {
     // If no conversation provided, fall back to original behavior
     if (!conversation) {
@@ -117,6 +119,21 @@ export class EnhancedInferenceService {
           const cacheEfficiency = (cachedTokens / inputTokens) * 100;
           console.log(`[Enhanced Inference] Cache efficiency: ${cacheEfficiency.toFixed(1)}% (${cachedTokens}/${inputTokens} tokens cached)`);
         }
+        
+        // Call metrics callback if provided
+        if (onMetrics) {
+          const endTime = Date.now();
+          await onMetrics({
+            inputTokens,
+            outputTokens,
+            cachedTokens,
+            cost: this.calculateCost(model, inputTokens, outputTokens),
+            cacheSavings: this.calculateCostSaved(model, cachedTokens),
+            model: model.id,
+            timestamp: new Date().toISOString(),
+            responseTime: endTime - startTime
+          });
+        }
       }
     };
     
@@ -139,7 +156,10 @@ export class EnhancedInferenceService {
       systemPrompt,
       settings,
       userId,
-      enhancedCallback
+      enhancedCallback,
+      conversation?.format || 'standard',
+      participants || [],
+      participant?.id
     );
   }
   
@@ -237,5 +257,29 @@ export class EnhancedInferenceService {
   
   getCacheMarker(conversationId: string, participantId?: string) {
     return this.contextManager.getCacheMarker(conversationId, participantId);
+  }
+  
+  private calculateCost(model: Model, inputTokens: number, outputTokens: number): number {
+    // Model pricing per 1M tokens
+    const inputPricing: Record<string, number> = {
+      'claude-3-5-sonnet-20241022': 3.00,
+      'claude-3-5-haiku-20241022': 0.25,
+      'claude-3-opus-20240229': 15.00,
+      'claude-3-sonnet-20240229': 3.00,
+      'claude-3-haiku-20240307': 0.25
+    };
+    
+    const outputPricing: Record<string, number> = {
+      'claude-3-5-sonnet-20241022': 15.00,
+      'claude-3-5-haiku-20241022': 1.25,
+      'claude-3-opus-20240229': 75.00,
+      'claude-3-sonnet-20240229': 15.00,
+      'claude-3-haiku-20240307': 1.25
+    };
+    
+    const inputCost = (inputTokens * (inputPricing[model.id] || 3.00)) / 1_000_000;
+    const outputCost = (outputTokens * (outputPricing[model.id] || 15.00)) / 1_000_000;
+    
+    return inputCost + outputCost;
   }
 }

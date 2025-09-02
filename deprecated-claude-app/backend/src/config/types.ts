@@ -100,6 +100,9 @@ export interface AppConfig {
     'openai-compatible'?: string;
   };
   
+  // Default model for new conversations
+  defaultModel?: string;
+  
   // Feature flags
   features?: {
     allowUserApiKeys: boolean;

@@ -4,6 +4,18 @@ import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
 import { ModelLoader } from '../config/model-loader.js';
 
+// Metrics interface for tracking token usage
+export interface MetricsData {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  cost: number;
+  cacheSavings: number;
+  model: string;
+  timestamp: string;
+  responseTime: number;
+}
+
 export class Database {
   private users: Map<string, User> = new Map();
   private usersByEmail: Map<string, string> = new Map(); // email -> userId
@@ -15,6 +27,7 @@ export class Database {
   private passwordHashes: Map<string, string> = new Map(); // email -> passwordHash
   private participants: Map<string, Participant> = new Map(); // participantId -> Participant
   private conversationParticipants: Map<string, string[]> = new Map(); // conversationId -> participantIds
+  private conversationMetrics: Map<string, MetricsData[]> = new Map(); // conversationId -> metrics
   
   private eventStore: EventStore;
   private initialized: boolean = false;
@@ -357,6 +370,16 @@ export class Database {
             convParticipants.splice(index, 1);
           }
         }
+        break;
+      }
+      
+      case 'metrics_added': {
+        const { conversationId, metrics } = event.data;
+        if (!this.conversationMetrics.has(conversationId)) {
+          this.conversationMetrics.set(conversationId, []);
+        }
+        const convMetrics = this.conversationMetrics.get(conversationId)!;
+        convMetrics.push(metrics);
         break;
       }
       
@@ -1118,6 +1141,54 @@ export class Database {
       participants,
       exportedAt: new Date(),
       version: '1.0' // Version for future compatibility
+    };
+  }
+
+  // Metrics methods
+  async addMetrics(conversationId: string, metrics: MetricsData): Promise<void> {
+    if (!this.conversationMetrics.has(conversationId)) {
+      this.conversationMetrics.set(conversationId, []);
+    }
+    
+    const convMetrics = this.conversationMetrics.get(conversationId)!;
+    convMetrics.push(metrics);
+    
+    // Store event
+    this.logEvent('metrics_added', { conversationId, metrics });
+  }
+  
+  async getConversationMetrics(conversationId: string): Promise<MetricsData[]> {
+    return this.conversationMetrics.get(conversationId) || [];
+  }
+  
+  async getConversationMetricsSummary(conversationId: string): Promise<{
+    lastCompletion?: MetricsData;
+    totals: {
+      messageCount: number;
+      inputTokens: number;
+      outputTokens: number;
+      cachedTokens: number;
+      totalCost: number;
+      totalSavings: number;
+      completionCount: number;
+    };
+  }> {
+    const metrics = await this.getConversationMetrics(conversationId);
+    const messages = await this.getConversationMessages(conversationId);
+    
+    const totals = {
+      messageCount: messages.length,
+      inputTokens: metrics.reduce((sum, m) => sum + m.inputTokens, 0),
+      outputTokens: metrics.reduce((sum, m) => sum + m.outputTokens, 0),
+      cachedTokens: metrics.reduce((sum, m) => sum + m.cachedTokens, 0),
+      totalCost: metrics.reduce((sum, m) => sum + m.cost, 0),
+      totalSavings: metrics.reduce((sum, m) => sum + m.cacheSavings, 0),
+      completionCount: metrics.length
+    };
+    
+    return {
+      lastCompletion: metrics[metrics.length - 1],
+      totals
     };
   }
 
