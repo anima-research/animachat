@@ -774,16 +774,12 @@ watch(conversations, (newConversations) => {
 // Load initial data
 onMounted(async () => {
   await store.loadModels();
+  await store.loadSystemConfig();
   await store.loadConversations();
   
-  // Load system configuration
-  try {
-    const response = await fetch('/api/system/config');
-    if (response.ok) {
-      systemConfig.value = await response.json();
-    }
-  } catch (error) {
-    console.error('Failed to load system config:', error);
+  // Set local systemConfig from store
+  if (store.state.systemConfig) {
+    systemConfig.value = store.state.systemConfig;
   }
   
   store.connectWebSocket();
@@ -871,8 +867,11 @@ function scrollToBottom(smooth: boolean = false) {
 }
 
 async function createNewConversation() {
-  const model = store.state.models[0]?.id || 'claude-3-5-sonnet-20241022';
-  const conversation = await store.createConversation(model);
+  // Use default model from system config, or fallback to first model or hardcoded default
+  const defaultModel = store.state.systemConfig?.defaultModel || 
+                      store.state.models[0]?.id || 
+                      'claude-3.5-sonnet';
+  const conversation = await store.createConversation(defaultModel);
   router.push(`/conversation/${conversation.id}`);
   // Load participants for the new conversation
   await loadParticipants();

@@ -13,6 +13,11 @@ interface StoreState {
   error: string | null;
   wsService: WebSocketService | null;
   lastMetricsUpdate: { conversationId: string; metrics: any } | null;
+  systemConfig: {
+    features?: any;
+    groupChatSuggestedModels?: string[];
+    defaultModel?: string;
+  } | null;
 }
 
 export interface Store {
@@ -46,6 +51,7 @@ export interface Store {
   getVisibleMessages(): Message[];
   
   loadModels(): Promise<void>;
+  loadSystemConfig(): Promise<void>;
   
   connectWebSocket(): void;
   disconnectWebSocket(): void;
@@ -65,7 +71,8 @@ export function createStore(): {
     isLoading: false,
     error: null,
     wsService: null,
-    lastMetricsUpdate: null
+    lastMetricsUpdate: null,
+    systemConfig: null
   });
 
   const store: Store = {
@@ -561,6 +568,22 @@ export function createStore(): {
       } catch (error) {
         console.error('Failed to load models:', error);
         throw error;
+      }
+    },
+    
+    // System config actions
+    async loadSystemConfig() {
+      try {
+        const response = await api.get('/system/config');
+        state.systemConfig = response.data;
+      } catch (error) {
+        console.error('Failed to load system config:', error);
+        // Don't throw, just use defaults
+        state.systemConfig = {
+          features: {},
+          groupChatSuggestedModels: [],
+          defaultModel: 'claude-3-5-sonnet-20241022'
+        };
       }
     },
     

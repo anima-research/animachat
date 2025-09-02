@@ -227,6 +227,7 @@
     "bedrock": "bedrock-default",
     "openrouter": "openrouter-community"
   },
+  "defaultModel": "claude-3-5-sonnet-20241022",
   "features": {
     "allowUserApiKeys": true,
     "enforceRateLimits": true,
