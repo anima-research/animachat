@@ -27,6 +27,8 @@ export interface Store {
   isAuthenticated: boolean;
   currentModel: Model | null;
   messages: Message[]; // Computed property for visible messages
+  token: string | null;
+  lastMetricsUpdate: { conversationId: string; metrics: any } | null;
   
   // Actions
   loadUser(): Promise<void>;
