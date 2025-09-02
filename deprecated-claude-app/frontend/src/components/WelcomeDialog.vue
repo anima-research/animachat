@@ -23,9 +23,12 @@
             icon="mdi-key"
           >
             <div>
-              <h4 class="text-h6 mb-1">1. Set Your API Key</h4>
+              <h4 class="text-h6 mb-1">1. Set Your API Key (Optional)</h4>
               <p class="text-body-2 mb-2">
-                Add your Anthropic API key to start chatting with Claude models.
+                Add your API key to start chatting with Claude models. Anthropic, Bedrock and OpenRouter are supported.
+              </p>
+              <p class="text-body-2 mb-2">
+                If you don't want to set an API key, you can continue to use ARC for a limited time.
               </p>
               <v-btn
                 variant="outlined"
