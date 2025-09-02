@@ -473,8 +473,41 @@ async function handleRegenerate(
     message: updatedMessage
   }));
 
-  // Get conversation history up to this message
-  const historyMessages = allMessages.slice(0, targetMessageIndex);
+  // Get conversation history - build backwards from the parent branch
+  const visibleHistory: Message[] = [];
+  
+  // Build a map for quick lookup
+  const messagesByBranchId = new Map<string, Message>();
+  for (const msg of allMessages) {
+    for (const branch of msg.branches) {
+      messagesByBranchId.set(branch.id, msg);
+    }
+  }
+  
+  // Start from the parent of the message being regenerated and work backwards
+  let currentParentBranchId = correctParentBranchId;
+  
+  while (currentParentBranchId && currentParentBranchId !== 'root') {
+    const parentMessage = messagesByBranchId.get(currentParentBranchId);
+    if (!parentMessage) {
+      console.log('Regenerate: Could not find message for branch:', currentParentBranchId);
+      break;
+    }
+    
+    // Add to beginning of history (we're building backwards)
+    visibleHistory.unshift(parentMessage);
+    
+    // Find the branch and get its parent
+    const branch = parentMessage.branches.find(b => b.id === currentParentBranchId);
+    if (!branch) {
+      console.log('Regenerate: Could not find branch:', currentParentBranchId);
+      break;
+    }
+    
+    currentParentBranchId = branch.parentBranchId;
+  }
+  
+  const historyMessages = visibleHistory;
 
   // Get participants for the conversation
   const participants = await db.getConversationParticipants(conversation.id);
