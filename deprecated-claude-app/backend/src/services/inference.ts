@@ -7,6 +7,9 @@ import { OpenAICompatibleService } from './openai-compatible.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
 
+// Internal format type that includes 'messages' mode
+type InternalConversationFormat = ConversationFormat | 'messages';
+
 export class InferenceService {
   private bedrockService: BedrockService;
   private anthropicService: AnthropicService;
@@ -42,12 +45,26 @@ export class InferenceService {
     }
     console.log(`[InferenceService] Found model: provider=${model.provider}, providerModelId=${model.providerModelId}`)
     
-    // Format messages based on conversation format
-    const formattedMessages = this.formatMessagesForConversation(messages, format, participants, responderId);
-
-    // Build stop sequences for prefill/colon formats
-    let stopSequences: string[] | undefined;
+    // Determine the actual format to use
+    let actualFormat: InternalConversationFormat = format;
     if (format === 'prefill') {
+      // Check if we should use 'messages' mode instead
+      const shouldUseMessagesMode = 
+        messages.length < 6 || // Less than 6 messages
+        !this.providerSupportsPrefill(model.provider); // Provider doesn't support prefill
+      
+      if (shouldUseMessagesMode) {
+        console.log(`[InferenceService] Switching from prefill to messages mode (messages: ${messages.length}, provider: ${model.provider})`);
+        actualFormat = 'messages';
+      }
+    }
+    
+    // Format messages based on conversation format
+    const formattedMessages = this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider);
+
+    // Build stop sequences for prefill/messages formats
+    let stopSequences: string[] | undefined;
+    if (actualFormat === 'prefill' || actualFormat === 'messages') {
       // Always include these common stop sequences
       const baseStopSequences = ['User:', 'A:', "Claude:"];
       // Add participant names as stop sequences
@@ -79,6 +96,11 @@ export class InferenceService {
       // TODO: Implement accurate token counting
       outputTokens += chunk.length / 4; // Rough estimate
     };
+    
+    // Wrap chunk handler for messages mode to strip participant names
+    const finalOnChunk = actualFormat === 'messages' 
+      ? this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId)
+      : trackingOnChunk;
 
     if (model.provider === 'anthropic') {
       const anthropicService = new AnthropicService(
@@ -91,7 +113,7 @@ export class InferenceService {
         formattedMessages,
         systemPrompt,
         settings,
-        trackingOnChunk,
+        finalOnChunk,
         stopSequences
       );
     } else if (model.provider === 'bedrock') {
@@ -101,7 +123,7 @@ export class InferenceService {
         formattedMessages,
         systemPrompt,
         settings,
-        trackingOnChunk,
+        finalOnChunk,
         stopSequences
       );
     } else if (model.provider === 'openrouter') {
@@ -115,7 +137,7 @@ export class InferenceService {
         formattedMessages,
         systemPrompt,
         settings,
-        trackingOnChunk,
+        finalOnChunk,
         stopSequences
       );
     } else if (model.provider === 'openai-compatible') {
@@ -131,7 +153,7 @@ export class InferenceService {
         formattedMessages,
         systemPrompt,
         settings,
-        trackingOnChunk,
+        finalOnChunk,
         stopSequences
       );
     } else {
@@ -187,9 +209,10 @@ export class InferenceService {
   
   private formatMessagesForConversation(
     messages: Message[],
-    format: ConversationFormat,
+    format: InternalConversationFormat,
     participants: Participant[],
-    responderId?: string
+    responderId?: string,
+    provider?: string
   ): Message[] {
     if (format === 'standard') {
       // Standard format - just log for debugging
@@ -323,6 +346,218 @@ export class InferenceService {
       return prefillMessages;
     }
     
+    if (format === 'messages') {
+      // Messages mode - format for providers that don't support prefill
+      const messagesFormatted: Message[] = [];
+      
+      // Find the responder
+      let responderName = 'Assistant';
+      let responderParticipantId: string | undefined;
+      if (responderId) {
+        const responder = participants.find(p => p.id === responderId);
+        if (responder) {
+          responderName = responder.name;
+          responderParticipantId = responder.id;
+        }
+      }
+      
+      console.log('\n========== MESSAGES MODE FORMATTING ==========');
+      console.log(`Responder: ${responderName} (ID: ${responderId})`);
+      
+      for (const message of messages) {
+        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+        if (!activeBranch || activeBranch.content === '') continue;
+        
+        // Find participant name
+        let participantName = activeBranch.role === 'user' ? 'User' : 'Assistant';
+        if (activeBranch.participantId) {
+          const participant = participants.find(p => p.id === activeBranch.participantId);
+          if (participant) {
+            participantName = participant.name;
+          }
+        }
+        
+        // Determine role based on whether this is the responder
+        const isResponder = activeBranch.participantId === responderParticipantId ||
+                          (activeBranch.role === 'assistant' && !activeBranch.participantId && participantName === responderName);
+        const role = isResponder ? 'assistant' : 'user';
+        
+        // Format content with participant name prefix
+        let formattedContent = `${participantName}: ${activeBranch.content}`;
+        
+        // Handle attachments for non-responder messages
+        if (role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
+          for (const attachment of activeBranch.attachments) {
+            const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
+            const isImage = imageExtensions.includes(fileExtension);
+            
+            if (isImage) {
+              formattedContent += `\n\n[Image attachment: ${attachment.fileName}]`;
+            } else {
+              formattedContent += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
+            }
+          }
+        }
+        
+        console.log(`${role}: ${formattedContent.substring(0, 50)}...`);
+        
+        // Create formatted message
+        const formattedMessage: Message = {
+          id: message.id,
+          conversationId: message.conversationId,
+          branches: [{
+            id: activeBranch.id,
+            content: formattedContent,
+            role: role,
+            createdAt: activeBranch.createdAt,
+            isActive: true,
+            parentBranchId: activeBranch.parentBranchId,
+            participantId: activeBranch.participantId
+          }],
+          activeBranchId: activeBranch.id,
+          order: message.order
+        };
+        
+        messagesFormatted.push(formattedMessage);
+      }
+      
+      console.log('========== END MESSAGES MODE ==========\n');
+      
+      // For Bedrock, we need to consolidate consecutive user messages
+      if (provider === 'bedrock') {
+        return this.consolidateConsecutiveMessages(messagesFormatted);
+      }
+      
+      return messagesFormatted;
+    }
+    
     return messages;
+  }
+  
+  private consolidateConsecutiveMessages(messages: Message[]): Message[] {
+    const consolidated: Message[] = [];
+    let currentUserContent: string[] = [];
+    let lastRole: string | null = null;
+    
+    for (const message of messages) {
+      const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+      if (!activeBranch) continue;
+      
+      if (activeBranch.role === 'user') {
+        // Accumulate user messages
+        currentUserContent.push(activeBranch.content);
+        lastRole = 'user';
+      } else {
+        // If we have accumulated user messages, add them as a single message
+        if (currentUserContent.length > 0) {
+          const branchId = `consolidated-branch-${Date.now()}-${Math.random()}`;
+          const consolidatedMessage: Message = {
+            id: `consolidated-${Date.now()}-${Math.random()}`,
+            conversationId: messages[0].conversationId,
+            branches: [{
+              id: branchId,
+              content: currentUserContent.join('\n\n'),
+              role: 'user',
+              createdAt: new Date(),
+              isActive: true,
+              parentBranchId: messages[0].branches[0].parentBranchId,
+              participantId: undefined
+            }],
+            activeBranchId: branchId,
+            order: consolidated.length
+          };
+          consolidated.push(consolidatedMessage);
+          currentUserContent = [];
+        }
+        
+        // Add the assistant message
+        consolidated.push(message);
+        lastRole = 'assistant';
+      }
+    }
+    
+    // Don't forget any remaining user messages
+    if (currentUserContent.length > 0) {
+      const branchId = `consolidated-branch-${Date.now()}-${Math.random()}`;
+      const consolidatedMessage: Message = {
+        id: `consolidated-${Date.now()}-${Math.random()}`,
+        conversationId: messages[0].conversationId,
+        branches: [{
+          id: branchId,
+          content: currentUserContent.join('\n\n'),
+          role: 'user',
+          createdAt: new Date(),
+          isActive: true,
+          parentBranchId: messages[0].branches[0].parentBranchId,
+          participantId: undefined
+        }],
+        activeBranchId: branchId,
+        order: consolidated.length
+      };
+      consolidated.push(consolidatedMessage);
+    }
+    
+    console.log(`[Messages Mode] Consolidated ${messages.length} messages into ${consolidated.length} messages for Bedrock compatibility`);
+    return consolidated;
+  }
+  
+  private providerSupportsPrefill(provider: string): boolean {
+    // Only Anthropic and Bedrock (Claude models) reliably support prefill
+    return provider === 'anthropic' || provider === 'bedrock';
+  }
+  
+  private createMessagesModeChunkHandler(
+    originalOnChunk: (chunk: string, isComplete: boolean) => Promise<void>,
+    participants: Participant[],
+    responderId?: string
+  ): (chunk: string, isComplete: boolean) => Promise<void> {
+    let buffer = '';
+    let nameStripped = false;
+    
+    return async (chunk: string, isComplete: boolean) => {
+      buffer += chunk;
+      
+      if (!nameStripped) {
+        // Find the responder's name
+        let responderName = 'Assistant';
+        if (responderId) {
+          const responder = participants.find(p => p.id === responderId);
+          if (responder) {
+            responderName = responder.name;
+          }
+        }
+        
+        // Check if buffer starts with "ParticipantName: "
+        const namePattern = new RegExp(`^${responderName}:\\s*`);
+        if (namePattern.test(buffer)) {
+          // Strip the name prefix
+          buffer = buffer.replace(namePattern, '');
+          nameStripped = true;
+          
+          // If we have content after stripping, send it
+          if (buffer.length > 0) {
+            await originalOnChunk(buffer, false);
+            buffer = '';
+          }
+        } else if (buffer.length > responderName.length + 2) {
+          // If we have enough buffer and no name match, assume no name prefix
+          nameStripped = true;
+          await originalOnChunk(buffer, false);
+          buffer = '';
+        }
+      } else {
+        // Name already stripped, just pass through
+        await originalOnChunk(chunk, false);
+        buffer = '';
+      }
+      
+      // Handle completion
+      if (isComplete && buffer.length > 0) {
+        await originalOnChunk(buffer, true);
+      } else if (isComplete) {
+        await originalOnChunk('', true);
+      }
+    };
   }
 }

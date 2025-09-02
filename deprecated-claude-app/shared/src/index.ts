@@ -7,20 +7,3 @@ export function getActiveBranch(message: import('./types.js').Message): import('
   return message.branches.find(b => b.id === message.activeBranchId);
 }
 
-export function createBranch(
-  content: string,
-  role: 'user' | 'assistant' | 'system',
-  parentBranchId?: string,
-  model?: string
-): import('./types.js').MessageBranch {
-  return {
-    id: crypto.randomUUID(),
-    content,
-    role,
-    createdAt: new Date(),
-    model,
-    parentBranchId,
-    isActive: true
-  };
-}
-

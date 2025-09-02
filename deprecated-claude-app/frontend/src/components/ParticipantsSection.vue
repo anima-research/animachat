@@ -22,7 +22,23 @@
       <thead>
         <tr>
           <th width="40">Type</th>
-          <th width="200">Name</th>
+          <th width="200">
+            <div class="d-flex align-center">
+              Name
+              <v-tooltip location="top">
+                <template v-slot:activator="{ props }">
+                  <v-icon
+                    v-bind="props"
+                    icon="mdi-information-outline"
+                    size="x-small"
+                    class="ml-1"
+                    style="opacity: 0.6"
+                  />
+                </template>
+                Click to edit participant names
+              </v-tooltip>
+            </div>
+          </th>
           <th width="250">Model</th>
           <th width="100">Actions</th>
         </tr>
@@ -41,14 +57,25 @@
             />
           </td>
           <td>
-            <v-text-field
-              v-model="participant.name"
-              density="compact"
-              variant="plain"
-              hide-details
-              single-line
-              class="table-input"
-            />
+            <div class="editable-name-wrapper">
+              <v-text-field
+                v-model="participant.name"
+                density="compact"
+                variant="plain"
+                hide-details
+                single-line
+                class="table-input editable-name"
+                placeholder="Enter name..."
+              >
+                <template v-slot:append-inner>
+                  <v-icon
+                    icon="mdi-pencil"
+                    size="x-small"
+                    class="edit-indicator"
+                  />
+                </template>
+              </v-text-field>
+            </div>
           </td>
           <td>
             <v-select
@@ -187,7 +214,7 @@
             <template v-slot:append>
               <v-text-field
                 :model-value="editingParticipant ? getParticipantTemperature(editingParticipant) : 1.0"
-                @update:model-value="(val) => editingParticipant && setParticipantTemperature(editingParticipant, val)"
+                @update:model-value="(val) => editingParticipant && setParticipantTemperature(editingParticipant, Number(val))"
                 type="number"
                 density="compact"
                 style="width: 70px"
@@ -203,7 +230,7 @@
           
           <v-text-field
             :model-value="editingParticipant ? getParticipantMaxTokens(editingParticipant) : 1024"
-            @update:model-value="(val) => editingParticipant && setParticipantMaxTokens(editingParticipant, val)"
+            @update:model-value="(val) => editingParticipant && setParticipantMaxTokens(editingParticipant, Number(val))"
             type="number"
             label="Max Tokens"
             variant="outlined"
@@ -429,5 +456,51 @@ function onModelSelected(modelId: string) {
 /* Make select dropdown more compact */
 .table-input :deep(.v-select__selection) {
   margin: 0;
+}
+
+/* Editable name field styles */
+.editable-name-wrapper {
+  position: relative;
+}
+
+.editable-name {
+  cursor: text;
+}
+
+.editable-name :deep(.v-field__input) {
+  cursor: text;
+}
+
+/* Edit indicator icon - hidden by default */
+.edit-indicator {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  color: rgba(var(--v-theme-on-surface), 0.4);
+}
+
+/* Show edit icon on hover */
+.editable-name-wrapper:hover .edit-indicator {
+  opacity: 1;
+}
+
+/* Add subtle background on hover */
+.editable-name-wrapper:hover .editable-name :deep(.v-field) {
+  background-color: rgba(var(--v-theme-primary), 0.04);
+  border-radius: 4px;
+  padding: 0 8px;
+}
+
+/* Add border when focused */
+.editable-name :deep(.v-field--focused) {
+  background-color: rgba(var(--v-theme-primary), 0.08);
+  border-radius: 4px;
+  padding: 0 8px;
+  box-shadow: inset 0 0 0 1px rgba(var(--v-theme-primary), 0.3);
+}
+
+/* Ensure placeholder text is visible */
+.editable-name :deep(.v-field__input::placeholder) {
+  color: rgba(var(--v-theme-on-surface), 0.3);
+  opacity: 1;
 }
 </style>
