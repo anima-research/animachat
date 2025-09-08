@@ -905,6 +905,11 @@ async function createNewConversation() {
   router.push(`/conversation/${conversation.id}`);
   // Load participants for the new conversation
   await loadParticipants();
+  
+  // Automatically open the settings dialog for the new conversation
+  // Use nextTick to ensure the route has changed and currentConversation is updated
+  await nextTick();
+  conversationSettingsDialog.value = true;
 }
 
 async function sendMessage() {

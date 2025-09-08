@@ -527,13 +527,13 @@ export class Database {
     if (format === 'standard' || !format) {
       // Standard format: fixed User and Assistant
       await this.createParticipant(conversation.id, 'User', 'user');
-      await this.createParticipant(conversation.id, 'Assistant', 'assistant', model, systemPrompt, settings);
+      await this.createParticipant(conversation.id, 'A', 'assistant', model, systemPrompt, settings);
     } else {
       // Prefill format: starts with default participants but can add more
       // Get model display name for assistant participant
       const modelLoader = ModelLoader.getInstance();
       const modelConfig = await modelLoader.getModelById(model);
-      const assistantName = modelConfig?.displayName || 'Assistant';
+      const assistantName = modelConfig?.displayName || 'A';
       
       await this.createParticipant(conversation.id, 'User', 'user');
       await this.createParticipant(conversation.id, assistantName, 'assistant', model, systemPrompt, settings);
