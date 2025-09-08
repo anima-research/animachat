@@ -1,5 +1,6 @@
 <template>
   <v-card
+    ref="messageCard"
     :class="[
       'mb-4',
       message.branches[branchIndex].role === 'user' ? 'ml-auto' : 'mr-auto',
@@ -179,12 +180,25 @@
           Generating...
         </v-chip>
       </div>
+      
+      <!-- Scroll to top button for long messages -->
+      <div v-if="showScrollToTop" class="scroll-to-top-container mt-3">
+        <v-btn
+          size="small"
+          variant="tonal"
+          color="grey"
+          @click="scrollToTopOfMessage"
+        >
+          <v-icon start size="small">mdi-chevron-up</v-icon>
+          Scroll to top
+        </v-btn>
+      </div>
     </v-card-text>
   </v-card>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUpdated } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Message, MessageBranch, Participant } from '@deprecated-claude/shared';
@@ -198,21 +212,49 @@ const props = defineProps<{
   isStreaming?: boolean;
 }>();
 
-// Debug logging
-if (props.isStreaming) {
-  console.log('MessageComponent: isStreaming=true for message', props.message.id, 'role=', props.message.branches[0].role);
-}
-
 const emit = defineEmits<{
   regenerate: [messageId: string, branchId: string];
   edit: [messageId: string, branchId: string, content: string];
   'switch-branch': [messageId: string, branchId: string];
   delete: [messageId: string, branchId: string];
   'select-as-parent': [messageId: string, branchId: string];
+  'stop-auto-scroll': [];
 }>();
 
 const isEditing = ref(false);
 const editContent = ref('');
+const messageCard = ref<HTMLElement>();
+const showScrollToTop = ref(false);
+
+// Check if message is long enough to need scroll button
+onMounted(() => {
+  checkMessageHeight();
+});
+
+onUpdated(() => {
+  checkMessageHeight();
+});
+
+function checkMessageHeight() {
+  if (messageCard.value) {
+    const element = (messageCard.value as any).$el || messageCard.value;
+    // Show button if message is taller than 500px
+    showScrollToTop.value = element?.offsetHeight > 500;
+  }
+}
+
+function scrollToTopOfMessage() {
+  if (messageCard.value) {
+    const element = (messageCard.value as any).$el || messageCard.value;
+    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    
+    // Stop auto-scrolling if streaming
+    if (props.isStreaming) {
+      // Emit event to parent to stop auto-scrolling
+      emit('stop-auto-scroll');
+    }
+  }
+}
 
 const branchIndex = computed(() => {
   return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;
@@ -404,5 +446,10 @@ function openImageInNewTab(attachment: any): void {
   50% {
     opacity: 0.7;
   }
+}
+
+.scroll-to-top-container {
+  display: flex;
+  justify-content: center;
 }
 </style>

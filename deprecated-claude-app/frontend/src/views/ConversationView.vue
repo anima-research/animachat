@@ -260,6 +260,7 @@
             @switch-branch="switchBranch"
             @delete="deleteMessage"
             @select-as-parent="selectBranchAsParent"
+            @stop-auto-scroll="stopAutoScroll"
           />
         </div>
       </v-container>
@@ -617,6 +618,7 @@ const rawImportData = ref('');
 const messageInput = ref('');
 const isStreaming = ref(false);
 const streamingMessageId = ref<string | null>(null);
+const autoScrollEnabled = ref(true);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
 
@@ -778,30 +780,26 @@ onMounted(async () => {
   
   // Set up WebSocket listeners for streaming after a small delay
   nextTick(() => {
-    console.log('Setting up WebSocket listeners, wsService:', store.state.wsService);
     if (store.state.wsService) {
       store.state.wsService.on('message_created', (data: any) => {
-        console.log('message_created event received:', data);
         // A new message was created, start tracking streaming
         if (data.message && data.message.branches?.length > 0) {
           const lastBranch = data.message.branches[data.message.branches.length - 1];
           if (lastBranch.role === 'assistant') {
             streamingMessageId.value = data.message.id;
             isStreaming.value = true;
-            console.log('Started streaming for message:', data.message.id);
+            autoScrollEnabled.value = true; // Re-enable auto-scroll for new messages
           }
         }
       });
       
       store.state.wsService.on('stream', (data: any) => {
-        console.log('stream event received:', data);
         // Streaming content update
         if (data.messageId === streamingMessageId.value) {
           // Check if streaming is complete
           if (data.isComplete) {
             isStreaming.value = false;
             streamingMessageId.value = null;
-            console.log('Streaming completed for message:', data.messageId);
           } else {
             // Still streaming
             if (!isStreaming.value) {
@@ -810,8 +808,6 @@ onMounted(async () => {
           }
         }
       });
-    } else {
-      console.log('wsService not available yet');
     }
   });
   
@@ -858,9 +854,11 @@ watch(() => route.params.id, async (newId) => {
 
 // Watch for new messages to scroll
 watch(messages, () => {
-  nextTick(() => {
-    scrollToBottom(true); // Smooth scroll for new messages
-  });
+  if (autoScrollEnabled.value) {
+    nextTick(() => {
+      scrollToBottom(true); // Smooth scroll for new messages
+    });
+  }
 }, { deep: true });
 
 function scrollToBottom(smooth: boolean = false) {
@@ -1307,6 +1305,10 @@ function selectBranchAsParent(messageId: string, branchId: string) {
   } else {
     selectedBranchForParent.value = { messageId, branchId };
   }
+}
+
+function stopAutoScroll() {
+  autoScrollEnabled.value = false;
 }
 
 function cancelBranchSelection() {
