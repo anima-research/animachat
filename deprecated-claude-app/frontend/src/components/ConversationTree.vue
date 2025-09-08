@@ -278,13 +278,11 @@ function renderTree() {
   // Apply compact mode filtering if enabled
   let root = originalRoot;
   if (compactMode.value) {
-    console.log('Applying compact mode filter');
     root = filterCompactNodes(originalRoot);
   }
   
   // Count total nodes to determine sizing
   const nodeCount = root.descendants().length;
-  console.log(`Tree has ${nodeCount} nodes (compact: ${compactMode.value})`);
   
   // Dynamic node size based on tree size
   const baseNodeRadius = Math.max(10, Math.min(20, 400 / Math.sqrt(nodeCount)));

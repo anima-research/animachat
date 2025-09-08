@@ -254,22 +254,13 @@
             :is-selected-parent="selectedBranchForParent?.messageId === message.id && 
                                  selectedBranchForParent?.branchId === message.activeBranchId"
             :is-last-message="index === messages.length - 1"
+            :is-streaming="isStreaming && message.id === streamingMessageId"
             @regenerate="regenerateMessage"
             @edit="editMessage"
             @switch-branch="switchBranch"
             @delete="deleteMessage"
             @select-as-parent="selectBranchAsParent"
           />
-          
-          <div v-if="isStreaming" class="d-flex align-center mt-4">
-            <v-progress-circular
-              indeterminate
-              size="20"
-              width="2"
-              class="mr-2"
-            />
-            <span class="text-caption">Generating response...</span>
-          </div>
         </div>
       </v-container>
 
@@ -625,9 +616,9 @@ const welcomeDialog = ref(false);
 const rawImportData = ref('');
 const messageInput = ref('');
 const isStreaming = ref(false);
+const streamingMessageId = ref<string | null>(null);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
-const userHasScrolledUp = ref(false); // Track if user has scrolled up
 
 // Branch selection state
 const selectedBranchForParent = ref<{ messageId: string; branchId: string } | null>(null);
@@ -785,6 +776,45 @@ onMounted(async () => {
   
   store.connectWebSocket();
   
+  // Set up WebSocket listeners for streaming after a small delay
+  nextTick(() => {
+    console.log('Setting up WebSocket listeners, wsService:', store.state.wsService);
+    if (store.state.wsService) {
+      store.state.wsService.on('message_created', (data: any) => {
+        console.log('message_created event received:', data);
+        // A new message was created, start tracking streaming
+        if (data.message && data.message.branches?.length > 0) {
+          const lastBranch = data.message.branches[data.message.branches.length - 1];
+          if (lastBranch.role === 'assistant') {
+            streamingMessageId.value = data.message.id;
+            isStreaming.value = true;
+            console.log('Started streaming for message:', data.message.id);
+          }
+        }
+      });
+      
+      store.state.wsService.on('stream', (data: any) => {
+        console.log('stream event received:', data);
+        // Streaming content update
+        if (data.messageId === streamingMessageId.value) {
+          // Check if streaming is complete
+          if (data.isComplete) {
+            isStreaming.value = false;
+            streamingMessageId.value = null;
+            console.log('Streaming completed for message:', data.messageId);
+          } else {
+            // Still streaming
+            if (!isStreaming.value) {
+              isStreaming.value = true;
+            }
+          }
+        }
+      });
+    } else {
+      console.log('wsService not available yet');
+    }
+  });
+  
   // Load participants for multi-participant conversations
   for (const conversation of conversations.value) {
     if (conversation.format === 'prefill') {
@@ -810,27 +840,6 @@ onMounted(async () => {
     }, 100);
   }
   
-  // Add scroll listener to detect when user scrolls up
-  // Wait a bit for the container to be ready
-  setTimeout(() => {
-    if (messagesContainer.value) {
-      const container = messagesContainer.value;
-      const element = (container as any).$el || container;
-      
-      if (element) {
-        element.addEventListener('scroll', () => {
-          const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
-          // Only set userHasScrolledUp if we're streaming and not at bottom
-          if (isStreaming.value && !isAtBottom) {
-            userHasScrolledUp.value = true;
-            console.log('User scrolled up during streaming');
-          } else if (!isStreaming.value) {
-            userHasScrolledUp.value = false;
-          }
-        });
-      }
-    }
-  }, 500);
 });
 
 // Watch route changes
@@ -847,28 +856,11 @@ watch(() => route.params.id, async (newId) => {
   }
 });
 
-// Watch for new messages to scroll - only on message count changes
-watch(() => messages.value.length, (newLength, oldLength) => {
-  // Scroll when a new message is added (not during streaming updates)
-  if (newLength > oldLength) {
-    nextTick(() => {
-      scrollToBottom(true); // Smooth scroll for new messages
-      userHasScrolledUp.value = false; // Reset flag for new messages
-    });
-  }
-});
-
-// Separate watcher for streaming content updates
+// Watch for new messages to scroll
 watch(messages, () => {
-  // During streaming, only scroll if user hasn't scrolled up
-  if (isStreaming.value && !userHasScrolledUp.value) {
-    // console.log('Auto-scrolling during stream');
-    nextTick(() => {
-      scrollToBottom(true);
-    });
-  } else if (isStreaming.value && userHasScrolledUp.value) {
-    console.log('Skipping auto-scroll - user has scrolled up');
-  }
+  nextTick(() => {
+    scrollToBottom(true); // Smooth scroll for new messages
+  });
 }, { deep: true });
 
 function scrollToBottom(smooth: boolean = false) {
@@ -928,7 +920,6 @@ async function sendMessage() {
   const attachmentsCopy = [...attachments.value];
   messageInput.value = '';
   attachments.value = [];
-  isStreaming.value = true;
   
   try {
     let participantId: string | undefined;
@@ -956,9 +947,9 @@ async function sendMessage() {
     if (selectedBranchForParent.value) {
       selectedBranchForParent.value = null;
     }
-  } finally {
-    isStreaming.value = false;
-    userHasScrolledUp.value = false; // Reset when streaming ends
+  } catch (error) {
+    console.error('Failed to send message:', error);
+    messageInput.value = content; // Restore input on error
   }
 }
 
@@ -967,8 +958,6 @@ async function continueGeneration() {
   
   console.log('ConversationView continueGeneration');
   console.log('Selected parent branch:', selectedBranchForParent.value);
-  
-  isStreaming.value = true;
   
   try {
     let responderId: string | undefined;
@@ -992,9 +981,8 @@ async function continueGeneration() {
     if (selectedBranchForParent.value) {
       selectedBranchForParent.value = null;
     }
-  } finally {
-    isStreaming.value = false;
-    userHasScrolledUp.value = false; // Reset when streaming ends
+  } catch (error) {
+    console.error('Failed to continue generation:', error);
   }
 }
 
@@ -1066,13 +1054,7 @@ async function triggerParticipantResponse(participant: Participant) {
 }
 
 async function regenerateMessage(messageId: string, branchId: string) {
-  isStreaming.value = true;
-  try {
-    await store.regenerateMessage(messageId, branchId);
-  } finally {
-    isStreaming.value = false;
-    userHasScrolledUp.value = false; // Reset when streaming ends
-  }
+  await store.regenerateMessage(messageId, branchId);
 }
 
 async function editMessage(messageId: string, branchId: string, content: string) {

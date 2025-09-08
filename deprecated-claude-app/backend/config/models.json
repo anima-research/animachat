@@ -351,41 +351,6 @@
       }
     },
     {
-      "id": "claude-3-opus-bedrock",
-      "providerModelId": "anthropic.claude-3-opus-20240229-v1:0",
-      "displayName": "Claude 3 Opus (Bedrock)",
-      "shortName": "Opus 3",
-      "provider": "bedrock",
-      "deprecated": false,
-      "contextWindow": 200000,
-      "outputTokenLimit": 4096,
-      "settings": {
-        "temperature": {
-          "min": 0,
-          "max": 1,
-          "default": 1,
-          "step": 0.1
-        },
-        "maxTokens": {
-          "min": 1,
-          "max": 4096,
-          "default": 1024
-        },
-        "topP": {
-          "min": 0,
-          "max": 1,
-          "default": 0.9,
-          "step": 0.01
-        },
-        "topK": {
-          "min": 1,
-          "max": 500,
-          "default": 40,
-          "step": 1
-        }
-      }
-    },
-    {
       "id": "claude-3-sonnet-bedrock",
       "providerModelId": "anthropic.claude-3-sonnet-20240229-v1:0",
       "displayName": "Claude 3 Sonnet (Bedrock)",

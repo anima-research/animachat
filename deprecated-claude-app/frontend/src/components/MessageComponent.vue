@@ -160,6 +160,25 @@
           {{ getBranchLabel(branchIndex) }}
         </v-chip>
       </div>
+      
+      <!-- Generating indicator -->
+      <div v-if="isStreaming && currentBranch.role === 'assistant'" class="generating-indicator mt-3">
+        <v-chip 
+          size="small" 
+          :color="participantColor || 'grey'"
+          variant="tonal"
+          class="generating-chip"
+        >
+          <v-progress-circular
+            indeterminate
+            size="14"
+            width="2"
+            class="mr-2"
+            :color="participantColor || 'grey'"
+          />
+          Generating...
+        </v-chip>
+      </div>
     </v-card-text>
   </v-card>
 </template>
@@ -176,7 +195,13 @@ const props = defineProps<{
   participants?: Participant[];
   isSelectedParent?: boolean;
   isLastMessage?: boolean;
+  isStreaming?: boolean;
 }>();
+
+// Debug logging
+if (props.isStreaming) {
+  console.log('MessageComponent: isStreaming=true for message', props.message.id, 'role=', props.message.branches[0].role);
+}
 
 const emit = defineEmits<{
   regenerate: [messageId: string, branchId: string];
@@ -361,3 +386,23 @@ function openImageInNewTab(attachment: any): void {
   }
 }
 </script>
+
+<style scoped>
+.generating-indicator {
+  display: flex;
+  align-items: center;
+}
+
+.generating-chip {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+</style>
