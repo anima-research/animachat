@@ -811,19 +811,26 @@ onMounted(async () => {
   }
   
   // Add scroll listener to detect when user scrolls up
-  nextTick(() => {
+  // Wait a bit for the container to be ready
+  setTimeout(() => {
     if (messagesContainer.value) {
       const container = messagesContainer.value;
       const element = (container as any).$el || container;
       
       if (element) {
         element.addEventListener('scroll', () => {
-          const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50;
-          userHasScrolledUp.value = !isAtBottom && isStreaming.value;
+          const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
+          // Only set userHasScrolledUp if we're streaming and not at bottom
+          if (isStreaming.value && !isAtBottom) {
+            userHasScrolledUp.value = true;
+            console.log('User scrolled up during streaming');
+          } else if (!isStreaming.value) {
+            userHasScrolledUp.value = false;
+          }
         });
       }
     }
-  });
+  }, 500);
 });
 
 // Watch route changes
@@ -840,13 +847,27 @@ watch(() => route.params.id, async (newId) => {
   }
 });
 
-// Watch for new messages to scroll
-watch(messages, () => {
-  // Only auto-scroll if user hasn't scrolled up or if not streaming
-  if (!userHasScrolledUp.value || !isStreaming.value) {
+// Watch for new messages to scroll - only on message count changes
+watch(() => messages.value.length, (newLength, oldLength) => {
+  // Scroll when a new message is added (not during streaming updates)
+  if (newLength > oldLength) {
     nextTick(() => {
       scrollToBottom(true); // Smooth scroll for new messages
+      userHasScrolledUp.value = false; // Reset flag for new messages
     });
+  }
+});
+
+// Separate watcher for streaming content updates
+watch(messages, () => {
+  // During streaming, only scroll if user hasn't scrolled up
+  if (isStreaming.value && !userHasScrolledUp.value) {
+    // console.log('Auto-scrolling during stream');
+    nextTick(() => {
+      scrollToBottom(true);
+    });
+  } else if (isStreaming.value && userHasScrolledUp.value) {
+    console.log('Skipping auto-scroll - user has scrolled up');
   }
 }, { deep: true });
 
