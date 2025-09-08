@@ -492,6 +492,10 @@ export class Database {
   async getUserApiKeys(userId: string): Promise<ApiKey[]> {
     return Array.from(this.apiKeys.values()).filter(key => key.userId === userId);
   }
+  
+  async deleteApiKey(keyId: string): Promise<boolean> {
+    return this.apiKeys.delete(keyId);
+  }
 
   // Conversation methods
   async createConversation(userId: string, title: string, model: string, systemPrompt?: string, settings?: any, format?: 'standard' | 'prefill', contextManagement?: any): Promise<Conversation> {
