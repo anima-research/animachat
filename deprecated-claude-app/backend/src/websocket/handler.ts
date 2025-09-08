@@ -485,7 +485,7 @@ async function handleRegenerate(
   }
   
   // Start from the parent of the message being regenerated and work backwards
-  let currentParentBranchId = correctParentBranchId;
+  let currentParentBranchId: string | undefined = correctParentBranchId;
   
   while (currentParentBranchId && currentParentBranchId !== 'root') {
     const parentMessage = messagesByBranchId.get(currentParentBranchId);
