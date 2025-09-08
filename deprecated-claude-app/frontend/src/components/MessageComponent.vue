@@ -25,6 +25,9 @@
         <div class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
           {{ participantName }}
         </div>
+        <div v-if="currentBranch?.createdAt" class="text-caption ml-2 text-grey">
+          {{ formatTimestamp(currentBranch.createdAt) }}
+        </div>
         
         <v-spacer />
         
@@ -198,7 +201,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUpdated } from 'vue';
+import { ref, computed, onMounted, onUpdated, watch } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Message, MessageBranch, Participant } from '@deprecated-claude/shared';
@@ -226,6 +229,18 @@ const editContent = ref('');
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
 
+const branchIndex = computed(() => {
+  return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;
+});
+
+const currentBranch = computed(() => {
+  const branch = props.message.branches[branchIndex.value];
+  // if (branch?.attachments?.length > 0) {
+  //   console.log(`Message ${props.message.id} has ${branch.attachments.length} attachments:`, branch.attachments);
+  // }
+  return branch;
+});
+
 // Check if message is long enough to need scroll button
 onMounted(() => {
   checkMessageHeight();
@@ -233,6 +248,19 @@ onMounted(() => {
 
 onUpdated(() => {
   checkMessageHeight();
+});
+
+// Also check height when streaming status changes or content updates
+watch(() => props.isStreaming, () => {
+  // Use setTimeout to ensure DOM has updated
+  setTimeout(checkMessageHeight, 100);
+});
+
+// Watch for content changes during streaming
+watch(() => currentBranch.value?.content, () => {
+  if (props.isStreaming) {
+    setTimeout(checkMessageHeight, 100);
+  }
 });
 
 function checkMessageHeight() {
@@ -255,18 +283,6 @@ function scrollToTopOfMessage() {
     }
   }
 }
-
-const branchIndex = computed(() => {
-  return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;
-});
-
-const currentBranch = computed(() => {
-  const branch = props.message.branches[branchIndex.value];
-  // if (branch?.attachments?.length > 0) {
-  //   console.log(`Message ${props.message.id} has ${branch.attachments.length} attachments:`, branch.attachments);
-  // }
-  return branch;
-});
 
 // Get participant name for current branch
 const participantName = computed(() => {
@@ -426,6 +442,35 @@ function openImageInNewTab(attachment: any): void {
     newWindow.document.write(`<img src="${src}" style="max-width: 100%; height: auto;" />`);
     newWindow.document.title = attachment.fileName;
   }
+}
+
+function formatTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  // If today, show time
+  if (diffDays === 0) {
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+  }
+  
+  // If yesterday
+  if (diffDays === 1) {
+    return `Yesterday ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+  }
+  
+  // If within this week
+  if (diffDays < 7) {
+    return date.toLocaleDateString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+  }
+  
+  // Otherwise show date
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 </script>
 
