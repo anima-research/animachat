@@ -5,14 +5,14 @@
     max-width="900"
     scrollable
   >
-    <v-card>
-      <v-card-title>
+    <v-card max-height="85vh" class="d-flex flex-column">
+      <v-card-title class="flex-shrink-0">
         Import Conversation
       </v-card-title>
       
-      <v-stepper v-model="step" hide-actions>
+      <v-stepper v-model="step" hide-actions class="flex-grow-1 overflow-hidden d-flex flex-column">
         <!-- Step 1: Select Import Format & Content -->
-        <v-stepper-header>
+        <v-stepper-header class="flex-shrink-0">
           <v-stepper-item 
             :complete="step > 1"
             :value="1"
@@ -30,8 +30,8 @@
             title="Configure"
           />
         </v-stepper-header>
-
-        <v-stepper-window>
+        
+        <v-stepper-window class="flex-grow-1 overflow-auto">
           <!-- Step 1: Format Selection -->
           <v-stepper-window-item :value="1">
             <v-card-text>

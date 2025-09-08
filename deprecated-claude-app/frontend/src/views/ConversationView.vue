@@ -627,6 +627,7 @@ const messageInput = ref('');
 const isStreaming = ref(false);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
+const userHasScrolledUp = ref(false); // Track if user has scrolled up
 
 // Branch selection state
 const selectedBranchForParent = ref<{ messageId: string; branchId: string } | null>(null);
@@ -808,6 +809,21 @@ onMounted(async () => {
       scrollToBottom();
     }, 100);
   }
+  
+  // Add scroll listener to detect when user scrolls up
+  nextTick(() => {
+    if (messagesContainer.value) {
+      const container = messagesContainer.value;
+      const element = (container as any).$el || container;
+      
+      if (element) {
+        element.addEventListener('scroll', () => {
+          const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50;
+          userHasScrolledUp.value = !isAtBottom && isStreaming.value;
+        });
+      }
+    }
+  });
 });
 
 // Watch route changes
@@ -826,9 +842,12 @@ watch(() => route.params.id, async (newId) => {
 
 // Watch for new messages to scroll
 watch(messages, () => {
-  nextTick(() => {
-    scrollToBottom(true); // Smooth scroll for new messages
-  });
+  // Only auto-scroll if user hasn't scrolled up or if not streaming
+  if (!userHasScrolledUp.value || !isStreaming.value) {
+    nextTick(() => {
+      scrollToBottom(true); // Smooth scroll for new messages
+    });
+  }
 }, { deep: true });
 
 function scrollToBottom(smooth: boolean = false) {
@@ -918,6 +937,7 @@ async function sendMessage() {
     }
   } finally {
     isStreaming.value = false;
+    userHasScrolledUp.value = false; // Reset when streaming ends
   }
 }
 
@@ -953,6 +973,7 @@ async function continueGeneration() {
     }
   } finally {
     isStreaming.value = false;
+    userHasScrolledUp.value = false; // Reset when streaming ends
   }
 }
 
@@ -1029,6 +1050,7 @@ async function regenerateMessage(messageId: string, branchId: string) {
     await store.regenerateMessage(messageId, branchId);
   } finally {
     isStreaming.value = false;
+    userHasScrolledUp.value = false; // Reset when streaming ends
   }
 }
 
