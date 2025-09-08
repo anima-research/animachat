@@ -1,9 +1,9 @@
 // Model color definitions
 export const MODEL_COLORS: Record<string, string> = {
   // Claude Opus models - Bright cyan/gold
-  'claude-opus-4-1-20250805': '#00e5ff',      // Very bright cyan
-  'claude-opus-4-20250514': '#00e5ff',        // Very bright cyan
-  'claude-3-opus-20240229': '#ffc107',        // Gold
+  'claude-opus-4-1-20250805': '#ffa600',      // Amber
+  'claude-opus-4-20250514': '#00e5ff',        // Cyan
+  'claude-3-opus-20240229': '#ffc300',        // Gold
   
   // Claude Sonnet models - Very bright blues and red
   'claude-sonnet-4-20250514': '#40c4ff',      // Very bright blue
