@@ -3,9 +3,7 @@
     <!-- Sidebar -->
     <v-navigation-drawer
       v-model="drawer"
-      :rail="rail"
       permanent
-      @click="rail = false"
     >
       <v-list>
         <v-list-item
@@ -17,13 +15,6 @@
             <div class="mr-3">
               <ArcLogo :size="40" />
             </div>
-          </template>
-          <template v-slot:append>
-            <v-btn
-              variant="text"
-              icon="mdi-chevron-left"
-              @click.stop="rail = !rail"
-            />
           </template>
         </v-list-item>
       </v-list>
@@ -608,7 +599,6 @@ const router = useRouter();
 const store = useStore();
 
 const drawer = ref(true);
-const rail = ref(false);
 const treeDrawer = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
