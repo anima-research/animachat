@@ -215,13 +215,14 @@
           title="Import raw messages backup"
         /> -->
         
-        <v-btn
+        <!-- Export button (hidden - available in conversation dropdown menu) -->
+        <!-- <v-btn
           v-if="currentConversation"
           icon="mdi-export"
           variant="text"
           @click="exportConversation(currentConversation.id)"
           title="Export conversation"
-        />
+        /> -->
         
         <v-btn
           v-if="allMessages.length > 0"

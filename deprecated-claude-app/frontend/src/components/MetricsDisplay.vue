@@ -8,11 +8,6 @@
         <Icon icon="mdi:text-box-outline" />
         <span class="metric-value">{{ formatTokens(lastCompletionTokens) || '0 tokens' }}</span>
       </div>
-      
-      <div class="metric-item">
-        <Icon icon="mdi:cog-outline" />
-        <span class="metric-value">{{ metrics?.contextManagement?.strategy || 'append' }}</span>
-      </div>
     </div>
     
     <!-- Detailed flyout panel -->
