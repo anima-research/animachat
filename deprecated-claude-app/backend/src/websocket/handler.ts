@@ -453,6 +453,7 @@ async function handleRegenerate(
   console.log('[Regenerate] Using parent branch:', correctParentBranchId);
   
   // Create new branch with correct parent
+  // Use the conversation's current model (which has the correct model ID)
   const updatedMessage = await db.addMessageBranch(
     message.messageId,
     '',

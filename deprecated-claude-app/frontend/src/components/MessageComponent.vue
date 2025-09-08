@@ -25,6 +25,9 @@
         <div class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
           {{ participantName }}
         </div>
+        <div v-if="modelIndicator" class="text-caption ml-1" style="color: #888; font-size: 0.75rem;">
+          ({{ modelIndicator }})
+        </div>
         <div v-if="currentBranch?.createdAt" class="text-caption ml-2 text-grey">
           {{ formatTimestamp(currentBranch.createdAt) }}
         </div>
@@ -290,7 +293,7 @@ const participantName = computed(() => {
   
   // If no participants list provided or no participantId, fall back to default behavior
   if (!props.participants || !branch.participantId) {
-    return branch.role === 'user' ? 'You' : branch.model || 'Assistant';
+    return branch.role === 'user' ? 'You' : 'Assistant';
   }
   
   // Find the participant by ID
@@ -300,7 +303,22 @@ const participantName = computed(() => {
   }
   
   // Fallback if participant not found
-  return branch.role === 'user' ? 'You' : branch.model || 'Assistant';
+  return branch.role === 'user' ? 'You' : 'Assistant';
+});
+
+// Get model indicator for assistant messages
+const modelIndicator = computed(() => {
+  const branch = currentBranch.value;
+  
+  // Only show model indicator for assistant messages that have a model stored
+  if (branch.role === 'assistant' && branch.model) {
+    // Return a shortened version of the model ID for display
+    // e.g., "claude-3.5-sonnet" -> "claude-3.5"
+    // or just return the full ID if you prefer
+    return branch.model;
+  }
+  
+  return null;
 });
 
 const participantColor = computed(() => {
