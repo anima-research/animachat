@@ -247,6 +247,8 @@
                                  selectedBranchForParent?.branchId === message.activeBranchId"
             :is-last-message="index === messages.length - 1"
             :is-streaming="isStreaming && message.id === streamingMessageId"
+            :has-error="streamingError?.messageId === message.id"
+            :error-message="streamingError?.messageId === message.id ? streamingError.error : undefined"
             @regenerate="regenerateMessage"
             @edit="editMessage"
             @switch-branch="switchBranch"
@@ -610,6 +612,7 @@ const messageInput = ref('');
 const isStreaming = ref(false);
 const streamingMessageId = ref<string | null>(null);
 const autoScrollEnabled = ref(true);
+const streamingError = ref<{ messageId: string; error: string } | null>(null);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
 
@@ -780,6 +783,7 @@ onMounted(async () => {
             streamingMessageId.value = data.message.id;
             isStreaming.value = true;
             autoScrollEnabled.value = true; // Re-enable auto-scroll for new messages
+            streamingError.value = null; // Clear any previous errors
           }
         }
       });
@@ -797,6 +801,21 @@ onMounted(async () => {
               isStreaming.value = true;
             }
           }
+        }
+      });
+      
+      store.state.wsService.on('error', (data: any) => {
+        // Handle streaming errors
+        console.error('WebSocket error:', data);
+        
+        // If we're currently streaming, mark it as failed
+        if (isStreaming.value && streamingMessageId.value) {
+          streamingError.value = {
+            messageId: streamingMessageId.value,
+            error: data.error || 'Failed to generate response'
+          };
+          isStreaming.value = false;
+          // Don't clear streamingMessageId so we can show the error on the right message
         }
       });
     }

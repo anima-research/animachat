@@ -168,8 +168,24 @@
         </v-chip>
       </div>
       
-      <!-- Generating indicator -->
-      <div v-if="isStreaming && currentBranch.role === 'assistant'" class="generating-indicator mt-3">
+      <!-- Generating indicator or error indicator -->
+      <div v-if="hasError && currentBranch.role === 'assistant'" class="error-indicator mt-3">
+        <v-chip 
+          size="small" 
+          color="error"
+          variant="tonal"
+          class="error-chip"
+        >
+          <v-icon
+            size="small"
+            class="mr-2"
+          >
+            mdi-alert-circle
+          </v-icon>
+          {{ errorMessage || 'Failed to generate response' }}
+        </v-chip>
+      </div>
+      <div v-else-if="isStreaming && currentBranch.role === 'assistant'" class="generating-indicator mt-3">
         <v-chip 
           size="small" 
           :color="participantColor || 'grey'"
@@ -216,6 +232,8 @@ const props = defineProps<{
   isSelectedParent?: boolean;
   isLastMessage?: boolean;
   isStreaming?: boolean;
+  hasError?: boolean;
+  errorMessage?: string;
 }>();
 
 const emit = defineEmits<{
