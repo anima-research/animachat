@@ -354,6 +354,8 @@ export function conversationRouter(db: Database): Router {
       
       const metrics: ConversationMetrics = {
         conversationId: req.params.id,
+        messageCount: summary.messageCount,
+        perModelMetrics: Object.fromEntries(summary.perModelMetrics),
         lastCompletion: summary.lastCompletion,
         totals: summary.totals,
         contextManagement: contextInfo
