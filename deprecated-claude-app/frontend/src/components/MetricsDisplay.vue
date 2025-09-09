@@ -323,6 +323,7 @@ const formatCost = (cost: number): string => {
     display:flex;
     align-items:center;
     gap:.5rem;
+    margin-bottom: .75rem;
 }
 
 .model-select {
