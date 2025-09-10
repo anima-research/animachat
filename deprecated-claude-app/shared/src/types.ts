@@ -248,6 +248,7 @@ export const ImportConversationRequestSchema = z.object({
 
 export type ImportConversationRequest = z.infer<typeof ImportConversationRequestSchema>;
 
+// Conversation metrics types
 const LastCompletionMetricsSchema = z.object({
   timestamp:     z.string(),
   model:         z.string(),
@@ -272,7 +273,6 @@ export const TotalsMetricsSchema = z.object({
 
 export type TotalsMetrics = z.infer<typeof TotalsMetricsSchema>;
 
-// Conversation metrics types
 export const ModelConversationMetricsSchema = z.object({
   participant: ParticipantSchema,
   lastCompletion: LastCompletionMetricsSchema.optional(),
