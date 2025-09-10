@@ -186,8 +186,6 @@ watch(() => store.lastMetricsUpdate, (update) => {
     if (metrics.value) {
       metrics.value.lastCompletion = update.metrics;
       
-      console.log("recieved update");
-      console.log(update);
       // Update totals
       if (metrics.value.totals) {
         metrics.value.totals.inputTokens += update.metrics.inputTokens;
