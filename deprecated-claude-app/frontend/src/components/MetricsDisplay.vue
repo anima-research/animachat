@@ -73,17 +73,13 @@
         
         <div class="details-section">
           <h4>Session Info</h4>
-          <div class="detail-row">
+          <div class="detail-row" v-if="curModelMetrics?.messageCount">
             <span>Messages:</span>
-            <span>{{ curModelMetrics?.totals?.messageCount || 0 }}</span>
+            <span>{{ curModelMetrics?.messageCount || 0 }}</span>
           </div>
           <div class="detail-row">
             <span>Completions:</span>
             <span>{{ curModelMetrics?.totals?.completionCount || 0 }}</span>
-          </div>
-          <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
-            <span>Model:</span>
-            <span>{{ curModelMetrics.lastCompletion.model }}</span>
           </div>
           <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
             <span>Response Time:</span>
@@ -203,6 +199,7 @@ watch(() => store.lastMetricsUpdate, (update) => {
         perModelMetricTotals.totalCost += update.metrics.cost;
         perModelMetricTotals.totalSavings += update.metrics.cacheSavings;
         perModelMetricTotals.completionCount += 1;
+        metrics.value.perModelMetrics[update.metrics.model].lastCompletion = update.metrics;
       }
     }
   }

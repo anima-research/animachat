@@ -1,5 +1,5 @@
-import { User, Conversation, Message, Participant, ApiKey} from '@deprecated-claude/shared';
-import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema} from '@deprecated-claude/shared';
+import { User, Conversation, Message, Participant, ApiKey } from '@deprecated-claude/shared';
+import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
