@@ -13,19 +13,29 @@
     <!-- Detailed flyout panel -->
     <Transition name="fade">
       <div v-if="showDetails" class="metrics-details">
+
+        <div class="section-header">
+          <Icon icon="mdi:robot" />
+          <select v-model="selectedModel" class="model-select">
+            <option v-for="opt in modelOptions" :key="opt" :value="opt">
+              {{ opt }}
+            </option>
+          </select>
+        </div>
+
         <div class="details-section">
           <h4>Cost Summary</h4>
           <div class="detail-row highlight">
             <span>Total Cost:</span>
-            <span>${{ formatCost(metrics?.totals?.totalCost || 0) }}</span>
+            <span>${{ formatCost(curModelMetrics?.totals?.totalCost || 0) }}</span>
           </div>
           <div class="detail-row highlight">
             <span>Total Saved:</span>
-            <span class="savings">${{ formatCost(metrics?.totals?.totalSavings || 0) }}</span>
+            <span class="savings">${{ formatCost(curModelMetrics?.totals?.totalSavings || 0) }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.lastCompletion">
+          <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
             <span>Last Completion Cost:</span>
-            <span>${{ formatCost(metrics.lastCompletion.cost) }}</span>
+            <span>${{ formatCost(curModelMetrics.lastCompletion.cost) }}</span>
           </div>
         </div>
         
@@ -37,24 +47,24 @@
           </div>
           <div class="detail-row">
             <span>Cached Tokens:</span>
-            <span>{{ formatNumber(metrics?.totals?.cachedTokens || 0) }}
-              <span class="cache-percentage" v-if="(metrics?.totals?.cachedTokens || 0) > 0">
+            <span>{{ formatNumber(curModelMetrics?.totals?.cachedTokens || 0) }}
+              <span class="cache-percentage" v-if="(curModelMetrics?.totals?.cachedTokens || 0) > 0">
                 ({{ overallCacheEfficiency }}%)
               </span>
             </span>
           </div>
-          <div class="detail-row" v-if="metrics?.lastCompletion">
+          <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
             <span>Last Input:</span>
-            <span>{{ formatNumber(metrics.lastCompletion.inputTokens) }}</span>
+            <span>{{ formatNumber(curModelMetrics.lastCompletion.inputTokens) }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.lastCompletion">
+          <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
             <span>Last Output:</span>
-            <span>{{ formatNumber(metrics.lastCompletion.outputTokens) }}</span>
+            <span>{{ formatNumber(curModelMetrics.lastCompletion.outputTokens) }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.lastCompletion">
+          <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
             <span>Last Cached:</span>
-            <span>{{ formatNumber(metrics.lastCompletion.cachedTokens) }} 
-              <span class="cache-percentage" v-if="metrics.lastCompletion.cachedTokens > 0">
+            <span>{{ formatNumber(curModelMetrics.lastCompletion.cachedTokens) }} 
+              <span class="cache-percentage" v-if="curModelMetrics.lastCompletion.cachedTokens > 0">
                 ({{ cacheEfficiency }}%)
               </span>
             </span>
@@ -63,21 +73,17 @@
         
         <div class="details-section">
           <h4>Session Info</h4>
-          <div class="detail-row">
+          <div class="detail-row" v-if="curModelMetrics?.messageCount">
             <span>Messages:</span>
-            <span>{{ metrics?.totals?.messageCount || 0 }}</span>
+            <span>{{ curModelMetrics?.messageCount || 0 }}</span>
           </div>
           <div class="detail-row">
             <span>Completions:</span>
-            <span>{{ metrics?.totals?.completionCount || 0 }}</span>
+            <span>{{ curModelMetrics?.totals?.completionCount || 0 }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.lastCompletion">
-            <span>Model:</span>
-            <span>{{ metrics.lastCompletion.model }}</span>
-          </div>
-          <div class="detail-row" v-if="metrics?.lastCompletion">
+          <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
             <span>Response Time:</span>
-            <span>{{ (metrics.lastCompletion.responseTime / 1000).toFixed(1) }}s</span>
+            <span>{{ (curModelMetrics.lastCompletion.responseTime / 1000).toFixed(1) }}s</span>
           </div>
         </div>
         
@@ -85,19 +91,27 @@
           <h4>Context Management</h4>
           <div class="detail-row">
             <span>Strategy:</span>
-            <span>{{ metrics?.contextManagement?.strategy || 'append' }}</span>
+            <span>{{ curContextManagment?.strategy || 'append' }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.contextManagement?.parameters?.maxTokens">
+          <div class="detail-row" v-if="curContextManagment?.maxTokens">
             <span>Max Tokens:</span>
-            <span>{{ formatNumber(metrics.contextManagement.parameters.maxTokens) }}</span>
+            <span>{{ formatNumber(curContextManagment.maxTokens) }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.contextManagement?.parameters?.maxGraceTokens">
-            <span>Grace Tokens:</span>
-            <span>{{ formatNumber(metrics.contextManagement.parameters.maxGraceTokens) }}</span>
+          <div class="detail-row" v-if="curContextManagment?.maxGraceTokens">
+            <span>Max Grace Tokens:</span>
+            <span>{{ formatNumber(curContextManagment.maxGraceTokens) }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.contextManagement?.parameters?.cacheInterval">
+          <div class="detail-row" v-if="curContextManagment?.cacheMinTokens">
+            <span>Cache Min Tokens:</span>
+            <span>{{ formatNumber(curContextManagment.cacheMinTokens) }}</span>
+          </div>
+          <div class="detail-row" v-if="curContextManagment?.cacheDepthFromEnd">
+            <span>Cache Depth From End:</span>
+            <span>{{ formatNumber(curContextManagment.cacheDepthFromEnd) }}</span>
+          </div>
+          <div class="detail-row" v-if="curContextManagment?.cacheInterval">
             <span>Cache Interval:</span>
-            <span>{{ formatNumber(metrics.contextManagement.parameters.cacheInterval) }}</span>
+            <span>{{ formatNumber(curContextManagment.cacheInterval) }}</span>
           </div>
         </div>
       </div>
@@ -108,7 +122,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { Icon } from '@iconify/vue';
-import type { ConversationMetrics } from '@deprecated-claude/shared';
+import type { ConversationMetrics, ContextManagement } from '@deprecated-claude/shared';
 import { useStore } from '@/store';
 
 const props = defineProps<{
@@ -119,6 +133,8 @@ const store = useStore();
 const showDetails = ref(false);
 const metrics = ref<ConversationMetrics | null>(null);
 let hoverTimer: number | null = null;
+const ALL_MODELS_METRICS = "All";
+const selectedModel = ref<string>(ALL_MODELS_METRICS);
 
 const handleMouseEnter = () => {
   if (hoverTimer) clearTimeout(hoverTimer);
@@ -179,33 +195,66 @@ watch(() => store.lastMetricsUpdate, (update) => {
         metrics.value.totals.totalSavings += update.metrics.cacheSavings;
         metrics.value.totals.completionCount += 1;
       }
+      
+      // Update per model totals
+      if (metrics.value.perModelMetrics && metrics.value.perModelMetrics[update.metrics.model]) {
+        const perModelMetricTotals = metrics.value.perModelMetrics[update.metrics.model].totals;
+        perModelMetricTotals.inputTokens += update.metrics.inputTokens;
+        perModelMetricTotals.outputTokens += update.metrics.outputTokens;
+        perModelMetricTotals.cachedTokens += update.metrics.cachedTokens;
+        perModelMetricTotals.totalCost += update.metrics.cost;
+        perModelMetricTotals.totalSavings += update.metrics.cacheSavings;
+        perModelMetricTotals.completionCount += 1;
+        metrics.value.perModelMetrics[update.metrics.model].lastCompletion = update.metrics;
+      }
     }
   }
 });
 
+// Model picker
+const curModelMetrics = computed<ModelConversationMetrics | null>(() => {
+  if (!metrics.value) return null;
+  if (selectedModel.value == ALL_MODELS_METRICS) return metrics.value; // simply grab the high level summary metrics
+  return metrics.value.perModelMetrics[selectedModel.value] ?? null;
+});
+
+const curContextManagment = computed<ContextManagement | null>(() => {
+  if (!metrics.value) return null;
+  if (!curModelMetrics.value || !curModelMetrics.contextManagement) return metrics.value.contextManagement; // simply grab the high level context management
+  // customized context management
+  return curModelMetrics.contextManagement;
+});
+
+
 // Computed properties
+const modelOptions = computed(() =>
+  metrics.value
+  ? [ALL_MODELS_METRICS, ...Object.keys(metrics.value.perModelMetrics ?? {}).sort((a, b) => a.localeCompare(b))]
+  : []
+);
+
+watch(modelOptions, opts => {
+  if (opts.length && !selectedModel.value) selectedModel.value = opts[0];
+});
+
 const lastCompletionTokens = computed(() => {
-  if (!metrics.value?.lastCompletion) {
-    // Return total tokens as fallback if no last completion
-    return metrics.value?.totals ? 
-      (metrics.value.totals.inputTokens + metrics.value.totals.outputTokens) : 0;
-  }
-  return metrics.value.lastCompletion.inputTokens + metrics.value.lastCompletion.outputTokens;
+  if (!curModelMetrics.value?.lastCompletion) return 0;
+  return curModelMetrics.value.lastCompletion.inputTokens + curModelMetrics.value.lastCompletion.outputTokens;
 });
 
 const totalTokens = computed(() => {
-  if (!metrics.value?.totals) return 0;
-  return metrics.value.totals.inputTokens + metrics.value.totals.outputTokens;
+  if (!curModelMetrics.value?.totals) return 0;
+  return curModelMetrics.value.totals.inputTokens + curModelMetrics.value.totals.outputTokens;
 });
 
 const cacheEfficiency = computed(() => {
-  if (!metrics.value?.lastCompletion || metrics.value.lastCompletion.inputTokens === 0) return 0;
-  return Math.round((metrics.value.lastCompletion.cachedTokens / metrics.value.lastCompletion.inputTokens) * 100);
+  if (!curModelMetrics.value?.lastCompletion || curModelMetrics.value.lastCompletion.inputTokens === 0) return 0;
+  return Math.round((curModelMetrics.value.lastCompletion.cachedTokens / curModelMetrics.value.lastCompletion.inputTokens) * 100);
 });
 
 const overallCacheEfficiency = computed(() => {
-  if (!metrics.value?.totals || metrics.value.totals.inputTokens === 0) return 0;
-  return Math.round((metrics.value.totals.cachedTokens / metrics.value.totals.inputTokens) * 100);
+  if (!curModelMetrics.value?.totals || curModelMetrics.value.totals.inputTokens === 0) return 0;
+  return Math.round((curModelMetrics.value.totals.cachedTokens / curModelMetrics.value.totals.inputTokens) * 100);
 });
 
 // Formatting functions
@@ -279,6 +328,40 @@ const formatCost = (cost: number): string => {
   z-index: 9999;
   max-height: 80vh;
   overflow-y: auto;
+}
+
+.section-header {
+    display:flex;
+    align-items:center;
+    gap:.5rem;
+    margin-bottom: .75rem;
+}
+
+.model-select {
+  padding: .25rem .5rem;
+  font-size: .75rem;
+  border-radius: 4px;
+
+  /* ── dark look ───────────────────────────── */
+  background-color: rgba(var(--v-theme-on-surface), 0.10);   /* match “card” tint */
+  color:            rgb(var(--v-theme-on-surface));
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+
+  /* nicer arrow & consistent border in Safari/Firefox/Edge */
+  appearance: none;
+}
+
+/* menu background/foreground when it opens */
+.model-select option {
+  background: rgb(var(--v-theme-surface));
+  color:      rgb(var(--v-theme-on-surface));
+}
+
+/* hover / focus ring */
+.model-select:hover,
+.model-select:focus {
+  background-color: rgba(var(--v-theme-on-surface), 0.16);
+  outline: none;
 }
 
 .details-section {

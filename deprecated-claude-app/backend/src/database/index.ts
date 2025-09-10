@@ -1,4 +1,5 @@
 import { User, Conversation, Message, Participant, ApiKey } from '@deprecated-claude/shared';
+import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
@@ -1161,34 +1162,53 @@ export class Database {
   }
   
   async getConversationMetricsSummary(conversationId: string): Promise<{
+    messageCount: number;
+    perModelMetrics: Map<string, ModelConversationMetrics>;
     lastCompletion?: MetricsData;
-    totals: {
-      messageCount: number;
-      inputTokens: number;
-      outputTokens: number;
-      cachedTokens: number;
-      totalCost: number;
-      totalSavings: number;
-      completionCount: number;
-    };
+    totals: TotalsMetrics;
   }> {
     const metrics = await this.getConversationMetrics(conversationId);
     const messages = await this.getConversationMessages(conversationId);
+    const participants = await this.getConversationParticipants(conversationId);
     
-    const totals = {
-      messageCount: messages.length,
-      inputTokens: metrics.reduce((sum, m) => sum + m.inputTokens, 0),
-      outputTokens: metrics.reduce((sum, m) => sum + m.outputTokens, 0),
-      cachedTokens: metrics.reduce((sum, m) => sum + m.cachedTokens, 0),
-      totalCost: metrics.reduce((sum, m) => sum + m.cost, 0),
-      totalSavings: metrics.reduce((sum, m) => sum + m.cacheSavings, 0),
+    const perModelMetrics = new Map<string, ModelConversationMetrics>(
+      participants
+        .filter(p => typeof p.model === 'string' && p.model.length > 0 && p.type == "assistant")  // only the ones with a model
+        .map(p => [
+          p.model as string,
+          ModelConversationMetricsSchema.parse({
+            participant: p,
+            contextManagement: p.contextManagement
+          })
+        ])
+    );
+    const totals = TotalsMetricsSchema.parse({
       completionCount: metrics.length
-    };
+    });
+    
+    for (const metric of metrics) {
+      totals.inputTokens += metric.inputTokens;
+      totals.outputTokens += metric.outputTokens;
+      totals.cachedTokens += metric.cachedTokens;
+      totals.totalCost += metric.cost;
+      totals.totalSavings += metric.cacheSavings;
+      const modelMetrics = perModelMetrics.get(metric.model);
+      if (modelMetrics) {
+        modelMetrics.lastCompletion = metric;
+        modelMetrics.totals.inputTokens += metric.inputTokens;
+        modelMetrics.totals.outputTokens += metric.outputTokens;
+        modelMetrics.totals.cachedTokens += metric.cachedTokens;
+        modelMetrics.totals.totalCost += metric.cost;
+        modelMetrics.totals.completionCount += 1;
+      }
+    }
     
     return {
-      lastCompletion: metrics[metrics.length - 1],
-      totals
-    };
+      messageCount: messages.length,
+      perModelMetrics: perModelMetrics,
+      lastCompletion: metrics[metrics.length-1],
+      totals: totals
+    }
   }
 
   // Close database connection
