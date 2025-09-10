@@ -276,7 +276,8 @@ export type TotalsMetrics = z.infer<typeof TotalsMetricsSchema>;
 export const ModelConversationMetricsSchema = z.object({
   participant: ParticipantSchema,
   lastCompletion: LastCompletionMetricsSchema.optional(),
-  totals: TotalsMetricsSchema.default({})
+  totals: TotalsMetricsSchema.default({}),
+  contextManagement: ContextManagementSchema.optional()
 });
 
 export type ModelConversationMetrics = z.infer<typeof ModelConversationMetricsSchema>;
@@ -284,21 +285,10 @@ export type ModelConversationMetrics = z.infer<typeof ModelConversationMetricsSc
 export const ConversationMetricsSchema = z.object({
   conversationId:   z.string(),
   messageCount:    z.number().default(0),
-  
   perModelMetrics: z.record(z.string(), ModelConversationMetricsSchema).default({}),
   lastCompletion: LastCompletionMetricsSchema.optional(),
   totals: TotalsMetricsSchema.default({}),
-  
-  contextManagement: z.object({
-    strategy:            z.enum(['append', 'rolling']),
-    currentWindowSize:   z.number(),
-    cacheMarkerPosition: z.number().optional(),
-    parameters: z.object({
-      maxTokens:      z.number().optional(),
-      maxGraceTokens: z.number().optional(),
-      cacheInterval:  z.number().optional(),
-    }).optional()
-  })
+  contextManagement: ContextManagementSchema.optional()
 });
 
 export type ConversationMetrics = z.infer<typeof ConversationMetricsSchema>;

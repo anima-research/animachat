@@ -1177,7 +1177,8 @@ export class Database {
         .map(p => [
           p.model as string,
           ModelConversationMetricsSchema.parse({
-            participant: p
+            participant: p,
+            contextManagement: p.contextManagement
           })
         ])
     );

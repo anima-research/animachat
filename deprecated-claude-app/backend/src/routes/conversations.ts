@@ -339,26 +339,13 @@ export function conversationRouter(db: Database): Router {
       // Get metrics summary from database
       const summary = await db.getConversationMetricsSummary(req.params.id);
       
-      // Add context management info
-      const contextInfo = {
-        strategy: conversation.contextManagement?.strategy || 'append',
-        currentWindowSize: 0, // Would need to get from context manager
-        parameters: conversation.contextManagement?.strategy === 'rolling' ? {
-          maxTokens: (conversation.contextManagement as any)?.maxTokens,
-          maxGraceTokens: (conversation.contextManagement as any)?.maxGraceTokens,
-          cacheInterval: (conversation.contextManagement as any)?.cacheInterval
-        } : {
-          cacheInterval: (conversation.contextManagement as any)?.cacheInterval || 10000
-        }
-      };
-      
       const metrics: ConversationMetrics = {
         conversationId: req.params.id,
         messageCount: summary.messageCount,
         perModelMetrics: Object.fromEntries(summary.perModelMetrics),
         lastCompletion: summary.lastCompletion,
         totals: summary.totals,
-        contextManagement: contextInfo
+        contextManagement: conversation.contextManagement
       };
 
       res.json(metrics);

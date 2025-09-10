@@ -91,19 +91,27 @@
           <h4>Context Management</h4>
           <div class="detail-row">
             <span>Strategy:</span>
-            <span>{{ metrics?.contextManagement?.strategy || 'append' }}</span>
+            <span>{{ curContextManagment?.strategy || 'append' }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.contextManagement?.parameters?.maxTokens">
+          <div class="detail-row" v-if="curContextManagment?.maxTokens">
             <span>Max Tokens:</span>
-            <span>{{ formatNumber(metrics.contextManagement.parameters.maxTokens) }}</span>
+            <span>{{ formatNumber(curContextManagment.maxTokens) }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.contextManagement?.parameters?.maxGraceTokens">
-            <span>Grace Tokens:</span>
-            <span>{{ formatNumber(metrics.contextManagement.parameters.maxGraceTokens) }}</span>
+          <div class="detail-row" v-if="curContextManagment?.maxGraceTokens">
+            <span>Max Grace Tokens:</span>
+            <span>{{ formatNumber(curContextManagment.maxGraceTokens) }}</span>
           </div>
-          <div class="detail-row" v-if="metrics?.contextManagement?.parameters?.cacheInterval">
+          <div class="detail-row" v-if="curContextManagment?.cacheMinTokens">
+            <span>Cache Min Tokens:</span>
+            <span>{{ formatNumber(curContextManagment.cacheMinTokens) }}</span>
+          </div>
+          <div class="detail-row" v-if="curContextManagment?.cacheDepthFromEnd">
+            <span>Cache Depth From End:</span>
+            <span>{{ formatNumber(curContextManagment.cacheDepthFromEnd) }}</span>
+          </div>
+          <div class="detail-row" v-if="curContextManagment?.cacheInterval">
             <span>Cache Interval:</span>
-            <span>{{ formatNumber(metrics.contextManagement.parameters.cacheInterval) }}</span>
+            <span>{{ formatNumber(curContextManagment.cacheInterval) }}</span>
           </div>
         </div>
       </div>
@@ -114,7 +122,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { Icon } from '@iconify/vue';
-import type { ConversationMetrics } from '@deprecated-claude/shared';
+import type { ConversationMetrics, ContextManagement } from '@deprecated-claude/shared';
 import { useStore } from '@/store';
 
 const props = defineProps<{
@@ -211,6 +219,14 @@ const curModelMetrics = computed<ModelConversationMetrics | null>(() => {
   if (selectedModel.value == ALL_MODELS_METRICS) return metrics.value; // simply grab the high level summary metrics
   return metrics.value.perModelMetrics[selectedModel.value] ?? null;
 });
+
+const curContextManagment = computed<ContextManagement | null>(() => {
+  if (!metrics.value) return null;
+  if (!curModelMetrics.value || !curModelMetrics.contextManagement) return metrics.value.contextManagement; // simply grab the high level context management
+  // customized context management
+  return curModelMetrics.contextManagement;
+});
+
 
 // Computed properties
 const modelOptions = computed(() =>
