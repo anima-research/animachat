@@ -122,7 +122,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { Icon } from '@iconify/vue';
-import type { ConversationMetrics, ContextManagement } from '@deprecated-claude/shared';
+import { ConversationMetrics, ContextManagement, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { useStore } from '@/store';
 
 const props = defineProps<{
@@ -180,7 +180,7 @@ watch(() => store.state.currentConversation?.updatedAt, () => {
 });
 
 // Listen for metrics updates via WebSocket
-watch(() => store.lastMetricsUpdate, (update) => {
+watch(() => store.lastMetricsUpdate, async (update) => {
   if (update && update.conversationId === props.conversationId) {
     // Update last completion metrics
     if (metrics.value) {
@@ -197,15 +197,20 @@ watch(() => store.lastMetricsUpdate, (update) => {
       }
       
       // Update per model totals
-      if (metrics.value.perModelMetrics && metrics.value.perModelMetrics[update.metrics.model]) {
-        const perModelMetricTotals = metrics.value.perModelMetrics[update.metrics.model].totals;
-        perModelMetricTotals.inputTokens += update.metrics.inputTokens;
-        perModelMetricTotals.outputTokens += update.metrics.outputTokens;
-        perModelMetricTotals.cachedTokens += update.metrics.cachedTokens;
-        perModelMetricTotals.totalCost += update.metrics.cost;
-        perModelMetricTotals.totalSavings += update.metrics.cacheSavings;
-        perModelMetricTotals.completionCount += 1;
-        metrics.value.perModelMetrics[update.metrics.model].lastCompletion = update.metrics;
+      if (metrics.value.perModelMetrics) {
+        if (!metrics.value.perModelMetrics[update.metrics.model]) {
+          await fetchMetrics(); // new model, refetch metrics to get participant id and such
+        }
+        else {
+          const perModelMetricTotals = metrics.value.perModelMetrics[update.metrics.model].totals;
+          perModelMetricTotals.inputTokens += update.metrics.inputTokens;
+          perModelMetricTotals.outputTokens += update.metrics.outputTokens;
+          perModelMetricTotals.cachedTokens += update.metrics.cachedTokens;
+          perModelMetricTotals.totalCost += update.metrics.cost;
+          perModelMetricTotals.totalSavings += update.metrics.cacheSavings;
+          perModelMetricTotals.completionCount += 1;
+          metrics.value.perModelMetrics[update.metrics.model].lastCompletion = update.metrics;
+        }
       }
     }
   }
@@ -238,8 +243,12 @@ watch(modelOptions, opts => {
 });
 
 const lastCompletionTokens = computed(() => {
-  if (!curModelMetrics.value?.lastCompletion) return 0;
-  return curModelMetrics.value.lastCompletion.inputTokens + curModelMetrics.value.lastCompletion.outputTokens;
+  if (!metrics.value?.lastCompletion) {
+    // Return total tokens as fallback if no last completion
+    return metrics.value?.totals ? 
+      (metrics.value.totals.inputTokens + metrics.value.totals.outputTokens) : 0;
+  }
+  return metrics.value.lastCompletion.inputTokens + metrics.value.lastCompletion.outputTokens;
 });
 
 const totalTokens = computed(() => {
