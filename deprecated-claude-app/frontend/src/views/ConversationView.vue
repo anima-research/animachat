@@ -1401,7 +1401,11 @@ async function updateParticipants(updatedParticipants: Participant[]) {
         }
       } else if (!existing.id.startsWith('temp-')) {
         // Check if participant was actually updated by comparing relevant fields
-        const hasChanges = !deepEqual(existing, updated);
+        const hasChanges = existing.name !== updated.name ||
+          existing.model !== updated.model ||
+          existing.systemPrompt !== updated.systemPrompt ||
+          !deepEqual(existing.settings, updated.settings) ||
+          !deepEqual(existing.contextManagement, updated.contextManagement);
         if (hasChanges) {
           // Participant was updated
           const updateData = UpdateParticipantSchema.parse({
