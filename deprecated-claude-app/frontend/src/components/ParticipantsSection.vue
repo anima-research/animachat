@@ -242,7 +242,9 @@
           <v-divider class="my-4" />
           
           <h4 class="text-subtitle-1 mb-3">Context Management</h4>
-          
+          <p class="text-caption text-grey mb-3">
+            These settings control how conversation history is managed.
+          </p>
           <v-checkbox
             v-model="participantContextOverride"
             label="Override conversation context settings"
@@ -260,10 +262,16 @@
               label="Context Strategy"
               variant="outlined"
               density="compact"
-              hide-details
               class="mb-3"
-            />
-            
+            >
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:subtitle>
+                    {{ item.raw.description }}
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
             <div v-if="participantContextStrategy === 'rolling'">
               <v-text-field
                 v-model.number="participantRollingMaxTokens"
@@ -274,8 +282,18 @@
                 hide-details
                 :min="1000"
                 :max="200000"
-                class="mb-3"
-              />
+                class="mb-3">
+                <template v-slot:append-inner>
+                  <v-tooltip location="top">
+                    <template v-slot:activator="{ props }">
+                      <v-icon v-bind="props" size="small">
+                        mdi-help-circle-outline
+                      </v-icon>
+                    </template>
+                    Maximum tokens to keep in context. Older messages beyond this limit will be dropped.
+                  </v-tooltip>
+                </template>
+              </v-text-field>
               
               <v-text-field
                 v-model.number="participantRollingGraceTokens"
@@ -286,7 +304,18 @@
                 hide-details
                 :min="0"
                 :max="50000"
-              />
+                class="mb-3">
+                <template v-slot:append-inner>
+                  <v-tooltip location="top">
+                    <template v-slot:activator="{ props }">
+                      <v-icon v-bind="props" size="small">
+                        mdi-help-circle-outline
+                      </v-icon>
+                    </template>
+                  Additional tokens allowed before truncation. Helps maintain cache efficiency.
+                  </v-tooltip>
+                </template>
+              </v-text-field>
             </div>
           </div>
           
