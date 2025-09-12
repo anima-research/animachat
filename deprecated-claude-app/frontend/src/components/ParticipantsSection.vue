@@ -379,7 +379,6 @@ const newParticipant = ref<any>({
 // Context management settings for participant
 const participantContextOverride = ref(false);
 const participantContextStrategy = ref('append');
-/// rolling settings
 const participantRollingMaxTokens = ref(50000);
 const participantRollingGraceTokens = ref(10000);
 
