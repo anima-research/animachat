@@ -583,6 +583,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import deepEqual from 'deep-equal';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
 import type { Conversation, Message, Participant, Model } from '@deprecated-claude/shared';
@@ -596,7 +597,6 @@ import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
 import MetricsDisplay from '@/components/MetricsDisplay.vue';
 import { getModelColor } from '@/utils/modelColors';
-import deepEqual from 'deep-equal';
 
 const route = useRoute();
 const router = useRouter();
