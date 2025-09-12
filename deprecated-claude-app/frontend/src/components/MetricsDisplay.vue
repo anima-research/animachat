@@ -225,9 +225,9 @@ const curModelMetrics = computed<ModelConversationMetrics | null>(() => {
 
 const curContextManagment = computed<ContextManagement | null>(() => {
   if (!metrics.value) return null;
-  if (!curModelMetrics.value || !curModelMetrics.contextManagement) return metrics.value.contextManagement; // simply grab the high level context management
+  if (!curModelMetrics.value || !curModelMetrics.value.contextManagement) return metrics.value.contextManagement; // simply grab the high level context management
   // customized context management
-  return curModelMetrics.contextManagement;
+  return curModelMetrics.value.contextManagement;
 });
 
 

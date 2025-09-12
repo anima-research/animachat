@@ -103,6 +103,15 @@ export const ParticipantSchema = z.object({
 
 export type Participant = z.infer<typeof ParticipantSchema>;
 
+export const UpdateParticipantSchema = z.object({
+  name: z.string().optional(),
+  model: z.string().optional(),
+  systemPrompt: z.string().optional(),
+  settings: ModelSettingsSchema.optional(),
+  contextManagement: ContextManagementSchema.optional(),
+  isActive: z.boolean().optional()
+}).transform((o) => ({ contextManagement: o.contextManagement })); // specifically pass through undefined and null
+
 // Attachment types
 export const AttachmentSchema = z.object({
   id: z.string().uuid(),

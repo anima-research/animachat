@@ -264,6 +264,20 @@
               class="mb-3"
             />
             
+            <div v-if="participantContextStrategy === 'append'">
+              <v-text-field
+                v-model.number="participantCacheInterval"
+                type="number"
+                label="Cache Interval"
+                variant="outlined"
+                density="compact"
+                hide-details
+                :min="1000"
+                :max="200000"
+                class="mb-3"
+              />
+            </div>
+            
             <div v-if="participantContextStrategy === 'rolling'">
               <v-text-field
                 v-model.number="participantRollingMaxTokens"
@@ -286,6 +300,31 @@
                 hide-details
                 :min="0"
                 :max="50000"
+                class="mb-3"
+              />
+              
+              <v-text-field
+                v-model.number="participantCacheMinTokens"
+                type="number"
+                label="Cache Min Tokens"
+                variant="outlined"
+                density="compact"
+                hide-details
+                :min="0"
+                :max="50000"
+                class="mb-3"
+              />
+              
+              <v-text-field
+                v-model.number="participantCacheDepthFromEnd"
+                type="number"
+                label="Cache Depth From End"
+                variant="outlined"
+                density="compact"
+                hide-details
+                :min="0"
+                :max="20000"
+                class="mb-3"
               />
             </div>
           </div>
@@ -315,8 +354,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, PropType } from 'vue';
-import type { Participant, Model } from '@deprecated-claude/shared';
+import { ref, computed, watch, PropType } from 'vue';
+import { type Participant, type Model, UpdateParticipantSchema } from '@deprecated-claude/shared';
+import deepEqual from 'deep-equal';
+import { useStore } from '@/store';
+const store = useStore();
 
 const props = defineProps({
   modelValue: {
@@ -341,6 +383,7 @@ const participants = computed({
 const showAddDialog = ref(false);
 const showSettingsDialog = ref(false);
 const editingParticipant = ref<Participant | null>(null);
+const originalEditingParticipant = ref<Participant | null>(null);
 const newParticipant = ref<any>({
   type: 'assistant',
   name: '',
@@ -350,8 +393,13 @@ const newParticipant = ref<any>({
 // Context management settings for participant
 const participantContextOverride = ref(false);
 const participantContextStrategy = ref('append');
+/// append settings
+const participantCacheInterval = ref(10000);
+/// rolling settings
 const participantRollingMaxTokens = ref(50000);
 const participantRollingGraceTokens = ref(10000);
+const participantCacheMinTokens = ref(5000);
+const participantCacheDepthFromEnd = ref(5);
 
 const contextStrategies = [
   {
@@ -371,6 +419,8 @@ function getParticipantTemperature(participant: Participant): number {
 }
 
 function setParticipantTemperature(participant: Participant, value: number) {
+  console.log(participant);
+  console.log(participant.settings);
   if (!participant.settings) {
     participant.settings = {
       temperature: value,
@@ -451,44 +501,85 @@ function removeParticipant(id: string) {
 function openSettings(participant: Participant) {
   editingParticipant.value = participant;
   
+  originalEditingParticipant.value =
+    JSON.parse(JSON.stringify(participant));
+  
   // Load context management settings
   if (participant.contextManagement) {
     participantContextOverride.value = true;
     participantContextStrategy.value = participant.contextManagement.strategy;
-    if (participant.contextManagement.strategy === 'rolling') {
+    if(participant.contextManagement.strategy === 'append') {
+      participantCacheInterval.value = participant.contextManagement.cacheInterval;
+    }
+    else if (participant.contextManagement.strategy === 'rolling') {
       participantRollingMaxTokens.value = participant.contextManagement.maxTokens;
       participantRollingGraceTokens.value = participant.contextManagement.maxGraceTokens;
+      participantCacheMinTokens.value = participant.contextManagement.cacheMinTokens;
+      participantCacheDepthFromEnd.value = participant.contextManagement.cacheDepthFromEnd;
     }
   } else {
     participantContextOverride.value = false;
     participantContextStrategy.value = 'append';
+    // append settings
+    participantCacheInterval.value = 10000;
+    // rolling settings
     participantRollingMaxTokens.value = 50000;
     participantRollingGraceTokens.value = 10000;
+    participantCacheMinTokens.value = 5000;
+    participantCacheDepthFromEnd.value = 5;
   }
   
   showSettingsDialog.value = true;
 }
 
-function closeSettings() {
+async function closeSettings() {
   // Save context management settings
   if (editingParticipant.value) {
     if (participantContextOverride.value) {
       if (participantContextStrategy.value === 'append') {
         editingParticipant.value.contextManagement = {
           strategy: 'append',
-          cacheInterval: 10000
+          cacheInterval: participantCacheInterval.value
         };
       } else if (participantContextStrategy.value === 'rolling') {
         editingParticipant.value.contextManagement = {
           strategy: 'rolling',
           maxTokens: participantRollingMaxTokens.value,
           maxGraceTokens: participantRollingGraceTokens.value,
-          cacheMinTokens: 5000,
-          cacheDepthFromEnd: 5
+          cacheMinTokens: participantCacheMinTokens.value,
+          cacheDepthFromEnd: participantCacheDepthFromEnd.value
         };
       }
     } else {
       editingParticipant.value.contextManagement = undefined;
+    }
+    // update edited participant, if modified
+    if (!deepEqual(originalEditingParticipant.value, editingParticipant.value)) {
+      try {
+        const response = await fetch(`/api/participants/${editingParticipant.value.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${store.token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(UpdateParticipantSchema.parse({
+            name: editingParticipant.value.name,
+            model: editingParticipant.value.model,
+            systemPrompt: editingParticipant.value.systemPrompt,
+            settings: editingParticipant.value.settings,
+            // keep in mind this field is special, for other fields undefined will simply skip modifying it
+            // but for this field undefined means "use defaults" so its value will always be passed through
+            contextManagement: editingParticipant.value.contextManagement,
+            isActive: editingParticipant.value.isActive
+          }))
+        });
+        if (!response.ok) {
+          console.error('Failed to update participant:', response);
+        }
+      } catch (error) {
+        console.error('Failed to update participant:', error);
+      }
     }
   }
   
