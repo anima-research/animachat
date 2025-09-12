@@ -242,7 +242,9 @@
           <v-divider class="my-4" />
           
           <h4 class="text-subtitle-1 mb-3">Context Management</h4>
-          
+          <p class="text-caption text-grey mb-3">
+            These settings control how conversation history is managed.
+          </p>
           <v-checkbox
             v-model="participantContextOverride"
             label="Override conversation context settings"
@@ -260,24 +262,16 @@
               label="Context Strategy"
               variant="outlined"
               density="compact"
-              hide-details
               class="mb-3"
-            />
-            
-            <div v-if="participantContextStrategy === 'append'">
-              <v-text-field
-                v-model.number="participantCacheInterval"
-                type="number"
-                label="Cache Interval"
-                variant="outlined"
-                density="compact"
-                hide-details
-                :min="1000"
-                :max="200000"
-                class="mb-3"
-              />
-            </div>
-            
+            >
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:subtitle>
+                    {{ item.raw.description }}
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
             <div v-if="participantContextStrategy === 'rolling'">
               <v-text-field
                 v-model.number="participantRollingMaxTokens"
@@ -288,8 +282,18 @@
                 hide-details
                 :min="1000"
                 :max="200000"
-                class="mb-3"
-              />
+                class="mb-3">
+                <template v-slot:append-inner>
+                  <v-tooltip location="top">
+                    <template v-slot:activator="{ props }">
+                      <v-icon v-bind="props" size="small">
+                        mdi-help-circle-outline
+                      </v-icon>
+                    </template>
+                    Maximum tokens to keep in context. Older messages beyond this limit will be dropped.
+                  </v-tooltip>
+                </template>
+              </v-text-field>
               
               <v-text-field
                 v-model.number="participantRollingGraceTokens"
@@ -300,32 +304,18 @@
                 hide-details
                 :min="0"
                 :max="50000"
-                class="mb-3"
-              />
-              
-              <v-text-field
-                v-model.number="participantCacheMinTokens"
-                type="number"
-                label="Cache Min Tokens"
-                variant="outlined"
-                density="compact"
-                hide-details
-                :min="0"
-                :max="50000"
-                class="mb-3"
-              />
-              
-              <v-text-field
-                v-model.number="participantCacheDepthFromEnd"
-                type="number"
-                label="Cache Depth From End"
-                variant="outlined"
-                density="compact"
-                hide-details
-                :min="0"
-                :max="20000"
-                class="mb-3"
-              />
+                class="mb-3">
+                <template v-slot:append-inner>
+                  <v-tooltip location="top">
+                    <template v-slot:activator="{ props }">
+                      <v-icon v-bind="props" size="small">
+                        mdi-help-circle-outline
+                      </v-icon>
+                    </template>
+                  Additional tokens allowed before truncation. Helps maintain cache efficiency.
+                  </v-tooltip>
+                </template>
+              </v-text-field>
             </div>
           </div>
           
@@ -389,13 +379,9 @@ const newParticipant = ref<any>({
 // Context management settings for participant
 const participantContextOverride = ref(false);
 const participantContextStrategy = ref('append');
-/// append settings
-const participantCacheInterval = ref(10000);
 /// rolling settings
 const participantRollingMaxTokens = ref(50000);
 const participantRollingGraceTokens = ref(10000);
-const participantCacheMinTokens = ref(5000);
-const participantCacheDepthFromEnd = ref(5);
 
 const contextStrategies = [
   {
@@ -499,25 +485,15 @@ function openSettings(participant: Participant) {
   if (participant.contextManagement) {
     participantContextOverride.value = true;
     participantContextStrategy.value = participant.contextManagement.strategy;
-    if(participant.contextManagement.strategy === 'append') {
-      participantCacheInterval.value = participant.contextManagement.cacheInterval;
-    }
-    else if (participant.contextManagement.strategy === 'rolling') {
+    if (participant.contextManagement.strategy === 'rolling') {
       participantRollingMaxTokens.value = participant.contextManagement.maxTokens;
       participantRollingGraceTokens.value = participant.contextManagement.maxGraceTokens;
-      participantCacheMinTokens.value = participant.contextManagement.cacheMinTokens;
-      participantCacheDepthFromEnd.value = participant.contextManagement.cacheDepthFromEnd;
     }
   } else {
     participantContextOverride.value = false;
     participantContextStrategy.value = 'append';
-    // append settings
-    participantCacheInterval.value = 10000;
-    // rolling settings
     participantRollingMaxTokens.value = 50000;
     participantRollingGraceTokens.value = 10000;
-    participantCacheMinTokens.value = 5000;
-    participantCacheDepthFromEnd.value = 5;
   }
   
   showSettingsDialog.value = true;
