@@ -383,7 +383,6 @@ const participants = computed({
 const showAddDialog = ref(false);
 const showSettingsDialog = ref(false);
 const editingParticipant = ref<Participant | null>(null);
-const originalEditingParticipant = ref<Participant | null>(null);
 const newParticipant = ref<any>({
   type: 'assistant',
   name: '',
@@ -419,8 +418,6 @@ function getParticipantTemperature(participant: Participant): number {
 }
 
 function setParticipantTemperature(participant: Participant, value: number) {
-  console.log(participant);
-  console.log(participant.settings);
   if (!participant.settings) {
     participant.settings = {
       temperature: value,
@@ -501,9 +498,6 @@ function removeParticipant(id: string) {
 function openSettings(participant: Participant) {
   editingParticipant.value = participant;
   
-  originalEditingParticipant.value =
-    JSON.parse(JSON.stringify(participant));
-  
   // Load context management settings
   if (participant.contextManagement) {
     participantContextOverride.value = true;
@@ -532,54 +526,26 @@ function openSettings(participant: Participant) {
   showSettingsDialog.value = true;
 }
 
-async function closeSettings() {
+function closeSettings() {
   // Save context management settings
   if (editingParticipant.value) {
     if (participantContextOverride.value) {
       if (participantContextStrategy.value === 'append') {
         editingParticipant.value.contextManagement = {
           strategy: 'append',
-          cacheInterval: participantCacheInterval.value
+          cacheInterval: 10000
         };
       } else if (participantContextStrategy.value === 'rolling') {
         editingParticipant.value.contextManagement = {
           strategy: 'rolling',
           maxTokens: participantRollingMaxTokens.value,
           maxGraceTokens: participantRollingGraceTokens.value,
-          cacheMinTokens: participantCacheMinTokens.value,
-          cacheDepthFromEnd: participantCacheDepthFromEnd.value
+          cacheMinTokens: 5000,
+          cacheDepthFromEnd: 5
         };
       }
     } else {
       editingParticipant.value.contextManagement = undefined;
-    }
-    // update edited participant, if modified
-    if (!deepEqual(originalEditingParticipant.value, editingParticipant.value)) {
-      try {
-        const response = await fetch(`/api/participants/${editingParticipant.value.id}`, {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${store.token}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify(UpdateParticipantSchema.parse({
-            name: editingParticipant.value.name,
-            model: editingParticipant.value.model,
-            systemPrompt: editingParticipant.value.systemPrompt,
-            settings: editingParticipant.value.settings,
-            // keep in mind this field is special, for other fields undefined will simply skip modifying it
-            // but for this field undefined means "use defaults" so its value will always be passed through
-            contextManagement: editingParticipant.value.contextManagement,
-            isActive: editingParticipant.value.isActive
-          }))
-        });
-        if (!response.ok) {
-          console.error('Failed to update participant:', response);
-        }
-      } catch (error) {
-        console.error('Failed to update participant:', error);
-      }
     }
   }
   

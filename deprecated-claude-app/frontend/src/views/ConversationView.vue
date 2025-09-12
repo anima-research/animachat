@@ -586,6 +586,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
 import type { Conversation, Message, Participant, Model } from '@deprecated-claude/shared';
+import { UpdateParticipantSchema } from '@deprecated-claude/shared';
 import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
@@ -595,6 +596,7 @@ import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
 import MetricsDisplay from '@/components/MetricsDisplay.vue';
 import { getModelColor } from '@/utils/modelColors';
+import deepEqual from 'deep-equal';
 
 const route = useRoute();
 const router = useRouter();
@@ -1399,21 +1401,19 @@ async function updateParticipants(updatedParticipants: Participant[]) {
         }
       } else if (!existing.id.startsWith('temp-')) {
         // Check if participant was actually updated by comparing relevant fields
-        const hasChanges = 
-          existing.name !== updated.name ||
-          existing.model !== updated.model ||
-          existing.systemPrompt !== updated.systemPrompt ||
-          existing.settings?.temperature !== updated.settings?.temperature ||
-          existing.settings?.maxTokens !== updated.settings?.maxTokens;
-        
+        const hasChanges = !deepEqual(existing, updated);
         if (hasChanges) {
+          console.log("updating with value");
+          console.log(updated);
           // Participant was updated
-          const updateData = {
+          const updateData = UpdateParticipantSchema.parse({
             name: updated.name,
             model: updated.model,
             systemPrompt: updated.systemPrompt,
-            settings: updated.settings
-          };
+            settings: updated.settings,
+            contextManagement: updated.contextManagement
+          });
+          console.log(updateData);
           
           console.log('Updating participant:', existing.id, updateData);
           

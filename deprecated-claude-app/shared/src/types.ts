@@ -110,7 +110,7 @@ export const UpdateParticipantSchema = z.object({
   settings: ModelSettingsSchema.optional(),
   contextManagement: ContextManagementSchema.optional(),
   isActive: z.boolean().optional()
-}).transform((o) => ({ contextManagement: o.contextManagement })); // specifically pass through undefined and null
+}).transform((o) => ({ ...o, contextManagement: o.contextManagement })); // specifically pass through undefined and null
 
 // Attachment types
 export const AttachmentSchema = z.object({
