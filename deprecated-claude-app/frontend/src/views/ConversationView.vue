@@ -1403,8 +1403,6 @@ async function updateParticipants(updatedParticipants: Participant[]) {
         // Check if participant was actually updated by comparing relevant fields
         const hasChanges = !deepEqual(existing, updated);
         if (hasChanges) {
-          console.log("updating with value");
-          console.log(updated);
           // Participant was updated
           const updateData = UpdateParticipantSchema.parse({
             name: updated.name,
@@ -1413,7 +1411,6 @@ async function updateParticipants(updatedParticipants: Participant[]) {
             settings: updated.settings,
             contextManagement: updated.contextManagement
           });
-          console.log(updateData);
           
           console.log('Updating participant:', existing.id, updateData);
           

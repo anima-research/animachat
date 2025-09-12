@@ -354,11 +354,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, PropType } from 'vue';
-import { type Participant, type Model, UpdateParticipantSchema } from '@deprecated-claude/shared';
-import deepEqual from 'deep-equal';
-import { useStore } from '@/store';
-const store = useStore();
+import { ref, computed, PropType } from 'vue';
+import type { Participant, Model } from '@deprecated-claude/shared';
 
 const props = defineProps({
   modelValue: {

@@ -19,8 +19,6 @@ const CreateParticipantSchema = z.object({
   contextManagement: ContextManagementSchema.optional()
 });
 
-
-
 export function participantRouter(db: Database): Router {
   const router = Router();
 
