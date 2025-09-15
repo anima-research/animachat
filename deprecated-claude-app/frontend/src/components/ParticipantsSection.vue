@@ -258,7 +258,7 @@
           <div v-if="participantContextOverride" class="ml-4">
             <v-select
               :model-value="getParticipantContextOverrideField('strategy', 'append')"
-              @update:model-value="(val) => setParticipantContextOverrideField('strategy', val)"
+              @update:model-value="(val) => updateContextOverrideStrategy(val)"
               :items="contextStrategies"
               item-title="title"
               item-value="value"
@@ -349,7 +349,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, unref, computed, toRaw, PropType } from 'vue';
+import { ref, computed, watch, PropType } from 'vue';
 import type { Participant, Model } from '@deprecated-claude/shared';
 import { get as _get, set as _set, cloneDeep, isEqual } from 'lodash-es';
 
@@ -382,6 +382,25 @@ const newParticipant = ref<any>({
   model: ''
 });
 
+const defaultContextOverrideAppend = {
+  strategy: 'append',
+  cacheInterval: 10000
+}
+
+const defaultContextOverrideRollingWindow = {
+  strategy: 'rolling',
+  maxTokens: 50000,
+  maxGraceTokens: 10000,
+  cacheMinTokens: 5000,
+  cacheDepthFromEnd: 5
+}
+
+function getDefaultContextOverride(strategy) {
+  return strategy == 'append'
+    ? defaultContextOverrideAppend
+    : defaultContextOverrideRollingWindow;
+}
+
 // Context management settings for participant
 const participantContextOverride = ref(false);
 
@@ -402,7 +421,7 @@ const contextStrategies = [
 // generic functions for getting and setting participant fields
 // these need to send updates correctly by modifying the participants array
 // having a "cur modifying participant" object will not work bc it may be a copy
-// and thus when you make changes they won't persist
+// and thus when you make changes they (sometimes) won't persist
 function getParticipantField(path: string, defaultValue: any) {
   const p = participants.value.find(p => p.id === selectedParticipantId.value);
   return _get(p ?? {}, path, defaultValue);
@@ -448,15 +467,18 @@ function getParticipantContextOverrideField(contextOverrideFieldName: string, de
 function setParticipantContextOverrideField(contextOverrideFieldName: string, value: any) {
   // Do not modify existing copy (that may be overwritten/may be a proxy)
   // instead we need to send changes back up by using these methods
-  var currentContextOverride = cloneDeep(getParticipantField('contextManagement', {
-    // default settings if unspecified (TODO: make this copy default context management from conversation)
-    strategy: 'append',
-    cacheInterval: 10000
-  }));
+  var currentContextOverride = cloneDeep(getParticipantField('contextManagement',
+    getDefaultContextOverride(getParticipantContextOverrideField("strategy", "append"))));
   
   _set(currentContextOverride, contextOverrideFieldName, value);
   
   setParticipantField("contextManagement", currentContextOverride);
+}
+
+function updateContextOverrideStrategy(strategy: string) {
+  setParticipantContextOverrideField("strategy", strategy);
+  // reset to default values for new strategy (this uses the assigned strategy when looking up)
+  setParticipantField("contextManagement", getDefaultContextOverride(strategy));
 }
 
 function addParticipant() {
@@ -510,6 +532,18 @@ function removeParticipant(id: string) {
   const updated = participants.value.filter(p => p.id !== id);
   emit('update:modelValue', updated);
 }
+
+// when toggle checkbox, set context overrides to default/unknown as needed
+watch(participantContextOverride, () => {
+  if (!selectedParticipantId.value) return;
+  if (participantContextOverride.value) {
+    if (getParticipantField('contextManagement', null) == null) {
+      setParticipantField('contextManagement', getDefaultContextOverride(getParticipantContextOverrideField("strategy", "append")));
+    }
+  } else {
+    setParticipantField('contextManagement', undefined);
+  }
+});
 
 function openSettings(participant: Participant) {
   // we edit a draft, actually apply changes later
