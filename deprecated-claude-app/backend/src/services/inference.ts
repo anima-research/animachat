@@ -67,8 +67,10 @@ export class InferenceService {
     if (actualFormat === 'prefill' || actualFormat === 'messages') {
       // Always include these common stop sequences
       const baseStopSequences = ['User:', 'A:', "Claude:"];
-      // Add participant names as stop sequences
-      const participantStopSequences = participants.map(p => `${p.name}:`);
+      // Add participant names as stop sequences (excluding empty names for raw continuation)
+      const participantStopSequences = participants
+        .filter(p => p.name !== '') // Exclude empty names
+        .map(p => `${p.name}:`);
       // Combine and deduplicate
       stopSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
     }
@@ -303,18 +305,33 @@ export class InferenceService {
           }
         }
         
-        // Always use participant name format: "Name: content"
-        conversationContent += `${participantName}: ${messageContent}\n\n`;
+        // If participant has no name (raw continuation), don't add prefix
+        if (participantName === '') {
+          conversationContent += `${messageContent}`;
+        } else {
+          // Use participant name format: "Name: content"
+          conversationContent += `${participantName}: ${messageContent}\n\n`;
+        }
       }
       
       // If the last message was an empty assistant, append that assistant's name
       if (lastMessageWasEmptyAssistant) {
-        conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:`;
+        // If the assistant has no name (raw continuation), don't add any prefix
+        if (lastAssistantName === '') {
+          conversationContent = conversationContent.trim();
+        } else {
+          conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:`;
+        }
       } else if (responderId && participants.length > 0) {
         // Otherwise, if we have a responder, append their name with a colon (no newline)
         const responder = participants.find(p => p.id === responderId);
         if (responder) {
-          conversationContent = conversationContent.trim() + `\n\n${responder.name}:`;
+          // If responder has no name (raw continuation), don't add any prefix
+          if (responder.name === '') {
+            conversationContent = conversationContent.trim();
+          } else {
+            conversationContent = conversationContent.trim() + `\n\n${responder.name}:`;
+          }
         }
       }
       
@@ -382,8 +399,10 @@ export class InferenceService {
                           (activeBranch.role === 'assistant' && !activeBranch.participantId && participantName === responderName);
         const role = isResponder ? 'assistant' : 'user';
         
-        // Format content with participant name prefix
-        let formattedContent = `${participantName}: ${activeBranch.content}`;
+        // Format content with participant name prefix (unless name is empty for raw continuation)
+        let formattedContent = participantName === '' 
+          ? activeBranch.content 
+          : `${participantName}: ${activeBranch.content}`;
         
         // Handle attachments for non-responder messages
         if (role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {

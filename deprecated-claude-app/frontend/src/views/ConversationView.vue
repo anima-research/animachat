@@ -668,7 +668,7 @@ const responderOptions = computed(() => {
   // Include full participant objects to have access to type and model
   const assistantOptions = assistantParticipants.value.map(p => ({
     id: p.id,
-    name: p.name,
+    name: p.name === '' ? '(raw continuation)' : p.name,
     type: p.type,
     model: p.model || ''
   }));

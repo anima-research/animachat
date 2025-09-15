@@ -65,7 +65,7 @@
                 hide-details
                 single-line
                 class="table-input editable-name"
-                placeholder="Enter name..."
+                :placeholder="participant.name === '' ? '(raw continuation)' : 'Enter name...'"
               >
                 <template v-slot:append-inner>
                   <v-icon
@@ -137,10 +137,25 @@
           <v-text-field
             v-model="newParticipant.name"
             label="Name"
+            :placeholder="newParticipant.name === '' ? '(raw continuation)' : ''"
             variant="outlined"
             density="compact"
             class="mb-4"
-          />
+          >
+            <template v-slot:append-inner v-if="newParticipant.name === ''">
+              <v-tooltip location="top">
+                <template v-slot:activator="{ props }">
+                  <v-icon
+                    v-bind="props"
+                    icon="mdi-information-outline"
+                    size="small"
+                    color="info"
+                  />
+                </template>
+                Empty name creates a raw continuation participant - no formatting will be added
+              </v-tooltip>
+            </template>
+          </v-text-field>
           
           <v-select
             v-if="newParticipant.type === 'assistant'"

@@ -117,7 +117,8 @@ const treeData = computed(() => {
       // Look up participant by ID
       const participant = props.participants.find(p => p.id === branch.participantId);
       if (participant) {
-        participantName = participant.name;
+        // If participant has empty name, show "(raw continuation)"
+        participantName = participant.name === '' ? '(raw continuation)' : participant.name;
       } else {
         // If we have participants but can't find this one, use role-based fallback
         participantName = branch.role === 'user' ? 'User' : (branch.model || 'Assistant');

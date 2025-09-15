@@ -317,7 +317,8 @@ const participantName = computed(() => {
   // Find the participant by ID
   const participant = props.participants.find(p => p.id === branch.participantId);
   if (participant) {
-    return participant.name;
+    // If participant has empty name, show "(raw continuation)"
+    return participant.name === '' ? '(raw continuation)' : participant.name;
   }
   
   // Fallback if participant not found

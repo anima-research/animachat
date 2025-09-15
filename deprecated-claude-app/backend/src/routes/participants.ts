@@ -6,7 +6,7 @@ import { ContextManagementSchema } from '@deprecated-claude/shared';
 
 const CreateParticipantSchema = z.object({
   conversationId: z.string().uuid(),
-  name: z.string(),
+  name: z.string(), // Allow empty string for raw continuation mode
   type: z.enum(['user', 'assistant']),
   model: z.string().optional(),
   systemPrompt: z.string().optional(),
@@ -20,7 +20,7 @@ const CreateParticipantSchema = z.object({
 });
 
 const UpdateParticipantSchema = z.object({
-  name: z.string().optional(),
+  name: z.string().optional(), // Allow empty string for raw continuation mode
   model: z.string().optional(),
   systemPrompt: z.string().optional(),
   settings: z.object({
