@@ -65,7 +65,7 @@
                 hide-details
                 single-line
                 class="table-input editable-name"
-                :placeholder="participant.name === '' ? '(raw continuation)' : 'Enter name...'"
+                :placeholder="getParticipantPlaceholder(participant)"
               >
                 <template v-slot:append-inner>
                   <v-icon
@@ -137,7 +137,7 @@
           <v-text-field
             v-model="newParticipant.name"
             label="Name"
-            :placeholder="newParticipant.name === '' ? '(raw continuation)' : ''"
+            :placeholder="newParticipant.name === '' ? '(continue)' : ''"
             variant="outlined"
             density="compact"
             class="mb-4"
@@ -152,7 +152,7 @@
                     color="info"
                   />
                 </template>
-                Empty name creates a raw continuation participant - no formatting will be added
+                Empty name creates a continuation participant - no formatting will be added
               </v-tooltip>
             </template>
           </v-text-field>
@@ -181,7 +181,7 @@
           <v-btn
             color="primary"
             variant="elevated"
-            :disabled="!newParticipant.name"
+            :disabled="newParticipant.name === null || newParticipant.name === undefined"
             @click="confirmAddParticipant"
           >
             Add
@@ -409,6 +409,17 @@ function setParticipantMaxTokens(participant: Participant, value: string | numbe
   } else {
     participant.settings.maxTokens = parseInt(value.toString());
   }
+}
+
+function getParticipantPlaceholder(participant: any) {
+  if (participant.name === '') {
+    if (participant.type === 'assistant' && participant.model) {
+      return `${participant.model} (continue)`;
+    } else {
+      return '(continue)';
+    }
+  }
+  return 'Enter name...';
 }
 
 function addParticipant() {

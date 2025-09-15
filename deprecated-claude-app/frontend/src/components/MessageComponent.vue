@@ -22,8 +22,8 @@
           size="small"
           class="mr-2"
         />
-        <div class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
-          {{ participantName }}
+        <div v-if="participantDisplayName" class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
+          {{ participantDisplayName }}
         </div>
         <div v-if="modelIndicator" class="text-caption ml-1" style="color: #888; font-size: 0.75rem;">
           ({{ modelIndicator }})
@@ -305,7 +305,7 @@ function scrollToTopOfMessage() {
   }
 }
 
-// Get participant name for current branch
+// Get participant name for current branch (used for internal logic)
 const participantName = computed(() => {
   const branch = currentBranch.value;
   
@@ -317,8 +317,37 @@ const participantName = computed(() => {
   // Find the participant by ID
   const participant = props.participants.find(p => p.id === branch.participantId);
   if (participant) {
-    // If participant has empty name, show "(raw continuation)"
-    return participant.name === '' ? '(raw continuation)' : participant.name;
+    // If participant has empty name, show appropriate continuation format
+    if (participant.name === '') {
+      if (participant.type === 'assistant' && participant.model) {
+        return `${participant.model} (continue)`;
+      } else {
+        return '(continue)';
+      }
+    }
+    return participant.name;
+  }
+  
+  // Fallback if participant not found
+  return branch.role === 'user' ? 'You' : 'Assistant';
+});
+
+// Get participant display name (shown in UI - empty for empty-name participants)
+const participantDisplayName = computed(() => {
+  const branch = currentBranch.value;
+  
+  // If no participants list provided or no participantId, fall back to default behavior
+  if (!props.participants || !branch.participantId) {
+    return branch.role === 'user' ? 'You' : 'Assistant';
+  }
+  
+  // Find the participant by ID
+  const participant = props.participants.find(p => p.id === branch.participantId);
+  if (participant && participant.name === '') {
+    // Return empty string for empty-name participants (no name shown)
+    return '';
+  } else if (participant) {
+    return participant.name;
   }
   
   // Fallback if participant not found

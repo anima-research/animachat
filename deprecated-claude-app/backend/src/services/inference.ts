@@ -48,13 +48,10 @@ export class InferenceService {
     // Determine the actual format to use
     let actualFormat: InternalConversationFormat = format;
     if (format === 'prefill') {
-      // Check if we should use 'messages' mode instead
-      const shouldUseMessagesMode = 
-        messages.length < 6 || // Less than 6 messages
-        !this.providerSupportsPrefill(model.provider); // Provider doesn't support prefill
-      
-      if (shouldUseMessagesMode) {
-        console.log(`[InferenceService] Switching from prefill to messages mode (messages: ${messages.length}, provider: ${model.provider})`);
+      // Only switch to messages mode if the provider doesn't support prefill
+      // Otherwise, always respect the user's choice of prefill format
+      if (!this.providerSupportsPrefill(model.provider)) {
+        console.log(`[InferenceService] Provider ${model.provider} doesn't support prefill, switching to messages mode`);
         actualFormat = 'messages';
       }
     }
@@ -217,21 +214,7 @@ export class InferenceService {
     provider?: string
   ): Message[] {
     if (format === 'standard') {
-      // Standard format - just log for debugging
-      console.log('\n========== STANDARD FORMAT MESSAGES ==========');
-      for (const message of messages) {
-        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
-        if (activeBranch) {
-          const attachmentCount = activeBranch.attachments?.length || 0;
-          console.log(`${activeBranch.role}: ${activeBranch.content.substring(0, 50)}... (${attachmentCount} attachments)`);
-          if (attachmentCount > 0) {
-            activeBranch.attachments?.forEach(att => {
-              console.log(`  - ${att.fileName} (${att.content?.length || 0} chars)`);
-            });
-          }
-        }
-      }
-      console.log('========== END STANDARD FORMAT ==========\n');
+      // Standard format - pass through as-is
       return messages;
     }
     
@@ -353,13 +336,6 @@ export class InferenceService {
       };
       prefillMessages.push(assistantMessage);
       
-      // Debug log the full prefill prompt
-      console.log('\n========== PREFILL PROMPT BEING SENT TO API ==========');
-      console.log('User message:', cmdMessage.branches[0].content);
-      console.log('Assistant prefill:');
-      console.log(conversationContent);
-      console.log('========== END PREFILL PROMPT ==========\n');
-      
       return prefillMessages;
     }
     
@@ -377,9 +353,6 @@ export class InferenceService {
           responderParticipantId = responder.id;
         }
       }
-      
-      console.log('\n========== MESSAGES MODE FORMATTING ==========');
-      console.log(`Responder: ${responderName} (ID: ${responderId})`);
       
       for (const message of messages) {
         const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
@@ -419,8 +392,6 @@ export class InferenceService {
           }
         }
         
-        console.log(`${role}: ${formattedContent.substring(0, 50)}...`);
-        
         // Create formatted message
         const formattedMessage: Message = {
           id: message.id,
@@ -440,8 +411,6 @@ export class InferenceService {
         
         messagesFormatted.push(formattedMessage);
       }
-      
-      console.log('========== END MESSAGES MODE ==========\n');
       
       // For Bedrock, we need to consolidate consecutive user messages
       if (provider === 'bedrock') {

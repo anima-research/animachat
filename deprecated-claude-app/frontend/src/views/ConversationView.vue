@@ -291,7 +291,9 @@
               class="clickable-chip"
             >
               <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
-              {{ participant.name }}
+              {{ participant.name === '' 
+                ? (participant.type === 'assistant' && participant.model ? `${participant.model} (continue)` : '(continue)')
+                : participant.name }}
             </v-chip>
             
             <!-- Divider between participants and suggested models -->
@@ -656,7 +658,12 @@ const selectedResponderName = computed(() => {
 
 // Allow sending as any participant type (user or assistant)
 const allParticipants = computed(() => {
-  return participants.value.filter(p => p.isActive);
+  return participants.value.filter(p => p.isActive).map(p => ({
+    ...p,
+    name: p.name === '' 
+      ? (p.type === 'assistant' && p.model ? `${p.model} (continue)` : '(continue)')
+      : p.name
+  }));
 });
 
 const assistantParticipants = computed(() => {
@@ -668,7 +675,9 @@ const responderOptions = computed(() => {
   // Include full participant objects to have access to type and model
   const assistantOptions = assistantParticipants.value.map(p => ({
     id: p.id,
-    name: p.name === '' ? '(raw continuation)' : p.name,
+    name: p.name === '' 
+      ? (p.model ? `${p.model} (continue)` : '(continue)')
+      : p.name,
     type: p.type,
     model: p.model || ''
   }));
