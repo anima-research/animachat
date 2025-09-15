@@ -1368,7 +1368,8 @@ async function loadParticipants() {
   try {
     const response = await api.get(`/participants/conversation/${currentConversation.value.id}`);
     participants.value = response.data;
-    
+    console.log("got participants");
+    console.log(participants.value);
     // Set default selected participant
     if (currentConversation.value.format !== 'standard') {
       const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
@@ -1400,12 +1401,18 @@ async function updateParticipants(updatedParticipants: Participant[]) {
           await api.delete(`/participants/${existing.id}`);
         }
       } else if (!existing.id.startsWith('temp-')) {
+        console.log("Has changes:");
         // Check if participant was actually updated by comparing relevant fields
         const hasChanges = existing.name !== updated.name ||
           existing.model !== updated.model ||
           existing.systemPrompt !== updated.systemPrompt ||
           !deepEqual(existing.settings, updated.settings) ||
           !deepEqual(existing.contextManagement, updated.contextManagement);
+        console.log(hasChanges);
+        console.log("existing");
+        console.log(existing);
+        console.log("updated");
+        console.log(updated);
         if (hasChanges) {
           // Participant was updated
           const updateData = UpdateParticipantSchema.parse({
