@@ -181,17 +181,18 @@
       max-width="600"
       @update:model-value="onSettingsDialogToggled"
     >
-      <v-card v-if="editingParticipant">
+      <v-card v-if="selectedParticipantId">
         <v-card-title>
           <div class="d-flex align-center">
             <v-icon icon="mdi-cog" class="mr-2" />
-            Advanced Settings - {{ editingParticipant.name }}
+            Advanced Settings - {{ getParticipantField('name', '') }}
           </div>
         </v-card-title>
         
         <v-card-text>
           <v-textarea
-            v-model="editingParticipant.systemPrompt"
+            :model-value="getParticipantField('systemPrompt', '')"
+            @update:model-value="(val) => setParticipantField('systemPrompt', val)"
             label="System Prompt"
             variant="outlined"
             rows="4"
@@ -215,7 +216,7 @@
             <template v-slot:append>
               <v-text-field
                 :model-value="getParticipantSettingsField('temperature', 1.0)"
-                @update:model-value="(val) => setParticipantSettingsField('temperature', val)"
+                @update:model-value="(val) => setParticipantSettingsField('temperature', parseFloat(val))"
                 type="number"
                 density="compact"
                 style="width: 70px"
@@ -256,7 +257,8 @@
           
           <div v-if="participantContextOverride" class="ml-4">
             <v-select
-              v-model="participantContextStrategy"
+              :model-value="getParticipantContextOverrideField('strategy', 'append')"
+              @update:model-value="(val) => setParticipantContextOverrideField('strategy', val)"
               :items="contextStrategies"
               item-title="title"
               item-value="value"
@@ -273,9 +275,10 @@
                 </v-list-item>
               </template>
             </v-select>
-            <div v-if="participantContextStrategy === 'rolling'">
+            <div v-if="getParticipantContextOverrideField('strategy', 'append') === 'rolling'">
               <v-text-field
-                v-model.number="participantContextOverrideField('maxTokens', 50000)"
+                :model-value="getParticipantContextOverrideField('maxTokens', 50000)"
+                @update:model-value="(val) => setParticipantContextOverrideField('maxTokens', Number(val))"
                 type="number"
                 label="Max Tokens"
                 variant="outlined"
@@ -297,7 +300,8 @@
               </v-text-field>
               
               <v-text-field
-                v-model.number="participantContextOverrideField('maxGraceTokens', 10000)"
+                :model-value="getParticipantContextOverrideField('maxGraceTokens', 10000)"
+                @update:model-value="(val) => setParticipantContextOverrideField('maxGraceTokens', Number(val))"
                 type="number"
                 label="Grace Tokens"
                 variant="outlined"
@@ -454,27 +458,6 @@ function setParticipantContextOverrideField(contextOverrideFieldName: string, va
   
   setParticipantField("contextManagement", currentContextOverride);
 }
-
-const fieldCache = new Map<string, any>();
-function participantContextOverrideField(contextOverrideFieldName: string, defaultValue: any) {
-  const cacheKey = `${selectedParticipantId.value}::${contextOverrideFieldName}`;
-  // avoid recomputing, without this they will slowly accumulate every redraw which leads to slowdown over time
-  if (fieldCache.has(cacheKey)) return fieldCache.get(cacheKey);
-  
-  const c = computed({
-    get() {
-      return getParticipantContextOverrideField(contextOverrideFieldName, defaultValue);
-    },
-    set(val) {
-      setParticipantContextOverrideField(contextOverrideFieldName, val);
-    }
-  });
-  
-  fieldCache.set(cacheKey, c);
-  
-  return c;
-}
-
 
 function addParticipant() {
   newParticipant.value = {
