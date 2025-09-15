@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
 import { AuthRequest } from '../middleware/auth.js';
-import { ContextManagementSchema } from '@deprecated-claude/shared';
+import { ContextManagementSchema, UpdateParticipantSchema } from '@deprecated-claude/shared';
 
 const CreateParticipantSchema = z.object({
   conversationId: z.string().uuid(),
@@ -17,20 +17,6 @@ const CreateParticipantSchema = z.object({
     topK: z.number().optional()
   }).optional(),
   contextManagement: ContextManagementSchema.optional()
-});
-
-const UpdateParticipantSchema = z.object({
-  name: z.string().optional(),
-  model: z.string().optional(),
-  systemPrompt: z.string().optional(),
-  settings: z.object({
-    temperature: z.number(),
-    maxTokens: z.number(),
-    topP: z.number().optional(),
-    topK: z.number().optional()
-  }).optional(),
-  contextManagement: ContextManagementSchema.optional(),
-  isActive: z.boolean().optional()
 });
 
 export function participantRouter(db: Database): Router {
