@@ -179,18 +179,20 @@
     <v-dialog
       v-model="showSettingsDialog"
       max-width="600"
+      @update:model-value="onSettingsDialogToggled"
     >
-      <v-card v-if="editingParticipant">
+      <v-card v-if="selectedParticipantId">
         <v-card-title>
           <div class="d-flex align-center">
             <v-icon icon="mdi-cog" class="mr-2" />
-            Advanced Settings - {{ editingParticipant.name }}
+            Advanced Settings - {{ getParticipantField('name', '') }}
           </div>
         </v-card-title>
         
         <v-card-text>
           <v-textarea
-            v-model="editingParticipant.systemPrompt"
+            :model-value="getParticipantField('systemPrompt', '')"
+            @update:model-value="(val) => setParticipantField('systemPrompt', val)"
             label="System Prompt"
             variant="outlined"
             rows="4"
@@ -200,8 +202,8 @@
           />
           
           <v-slider
-            :model-value="editingParticipant ? getParticipantTemperature(editingParticipant) : 1.0"
-            @update:model-value="(val) => editingParticipant && setParticipantTemperature(editingParticipant, val)"
+            :model-value="getParticipantSettingsField('temperature', 1.0)"
+            @update:model-value="(val) => setParticipantSettingsField('temperature', val)"
             :min="0"
             :max="2"
             :step="0.1"
@@ -213,8 +215,8 @@
           >
             <template v-slot:append>
               <v-text-field
-                :model-value="editingParticipant ? getParticipantTemperature(editingParticipant) : 1.0"
-                @update:model-value="(val) => editingParticipant && setParticipantTemperature(editingParticipant, Number(val))"
+                :model-value="getParticipantSettingsField('temperature', 1.0)"
+                @update:model-value="(val) => setParticipantSettingsField('temperature', parseFloat(val))"
                 type="number"
                 density="compact"
                 style="width: 70px"
@@ -229,8 +231,8 @@
           </v-slider>
           
           <v-text-field
-            :model-value="editingParticipant ? getParticipantMaxTokens(editingParticipant) : 1024"
-            @update:model-value="(val) => editingParticipant && setParticipantMaxTokens(editingParticipant, Number(val))"
+            :model-value="getParticipantSettingsField('maxTokens', 1.0)"
+            @update:model-value="(val) => setParticipantSettingsField('maxTokens', Number(val))"
             type="number"
             label="Max Tokens"
             variant="outlined"
@@ -255,7 +257,8 @@
           
           <div v-if="participantContextOverride" class="ml-4">
             <v-select
-              v-model="participantContextStrategy"
+              :model-value="getParticipantContextOverrideField('strategy', 'append')"
+              @update:model-value="(val) => updateContextOverrideStrategy(val)"
               :items="contextStrategies"
               item-title="title"
               item-value="value"
@@ -272,9 +275,10 @@
                 </v-list-item>
               </template>
             </v-select>
-            <div v-if="participantContextStrategy === 'rolling'">
+            <div v-if="getParticipantContextOverrideField('strategy', 'append') === 'rolling'">
               <v-text-field
-                v-model.number="participantRollingMaxTokens"
+                :model-value="getParticipantContextOverrideField('maxTokens', 50000)"
+                @update:model-value="(val) => setParticipantContextOverrideField('maxTokens', Number(val))"
                 type="number"
                 label="Max Tokens"
                 variant="outlined"
@@ -296,7 +300,8 @@
               </v-text-field>
               
               <v-text-field
-                v-model.number="participantRollingGraceTokens"
+                :model-value="getParticipantContextOverrideField('maxGraceTokens', 10000)"
+                @update:model-value="(val) => setParticipantContextOverrideField('maxGraceTokens', Number(val))"
                 type="number"
                 label="Grace Tokens"
                 variant="outlined"
@@ -344,8 +349,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, PropType } from 'vue';
+import { ref, computed, watch, PropType } from 'vue';
 import type { Participant, Model } from '@deprecated-claude/shared';
+import { get as _get, set as _set, cloneDeep, isEqual } from 'lodash-es';
 
 const props = defineProps({
   modelValue: {
@@ -369,18 +375,34 @@ const participants = computed({
 
 const showAddDialog = ref(false);
 const showSettingsDialog = ref(false);
-const editingParticipant = ref<Participant | null>(null);
+const selectedParticipantId = ref<string | null>(null);
 const newParticipant = ref<any>({
   type: 'assistant',
   name: '',
   model: ''
 });
 
+const defaultContextOverrideAppend = {
+  strategy: 'append',
+  cacheInterval: 10000
+}
+
+const defaultContextOverrideRollingWindow = {
+  strategy: 'rolling',
+  maxTokens: 50000,
+  maxGraceTokens: 10000,
+  cacheMinTokens: 5000,
+  cacheDepthFromEnd: 5
+}
+
+function getDefaultContextOverride(strategy) {
+  return strategy == 'append'
+    ? defaultContextOverrideAppend
+    : defaultContextOverrideRollingWindow;
+}
+
 // Context management settings for participant
 const participantContextOverride = ref(false);
-const participantContextStrategy = ref('append');
-const participantRollingMaxTokens = ref(50000);
-const participantRollingGraceTokens = ref(10000);
 
 const contextStrategies = [
   {
@@ -395,34 +417,68 @@ const contextStrategies = [
   }
 ];
 
-function getParticipantTemperature(participant: Participant): number {
-  return participant.settings?.temperature ?? 1.0;
+
+// generic functions for getting and setting participant fields
+// these need to send updates correctly by modifying the participants array
+// having a "cur modifying participant" object will not work bc it may be a copy
+// and thus when you make changes they (sometimes) won't persist
+function getParticipantField(path: string, defaultValue: any) {
+  const p = participants.value.find(p => p.id === selectedParticipantId.value);
+  return _get(p ?? {}, path, defaultValue);
 }
 
-function setParticipantTemperature(participant: Participant, value: number) {
-  if (!participant.settings) {
-    participant.settings = {
-      temperature: value,
-      maxTokens: 1024
-    };
-  } else {
-    participant.settings.temperature = value;
-  }
+function setParticipantField(path: string, value: any) {
+  const list = participants.value;
+  const idx = list.findIndex(p => p.id === selectedParticipantId.value);
+  if (idx < 0) return;
+
+  const updated = cloneDeep(list);
+  _set(updated[idx], path, value);
+
+  // avoid no-op emits
+  if (isEqual(list[idx], updated[idx])) return;
+  
+  // emit the modified participants array
+  participants.value = updated;
 }
 
-function getParticipantMaxTokens(participant: Participant): number {
-  return participant.settings?.maxTokens ?? 1024;
+function getParticipantSettingsField(settingsFieldName: string, defaultValue: any) {
+  return getParticipantField("settings." + settingsFieldName, defaultValue);
 }
 
-function setParticipantMaxTokens(participant: Participant, value: string | number) {
-  if (!participant.settings) {
-    participant.settings = {
-      temperature: 1.0,
-      maxTokens: parseInt(value.toString())
-    };
-  } else {
-    participant.settings.maxTokens = parseInt(value.toString());
-  }
+function setParticipantSettingsField(settingsFieldName: string, value: any) {
+  // Do not modify existing copy (that may be overwritten/may be a proxy)
+  // instead we need to send changes back up by using these methods
+  var currentSettings = cloneDeep(getParticipantField("settings", {
+    // default settings if unspecified
+    temperature: 1.0,
+    maxTokens: 1024
+  }));
+  
+  _set(currentSettings, settingsFieldName, value);
+  
+  setParticipantField('settings', currentSettings);
+}
+
+function getParticipantContextOverrideField(contextOverrideFieldName: string, defaultValue: any) {
+  return getParticipantField('contextManagement.' + contextOverrideFieldName, defaultValue);
+}
+
+function setParticipantContextOverrideField(contextOverrideFieldName: string, value: any) {
+  // Do not modify existing copy (that may be overwritten/may be a proxy)
+  // instead we need to send changes back up by using these methods
+  var currentContextOverride = cloneDeep(getParticipantField('contextManagement',
+    getDefaultContextOverride(getParticipantContextOverrideField("strategy", "append"))));
+  
+  _set(currentContextOverride, contextOverrideFieldName, value);
+  
+  setParticipantField("contextManagement", currentContextOverride);
+}
+
+function updateContextOverrideStrategy(strategy: string) {
+  setParticipantContextOverrideField("strategy", strategy);
+  // reset to default values for new strategy (this uses the assigned strategy when looking up)
+  setParticipantField("contextManagement", getDefaultContextOverride(strategy));
 }
 
 function addParticipant() {
@@ -477,52 +533,35 @@ function removeParticipant(id: string) {
   emit('update:modelValue', updated);
 }
 
-function openSettings(participant: Participant) {
-  editingParticipant.value = participant;
-  
-  // Load context management settings
-  if (participant.contextManagement) {
-    participantContextOverride.value = true;
-    participantContextStrategy.value = participant.contextManagement.strategy;
-    if (participant.contextManagement.strategy === 'rolling') {
-      participantRollingMaxTokens.value = participant.contextManagement.maxTokens;
-      participantRollingGraceTokens.value = participant.contextManagement.maxGraceTokens;
+// when toggle checkbox, set context overrides to default/unknown as needed
+watch(participantContextOverride, () => {
+  if (!selectedParticipantId.value) return;
+  if (participantContextOverride.value) {
+    if (getParticipantField('contextManagement', null) == null) {
+      setParticipantField('contextManagement', getDefaultContextOverride(getParticipantContextOverrideField("strategy", "append")));
     }
   } else {
-    participantContextOverride.value = false;
-    participantContextStrategy.value = 'append';
-    participantRollingMaxTokens.value = 50000;
-    participantRollingGraceTokens.value = 10000;
+    setParticipantField('contextManagement', undefined);
   }
+});
+
+function openSettings(participant: Participant) {
+  // we edit a draft, actually apply changes later
+  selectedParticipantId.value = participant.id;
+  participantContextOverride.value = Boolean(participant.contextManagement);
   
   showSettingsDialog.value = true;
 }
 
+// ensure close settings is called when the user clicks out of the box instead of the close button
+function onSettingsDialogToggled(open: boolean) {
+  if (!open) closeSettings();
+}
+
 function closeSettings() {
-  // Save context management settings
-  if (editingParticipant.value) {
-    if (participantContextOverride.value) {
-      if (participantContextStrategy.value === 'append') {
-        editingParticipant.value.contextManagement = {
-          strategy: 'append',
-          cacheInterval: 10000
-        };
-      } else if (participantContextStrategy.value === 'rolling') {
-        editingParticipant.value.contextManagement = {
-          strategy: 'rolling',
-          maxTokens: participantRollingMaxTokens.value,
-          maxGraceTokens: participantRollingGraceTokens.value,
-          cacheMinTokens: 5000,
-          cacheDepthFromEnd: 5
-        };
-      }
-    } else {
-      editingParticipant.value.contextManagement = undefined;
-    }
-  }
-  
   showSettingsDialog.value = false;
-  editingParticipant.value = null;
+  selectedParticipantId.value = null;
+  participantContextOverride.value = false;
 }
 
 function onModelSelected(modelId: string) {

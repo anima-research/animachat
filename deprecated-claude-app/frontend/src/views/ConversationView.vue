@@ -583,7 +583,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import deepEqual from 'deep-equal';
+import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
 import type { Conversation, Message, Participant, Model } from '@deprecated-claude/shared';
@@ -1368,7 +1368,6 @@ async function loadParticipants() {
   try {
     const response = await api.get(`/participants/conversation/${currentConversation.value.id}`);
     participants.value = response.data;
-    
     // Set default selected participant
     if (currentConversation.value.format !== 'standard') {
       const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
@@ -1404,8 +1403,8 @@ async function updateParticipants(updatedParticipants: Participant[]) {
         const hasChanges = existing.name !== updated.name ||
           existing.model !== updated.model ||
           existing.systemPrompt !== updated.systemPrompt ||
-          !deepEqual(existing.settings, updated.settings) ||
-          !deepEqual(existing.contextManagement, updated.contextManagement);
+          !isEqual(existing.settings, updated.settings) ||
+          !isEqual(existing.contextManagement, updated.contextManagement);
         if (hasChanges) {
           // Participant was updated
           const updateData = UpdateParticipantSchema.parse({
