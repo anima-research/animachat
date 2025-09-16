@@ -417,7 +417,33 @@ const hasNavigableBranches = computed(() => {
 });
 
 const renderedContent = computed(() => {
-  const content = currentBranch.value.content;
+  let content = currentBranch.value.content;
+  
+  // First, protect code blocks and inline code from HTML escaping
+  const codeBlocks: string[] = [];
+  const inlineCode: string[] = [];
+  
+  // Save code blocks with placeholders
+  content = content.replace(/```[\s\S]*?```/g, (match) => {
+    const index = codeBlocks.length;
+    codeBlocks.push(match);
+    return `__CODE_BLOCK_${index}__`;
+  });
+  
+  // Save inline code with placeholders
+  content = content.replace(/`[^`\n]+`/g, (match) => {
+    const index = inlineCode.length;
+    inlineCode.push(match);
+    return `__INLINE_CODE_${index}__`;
+  });
+  
+  // Escape HTML/XML tags that aren't in code blocks
+  // This prevents raw HTML from being rendered but preserves it visually
+  content = content.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  
+  // Restore code blocks and inline code
+  content = content.replace(/__CODE_BLOCK_(\d+)__/g, (_, index) => codeBlocks[parseInt(index)]);
+  content = content.replace(/__INLINE_CODE_(\d+)__/g, (_, index) => inlineCode[parseInt(index)]);
   
   // Handle code blocks with syntax highlighting
   const renderer = new marked.Renderer();
@@ -441,7 +467,17 @@ const renderedContent = computed(() => {
   });
   
   const html = marked(content);
-  return DOMPurify.sanitize(html);
+  return DOMPurify.sanitize(html, {
+    // Allow only safe HTML tags that markdown generates
+    ALLOWED_TAGS: [
+      'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+      'blockquote', 'ul', 'ol', 'li', 'a', 'img',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'table', 'thead', 'tbody', 'tr', 'th', 'td',
+      'hr', 'sup', 'sub', 'del', 'ins'
+    ],
+    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel']
+  });
 });
 
 function escapeHtml(text: string): string {
