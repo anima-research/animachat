@@ -181,7 +181,7 @@
             v-if="!isLastMessage"
             :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
             :color="isSelectedParent ? 'info' : undefined"
-            size="x-small"
+            size="small"
             variant="text"
             density="compact"
             :style="isSelectedParent ? 'opacity: 1' : 'opacity: 0.6'"

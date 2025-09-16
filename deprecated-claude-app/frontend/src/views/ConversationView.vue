@@ -276,7 +276,7 @@
         
         <!-- Model Quick Access Bar -->
         <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
-             class="mb-2">
+             class="mb-0 d-flex align-center justify-space-around">
           <div class="d-flex align-center gap-2 flex-wrap">
             
             <!-- Existing participants sorted by last spoken -->
@@ -328,8 +328,59 @@
           </div>
         </div>
         
-        <div v-if="currentConversation.format !== 'standard'" class="mb-2 d-flex gap-2">
+        <div class="mb-2 d-flex gap-2 align-center justify-space-around">
           <v-select
+            v-if="currentConversation.format !== 'standard'"
+            v-model="selectedResponder"
+            :items="responderOptions"
+            item-title="name"
+            item-value="id"
+            label="Response from"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="flex-grow-1 mr-2"
+          >
+            <template v-slot:selection="{ item }">
+              <div class="d-flex align-center">
+                <v-icon 
+                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                  size="small"
+                  class="mr-2"
+                />
+                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
+                  {{ item.raw.name }}
+                </span>
+              </div>
+            </template>
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:prepend>
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                  />
+                </template>
+                <template v-slot:title>
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
+                    {{ item.raw.name }}
+                  </span>
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
+          <v-btn
+            :disabled="isStreaming"
+            :color="continueButtonColor"
+            icon="mdi-robot"
+            variant="text"
+            :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
+            @click="continueGeneration"
+            class="mr-2"
+          />
+          <v-select
+            v-if="currentConversation.format !== 'standard'"
             v-model="selectedParticipant"
             :items="allParticipants"
             item-title="name"
@@ -369,59 +420,13 @@
               </v-list-item>
             </template>
           </v-select>
-          <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
+          
+          <!-- <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
                        vertical 
                        class="mx-1" 
-                       style="height: 30px" />
-          <v-select
-            v-model="selectedResponder"
-            :items="responderOptions"
-            item-title="name"
-            item-value="id"
-            label="Response from"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="flex-grow-1"
-          >
-            <template v-slot:selection="{ item }">
-              <div class="d-flex align-center">
-                <v-icon 
-                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
-                  size="small"
-                  class="mr-2"
-                />
-                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
-                  {{ item.raw.name }}
-                </span>
-              </div>
-            </template>
-            <template v-slot:item="{ props, item }">
-              <v-list-item v-bind="props">
-                <template v-slot:prepend>
-                  <v-icon 
-                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
-                  />
-                </template>
-                <template v-slot:title>
-                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
-                    {{ item.raw.name }}
-                  </span>
-                </template>
-              </v-list-item>
-            </template>
-          </v-select>
-          <v-btn
-            :disabled="isStreaming"
-            :color="continueButtonColor"
-            icon="mdi-robot"
-            variant="text"
-            :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
-            @click="continueGeneration"
-            class="mr-1"
-          />
+                       style="height: 30px" /> -->
+          
+          
         </div>
         
         <!-- Attachments display -->
@@ -616,6 +621,7 @@ const messageInput = ref('');
 const isStreaming = ref(false);
 const streamingMessageId = ref<string | null>(null);
 const autoScrollEnabled = ref(true);
+const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string } | null>(null);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
@@ -875,7 +881,8 @@ watch(() => route.params.id, async (newId) => {
 
 // Watch for new messages to scroll
 watch(messages, () => {
-  if (autoScrollEnabled.value) {
+  // Don't auto-scroll if we're switching branches via the navigation arrows
+  if (autoScrollEnabled.value && !isSwitchingBranch.value) {
     nextTick(() => {
       scrollToBottom(true); // Smooth scroll for new messages
     });
@@ -1098,7 +1105,12 @@ async function editMessage(messageId: string, branchId: string, content: string)
 }
 
 function switchBranch(messageId: string, branchId: string) {
+  isSwitchingBranch.value = true;
   store.switchBranch(messageId, branchId);
+  // Reset the flag after a short delay to allow the watch to process
+  setTimeout(() => {
+    isSwitchingBranch.value = false;
+  }, 100);
 }
 
 async function navigateToTreeBranch(messageId: string, branchId: string) {
@@ -1133,6 +1145,9 @@ async function navigateToTreeBranch(messageId: string, branchId: string) {
   
   console.log('Path to switch:', pathToRoot);
   
+  // Set flag to prevent auto-scrolling during branch switches
+  isSwitchingBranch.value = true;
+  
   // Switch branches along the path
   for (const { messageId: msgId, branchId: brId } of pathToRoot) {
     const message = allMessages.value.find(m => m.id === msgId);
@@ -1141,6 +1156,11 @@ async function navigateToTreeBranch(messageId: string, branchId: string) {
       store.switchBranch(msgId, brId);
     }
   }
+  
+  // Reset the flag after branches are switched
+  setTimeout(() => {
+    isSwitchingBranch.value = false;
+  }, 100);
   
   // Wait for DOM to update, then scroll to the clicked message
   await nextTick();
