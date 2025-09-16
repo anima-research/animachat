@@ -89,7 +89,22 @@
               hide-details
               single-line
               class="table-input"
-            />
+            >
+              <template v-slot:selection="{ item }">
+                <span :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`">
+                  {{ item.raw.displayName }}
+                </span>
+              </template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:title>
+                    <span :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`">
+                      {{ item.raw.displayName }}
+                    </span>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
             <span v-else class="text-disabled">—</span>
           </td>
           <td>
@@ -167,7 +182,22 @@
             variant="outlined"
             density="compact"
             @update:model-value="onModelSelected"
-          />
+          >
+            <template v-slot:selection="{ item }">
+              <span :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`">
+                {{ item.raw.displayName }}
+              </span>
+            </template>
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:title>
+                  <span :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`">
+                    {{ item.raw.displayName }}
+                  </span>
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
         </v-card-text>
         
         <v-card-actions>

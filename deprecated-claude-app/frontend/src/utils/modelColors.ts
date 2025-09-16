@@ -6,10 +6,10 @@ export const MODEL_COLORS: Record<string, string> = {
   'claude-3-opus-20240229': '#ffc300',        // Golden yellow
   
   // Claude Sonnet models
-  'claude-sonnet-4-20250514': '#8cd8fa',      // Light sky blue
+  'claude-sonnet-4-20250514': '#86a3b0',      // Light sky blue
   'claude-3-7-sonnet-20250219': '#00b0ff',    // Vivid light blue
-  'claude-3-5-sonnet-20241022': '#fa00b3',    // Hot pink/magenta
-  'claude-3-5-sonnet-20240620': '#144fff',    // Vivid blue
+  'claude-3-5-sonnet-20241022': '#ed098e',    // Hot pink/magenta
+  'claude-3-5-sonnet-20240620': '#146fff',    // Vivid blue
   'claude-3-sonnet-20240229': '#f44336',      // Bright red
   
   // Claude Haiku models - Bright green
@@ -88,7 +88,7 @@ export function getModelColor(model: string | undefined): string {
     return MODEL_COLORS['claude-3-7-sonnet-20250219'];
   }
   if (modelLower.includes('3-6-sonnet') || modelLower.includes('3.6-sonnet') || modelLower.includes('sonnet-3.6') || modelLower.includes('sonnet 3.6')) {
-    return MODEL_COLORS['claude-3-6-sonnet-20241022'];
+    return MODEL_COLORS['claude-3-5-sonnet-20241022'];
   }
   if (modelLower.includes('3-5-sonnet') || modelLower.includes('3.5-sonnet') || modelLower.includes('sonnet-3.5') || modelLower.includes('sonnet 3.5')) {
     return MODEL_COLORS['claude-3-5-sonnet-20240620'];

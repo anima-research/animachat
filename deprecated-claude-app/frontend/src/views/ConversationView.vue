@@ -229,7 +229,7 @@
       <v-container
         ref="messagesContainer"
         class="flex-grow-1 overflow-y-auto messages-container"
-        style="max-height: calc(100vh - 200px);"
+        style="max-height: calc(100vh - 160px);"
       >
         <div v-if="!currentConversation" class="text-center mt-12">
           <v-icon size="64" color="grey">mdi-message-text-outline</v-icon>
@@ -369,6 +369,10 @@
               </v-list-item>
             </template>
           </v-select>
+          <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
+                       vertical 
+                       class="mx-1" 
+                       style="height: 30px" />
           <v-select
             v-model="selectedResponder"
             :items="responderOptions"
@@ -409,6 +413,15 @@
               </v-list-item>
             </template>
           </v-select>
+          <v-btn
+            :disabled="isStreaming"
+            :color="continueButtonColor"
+            icon="mdi-robot"
+            variant="text"
+            :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
+            @click="continueGeneration"
+            class="mr-1"
+          />
         </div>
         
         <!-- Attachments display -->
@@ -443,7 +456,7 @@
           label="Type your message..."
           rows="3"
           auto-grow
-          max-rows="10"
+          max-rows="15"
           variant="outlined"
           hide-details
           @keydown.enter.exact.prevent="sendMessage"
@@ -459,15 +472,7 @@
               class="mr-1"
             />
             
-            <v-btn
-              :disabled="isStreaming"
-              :color="continueButtonColor"
-              icon="mdi-robot"
-              variant="text"
-              :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
-              @click="continueGeneration"
-              class="mr-1"
-            />
+            
             <v-btn
               :disabled="!messageInput.trim() || isStreaming"
               color="primary"
@@ -916,7 +921,7 @@ async function createNewConversation() {
   // Use default model from system config, or fallback to first model or hardcoded default
   const defaultModel = store.state.systemConfig?.defaultModel || 
                       store.state.models[0]?.id || 
-                      'claude-3.5-sonnet';
+                      'claude-3.6-sonnet';
   const conversation = await store.createConversation(defaultModel);
   router.push(`/conversation/${conversation.id}`);
   // Load participants for the new conversation

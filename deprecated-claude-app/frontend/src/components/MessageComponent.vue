@@ -15,6 +15,40 @@
     :variant="message.branches[branchIndex].role === 'user' ? 'tonal' : 'elevated'"
   >
     <v-card-text>
+
+      <div
+        v-if="hasNavigableBranches"
+        class="top-controls d-flex align-center justify-space-evenly"
+      >
+      <!-- Branch navigation section -->
+        <div v-if="hasNavigableBranches" class="d-flex align-center">
+          <v-btn
+            icon="mdi-chevron-left"
+            size="small"
+            variant="text"
+            density="compact"
+
+            :disabled="siblingIndex === 0"
+            @click="navigateBranch(-1)"
+          />
+          
+          <span class="mx-1 meta-text">
+            {{ siblingIndex + 1 }} / {{ siblingBranches.length }}
+          </span>
+          
+          <v-btn
+            icon="mdi-chevron-right"
+            size="small"
+            variant="text"
+            density="compact"
+
+            :disabled="siblingIndex === siblingBranches.length - 1"
+            @click="navigateBranch(1)"
+          />
+        </div>
+
+      </div>
+
       <div class="d-flex align-start mb-2">
         <v-icon
           :icon="message.branches[branchIndex].role === 'user' ? 'mdi-account' : 'mdi-robot'"
@@ -25,52 +59,55 @@
         <div v-if="participantDisplayName" class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
           {{ participantDisplayName }}
         </div>
-        <div v-if="modelIndicator" class="text-caption ml-1" style="color: #888; font-size: 0.75rem;">
+        <div v-if="modelIndicator" class="text-caption ml-1 meta-text">
           ({{ modelIndicator }})
         </div>
-        <div v-if="currentBranch?.createdAt" class="text-caption ml-2 text-grey">
+        <div v-if="currentBranch?.createdAt" class="text-caption ml-2 meta-text">
           {{ formatTimestamp(currentBranch.createdAt) }}
         </div>
         
         <v-spacer />
         
         <div v-if="!isEditing" class="d-flex gap-1">
-          <v-btn
-            v-if="!isLastMessage"
-            :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
-            :color="isSelectedParent ? 'info' : undefined"
-            size="x-small"
-            variant="text"
-            @click="$emit('select-as-parent', message.id, currentBranch.id)"
-            title="Branch from here"
-          />
-          
-          <v-btn
-            icon="mdi-pencil"
-            size="x-small"
-            variant="text"
-            @click="startEdit"
-          />
-          
+
           <v-btn
             v-if="message.branches[branchIndex].role === 'assistant'"
             icon="mdi-refresh"
             size="x-small"
+            density="compact"
+            class="mr-4"
+            style="opacity: 0.6"
             variant="text"
             @click="$emit('regenerate', message.id, currentBranch.id)"
           />
-          
+
+
+          <v-btn
+            icon="mdi-pencil"
+            size="x-small"
+            variant="text"
+            class="mr-4"
+            style="opacity: 0.6"
+            density="compact"
+            @click="startEdit"
+          />
+
           <v-btn
             icon="mdi-content-copy"
             size="x-small"
+            density="compact"
             variant="text"
+            class="mr-4"
+            style="opacity: 0.6"
             @click="copyContent"
           />
-          
+
           <v-btn
             icon="mdi-delete-outline"
             size="x-small"
+            density="compact"
             variant="text"
+            class="mr-4"
             color="error"
             @click="$emit('delete', message.id, currentBranch.id)"
           />
@@ -134,47 +171,28 @@
         </v-btn>
       </div>
       
-      <!-- Branch navigation and/or scroll to top button -->
       <div
-        v-if="hasNavigableBranches || showScrollToTop"
-        class="bottom-controls d-flex align-center justify-space-between mt-3"
+        v-if="!isEditing && !isStreaming && !isLastMessage"
+        class="bottom-controls d-flex align-center justify-space-evenly mt-3"
       >
-        <!-- Branch navigation section -->
-        <div v-if="hasNavigableBranches" class="d-flex align-center">
+
+        <div v-if="!isEditing" class="d-flex gap-1">
           <v-btn
-            icon="mdi-chevron-left"
+            v-if="!isLastMessage"
+            :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
+            :color="isSelectedParent ? 'info' : undefined"
             size="x-small"
             variant="text"
-            :disabled="siblingIndex === 0"
-            @click="navigateBranch(-1)"
+            density="compact"
+            :style="isSelectedParent ? 'opacity: 1' : 'opacity: 0.6'"
+            @click="$emit('select-as-parent', message.id, currentBranch.id)"
+            title="Branch from here"
           />
-          
-          <span class="mx-2">
-            {{ siblingIndex + 1 }} / {{ siblingBranches.length }}
-          </span>
-          
-          <v-btn
-            icon="mdi-chevron-right"
-            size="x-small"
-            variant="text"
-            :disabled="siblingIndex === siblingBranches.length - 1"
-            @click="navigateBranch(1)"
-          />
-          
-          <v-chip
-            v-if="siblingIndex > 0"
-            size="x-small"
-            class="ml-2"
-          >
-            {{ getBranchLabel(branchIndex) }}
-          </v-chip>
         </div>
-        
-        <!-- Empty spacer if no branch navigation -->
-        <div v-else></div>
+
         
         <!-- Scroll to top button -->
-        <v-btn
+        <!-- <v-btn
           v-if="showScrollToTop"
           size="small"
           variant="tonal"
@@ -183,7 +201,7 @@
         >
           <v-icon start size="small">mdi-chevron-up</v-icon>
           Scroll to top
-        </v-btn>
+        </v-btn> -->
       </div>
       
       <!-- Generating indicator or error indicator -->
@@ -261,9 +279,6 @@ const branchIndex = computed(() => {
 
 const currentBranch = computed(() => {
   const branch = props.message.branches[branchIndex.value];
-  // if (branch?.attachments?.length > 0) {
-  //   console.log(`Message ${props.message.id} has ${branch.attachments.length} attachments:`, branch.attachments);
-  // }
   return branch;
 });
 
@@ -309,33 +324,6 @@ function scrollToTopOfMessage() {
     }
   }
 }
-
-// Get participant name for current branch (used for internal logic)
-const participantName = computed(() => {
-  const branch = currentBranch.value;
-  
-  // If no participants list provided or no participantId, fall back to default behavior
-  if (!props.participants || !branch.participantId) {
-    return branch.role === 'user' ? 'You' : 'Assistant';
-  }
-  
-  // Find the participant by ID
-  const participant = props.participants.find(p => p.id === branch.participantId);
-  if (participant) {
-    // If participant has empty name, show appropriate continuation format
-    if (participant.name === '') {
-      if (participant.type === 'assistant' && participant.model) {
-        return `${participant.model} (continue)`;
-      } else {
-        return '(continue)';
-      }
-    }
-    return participant.name;
-  }
-  
-  // Fallback if participant not found
-  return branch.role === 'user' ? 'You' : 'Assistant';
-});
 
 // Get participant display name (shown in UI - empty for empty-name participants)
 const participantDisplayName = computed(() => {
@@ -514,17 +502,6 @@ function navigateBranch(direction: number) {
   }
 }
 
-function getBranchLabel(index: number): string {
-  // Determine if this is an edit or regeneration
-  const branch = props.message.branches[index];
-  const originalBranch = props.message.branches[0];
-  
-  if (branch.role === originalBranch.role && branch.parentBranchId) {
-    return 'edited';
-  }
-  return 'regenerated';
-}
-
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -600,7 +577,23 @@ function formatTimestamp(timestamp: string): string {
   }
 }
 
+.meta-text {
+  opacity: 0.6;
+  font-size: 0.75rem;
+}
+
+.top-controls {
+  margin-top: -14px;
+  margin-bottom: -2px;
+}
+
 .bottom-controls {
+  margin-bottom: -6px;
   gap: 8px;
 }
+
+.flip-vertical {
+  transform: scaleY(-1);
+}
 </style>
+

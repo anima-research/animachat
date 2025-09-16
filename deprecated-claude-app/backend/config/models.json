@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "claude-3.5-sonnet",
+      "id": "claude-3.6-sonnet",
       "providerModelId": "claude-3-5-sonnet-20241022",
       "displayName": "Claude 3.6 Sonnet",
       "shortName": "Sonnet 3.6",
@@ -211,7 +211,7 @@
       }
     },
     {
-      "id": "claude-3.5-sonnet-old",
+      "id": "claude-3.5-sonnet",
       "providerModelId": "claude-3-5-sonnet-20240620",
       "displayName": "Claude 3.5 Sonnet",
       "shortName": "Sonnet 3.5",
@@ -316,7 +316,7 @@
       }
     },
     {
-      "id": "claude-3.5-sonnet-bedrock",
+      "id": "claude-3.6-sonnet-bedrock",
       "providerModelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
       "displayName": "Claude 3.6 Sonnet (Bedrock)",
       "shortName": "Sonnet 3.6",
@@ -421,7 +421,7 @@
       }
     },
     {
-      "id": "claude-3.5-sonnet-openrouter",
+      "id": "claude-3.6-sonnet-openrouter",
       "providerModelId": "anthropic/claude-3.5-sonnet",
       "displayName": "Claude 3.6 Sonnet (OpenRouter)",
       "shortName": "Sonnet 3.6",
