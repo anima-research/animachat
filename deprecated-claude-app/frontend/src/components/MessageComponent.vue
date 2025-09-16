@@ -134,38 +134,56 @@
         </v-btn>
       </div>
       
-      <!-- Branch navigation -->
+      <!-- Branch navigation and/or scroll to top button -->
       <div
-        v-if="hasNavigableBranches"
-        class="branch-navigation"
+        v-if="hasNavigableBranches || showScrollToTop"
+        class="bottom-controls d-flex align-center justify-space-between mt-3"
       >
+        <!-- Branch navigation section -->
+        <div v-if="hasNavigableBranches" class="d-flex align-center">
+          <v-btn
+            icon="mdi-chevron-left"
+            size="x-small"
+            variant="text"
+            :disabled="siblingIndex === 0"
+            @click="navigateBranch(-1)"
+          />
+          
+          <span class="mx-2">
+            {{ siblingIndex + 1 }} / {{ siblingBranches.length }}
+          </span>
+          
+          <v-btn
+            icon="mdi-chevron-right"
+            size="x-small"
+            variant="text"
+            :disabled="siblingIndex === siblingBranches.length - 1"
+            @click="navigateBranch(1)"
+          />
+          
+          <v-chip
+            v-if="siblingIndex > 0"
+            size="x-small"
+            class="ml-2"
+          >
+            {{ getBranchLabel(branchIndex) }}
+          </v-chip>
+        </div>
+        
+        <!-- Empty spacer if no branch navigation -->
+        <div v-else></div>
+        
+        <!-- Scroll to top button -->
         <v-btn
-          icon="mdi-chevron-left"
-          size="x-small"
-          variant="text"
-          :disabled="siblingIndex === 0"
-          @click="navigateBranch(-1)"
-        />
-        
-        <span>
-          {{ siblingIndex + 1 }} / {{ siblingBranches.length }}
-        </span>
-        
-        <v-btn
-          icon="mdi-chevron-right"
-          size="x-small"
-          variant="text"
-          :disabled="siblingIndex === siblingBranches.length - 1"
-          @click="navigateBranch(1)"
-        />
-        
-        <v-chip
-          v-if="siblingIndex > 0"
-          size="x-small"
-          class="ml-2"
+          v-if="showScrollToTop"
+          size="small"
+          variant="tonal"
+          color="grey"
+          @click="scrollToTopOfMessage"
         >
-          {{ getBranchLabel(branchIndex) }}
-        </v-chip>
+          <v-icon start size="small">mdi-chevron-up</v-icon>
+          Scroll to top
+        </v-btn>
       </div>
       
       <!-- Generating indicator or error indicator -->
@@ -201,19 +219,6 @@
           />
           Generating...
         </v-chip>
-      </div>
-      
-      <!-- Scroll to top button for long messages -->
-      <div v-if="showScrollToTop" class="scroll-to-top-container mt-3">
-        <v-btn
-          size="small"
-          variant="tonal"
-          color="grey"
-          @click="scrollToTopOfMessage"
-        >
-          <v-icon start size="small">mdi-chevron-up</v-icon>
-          Scroll to top
-        </v-btn>
       </div>
     </v-card-text>
   </v-card>
@@ -559,8 +564,7 @@ function formatTimestamp(timestamp: string): string {
   }
 }
 
-.scroll-to-top-container {
-  display: flex;
-  justify-content: center;
+.bottom-controls {
+  gap: 8px;
 }
 </style>
