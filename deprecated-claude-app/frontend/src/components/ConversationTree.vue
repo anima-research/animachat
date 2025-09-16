@@ -419,9 +419,46 @@ function renderTree() {
     .on('mouseenter', (event, d) => {
       hoveredNode.value = d.data;
       const [x, y] = d3.pointer(event, svgRef.value);
+      
+      // Get container dimensions
+      const containerWidth = svgRef.value?.clientWidth || 400;
+      const containerHeight = svgRef.value?.clientHeight || 600;
+      
+      // Estimate tooltip dimensions (max-width is 300px in CSS)
+      const tooltipMaxWidth = 300;
+      const tooltipEstimatedHeight = 80; // Approximate height for 2-3 lines of text
+      
+      // Calculate position with bounds checking
+      let left = x + 10;
+      let top = y - 10;
+      
+      // Check right boundary
+      if (left + tooltipMaxWidth > containerWidth) {
+        // Position to the left of the cursor instead
+        left = x - tooltipMaxWidth - 10;
+        // If that would go off the left edge, position at the right edge
+        if (left < 0) {
+          left = containerWidth - tooltipMaxWidth - 10;
+        }
+      }
+      
+      // Check bottom boundary
+      if (top + tooltipEstimatedHeight > containerHeight) {
+        // Position above the cursor instead
+        top = y - tooltipEstimatedHeight - 10;
+        // If that would go off the top edge, position at the bottom edge
+        if (top < 0) {
+          top = containerHeight - tooltipEstimatedHeight - 10;
+        }
+      }
+      
+      // Ensure we don't go off the left or top edges
+      left = Math.max(10, left);
+      top = Math.max(10, top);
+      
       tooltipStyle.value = {
-        left: `${x + 10}px`,
-        top: `${y - 10}px`
+        left: `${left}px`,
+        top: `${top}px`
       };
     })
     .on('mouseleave', () => {
@@ -572,6 +609,7 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   background: var(--v-theme-background);
+  overflow: hidden; /* Prevent tooltip from causing overflow */
 }
 
 .tree-controls {
