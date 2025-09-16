@@ -52,7 +52,7 @@
           <td>
             <v-icon
               :icon="participant.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-              :color="participant.type === 'user' ? 'primary' : 'secondary'"
+              :color="participant.type === 'user' ? 'primary' : getModelColor(participant.model)"
               size="small"
             />
           </td>
@@ -332,6 +332,7 @@
 <script setup lang="ts">
 import { ref, computed, PropType } from 'vue';
 import type { Participant, Model } from '@deprecated-claude/shared';
+import { getModelColor } from '@/utils/modelColors';
 
 const props = defineProps({
   modelValue: {
@@ -413,11 +414,7 @@ function setParticipantMaxTokens(participant: Participant, value: string | numbe
 
 function getParticipantPlaceholder(participant: any) {
   if (participant.name === '') {
-    if (participant.type === 'assistant' && participant.model) {
-      return `${participant.model} (continue)`;
-    } else {
-      return '(continue)';
-    }
+    return '(continue)';
   }
   return 'Enter name...';
 }
