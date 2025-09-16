@@ -124,7 +124,7 @@
     <!-- Main Content -->
     <v-main class="d-flex flex-column" style="height: 100vh;">
       <!-- Top Bar -->
-      <v-app-bar density="compact" flat>
+      <v-app-bar density="compact">
         <v-app-bar-nav-icon @click="drawer = !drawer" />
         
         <v-toolbar-title>
@@ -260,7 +260,7 @@
       </v-container>
 
       <!-- Input Area -->
-      <v-container v-if="currentConversation" class="pa-4">
+      <v-container v-if="currentConversation" class="pa-4" style="padding-top: 0 !important">
         <!-- Branch selection indicator -->
         <v-alert
           v-if="selectedBranchForParent"
@@ -276,7 +276,7 @@
         
         <!-- Model Quick Access Bar -->
         <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
-             class="mb-3">
+             class="mb-2">
           <div class="d-flex align-center gap-2 flex-wrap">
             
             <!-- Existing participants sorted by last spoken -->
@@ -289,11 +289,15 @@
               @click="triggerParticipantResponse(participant)"
               :disabled="isStreaming"
               class="clickable-chip"
+              style="margin: 0 2px 0 2px"
             >
               <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
               {{ participant.name === '' 
-                ? (participant.type === 'assistant' && participant.model ? `${participant.model} (continue)` : '(continue)')
+                ? `${participant.model} (continue)`
                 : participant.name }}
+              <v-tooltip activator="parent" location="top">
+                {{ participant.name === '' ? `Continue with ${participant.model}` : `Response from ${participant.name}` }}
+              </v-tooltip>
             </v-chip>
             
             <!-- Divider between participants and suggested models -->
@@ -312,6 +316,7 @@
                 @click="triggerModelResponse(model)"
                 :disabled="isStreaming"
                 class="clickable-chip"
+                style="margin: 0 2px 0 2px"
               >
                 <v-icon size="x-small" start>{{ getProviderIcon(model.provider) }}</v-icon>
                 {{ model.shortName || model.displayName }}
@@ -492,17 +497,7 @@
       :width="400"
       permanent
     >
-      <v-toolbar density="compact">
-        <v-toolbar-title>Conversation Tree</v-toolbar-title>
-        <v-spacer />
-        <v-btn
-          icon="mdi-close"
-          size="small"
-          variant="text"
-          @click="treeDrawer = false"
-        />
-      </v-toolbar>
-      
+
       <ConversationTree
         v-if="allMessages.length > 0"
         :messages="allMessages"
@@ -513,6 +508,8 @@
         :selected-parent-branch-id="selectedBranchForParent?.branchId"
         @navigate-to-branch="navigateToTreeBranch"
         class="flex-grow-1"
+        style="overflow-y: hidden"
+
       />
       
       <v-container v-else class="d-flex align-center justify-center" style="height: calc(100% - 48px);">
