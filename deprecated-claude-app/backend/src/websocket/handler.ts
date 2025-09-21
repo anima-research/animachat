@@ -452,14 +452,23 @@ async function handleRegenerate(
   console.log('[Regenerate] Original branch parent:', originalBranch?.parentBranchId);
   console.log('[Regenerate] Using parent branch:', correctParentBranchId);
   
-  // Create new branch with correct parent
-  // Use the conversation's current model (which has the correct model ID)
+  // Get the participant's model if in prefill mode
+  let regenerateModel = conversation.model;
+  if (conversation.format === 'prefill' && participantId) {
+    const participants = await db.getConversationParticipants(conversation.id);
+    const participant = participants.find(p => p.id === participantId);
+    if (participant && participant.model) {
+      regenerateModel = participant.model;
+    }
+  }
+  
+  // Create new branch with correct parent and model
   const updatedMessage = await db.addMessageBranch(
     message.messageId,
     '',
     'assistant',
     correctParentBranchId,
-    conversation.model,
+    regenerateModel,
     participantId
   );
 

@@ -34,7 +34,8 @@ export class InferenceService {
     onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
     format: ConversationFormat = 'standard',
     participants: Participant[] = [],
-    responderId?: string
+    responderId?: string,
+    conversation?: Conversation
   ): Promise<void> {
     
     // Find the model configuration
@@ -57,7 +58,7 @@ export class InferenceService {
     }
     
     // Format messages based on conversation format
-    const formattedMessages = this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider);
+    const formattedMessages = this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider, conversation);
 
     // Build stop sequences for prefill/messages formats
     let stopSequences: string[] | undefined;
@@ -211,7 +212,8 @@ export class InferenceService {
     format: InternalConversationFormat,
     participants: Participant[],
     responderId?: string,
-    provider?: string
+    provider?: string,
+    conversation?: Conversation
   ): Message[] {
     if (format === 'standard') {
       // Standard format - pass through as-is
@@ -222,22 +224,26 @@ export class InferenceService {
       // Convert to prefill format with participant names
       const prefillMessages: Message[] = [];
       
-      // Add the hardcoded user message for prefill
-      const cmdMessage: Message = {
-        id: 'prefill-cmd',
-        conversationId: messages[0]?.conversationId || '',
-        branches: [{
-          id: 'prefill-cmd-branch',
-          content: '<cmd>cat untitled.log</cmd>',
-          role: 'user',
-          createdAt: new Date(),
-          isActive: true,
-          parentBranchId: 'root'
-        }],
-        activeBranchId: 'prefill-cmd-branch',
-        order: 0
-      };
-      prefillMessages.push(cmdMessage);
+      // Add initial user message if configured
+      const prefillSettings = conversation?.prefillUserMessage || { enabled: true, content: '<cmd>cat untitled.log</cmd>' };
+      
+      if (prefillSettings.enabled) {
+        const cmdMessage: Message = {
+          id: 'prefill-cmd',
+          conversationId: messages[0]?.conversationId || '',
+          branches: [{
+            id: 'prefill-cmd-branch',
+            content: prefillSettings.content,
+            role: 'user',
+            createdAt: new Date(),
+            isActive: true,
+            parentBranchId: 'root'
+          }],
+          activeBranchId: 'prefill-cmd-branch',
+          order: 0
+        };
+        prefillMessages.push(cmdMessage);
+      }
       
       // Build the conversation content with participant names
       let conversationContent = '';

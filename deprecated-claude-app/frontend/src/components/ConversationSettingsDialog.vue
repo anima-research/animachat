@@ -71,6 +71,43 @@
             v-model="localParticipants"
             :models="models"
           />
+          
+          <v-divider class="my-4" />
+          
+          <!-- Prefill Initial Message Settings -->
+          <h4 class="text-h6 mb-4">Initial User Message</h4>
+          <p class="text-caption text-grey mb-3">
+            Configure the initial user message that starts the conversation log in group chat mode.
+          </p>
+          
+          <v-checkbox
+            v-model="prefillUserMessageEnabled"
+            label="Include initial user message"
+            density="compact"
+          />
+          
+          <v-textarea
+            v-if="prefillUserMessageEnabled"
+            v-model="prefillUserMessageContent"
+            label="Initial message content"
+            placeholder="<cmd>cat untitled.log</cmd>"
+            variant="outlined"
+            density="compact"
+            rows="2"
+            class="mt-2"
+          >
+            <template v-slot:append-inner>
+              <v-tooltip location="top">
+                <template v-slot:activator="{ props }">
+                  <v-icon v-bind="props" size="small">
+                    mdi-help-circle-outline
+                  </v-icon>
+                </template>
+                This message appears at the beginning of the conversation log sent to the model.
+                Common patterns: &lt;cmd&gt;command&lt;/cmd&gt; for commands, or plain text for context.
+              </v-tooltip>
+            </template>
+          </v-textarea>
         </div>
         
         <div v-if="selectedModel && settings.format === 'standard'">
@@ -311,6 +348,9 @@ const contextStrategy = ref('append');
 const rollingMaxTokens = ref(50000);
 const rollingGraceTokens = ref(10000);
 
+const prefillUserMessageEnabled = ref(true);
+const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
+
 const formatOptions = [
   {
     value: 'standard',
@@ -398,6 +438,16 @@ watch(() => props.conversation, async (conversation) => {
       contextStrategy.value = 'append';
       rollingMaxTokens.value = 50000;
       rollingGraceTokens.value = 10000;
+    }
+    
+    // Load prefill user message settings
+    if (conversation.prefillUserMessage) {
+      prefillUserMessageEnabled.value = conversation.prefillUserMessage.enabled;
+      prefillUserMessageContent.value = conversation.prefillUserMessage.content;
+    } else {
+      // Default values
+      prefillUserMessageEnabled.value = true;
+      prefillUserMessageContent.value = '<cmd>cat untitled.log</cmd>';
     }
     
     // Load participants if in multi-participant mode
@@ -562,6 +612,15 @@ function save() {
     };
   }
   
+  // Build prefill user message settings (only for prefill format)
+  let prefillUserMessage: any = undefined;
+  if (settings.value.format === 'prefill') {
+    prefillUserMessage = {
+      enabled: prefillUserMessageEnabled.value,
+      content: prefillUserMessageContent.value
+    };
+  }
+  
   // Update conversation settings
   emit('update', {
     title: settings.value.title,
@@ -569,7 +628,8 @@ function save() {
     format: settings.value.format,
     systemPrompt: settings.value.systemPrompt || undefined,
     settings: finalSettings,
-    contextManagement
+    contextManagement,
+    prefillUserMessage
   });
   
   // If in multi-participant mode, emit participants for parent to update

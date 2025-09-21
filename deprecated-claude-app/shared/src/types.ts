@@ -153,6 +153,13 @@ export type Message = z.infer<typeof MessageSchema>;
 export const ConversationFormatSchema = z.enum(['standard', 'prefill']);
 export type ConversationFormat = z.infer<typeof ConversationFormatSchema>;
 
+// Prefill settings
+export const PrefillSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  content: z.string().default('<cmd>cat untitled.log</cmd>')
+});
+export type PrefillSettings = z.infer<typeof PrefillSettingsSchema>;
+
 // Conversation types
 export const ConversationSchema = z.object({
   id: z.string().uuid(),
@@ -165,7 +172,8 @@ export const ConversationSchema = z.object({
   updatedAt: z.date(),
   archived: z.boolean().default(false),
   settings: ModelSettingsSchema,
-  contextManagement: ContextManagementSchema.optional() // Conversation-level default
+  contextManagement: ContextManagementSchema.optional(), // Conversation-level default
+  prefillUserMessage: PrefillSettingsSchema.optional() // Settings for initial user message in prefill mode
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;
@@ -235,7 +243,8 @@ export const CreateConversationRequestSchema = z.object({
   format: ConversationFormatSchema.optional(),
   systemPrompt: z.string().optional(),
   settings: ModelSettingsSchema.optional(),
-  contextManagement: ContextManagementSchema.optional()
+  contextManagement: ContextManagementSchema.optional(),
+  prefillUserMessage: PrefillSettingsSchema.optional()
 });
 
 export type CreateConversationRequest = z.infer<typeof CreateConversationRequestSchema>;
