@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage, Conversation } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
@@ -23,6 +23,78 @@ export class InferenceService {
     this.modelLoader = ModelLoader.getInstance();
     this.bedrockService = new BedrockService(db);
     this.anthropicService = new AnthropicService(db);
+  }
+
+  /**
+   * Build the prompt exactly as it would be sent to the API
+   * Returns the formatted messages array that would be sent to the provider
+   */
+  async buildPrompt(
+    modelId: string,
+    messages: Message[],
+    systemPrompt: string | undefined,
+    format: ConversationFormat = 'standard',
+    participants: Participant[] = [],
+    responderId?: string,
+    conversation?: Conversation
+  ): Promise<{ messages: any[], systemPrompt?: string, provider: string, modelId: string }> {
+    // Find the model configuration
+    const model = await this.modelLoader.getModelById(modelId);
+    if (!model) {
+      throw new Error(`Model ${modelId} not found`);
+    }
+    
+    // Determine the actual format to use
+    let actualFormat: InternalConversationFormat = format;
+    if (format === 'prefill') {
+      if (!this.providerSupportsPrefill(model.provider)) {
+        actualFormat = 'messages';
+      }
+    }
+    
+    // Format messages based on conversation format
+    const formattedMessages = this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider, conversation);
+    
+    // Now format for the specific provider
+    let apiMessages: any[];
+    let apiSystemPrompt: string | undefined = systemPrompt;
+    
+    switch (model.provider) {
+      case 'anthropic':
+        apiMessages = this.anthropicService.formatMessagesForAnthropic(formattedMessages);
+        break;
+      case 'bedrock':
+        apiMessages = this.bedrockService.formatMessagesForClaude(formattedMessages);
+        break;
+      case 'openai-compatible':
+        // For OpenAI-compatible, we need to get the API key first
+        const openAIKey = await this.apiKeyManager.getApiKey('openai-compatible');
+        if (!openAIKey) throw new Error('OpenAI-compatible API key not configured');
+        const openAIService = new OpenAICompatibleService(
+          this.db,
+          openAIKey.key,
+          openAIKey.baseUrl || 'http://localhost:11434',
+          openAIKey.modelPrefix
+        );
+        apiMessages = openAIService.formatMessagesForOpenAI(formattedMessages, systemPrompt);
+        apiSystemPrompt = undefined; // System prompt is included in messages for OpenAI
+        break;
+      case 'openrouter':
+        const openRouterKey = await this.apiKeyManager.getApiKey('openrouter');
+        const openRouterService = new OpenRouterService(this.db, openRouterKey?.key);
+        apiMessages = openRouterService.formatMessagesForOpenRouter(formattedMessages, systemPrompt);
+        apiSystemPrompt = undefined; // System prompt is included in messages for OpenRouter
+        break;
+      default:
+        throw new Error(`Unknown provider: ${model.provider}`);
+    }
+    
+    return {
+      messages: apiMessages,
+      systemPrompt: apiSystemPrompt,
+      provider: model.provider,
+      modelId: model.providerModelId
+    };
   }
 
   async streamCompletion(

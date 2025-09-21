@@ -12,6 +12,7 @@ import { modelRouter } from './routes/models.js';
 import { participantRouter } from './routes/participants.js';
 import { importRouter } from './routes/import.js';
 import { systemRouter } from './routes/system.js';
+import { createPromptRouter } from './routes/prompt.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
 import { authenticateToken } from './middleware/auth.js';
@@ -77,6 +78,7 @@ app.use('/api/conversations', authenticateToken, conversationRouter(db));
 app.use('/api/models', authenticateToken, modelRouter());
 app.use('/api/participants', authenticateToken, participantRouter(db));
 app.use('/api/import', authenticateToken, importRouter(db));
+app.use('/api/prompt', createPromptRouter(db));
 app.use('/api/system', systemRouter());
 
 // Health check

@@ -231,7 +231,7 @@ export class AnthropicService {
     }
   }
 
-  private formatMessagesForAnthropic(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: any }> {
+  formatMessagesForAnthropic(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: any }> {
     const formattedMessages: Array<{ role: 'user' | 'assistant'; content: any }> = [];
 
     for (const message of messages) {

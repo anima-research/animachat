@@ -170,7 +170,7 @@ export class OpenRouterService {
     }
   }
 
-  private formatMessagesForOpenRouter(messages: Message[], systemPrompt?: string): OpenRouterMessage[] {
+  formatMessagesForOpenRouter(messages: Message[], systemPrompt?: string): OpenRouterMessage[] {
     const formatted: OpenRouterMessage[] = [];
 
     // Add system prompt if provided

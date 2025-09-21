@@ -144,7 +144,7 @@ export class BedrockService {
     }
   }
 
-  private formatMessagesForClaude(messages: Message[]): Array<{ role: string; content: string }> {
+  formatMessagesForClaude(messages: Message[]): Array<{ role: string; content: string }> {
     const formattedMessages: Array<{ role: string; content: string }> = [];
 
     for (const message of messages) {

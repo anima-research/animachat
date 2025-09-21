@@ -188,6 +188,16 @@
             @click="$emit('select-as-parent', message.id, currentBranch.id)"
             title="Branch from here"
           />
+          
+          <v-btn
+            icon="mdi-code-json"
+            size="small"
+            variant="text"
+            density="compact"
+            style="opacity: 0.6"
+            @click="downloadPrompt"
+            title="Download prompt as JSON"
+          />
         </div>
 
         
@@ -246,8 +256,10 @@
 import { ref, computed, onMounted, onUpdated, watch } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import type { Message, MessageBranch, Participant } from '@deprecated-claude/shared';
+import type { Message, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
+import { api } from '@/services/api';
+import { useStore } from '@/store';
 
 const props = defineProps<{
   message: Message;
@@ -549,8 +561,8 @@ function openImageInNewTab(attachment: any): void {
   }
 }
 
-function formatTimestamp(timestamp: string): string {
-  const date = new Date(timestamp);
+function formatTimestamp(timestamp: string | Date): string {
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
@@ -576,6 +588,50 @@ function formatTimestamp(timestamp: string): string {
   
   // Otherwise show date
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+}
+
+const store = useStore();
+
+async function downloadPrompt() {
+  try {
+    // Get the conversation ID from the store
+    const conversationId = store.state.currentConversation?.id;
+    if (!conversationId) {
+      console.error('No conversation ID available');
+      return;
+    }
+    
+    // Call the API to get the prompt
+    const response = await api.post('/prompt/build', {
+      conversationId,
+      branchId: currentBranch.value.id,
+      includeSystemPrompt: true
+    });
+    
+    // Create a downloadable JSON file
+    const promptData = {
+      ...response.data,
+      timestamp: new Date().toISOString(),
+      message: {
+        id: props.message.id,
+        branchId: currentBranch.value.id,
+        role: currentBranch.value.role,
+        contentPreview: currentBranch.value.content.substring(0, 100) + '...'
+      }
+    };
+    
+    const blob = new Blob([JSON.stringify(promptData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `prompt-${props.message.id}-${currentBranch.value.id}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Failed to download prompt:', error);
+  }
 }
 </script>
 
