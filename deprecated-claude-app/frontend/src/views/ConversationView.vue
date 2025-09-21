@@ -186,16 +186,6 @@
           </v-tooltip>
         </v-chip>
         
-        <!-- Fix branches button (hidden - only for debugging) -->
-        <!-- <v-btn
-          v-if="currentConversation"
-          icon="mdi-wrench"
-          size="small"
-          color="orange"
-          @click="fixConversationBranches"
-          title="Fix branch structure issues"
-        /> -->
-        
         <!-- Import raw messages button (hidden - kept for potential debugging use) -->
         <!-- <v-btn
           v-if="currentConversation"
@@ -479,7 +469,7 @@
             
             
             <v-btn
-              :disabled="!messageInput.trim() || isStreaming"
+              :disabled="!messageInput || isStreaming"
               color="primary"
               icon="mdi-send"
               variant="text"
@@ -984,7 +974,8 @@ async function createNewConversation() {
 }
 
 async function sendMessage() {
-  const content = messageInput.value.trim();
+  // const content = messageInput.value.trim();
+  const content = messageInput.value;
   if (!content || isStreaming.value) return;
   
   console.log('ConversationView sendMessage:', content);
@@ -1537,46 +1528,6 @@ function logout() {
 
 // Cache for conversation participants to avoid repeated API calls
 const conversationParticipantsCache = ref<Record<string, any[]>>({});
-
-// Branch structure analysis function (disabled - only reports issues, doesn't fix)
-// async function fixConversationBranches() {
-//   if (!currentConversation.value) return;
-  
-//   const conversationId = currentConversation.value.id;
-//   console.log(`Analyzing branch structure for conversation: ${conversationId}`);
-  
-//   try {
-//     const token = localStorage.getItem('token');
-//     if (!token) {
-//       alert('Not authenticated');
-//       return;
-//     }
-    
-//     const response = await fetch(`http://localhost:3010/api/conversations/${conversationId}/fix-branches`, {
-//       method: 'POST',
-//       headers: {
-//         'Authorization': `Bearer ${token}`,
-//         'Content-Type': 'application/json'
-//       }
-//     });
-    
-//     const result = await response.json();
-    
-//     if (response.ok) {
-//       console.log('Branch structure analysis:', result);
-//       alert(`Branch structure analysis complete!\n\nCheck console for details.`);
-      
-//       // Reload the conversation to see any changes
-//       await store.loadConversation(conversationId);
-//     } else {
-//       console.error('Failed to analyze branches:', result);
-//       alert(`Failed to analyze branches: ${result.error || 'Unknown error'}`);
-//     }
-//   } catch (error) {
-//     console.error('Error analyzing branches:', error);
-//     alert('Error analyzing branches. Check console for details.');
-//   }
-// }
 
 async function importRawMessages() {
   if (!currentConversation.value || !rawImportData.value.trim()) return;
