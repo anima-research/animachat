@@ -407,6 +407,10 @@ const hasNavigableBranches = computed(() => {
 const renderedContent = computed(() => {
   let content = currentBranch.value.content;
   
+  // Preserve leading/trailing whitespace by converting to non-breaking spaces
+  const leadingSpaces = content.match(/^(\s+)/)?.[1] || '';
+  const trailingSpaces = content.match(/(\s+)$/)?.[1] || '';
+  
   // First, protect code blocks and inline code from HTML escaping
   const codeBlocks: string[] = [];
   const inlineCode: string[] = [];
@@ -454,7 +458,24 @@ const renderedContent = computed(() => {
     gfm: true
   });
   
-  const html = marked(content);
+  let html = marked.parse ? marked.parse(content) : marked(content);
+  // Handle if marked returns a promise (newer versions)
+  if (html instanceof Promise) {
+    html = ''; // Fallback, but this shouldn't happen with sync parse
+  }
+  
+  // Convert leading/trailing spaces to non-breaking spaces to preserve them
+  const leadingNbsp = leadingSpaces.replace(/ /g, '&nbsp;').replace(/\n/g, '<br>');
+  const trailingNbsp = trailingSpaces.replace(/ /g, '&nbsp;').replace(/\n/g, '<br>');
+  
+  // Add preserved whitespace back
+  if (leadingNbsp) {
+    html = leadingNbsp + html;
+  }
+  if (trailingNbsp) {
+    html = html + trailingNbsp;
+  }
+  
   return DOMPurify.sanitize(html, {
     // Allow only safe HTML tags that markdown generates
     ALLOWED_TAGS: [
@@ -485,8 +506,8 @@ function cancelEdit() {
 }
 
 function saveEdit() {
-  if (editContent.value.trim() !== currentBranch.value.content) {
-    emit('edit', props.message.id, currentBranch.value.id, editContent.value.trim());
+  if (editContent.value !== currentBranch.value.content) {
+    emit('edit', props.message.id, currentBranch.value.id, editContent.value);
   }
   cancelEdit();
 }

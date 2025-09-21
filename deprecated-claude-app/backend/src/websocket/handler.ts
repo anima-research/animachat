@@ -692,6 +692,15 @@ async function handleEdit(
       responderId = defaultAssistant?.id;
     }
     
+    // Get the responder's model early for branch creation
+    let responderModel = conversation.model;
+    if (responderId && participants.length > 0) {
+      const responderParticipant = participants.find(p => p.id === responderId);
+      if (responderParticipant && responderParticipant.model) {
+        responderModel = responderParticipant.model;
+      }
+    }
+    
     // Check if there's already an assistant message after this user message
     const nextMessage = editedMessageIndex + 1 < allMessages.length ? allMessages[editedMessageIndex + 1] : null;
     
@@ -704,7 +713,7 @@ async function handleEdit(
         '',
         'assistant',
         updatedMessage.activeBranchId, // Parent is the edited user message's active branch
-        conversation.model,
+        responderModel,  // Use responder's model, not conversation model
         responderId // Assistant participant ID
       );
       
@@ -727,7 +736,7 @@ async function handleEdit(
         msg.conversationId,
         '',
         'assistant',
-        conversation.model,
+        responderModel,  // Use responder's model, not conversation model
         updatedMessage.activeBranchId, // Parent is the edited user message's active branch
         responderId // Assistant participant ID
       );
@@ -739,24 +748,59 @@ async function handleEdit(
       }));
     }
     
-    // Get conversation history up to and including the edited message
-    const historyMessages = allMessages.slice(0, editedMessageIndex + 1);
+    // Build conversation history following the active branch path
+    const historyMessages: Message[] = [];
     
-    // Make sure we're using the edited branch for the user message in history
-    if (historyMessages[editedMessageIndex]) {
-      historyMessages[editedMessageIndex] = updatedMessage;
+    // Build a map for quick lookup
+    const messagesByBranchId = new Map<string, Message>();
+    for (const msg of allMessages) {
+      for (const branch of msg.branches) {
+        messagesByBranchId.set(branch.id, msg);
+      }
     }
     
-    // Get the responder's settings
+    // Start from the edited message's active branch and work backwards
+    let currentBranchId: string | undefined = updatedMessage.activeBranchId;
+    const tempHistory: Message[] = [];
+    
+    while (currentBranchId && currentBranchId !== 'root') {
+      const currentMessage = messagesByBranchId.get(currentBranchId);
+      if (!currentMessage) {
+        console.log('Edit: Could not find message for branch:', currentBranchId);
+        break;
+      }
+      
+      // Use the updated message if this is the edited one
+      if (currentMessage.id === updatedMessage.id) {
+        tempHistory.unshift(updatedMessage);
+      } else {
+        tempHistory.unshift(currentMessage);
+      }
+      
+      // Find the branch and get its parent
+      const branch = currentMessage.id === updatedMessage.id 
+        ? updatedMessage.branches.find(b => b.id === currentBranchId)
+        : currentMessage.branches.find(b => b.id === currentBranchId);
+        
+      if (!branch) {
+        console.log('Edit: Could not find branch:', currentBranchId);
+        break;
+      }
+      
+      currentBranchId = branch.parentBranchId;
+    }
+    
+    // tempHistory now contains the messages in correct order
+    historyMessages.push(...tempHistory);
+    
+    // Get the responder's settings (we already have responderModel from earlier)
     let responderSettings = conversation.settings;
     let responderSystemPrompt = conversation.systemPrompt;
-    let responderModel = conversation.model;
     let responderParticipant: Participant | undefined;
     
     if (responderId && participants.length > 0) {
       responderParticipant = participants.find(p => p.id === responderId);
       if (responderParticipant) {
-        responderModel = responderParticipant.model || conversation.model;
         responderSystemPrompt = responderParticipant.systemPrompt || conversation.systemPrompt;
         responderSettings = responderParticipant.settings || conversation.settings;
       }
