@@ -870,6 +870,11 @@ onMounted(async () => {
 // Watch route changes
 watch(() => route.params.id, async (newId) => {
   if (newId) {
+    // Clear selected branch when switching conversations
+    if (selectedBranchForParent.value) {
+      cancelBranchSelection();
+    }
+    
     await store.loadConversation(newId as string);
     await loadParticipants();
     // Ensure DOM is updated before scrolling
@@ -888,6 +893,42 @@ watch(messages, () => {
     nextTick(() => {
       scrollToBottom(true); // Smooth scroll for new messages
     });
+  }
+}, { deep: true });
+
+// Watch for branch changes to clear selected parent if it's no longer in active path
+watch(messages, () => {
+  if (selectedBranchForParent.value && messages.value.length > 0) {
+    const { messageId, branchId } = selectedBranchForParent.value;
+    
+    // Check if the selected branch is still in the active path
+    let isInActivePath = false;
+    
+    // Find the message with the selected branch
+    const selectedMessage = messages.value.find(m => m.id === messageId);
+    if (selectedMessage && selectedMessage.activeBranchId === branchId) {
+      // Now trace forward from this message to see if it leads to the current position
+      let currentMsg = selectedMessage;
+      const currentBranch = currentMsg.branches.find(b => b.id === branchId);
+      
+      if (currentBranch) {
+        // Check if any message has this branch as its parent in the active path
+        isInActivePath = messages.value.some(msg => {
+          const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+          return activeBranch && activeBranch.parentBranchId === branchId;
+        });
+        
+        // Also check if this is the last message (no children)
+        if (!isInActivePath && messages.value[messages.value.length - 1]?.id === messageId) {
+          isInActivePath = true;
+        }
+      }
+    }
+    
+    // Clear selection if it's not in the active path
+    if (!isInActivePath) {
+      cancelBranchSelection();
+    }
   }
 }, { deep: true });
 
