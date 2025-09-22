@@ -28,6 +28,14 @@
       </v-chip>
       
       <v-btn
+        v-if="shareData?.share?.shareType === 'tree'"
+        :icon="showTreeView ? 'mdi-message-text' : 'mdi-file-tree-outline'"
+        size="small"
+        @click="showTreeView = !showTreeView"
+        :title="showTreeView ? 'Show messages' : 'Show tree'"
+      />
+      
+      <v-btn
         v-if="shareData?.share?.settings?.allowDownload"
         icon="mdi-download"
         size="small"
@@ -60,12 +68,69 @@
             {{ shareData.share.settings.description }}
           </v-alert>
           
+          <!-- Tree view -->
+          <div v-if="showTreeView && shareData.share.shareType === 'tree'" class="flex-grow-1 overflow-auto pa-4">
+            <div class="mx-auto" style="max-width: 1200px;">
+              <div class="tree-container">
+                <div class="tree-node" v-for="(node, index) in treeNodes" :key="index">
+                  <div 
+                    class="tree-indent"
+                    :style="{ marginLeft: `${node.depth * 40}px` }"
+                  >
+                    <div v-if="node.type === 'branch'" class="branch-indicator">
+                      <v-icon size="x-small">mdi-source-branch</v-icon>
+                    </div>
+                    <v-card
+                      :id="`message-${node.message.id}`"
+                      class="tree-message-card"
+                      :class="{ 
+                        'active-branch': node.isActive,
+                        'clickable': node.message.branches.length > 1
+                      }"
+                      @click="node.message.branches.length > 1 && navigateBranch(node.message.id, node.branch.id)"
+                    >
+                      <v-card-text class="pa-2">
+                        <div class="d-flex align-center mb-1">
+                          <v-icon 
+                            :icon="node.branch.role === 'user' ? 'mdi-account' : 'mdi-robot'"
+                            :color="node.branch.role === 'user' ? 'primary' : 'grey'"
+                            size="x-small"
+                            class="mr-1"
+                          />
+                          <span class="text-caption font-weight-medium">
+                            {{ getParticipantName(node.branch) || (node.branch.role === 'user' ? 'User' : 'Assistant') }}
+                          </span>
+                          <v-spacer />
+                          <v-btn
+                            icon="mdi-link"
+                            size="x-small"
+                            variant="text"
+                            density="compact"
+                            @click.stop="copyMessageLink(node.message.id)"
+                            title="Copy link to this message"
+                          />
+                        </div>
+                        <div class="text-body-2 message-preview">
+                          {{ node.branch.content.substring(0, 150) }}{{ node.branch.content.length > 150 ? '...' : '' }}
+                        </div>
+                        <div v-if="node.message.branches.length > 1" class="text-caption text-grey mt-1">
+                          Branch {{ node.branchIndex + 1 }} of {{ node.message.branches.length }}
+                        </div>
+                      </v-card-text>
+                    </v-card>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
           <!-- Messages container -->
-          <div class="flex-grow-1 overflow-auto pa-4" ref="messagesContainer">
+          <div v-else class="flex-grow-1 overflow-auto pa-4" ref="messagesContainer">
             <div class="mx-auto" style="max-width: 900px;">
               <div
                 v-for="(message, index) in displayMessages"
                 :key="message.id"
+                :id="`message-${message.id}`"
                 class="mb-4"
               >
                 <SharedMessageComponent
@@ -77,6 +142,7 @@
                   :conversation-id="shareData.conversation.id"
                   :is-tree-view="shareData.share.shareType === 'tree'"
                   @navigate-branch="navigateBranch"
+                  @copy-link="copyMessageLink"
                 />
               </div>
               
@@ -105,7 +171,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, nextTick } from 'vue';
 import { useRoute } from 'vue-router';
 import { api } from '@/services/api';
 import SharedMessageComponent from '@/components/SharedMessageComponent.vue';
@@ -116,6 +182,7 @@ const shareData = ref<any>(null);
 const isLoading = ref(true);
 const error = ref('');
 const messagesContainer = ref<HTMLElement>();
+const showTreeView = ref(false);
 
 // For tree navigation
 const activeBranchPath = ref<Set<string>>(new Set());
@@ -156,8 +223,64 @@ const displayMessages = computed(() => {
   return messages;
 });
 
+const treeNodes = computed(() => {
+  if (!shareData.value || !shareData.value.messages) return [];
+  
+  const nodes: any[] = [];
+  const processedBranches = new Set<string>();
+  
+  // Build tree structure
+  function addBranches(parentBranchId: string, depth: number) {
+    for (const msg of shareData.value.messages) {
+      for (let branchIndex = 0; branchIndex < msg.branches.length; branchIndex++) {
+        const branch = msg.branches[branchIndex];
+        
+        if (branch.parentBranchId === parentBranchId && !processedBranches.has(branch.id)) {
+          processedBranches.add(branch.id);
+          
+          // Add branch indicator if this is not the first branch of a message
+          if (branchIndex > 0 && nodes.length > 0 && nodes[nodes.length - 1].message.id === msg.id) {
+            nodes.push({
+              type: 'branch',
+              depth: depth - 1
+            });
+          }
+          
+          nodes.push({
+            type: 'message',
+            message: msg,
+            branch: branch,
+            branchIndex: branchIndex,
+            depth: depth,
+            isActive: branch.id === msg.activeBranchId
+          });
+          
+          // Recursively add children
+          addBranches(branch.id, depth + 1);
+        }
+      }
+    }
+  }
+  
+  addBranches('root', 0);
+  return nodes;
+});
+
+function getParticipantName(branch: any): string | null {
+  if (!shareData.value.participants || !branch.participantId) {
+    return null;
+  }
+  const participant = shareData.value.participants.find((p: any) => p.id === branch.participantId);
+  return participant?.name || null;
+}
+
 onMounted(async () => {
   await loadShare();
+  
+  // Check for message hash in URL
+  if (window.location.hash) {
+    await scrollToMessage(window.location.hash.substring(1));
+  }
 });
 
 async function loadShare() {
@@ -305,6 +428,26 @@ async function downloadConversation() {
   URL.revokeObjectURL(url);
 }
 
+async function scrollToMessage(messageId: string) {
+  await nextTick();
+  const element = document.getElementById(messageId);
+  if (element) {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Add highlight effect
+    element.classList.add('highlight-message');
+    setTimeout(() => {
+      element.classList.remove('highlight-message');
+    }, 2000);
+  }
+}
+
+function copyMessageLink(messageId: string) {
+  const url = new URL(window.location.href);
+  url.hash = `message-${messageId}`;
+  navigator.clipboard.writeText(url.toString());
+  // TODO: Show toast notification
+}
+
 function formatDate(date: string | Date): string {
   const d = new Date(date);
   const now = new Date();
@@ -327,5 +470,64 @@ function formatDate(date: string | Date): string {
 .v-footer {
   background: rgba(var(--v-theme-surface), 0.95);
   border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.tree-container {
+  padding: 20px;
+}
+
+.tree-node {
+  margin-bottom: 8px;
+}
+
+.tree-indent {
+  position: relative;
+}
+
+.branch-indicator {
+  text-align: center;
+  margin: 8px 0;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+}
+
+.tree-message-card {
+  transition: all 0.2s;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.tree-message-card.active-branch {
+  border-color: rgba(var(--v-theme-primary), 0.5);
+  background: rgba(var(--v-theme-primary), 0.05);
+}
+
+.tree-message-card.clickable {
+  cursor: pointer;
+}
+
+.tree-message-card.clickable:hover {
+  border-color: rgba(var(--v-theme-primary), 0.3);
+  transform: translateX(2px);
+}
+
+.message-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.highlight-message {
+  animation: highlight 2s ease-out;
+}
+
+@keyframes highlight {
+  0% {
+    background-color: rgba(var(--v-theme-warning), 0.3);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 </style>

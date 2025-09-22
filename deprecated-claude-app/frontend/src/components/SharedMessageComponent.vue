@@ -48,6 +48,14 @@
         <!-- Action buttons -->
         <div class="d-flex gap-1">
           <v-btn
+            icon="mdi-link"
+            size="x-small"
+            variant="text"
+            @click="copyLink"
+            title="Copy link to message"
+          />
+          
+          <v-btn
             icon="mdi-content-copy"
             size="x-small"
             variant="text"
@@ -91,6 +99,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'navigate-branch': [messageId: string, branchId: string];
+  'copy-link': [messageId: string];
 }>();
 
 const currentBranchIndex = computed(() => {
@@ -146,6 +155,10 @@ function navigateBranch(direction: number) {
 
 function copyContent() {
   navigator.clipboard.writeText(currentBranch.value.content);
+}
+
+function copyLink() {
+  emit('copy-link', props.message.id);
 }
 
 async function downloadPrompt() {
