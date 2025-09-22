@@ -71,21 +71,40 @@
           <!-- Tree view -->
           <div v-if="showTreeView && shareData.share.shareType === 'tree'" class="flex-grow-1 overflow-auto pa-4">
             <div class="mx-auto" style="max-width: 1200px;">
+              <!-- Focus breadcrumb -->
+              <div v-if="focusNodeId" class="mb-3 d-flex align-center">
+                <v-btn
+                  size="small"
+                  variant="tonal"
+                  @click="focusNodeId = null"
+                  prepend-icon="mdi-home"
+                >
+                  Root
+                </v-btn>
+                <v-icon class="mx-2">mdi-chevron-right</v-icon>
+                <v-chip size="small" variant="outlined">
+                  Focused on: {{ getFocusedNodePreview() }}
+                </v-chip>
+              </div>
+              
               <div class="tree-container">
                 <div class="tree-node" v-for="(node, index) in treeNodes" :key="index">
                   <div 
                     class="tree-indent"
-                    :style="{ marginLeft: `${node.depth * 40}px` }"
+                    :style="{ marginLeft: `${node.depth * 20}px` }"
                   >
                     <div v-if="node.type === 'branch'" class="branch-indicator">
                       <v-icon size="x-small">mdi-source-branch</v-icon>
                     </div>
                     <v-card
+                      v-else
                       :id="`message-${node.message.id}`"
                       class="tree-message-card"
                       :class="{ 
                         'active-branch': node.isActive,
-                        'clickable': node.message.branches.length > 1
+                        'clickable': node.message.branches.length > 1,
+                        'focus-root': node.branch.id === focusNodeId,
+                        'is-ancestor': node.isAncestor
                       }"
                       @click="node.message.branches.length > 1 && navigateBranch(node.message.id, node.branch.id)"
                     >
@@ -101,6 +120,15 @@
                             {{ getParticipantName(node.branch) || (node.branch.role === 'user' ? 'User' : 'Assistant') }}
                           </span>
                           <v-spacer />
+                          <v-btn
+                            icon="mdi-target"
+                            size="x-small"
+                            variant="text"
+                            density="compact"
+                            color="primary"
+                            @click.stop="focusOnNode(node.branch.id)"
+                            title="Focus on this node"
+                          />
                           <v-btn
                             icon="mdi-link"
                             size="x-small"
@@ -183,6 +211,7 @@ const isLoading = ref(true);
 const error = ref('');
 const messagesContainer = ref<HTMLElement>();
 const showTreeView = ref(false);
+const focusNodeId = ref<string | null>(null);
 
 // For tree navigation
 const activeBranchPath = ref<Set<string>>(new Set());
@@ -229,8 +258,49 @@ const treeNodes = computed(() => {
   const nodes: any[] = [];
   const processedBranches = new Set<string>();
   
-  // Build tree structure
-  function addBranches(parentBranchId: string, depth: number) {
+  // Determine starting point based on focus
+  const startBranchId = focusNodeId.value || 'root';
+  const startDepth = 0;
+  
+  // If we have a focus node, optionally show its ancestors with negative depth
+  if (focusNodeId.value) {
+    // Find path from root to focus node
+    const pathToFocus: any[] = [];
+    let currentId = focusNodeId.value;
+    
+    while (currentId && currentId !== 'root') {
+      for (const msg of shareData.value.messages) {
+        const branch = msg.branches.find((b: any) => b.id === currentId);
+        if (branch) {
+          pathToFocus.unshift({ message: msg, branch, branchIndex: msg.branches.indexOf(branch) });
+          currentId = branch.parentBranchId;
+          break;
+        }
+      }
+    }
+    
+    // Add ancestors with negative depth (optional - comment out if you don't want to see ancestors)
+    pathToFocus.forEach((item, index) => {
+      if (!processedBranches.has(item.branch.id)) {
+        processedBranches.add(item.branch.id);
+        nodes.push({
+          type: 'message',
+          message: item.message,
+          branch: item.branch,
+          branchIndex: item.branchIndex,
+          depth: index - pathToFocus.length,
+          isActive: item.branch.id === item.message.activeBranchId,
+          isAncestor: true
+        });
+      }
+    });
+  }
+  
+  // Build tree structure from focus point
+  function addBranches(parentBranchId: string, depth: number, maxDepth: number = 10) {
+    // Limit depth to prevent infinite recursion and save horizontal space
+    if (depth > maxDepth) return;
+    
     for (const msg of shareData.value.messages) {
       for (let branchIndex = 0; branchIndex < msg.branches.length; branchIndex++) {
         const branch = msg.branches[branchIndex];
@@ -256,13 +326,13 @@ const treeNodes = computed(() => {
           });
           
           // Recursively add children
-          addBranches(branch.id, depth + 1);
+          addBranches(branch.id, depth + 1, maxDepth);
         }
       }
     }
   }
   
-  addBranches('root', 0);
+  addBranches(startBranchId, startDepth);
   return nodes;
 });
 
@@ -448,6 +518,24 @@ function copyMessageLink(messageId: string) {
   // TODO: Show toast notification
 }
 
+function focusOnNode(branchId: string) {
+  focusNodeId.value = branchId;
+}
+
+function getFocusedNodePreview(): string {
+  if (!focusNodeId.value || !shareData.value) return '';
+  
+  for (const msg of shareData.value.messages) {
+    const branch = msg.branches.find((b: any) => b.id === focusNodeId.value);
+    if (branch) {
+      const preview = branch.content.substring(0, 50);
+      return preview + (branch.content.length > 50 ? '...' : '');
+    }
+  }
+  
+  return 'Unknown';
+}
+
 function formatDate(date: string | Date): string {
   const d = new Date(date);
   const now = new Date();
@@ -507,6 +595,16 @@ function formatDate(date: string | Date): string {
 .tree-message-card.clickable:hover {
   border-color: rgba(var(--v-theme-primary), 0.3);
   transform: translateX(2px);
+}
+
+.tree-message-card.focus-root {
+  border: 2px solid rgba(var(--v-theme-warning), 0.5);
+  background: rgba(var(--v-theme-warning), 0.1);
+}
+
+.tree-message-card.is-ancestor {
+  opacity: 0.6;
+  background: rgba(var(--v-theme-on-surface), 0.02);
 }
 
 .message-preview {
