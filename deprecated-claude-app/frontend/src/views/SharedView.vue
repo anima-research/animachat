@@ -61,11 +61,14 @@
           <v-alert
             v-if="shareData.share.settings.description"
             type="info"
-            variant="tonal"
+            variant="outlined"
             density="compact"
             class="ma-4 mb-0"
+            style="background: rgba(var(--v-theme-info), 0.05);"
           >
-            {{ shareData.share.settings.description }}
+            <div style="color: rgba(var(--v-theme-on-surface), 0.87);">
+              {{ shareData.share.settings.description }}
+            </div>
           </v-alert>
           
           <!-- Tree view -->
