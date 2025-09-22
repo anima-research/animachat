@@ -81,33 +81,11 @@
             @click="$emit('regenerate', message.id, currentBranch.id)"
           />
 
-
-          <v-btn
-            icon="mdi-pencil"
-            size="x-small"
-            variant="text"
-            class="mr-4"
-            style="opacity: 0.6"
-            density="compact"
-            @click="startEdit"
-          />
-
-          <v-btn
-            icon="mdi-content-copy"
-            size="x-small"
-            density="compact"
-            variant="text"
-            class="mr-4"
-            style="opacity: 0.6"
-            @click="copyContent"
-          />
-
           <v-btn
             icon="mdi-delete-outline"
             size="x-small"
             density="compact"
             variant="text"
-            class="mr-4"
             color="error"
             @click="$emit('delete', message.id, currentBranch.id)"
           />
@@ -172,33 +150,54 @@
       </div>
       
       <div
-        v-if="!isEditing && !isStreaming && !isLastMessage"
-        class="bottom-controls d-flex align-center justify-space-evenly mt-3"
+        v-if="!isEditing && !isStreaming"
+        class="bottom-controls d-flex align-center justify-space-between mt-3"
       >
 
-        <div v-if="!isEditing" class="d-flex gap-1">
+        <v-btn
+          :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
+          :color="isSelectedParent ? 'info' : undefined"
+          size="small"
+          variant="text"
+          density="compact"
+          :style="isSelectedParent ? 'opacity: 1' : isLastMessage ? 'opacity: 0.3' : 'opacity: 0.6'"
+          @click="$emit('select-as-parent', message.id, currentBranch.id)"
+          title="Branch from here"
+          :disabled="isLastMessage"
+        />
+
+        <v-spacer />
+
+        <div class="d-flex gap-1">
           <v-btn
-            v-if="!isLastMessage"
-            :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
-            :color="isSelectedParent ? 'info' : undefined"
-            size="small"
-            variant="text"
+            icon="mdi-content-copy"
+            size="x-small"
             density="compact"
-            :style="isSelectedParent ? 'opacity: 1' : 'opacity: 0.6'"
-            @click="$emit('select-as-parent', message.id, currentBranch.id)"
-            title="Branch from here"
+            variant="text"
+            class="mr-4"
+            style="opacity: 0.6"
+            @click="copyContent"
           />
-          
           <v-btn
             icon="mdi-code-json"
-            size="small"
+            size="x-small"
             variant="text"
             density="compact"
+            class="mr-4"
             style="opacity: 0.6"
             @click="downloadPrompt"
             title="Download prompt as JSON"
           />
+          <v-btn
+            icon="mdi-pencil"
+            size="x-small"
+            variant="text"
+            style="opacity: 0.6"
+            density="compact"
+            @click="startEdit"
+          />
         </div>
+
 
         
         <!-- Scroll to top button -->
@@ -608,19 +607,8 @@ async function downloadPrompt() {
       includeSystemPrompt: true
     });
     
-    // Create a downloadable JSON file
-    const promptData = {
-      ...response.data,
-      timestamp: new Date().toISOString(),
-      message: {
-        id: props.message.id,
-        branchId: currentBranch.value.id,
-        role: currentBranch.value.role,
-        contentPreview: currentBranch.value.content.substring(0, 100) + '...'
-      }
-    };
-    
-    const blob = new Blob([JSON.stringify(promptData, null, 2)], { type: 'application/json' });
+    // Create a downloadable JSON file with just the messages array
+    const blob = new Blob([JSON.stringify(response.data.messages, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

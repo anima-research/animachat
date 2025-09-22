@@ -19,7 +19,7 @@ export function createPromptRouter(db: Database): Router {
   // Get prompt for a specific message/branch
   router.post('/build', authenticateToken, async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user.userId;
+      const userId = (req as any).userId; // authenticateToken sets userId directly on req
       const params = GetPromptSchema.parse(req.body);
 
       // Get the conversation
