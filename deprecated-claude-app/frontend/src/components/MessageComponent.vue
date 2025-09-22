@@ -1,5 +1,6 @@
 <template>
   <v-card
+    ref="messageCard"
     :class="[
       'mb-4',
       message.branches[branchIndex].role === 'user' ? 'ml-auto' : 'mr-auto',
@@ -14,6 +15,40 @@
     :variant="message.branches[branchIndex].role === 'user' ? 'tonal' : 'elevated'"
   >
     <v-card-text>
+
+      <div
+        v-if="hasNavigableBranches"
+        class="top-controls d-flex align-center justify-space-evenly"
+      >
+      <!-- Branch navigation section -->
+        <div v-if="hasNavigableBranches" class="d-flex align-center">
+          <v-btn
+            icon="mdi-chevron-left"
+            size="small"
+            variant="text"
+            density="compact"
+
+            :disabled="siblingIndex === 0"
+            @click="navigateBranch(-1)"
+          />
+          
+          <span class="mx-1 meta-text">
+            {{ siblingIndex + 1 }} / {{ siblingBranches.length }}
+          </span>
+          
+          <v-btn
+            icon="mdi-chevron-right"
+            size="small"
+            variant="text"
+            density="compact"
+
+            :disabled="siblingIndex === siblingBranches.length - 1"
+            @click="navigateBranch(1)"
+          />
+        </div>
+
+      </div>
+
       <div class="d-flex align-start mb-2">
         <v-icon
           :icon="message.branches[branchIndex].role === 'user' ? 'mdi-account' : 'mdi-robot'"
@@ -21,48 +56,35 @@
           size="small"
           class="mr-2"
         />
-        <div class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
-          {{ participantName }}
+        <div v-if="participantDisplayName" class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
+          {{ participantDisplayName }}
+        </div>
+        <div v-if="modelIndicator" class="text-caption ml-1 meta-text">
+          ({{ modelIndicator }})
+        </div>
+        <div v-if="currentBranch?.createdAt" class="text-caption ml-2 meta-text">
+          {{ formatTimestamp(currentBranch.createdAt) }}
         </div>
         
         <v-spacer />
         
         <div v-if="!isEditing" class="d-flex gap-1">
-          <v-btn
-            v-if="!isLastMessage"
-            :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
-            :color="isSelectedParent ? 'info' : undefined"
-            size="x-small"
-            variant="text"
-            @click="$emit('select-as-parent', message.id, currentBranch.id)"
-            title="Branch from here"
-          />
-          
-          <v-btn
-            icon="mdi-pencil"
-            size="x-small"
-            variant="text"
-            @click="startEdit"
-          />
-          
+
           <v-btn
             v-if="message.branches[branchIndex].role === 'assistant'"
             icon="mdi-refresh"
             size="x-small"
+            density="compact"
+            class="mr-4"
+            style="opacity: 0.6"
             variant="text"
             @click="$emit('regenerate', message.id, currentBranch.id)"
           />
-          
-          <v-btn
-            icon="mdi-content-copy"
-            size="x-small"
-            variant="text"
-            @click="copyContent"
-          />
-          
+
           <v-btn
             icon="mdi-delete-outline"
             size="x-small"
+            density="compact"
             variant="text"
             color="error"
             @click="$emit('delete', message.id, currentBranch.id)"
@@ -127,37 +149,102 @@
         </v-btn>
       </div>
       
-      <!-- Branch navigation -->
       <div
-        v-if="hasNavigableBranches"
-        class="branch-navigation"
+        v-if="!isEditing && !isStreaming"
+        class="bottom-controls d-flex align-center justify-space-between mt-3"
       >
+
         <v-btn
-          icon="mdi-chevron-left"
-          size="x-small"
+          :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
+          :color="isSelectedParent ? 'info' : undefined"
+          size="small"
           variant="text"
-          :disabled="siblingIndex === 0"
-          @click="navigateBranch(-1)"
+          density="compact"
+          :style="isSelectedParent ? 'opacity: 1' : isLastMessage ? 'opacity: 0.3' : 'opacity: 0.6'"
+          @click="$emit('select-as-parent', message.id, currentBranch.id)"
+          title="Branch from here"
+          :disabled="isLastMessage"
         />
+
+        <v-spacer />
+
+        <div class="d-flex gap-1">
+          <v-btn
+            icon="mdi-content-copy"
+            size="x-small"
+            density="compact"
+            variant="text"
+            class="mr-4"
+            style="opacity: 0.6"
+            @click="copyContent"
+          />
+          <v-btn
+            icon="mdi-code-json"
+            size="x-small"
+            variant="text"
+            density="compact"
+            class="mr-4"
+            style="opacity: 0.6"
+            @click="downloadPrompt"
+            title="Download prompt as JSON"
+          />
+          <v-btn
+            icon="mdi-pencil"
+            size="x-small"
+            variant="text"
+            style="opacity: 0.6"
+            density="compact"
+            @click="startEdit"
+          />
+        </div>
+
+
         
-        <span>
-          {{ siblingIndex + 1 }} / {{ siblingBranches.length }}
-        </span>
-        
-        <v-btn
-          icon="mdi-chevron-right"
-          size="x-small"
-          variant="text"
-          :disabled="siblingIndex === siblingBranches.length - 1"
-          @click="navigateBranch(1)"
-        />
-        
-        <v-chip
-          v-if="siblingIndex > 0"
-          size="x-small"
-          class="ml-2"
+        <!-- Scroll to top button -->
+        <!-- <v-btn
+          v-if="showScrollToTop"
+          size="small"
+          variant="tonal"
+          color="grey"
+          @click="scrollToTopOfMessage"
         >
-          {{ getBranchLabel(branchIndex) }}
+          <v-icon start size="small">mdi-chevron-up</v-icon>
+          Scroll to top
+        </v-btn> -->
+      </div>
+      
+      <!-- Generating indicator or error indicator -->
+      <div v-if="hasError && currentBranch.role === 'assistant'" class="error-indicator mt-3">
+        <v-chip 
+          size="small" 
+          color="error"
+          variant="tonal"
+          class="error-chip"
+        >
+          <v-icon
+            size="small"
+            class="mr-2"
+          >
+            mdi-alert-circle
+          </v-icon>
+          {{ errorMessage || 'Failed to generate response' }}
+        </v-chip>
+      </div>
+      <div v-else-if="isStreaming && currentBranch.role === 'assistant'" class="generating-indicator mt-3">
+        <v-chip 
+          size="small" 
+          :color="participantColor || 'grey'"
+          variant="tonal"
+          class="generating-chip"
+        >
+          <v-progress-circular
+            indeterminate
+            size="14"
+            width="2"
+            class="mr-2"
+            :color="participantColor || 'grey'"
+          />
+          Generating...
         </v-chip>
       </div>
     </v-card-text>
@@ -165,17 +252,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUpdated, watch } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import type { Message, MessageBranch, Participant } from '@deprecated-claude/shared';
+import type { Message, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
+import { api } from '@/services/api';
+import { useStore } from '@/store';
 
 const props = defineProps<{
   message: Message;
   participants?: Participant[];
   isSelectedParent?: boolean;
   isLastMessage?: boolean;
+  isStreaming?: boolean;
+  hasError?: boolean;
+  errorMessage?: string;
 }>();
 
 const emit = defineEmits<{
@@ -184,10 +276,13 @@ const emit = defineEmits<{
   'switch-branch': [messageId: string, branchId: string];
   delete: [messageId: string, branchId: string];
   'select-as-parent': [messageId: string, branchId: string];
+  'stop-auto-scroll': [];
 }>();
 
 const isEditing = ref(false);
 const editContent = ref('');
+const messageCard = ref<HTMLElement>();
+const showScrollToTop = ref(false);
 
 const branchIndex = computed(() => {
   return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;
@@ -195,29 +290,87 @@ const branchIndex = computed(() => {
 
 const currentBranch = computed(() => {
   const branch = props.message.branches[branchIndex.value];
-  // if (branch?.attachments?.length > 0) {
-  //   console.log(`Message ${props.message.id} has ${branch.attachments.length} attachments:`, branch.attachments);
-  // }
   return branch;
 });
 
-// Get participant name for current branch
-const participantName = computed(() => {
+// Check if message is long enough to need scroll button
+onMounted(() => {
+  checkMessageHeight();
+});
+
+onUpdated(() => {
+  checkMessageHeight();
+});
+
+// Also check height when streaming status changes or content updates
+watch(() => props.isStreaming, () => {
+  // Use setTimeout to ensure DOM has updated
+  setTimeout(checkMessageHeight, 100);
+});
+
+// Watch for content changes during streaming
+watch(() => currentBranch.value?.content, () => {
+  if (props.isStreaming) {
+    setTimeout(checkMessageHeight, 100);
+  }
+});
+
+function checkMessageHeight() {
+  if (messageCard.value) {
+    const element = (messageCard.value as any).$el || messageCard.value;
+    // Show button if message is taller than 500px
+    showScrollToTop.value = element?.offsetHeight > 500;
+  }
+}
+
+function scrollToTopOfMessage() {
+  if (messageCard.value) {
+    const element = (messageCard.value as any).$el || messageCard.value;
+    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    
+    // Stop auto-scrolling if streaming
+    if (props.isStreaming) {
+      // Emit event to parent to stop auto-scrolling
+      emit('stop-auto-scroll');
+    }
+  }
+}
+
+// Get participant display name (shown in UI - empty for empty-name participants)
+const participantDisplayName = computed(() => {
   const branch = currentBranch.value;
   
   // If no participants list provided or no participantId, fall back to default behavior
   if (!props.participants || !branch.participantId) {
-    return branch.role === 'user' ? 'You' : branch.model || 'Assistant';
+    return branch.role === 'user' ? 'You' : 'Assistant';
   }
   
   // Find the participant by ID
   const participant = props.participants.find(p => p.id === branch.participantId);
-  if (participant) {
+  if (participant && participant.name === '') {
+    // Return empty string for empty-name participants (no name shown)
+    return '';
+  } else if (participant) {
     return participant.name;
   }
   
   // Fallback if participant not found
-  return branch.role === 'user' ? 'You' : branch.model || 'Assistant';
+  return branch.role === 'user' ? 'You' : 'Assistant';
+});
+
+// Get model indicator for assistant messages
+const modelIndicator = computed(() => {
+  const branch = currentBranch.value;
+  
+  // Only show model indicator for assistant messages that have a model stored
+  if (branch.role === 'assistant' && branch.model) {
+    // Return a shortened version of the model ID for display
+    // e.g., "claude-3.5-sonnet" -> "claude-3.5"
+    // or just return the full ID if you prefer
+    return branch.model;
+  }
+  
+  return null;
 });
 
 const participantColor = computed(() => {
@@ -263,7 +416,37 @@ const hasNavigableBranches = computed(() => {
 });
 
 const renderedContent = computed(() => {
-  const content = currentBranch.value.content;
+  let content = currentBranch.value.content;
+  
+  // Preserve leading/trailing whitespace by converting to non-breaking spaces
+  const leadingSpaces = content.match(/^(\s+)/)?.[1] || '';
+  const trailingSpaces = content.match(/(\s+)$/)?.[1] || '';
+  
+  // First, protect code blocks and inline code from HTML escaping
+  const codeBlocks: string[] = [];
+  const inlineCode: string[] = [];
+  
+  // Save code blocks with placeholders
+  content = content.replace(/```[\s\S]*?```/g, (match) => {
+    const index = codeBlocks.length;
+    codeBlocks.push(match);
+    return `__CODE_BLOCK_${index}__`;
+  });
+  
+  // Save inline code with placeholders
+  content = content.replace(/`[^`\n]+`/g, (match) => {
+    const index = inlineCode.length;
+    inlineCode.push(match);
+    return `__INLINE_CODE_${index}__`;
+  });
+  
+  // Escape HTML/XML tags that aren't in code blocks
+  // This prevents raw HTML from being rendered but preserves it visually
+  content = content.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  
+  // Restore code blocks and inline code
+  content = content.replace(/__CODE_BLOCK_(\d+)__/g, (_, index) => codeBlocks[parseInt(index)]);
+  content = content.replace(/__INLINE_CODE_(\d+)__/g, (_, index) => inlineCode[parseInt(index)]);
   
   // Handle code blocks with syntax highlighting
   const renderer = new marked.Renderer();
@@ -286,8 +469,35 @@ const renderedContent = computed(() => {
     gfm: true
   });
   
-  const html = marked(content);
-  return DOMPurify.sanitize(html);
+  let html = marked.parse ? marked.parse(content) : marked(content);
+  // Handle if marked returns a promise (newer versions)
+  if (html instanceof Promise) {
+    html = ''; // Fallback, but this shouldn't happen with sync parse
+  }
+  
+  // Convert leading/trailing spaces to non-breaking spaces to preserve them
+  const leadingNbsp = leadingSpaces.replace(/ /g, '&nbsp;').replace(/\n/g, '<br>');
+  const trailingNbsp = trailingSpaces.replace(/ /g, '&nbsp;').replace(/\n/g, '<br>');
+  
+  // Add preserved whitespace back
+  if (leadingNbsp) {
+    html = leadingNbsp + html;
+  }
+  if (trailingNbsp) {
+    html = html + trailingNbsp;
+  }
+  
+  return DOMPurify.sanitize(html, {
+    // Allow only safe HTML tags that markdown generates
+    ALLOWED_TAGS: [
+      'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+      'blockquote', 'ul', 'ol', 'li', 'a', 'img',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'table', 'thead', 'tbody', 'tr', 'th', 'td',
+      'hr', 'sup', 'sub', 'del', 'ins'
+    ],
+    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel']
+  });
 });
 
 function escapeHtml(text: string): string {
@@ -307,8 +517,8 @@ function cancelEdit() {
 }
 
 function saveEdit() {
-  if (editContent.value.trim() !== currentBranch.value.content) {
-    emit('edit', props.message.id, currentBranch.value.id, editContent.value.trim());
+  if (editContent.value !== currentBranch.value.content) {
+    emit('edit', props.message.id, currentBranch.value.id, editContent.value);
   }
   cancelEdit();
 }
@@ -322,17 +532,6 @@ function navigateBranch(direction: number) {
   if (newIndex >= 0 && newIndex < siblingBranches.value.length) {
     emit('switch-branch', props.message.id, siblingBranches.value[newIndex].id);
   }
-}
-
-function getBranchLabel(index: number): string {
-  // Determine if this is an edit or regeneration
-  const branch = props.message.branches[index];
-  const originalBranch = props.message.branches[0];
-  
-  if (branch.role === originalBranch.role && branch.parentBranchId) {
-    return 'edited';
-  }
-  return 'regenerated';
 }
 
 function formatFileSize(bytes: number): string {
@@ -360,4 +559,106 @@ function openImageInNewTab(attachment: any): void {
     newWindow.document.title = attachment.fileName;
   }
 }
+
+function formatTimestamp(timestamp: string | Date): string {
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  // If today, show time
+  if (diffDays === 0) {
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+  }
+  
+  // If yesterday
+  if (diffDays === 1) {
+    return `Yesterday ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+  }
+  
+  // If within this week
+  if (diffDays < 7) {
+    return date.toLocaleDateString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+  }
+  
+  // Otherwise show date
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+}
+
+const store = useStore();
+
+async function downloadPrompt() {
+  try {
+    // Get the conversation ID from the store
+    const conversationId = store.state.currentConversation?.id;
+    if (!conversationId) {
+      console.error('No conversation ID available');
+      return;
+    }
+    
+    // Call the API to get the prompt
+    const response = await api.post('/prompt/build', {
+      conversationId,
+      branchId: currentBranch.value.id,
+      includeSystemPrompt: true
+    });
+    
+    // Create a downloadable JSON file with just the messages array
+    const blob = new Blob([JSON.stringify(response.data.messages, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `prompt-${props.message.id}-${currentBranch.value.id}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Failed to download prompt:', error);
+  }
+}
 </script>
+
+<style scoped>
+.generating-indicator {
+  display: flex;
+  align-items: center;
+}
+
+.generating-chip {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.meta-text {
+  opacity: 0.6;
+  font-size: 0.75rem;
+}
+
+.top-controls {
+  margin-top: -14px;
+  margin-bottom: -2px;
+}
+
+.bottom-controls {
+  margin-bottom: -6px;
+  gap: 8px;
+}
+
+.flip-vertical {
+  transform: scaleY(-1);
+}
+</style>
+

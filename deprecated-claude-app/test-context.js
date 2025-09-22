@@ -23,7 +23,7 @@ async function createConversation() {
   try {
     const response = await axios.post(`${API_URL}/conversations`, {
       title: 'Test Context Management',
-      model: 'claude-3.5-sonnet',
+      model: 'claude-3.6-sonnet',
       systemPrompt: 'You are a helpful assistant.',
       contextManagement: {
         strategy: 'rolling',

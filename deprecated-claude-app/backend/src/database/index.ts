@@ -1,8 +1,10 @@
 import { User, Conversation, Message, Participant, ApiKey } from '@deprecated-claude/shared';
+import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
 import { ModelLoader } from '../config/model-loader.js';
+import { SharesStore, SharedConversation } from './shares.js';
 
 // Metrics interface for tracking token usage
 export interface MetricsData {
@@ -30,10 +32,12 @@ export class Database {
   private conversationMetrics: Map<string, MetricsData[]> = new Map(); // conversationId -> metrics
   
   private eventStore: EventStore;
+  private sharesStore: SharesStore;
   private initialized: boolean = false;
 
   constructor() {
     this.eventStore = new EventStore();
+    this.sharesStore = new SharesStore();
   }
   
   async init(): Promise<void> {
@@ -383,6 +387,13 @@ export class Database {
         break;
       }
       
+      // Share events
+      case 'share_created':
+      case 'share_deleted':
+      case 'share_viewed':
+        this.sharesStore.replayEvent(event);
+        break;
+      
       // Add more cases as needed
       }
     } catch (error) {
@@ -492,6 +503,10 @@ export class Database {
   async getUserApiKeys(userId: string): Promise<ApiKey[]> {
     return Array.from(this.apiKeys.values()).filter(key => key.userId === userId);
   }
+  
+  async deleteApiKey(keyId: string): Promise<boolean> {
+    return this.apiKeys.delete(keyId);
+  }
 
   // Conversation methods
   async createConversation(userId: string, title: string, model: string, systemPrompt?: string, settings?: any, format?: 'standard' | 'prefill', contextManagement?: any): Promise<Conversation> {
@@ -523,19 +538,19 @@ export class Database {
 
     await this.logEvent('conversation_created', conversation);
     
-    // Get model display name for assistant participant
-    const modelLoader = ModelLoader.getInstance();
-    const modelConfig = await modelLoader.getModelById(model);
-    const assistantName = modelConfig?.displayName || 'Assistant';
-    
     // Create default participants
     if (format === 'standard' || !format) {
-      // Standard format: fixed User and model name
-      await this.createParticipant(conversation.id, 'User', 'user');
-      await this.createParticipant(conversation.id, assistantName, 'assistant', model, systemPrompt, settings);
+      // Standard format: fixed User and Assistant
+      await this.createParticipant(conversation.id, 'H', 'user');
+      await this.createParticipant(conversation.id, 'A', 'assistant', model, systemPrompt, settings);
     } else {
       // Prefill format: starts with default participants but can add more
-      await this.createParticipant(conversation.id, 'User', 'user');
+      // Get model display name for assistant participant
+      const modelLoader = ModelLoader.getInstance();
+      const modelConfig = await modelLoader.getModelById(model);
+      const assistantName = modelConfig?.displayName || 'A';
+      
+      await this.createParticipant(conversation.id, 'H', 'user');
       await this.createParticipant(conversation.id, assistantName, 'assistant', model, systemPrompt, settings);
     }
 
@@ -568,19 +583,14 @@ export class Database {
     await this.logEvent('conversation_updated', { id, updates });
 
     // If the model was updated and this is a standard conversation, 
-    // update the assistant participant's model and name
+    // update the assistant participant's model (but NOT the name)
     if (updates.model && conversation.format === 'standard') {
       const participants = await this.getConversationParticipants(id);
       const defaultAssistant = participants.find(p => p.type === 'assistant');
       if (defaultAssistant) {
-        // Get the new model's display name
-        const modelLoader = ModelLoader.getInstance();
-        const modelConfig = await modelLoader.getModelById(updates.model);
-        const newAssistantName = modelConfig?.displayName || 'Assistant';
-        
+        // Only update the model, keep the name as "Assistant"
         await this.updateParticipant(defaultAssistant.id, { 
-          model: updates.model,
-          name: newAssistantName
+          model: updates.model
         });
       }
     }
@@ -1162,34 +1172,112 @@ export class Database {
   }
   
   async getConversationMetricsSummary(conversationId: string): Promise<{
+    messageCount: number;
+    perModelMetrics: Map<string, ModelConversationMetrics>;
     lastCompletion?: MetricsData;
-    totals: {
-      messageCount: number;
-      inputTokens: number;
-      outputTokens: number;
-      cachedTokens: number;
-      totalCost: number;
-      totalSavings: number;
-      completionCount: number;
-    };
+    totals: TotalsMetrics;
   }> {
     const metrics = await this.getConversationMetrics(conversationId);
     const messages = await this.getConversationMessages(conversationId);
+    const participants = await this.getConversationParticipants(conversationId);
     
-    const totals = {
-      messageCount: messages.length,
-      inputTokens: metrics.reduce((sum, m) => sum + m.inputTokens, 0),
-      outputTokens: metrics.reduce((sum, m) => sum + m.outputTokens, 0),
-      cachedTokens: metrics.reduce((sum, m) => sum + m.cachedTokens, 0),
-      totalCost: metrics.reduce((sum, m) => sum + m.cost, 0),
-      totalSavings: metrics.reduce((sum, m) => sum + m.cacheSavings, 0),
+    const perModelMetrics = new Map<string, ModelConversationMetrics>(
+      participants
+        .filter(p => typeof p.model === 'string' && p.model.length > 0 && p.type == "assistant")  // only the ones with a model
+        .map(p => [
+          p.model as string,
+          ModelConversationMetricsSchema.parse({
+            participant: p,
+            contextManagement: p.contextManagement
+          })
+        ])
+    );
+    const totals = TotalsMetricsSchema.parse({
       completionCount: metrics.length
-    };
+    });
+    
+    for (const metric of metrics) {
+      totals.inputTokens += metric.inputTokens;
+      totals.outputTokens += metric.outputTokens;
+      totals.cachedTokens += metric.cachedTokens;
+      totals.totalCost += metric.cost;
+      totals.totalSavings += metric.cacheSavings;
+      const modelMetrics = perModelMetrics.get(metric.model);
+      if (modelMetrics) {
+        modelMetrics.lastCompletion = metric;
+        modelMetrics.totals.inputTokens += metric.inputTokens;
+        modelMetrics.totals.outputTokens += metric.outputTokens;
+        modelMetrics.totals.cachedTokens += metric.cachedTokens;
+        modelMetrics.totals.totalCost += metric.cost;
+        modelMetrics.totals.completionCount += 1;
+      }
+    }
     
     return {
-      lastCompletion: metrics[metrics.length - 1],
-      totals
+      messageCount: messages.length,
+      perModelMetrics: perModelMetrics,
+      lastCompletion: metrics[metrics.length-1],
+      totals: totals
+    }
+  }
+
+  // Share management methods
+  async createShare(
+    conversationId: string,
+    userId: string,
+    shareType: 'branch' | 'tree',
+    branchId?: string,
+    settings?: Partial<SharedConversation['settings']>,
+    expiresAt?: Date
+  ): Promise<SharedConversation> {
+    // Verify the user owns the conversation
+    const conversation = await this.getConversation(conversationId);
+    if (!conversation || conversation.userId !== userId) {
+      throw new Error('Conversation not found or unauthorized');
+    }
+    
+    const share = await this.sharesStore.createShare(
+      conversationId,
+      userId,
+      shareType,
+      branchId,
+      settings,
+      expiresAt
+    );
+    
+    // Persist the share creation event
+    const event: Event = {
+      timestamp: new Date(),
+      type: 'share_created',
+      data: share
     };
+    await this.eventStore.appendEvent(event);
+    
+    return share;
+  }
+  
+  async getShareByToken(token: string): Promise<SharedConversation | null> {
+    return this.sharesStore.getShareByToken(token);
+  }
+  
+  async getSharesByUser(userId: string): Promise<SharedConversation[]> {
+    return this.sharesStore.getSharesByUser(userId);
+  }
+  
+  async deleteShare(id: string, userId: string): Promise<boolean> {
+    const deleted = await this.sharesStore.deleteShare(id, userId);
+    
+    if (deleted) {
+      // Persist the share deletion event
+      const event: Event = {
+        timestamp: new Date(),
+        type: 'share_deleted',
+        data: { id }
+      };
+      await this.eventStore.appendEvent(event);
+    }
+    
+    return deleted;
   }
 
   // Close database connection

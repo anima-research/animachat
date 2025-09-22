@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "claude-3.5-sonnet",
+      "id": "claude-3.6-sonnet",
       "providerModelId": "claude-3-5-sonnet-20241022",
       "displayName": "Claude 3.6 Sonnet",
       "shortName": "Sonnet 3.6",
@@ -211,7 +211,7 @@
       }
     },
     {
-      "id": "claude-3.5-sonnet-old",
+      "id": "claude-3.5-sonnet",
       "providerModelId": "claude-3-5-sonnet-20240620",
       "displayName": "Claude 3.5 Sonnet",
       "shortName": "Sonnet 3.5",
@@ -316,7 +316,7 @@
       }
     },
     {
-      "id": "claude-3.5-sonnet-bedrock",
+      "id": "claude-3.6-sonnet-bedrock",
       "providerModelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
       "displayName": "Claude 3.6 Sonnet (Bedrock)",
       "shortName": "Sonnet 3.6",
@@ -334,41 +334,6 @@
         "maxTokens": {
           "min": 1,
           "max": 8192,
-          "default": 1024
-        },
-        "topP": {
-          "min": 0,
-          "max": 1,
-          "default": 0.9,
-          "step": 0.01
-        },
-        "topK": {
-          "min": 1,
-          "max": 500,
-          "default": 40,
-          "step": 1
-        }
-      }
-    },
-    {
-      "id": "claude-3-opus-bedrock",
-      "providerModelId": "anthropic.claude-3-opus-20240229-v1:0",
-      "displayName": "Claude 3 Opus (Bedrock)",
-      "shortName": "Opus 3",
-      "provider": "bedrock",
-      "deprecated": false,
-      "contextWindow": 200000,
-      "outputTokenLimit": 4096,
-      "settings": {
-        "temperature": {
-          "min": 0,
-          "max": 1,
-          "default": 1,
-          "step": 0.1
-        },
-        "maxTokens": {
-          "min": 1,
-          "max": 4096,
           "default": 1024
         },
         "topP": {
@@ -456,7 +421,7 @@
       }
     },
     {
-      "id": "claude-3.5-sonnet-openrouter",
+      "id": "claude-3.6-sonnet-openrouter",
       "providerModelId": "anthropic/claude-3.5-sonnet",
       "displayName": "Claude 3.6 Sonnet (OpenRouter)",
       "shortName": "Sonnet 3.6",

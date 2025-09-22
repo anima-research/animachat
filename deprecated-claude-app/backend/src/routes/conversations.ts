@@ -250,39 +250,6 @@ export function conversationRouter(db: Database): Router {
       res.status(500).json({ error: 'Internal server error' });
     }
   });
-  
-  // Analyze conversation branch structure (reports issues but doesn't auto-fix)
-  // Keeping this endpoint for debugging purposes
-  router.post('/:id/fix-branches', async (req: AuthRequest, res) => {
-    try {
-      if (!req.userId) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
-      
-      const conversation = await db.getConversation(req.params.id);
-      if (!conversation || conversation.userId !== req.userId) {
-        return res.status(404).json({ error: 'Conversation not found' });
-      }
-      
-      // Import and run the fix functions
-      const { fixConversationBranches, validateActiveBranches } = await import('../database/fix-branches.js');
-      
-      await fixConversationBranches(db, req.params.id);
-      await validateActiveBranches(db, req.params.id);
-      
-      // Return the fixed conversation
-      const messages = await db.getConversationMessages(req.params.id);
-      res.json({ 
-        success: true, 
-        conversation,
-        messageCount: messages.length,
-        message: 'Branch structure fixed successfully'
-      });
-    } catch (error) {
-      console.error('Fix branches error:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
 
   // Get cache metrics for conversation
   router.get('/:id/cache-metrics', async (req: AuthRequest, res) => {
@@ -339,24 +306,13 @@ export function conversationRouter(db: Database): Router {
       // Get metrics summary from database
       const summary = await db.getConversationMetricsSummary(req.params.id);
       
-      // Add context management info
-      const contextInfo = {
-        strategy: conversation.contextManagement?.strategy || 'append',
-        currentWindowSize: 0, // Would need to get from context manager
-        parameters: conversation.contextManagement?.strategy === 'rolling' ? {
-          maxTokens: (conversation.contextManagement as any)?.maxTokens,
-          maxGraceTokens: (conversation.contextManagement as any)?.maxGraceTokens,
-          cacheInterval: (conversation.contextManagement as any)?.cacheInterval
-        } : {
-          cacheInterval: (conversation.contextManagement as any)?.cacheInterval || 10000
-        }
-      };
-      
       const metrics: ConversationMetrics = {
         conversationId: req.params.id,
+        messageCount: summary.messageCount,
+        perModelMetrics: Object.fromEntries(summary.perModelMetrics),
         lastCompletion: summary.lastCompletion,
         totals: summary.totals,
-        contextManagement: contextInfo
+        contextManagement: conversation.contextManagement
       };
 
       res.json(metrics);

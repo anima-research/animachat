@@ -54,7 +54,11 @@ export class EnhancedInferenceService {
         systemPrompt,
         settings,
         userId,
-        streamCallback
+        streamCallback,
+        'standard',
+        participants || [],
+        undefined,
+        undefined
       );
     }
     
@@ -159,7 +163,8 @@ export class EnhancedInferenceService {
       enhancedCallback,
       conversation?.format || 'standard',
       participants || [],
-      participant?.id
+      participant?.id,
+      conversation
     );
   }
   

@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage, Conversation } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
@@ -28,6 +28,76 @@ export class InferenceService {
     this.anthropicService = new AnthropicService(db);
   }
 
+  /**
+   * Build the prompt exactly as it would be sent to the API
+   * Returns the formatted messages array that would be sent to the provider
+   */
+  async buildPrompt(
+    modelId: string,
+    messages: Message[],
+    systemPrompt: string | undefined,
+    format: ConversationFormat = 'standard',
+    participants: Participant[] = [],
+    responderId?: string,
+    conversation?: Conversation
+  ): Promise<{ messages: any[], systemPrompt?: string, provider: string, modelId: string }> {
+    // Find the model configuration
+    const model = await this.modelLoader.getModelById(modelId);
+    if (!model) {
+      throw new Error(`Model ${modelId} not found`);
+    }
+    
+    // Determine the actual format to use
+    let actualFormat: InternalConversationFormat = format;
+    if (format === 'prefill') {
+      if (!this.providerSupportsPrefill(model.provider)) {
+        actualFormat = 'messages';
+      }
+    }
+    
+    // Format messages based on conversation format
+    const formattedMessages = this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider, conversation);
+    
+    // Now format for the specific provider
+    let apiMessages: any[];
+    let apiSystemPrompt: string | undefined = systemPrompt;
+    
+    switch (model.provider) {
+      case 'anthropic':
+        apiMessages = this.anthropicService.formatMessagesForAnthropic(formattedMessages);
+        break;
+      case 'bedrock':
+        apiMessages = this.bedrockService.formatMessagesForClaude(formattedMessages);
+        break;
+      case 'openai-compatible':
+        // For prompt building, we don't need actual API keys, just format the messages
+        const openAIService = new OpenAICompatibleService(
+          this.db,
+          'dummy-key', // Not used for formatting
+          'http://localhost:11434',
+          undefined
+        );
+        apiMessages = openAIService.formatMessagesForOpenAI(formattedMessages, systemPrompt);
+        apiSystemPrompt = undefined; // System prompt is included in messages for OpenAI
+        break;
+      case 'openrouter':
+        // For prompt building, we don't need actual API keys, just format the messages
+        const openRouterService = new OpenRouterService(this.db, undefined);
+        apiMessages = openRouterService.formatMessagesForOpenRouter(formattedMessages, systemPrompt);
+        apiSystemPrompt = undefined; // System prompt is included in messages for OpenRouter
+        break;
+      default:
+        throw new Error(`Unknown provider: ${model.provider}`);
+    }
+    
+    return {
+      messages: apiMessages,
+      systemPrompt: apiSystemPrompt,
+      provider: model.provider,
+      modelId: model.providerModelId
+    };
+  }
+
   async streamCompletion(
     modelId: string,
     messages: Message[],
@@ -37,7 +107,8 @@ export class InferenceService {
     onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
     format: ConversationFormat = 'standard',
     participants: Participant[] = [],
-    responderId?: string
+    responderId?: string,
+    conversation?: Conversation
   ): Promise<void> {
     
     // Find the model configuration
@@ -62,19 +133,16 @@ export class InferenceService {
     // Determine the actual format to use
     let actualFormat: InternalConversationFormat = format;
     if (format === 'prefill') {
-      // Check if we should use 'messages' mode instead
-      const shouldUseMessagesMode = 
-        messages.length < 6 || // Less than 6 messages
-        !this.providerSupportsPrefill(model.provider); // Provider doesn't support prefill
-      
-      if (shouldUseMessagesMode) {
-        console.log(`[InferenceService] Switching from prefill to messages mode (messages: ${messages.length}, provider: ${model.provider})`);
+      // Only switch to messages mode if the provider doesn't support prefill
+      // Otherwise, always respect the user's choice of prefill format
+      if (!this.providerSupportsPrefill(model.provider)) {
+        console.log(`[InferenceService] Provider ${model.provider} doesn't support prefill, switching to messages mode`);
         actualFormat = 'messages';
       }
     }
     
     // Format messages based on conversation format
-    const formattedMessages = await this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider, modelId);
+    const formattedMessages = this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider, conversation, model);
 
     // Build stop sequences for prefill/messages formats
     let stopSequences: string[] | undefined;
@@ -86,8 +154,10 @@ export class InferenceService {
       } else {
         // For colon format, use participant names
         const baseStopSequences = ['User:', 'A:', "Claude:"];
-        // Add participant names as stop sequences
-        const participantStopSequences = participants.map(p => `${p.name}:`);
+        // Add participant names as stop sequences (excluding empty names for raw continuation)
+        const participantStopSequences = participants
+          .filter(p => p.name !== '') // Exclude empty names
+          .map(p => `${p.name}:`);
         // Combine and deduplicate
         stopSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
       }
@@ -237,30 +307,17 @@ export class InferenceService {
     return false;
   }
   
-  private async formatMessagesForConversation(
+  private formatMessagesForConversation(
     messages: Message[],
     format: InternalConversationFormat,
     participants: Participant[],
     responderId?: string,
     provider?: string,
-    modelId?: string
-  ): Promise<Message[]> {
+    conversation?: Conversation,
+    modelConfig?: any
+  ): Message[] {
     if (format === 'standard') {
-      // Standard format - just log for debugging
-      console.log('\n========== STANDARD FORMAT MESSAGES ==========');
-      for (const message of messages) {
-        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
-        if (activeBranch) {
-          const attachmentCount = activeBranch.attachments?.length || 0;
-          console.log(`${activeBranch.role}: ${activeBranch.content.substring(0, 50)}... (${attachmentCount} attachments)`);
-          if (attachmentCount > 0) {
-            activeBranch.attachments?.forEach(att => {
-              console.log(`  - ${att.fileName} (${att.content?.length || 0} chars)`);
-            });
-          }
-        }
-      }
-      console.log('========== END STANDARD FORMAT ==========\n');
+      // Standard format - pass through as-is
       return messages;
     }
     
@@ -268,22 +325,26 @@ export class InferenceService {
       // Convert to prefill format with participant names
       const prefillMessages: Message[] = [];
       
-      // Add the hardcoded user message for prefill
-      const cmdMessage: Message = {
-        id: 'prefill-cmd',
-        conversationId: messages[0]?.conversationId || '',
-        branches: [{
-          id: 'prefill-cmd-branch',
-          content: '<cmd>cat untitled.log</cmd>',
-          role: 'user',
-          createdAt: new Date(),
-          isActive: true,
-          parentBranchId: 'root'
-        }],
-        activeBranchId: 'prefill-cmd-branch',
-        order: 0
-      };
-      prefillMessages.push(cmdMessage);
+      // Add initial user message if configured
+      const prefillSettings = (conversation as any)?.prefillUserMessage || { enabled: true, content: '<cmd>cat untitled.log</cmd>' };
+      
+      if (prefillSettings.enabled) {
+        const cmdMessage: Message = {
+          id: 'prefill-cmd',
+          conversationId: messages[0]?.conversationId || '',
+          branches: [{
+            id: 'prefill-cmd-branch',
+            content: prefillSettings.content,
+            role: 'user',
+            createdAt: new Date(),
+            isActive: true,
+            parentBranchId: 'root'
+          }],
+          activeBranchId: 'prefill-cmd-branch',
+          order: 0
+        };
+        prefillMessages.push(cmdMessage);
+      }
       
       // Build the conversation content with participant names
       let conversationContent = '';
@@ -334,18 +395,33 @@ export class InferenceService {
           }
         }
         
-        // Always use participant name format: "Name: content"
-        conversationContent += `${participantName}: ${messageContent}\n\n`;
+        // If participant has no name (raw continuation), don't add prefix
+        if (participantName === '') {
+          conversationContent += `${messageContent}`;
+        } else {
+          // Use participant name format: "Name: content"
+          conversationContent += `${participantName}: ${messageContent}\n\n`;
+        }
       }
       
       // If the last message was an empty assistant, append that assistant's name
       if (lastMessageWasEmptyAssistant) {
-        conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:`;
+        // If the assistant has no name (raw continuation), don't add any prefix
+        if (lastAssistantName === '') {
+          conversationContent = conversationContent.trim();
+        } else {
+          conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:`;
+        }
       } else if (responderId && participants.length > 0) {
         // Otherwise, if we have a responder, append their name with a colon (no newline)
         const responder = participants.find(p => p.id === responderId);
         if (responder) {
-          conversationContent = conversationContent.trim() + `\n\n${responder.name}:`;
+          // If responder has no name (raw continuation), don't add any prefix
+          if (responder.name === '') {
+            conversationContent = conversationContent.trim();
+          } else {
+            conversationContent = conversationContent.trim() + `\n\n${responder.name}:`;
+          }
         }
       }
       
@@ -367,13 +443,6 @@ export class InferenceService {
       };
       prefillMessages.push(assistantMessage);
       
-      // Debug log the full prefill prompt
-      console.log('\n========== PREFILL PROMPT BEING SENT TO API ==========');
-      console.log('User message:', cmdMessage.branches[0].content);
-      console.log('Assistant prefill:');
-      console.log(conversationContent);
-      console.log('========== END PREFILL PROMPT ==========\n');
-      
       return prefillMessages;
     }
     
@@ -391,9 +460,6 @@ export class InferenceService {
           responderParticipantId = responder.id;
         }
       }
-      
-      console.log('\n========== MESSAGES MODE FORMATTING ==========');
-      console.log(`Responder: ${responderName} (ID: ${responderId})`);
       
       for (const message of messages) {
         const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
@@ -415,11 +481,14 @@ export class InferenceService {
         
         // Format content based on model's groupChatFormat preference
         let formattedContent: string;
-        const modelLoader = ModelLoader.getInstance();
-        const model = await modelLoader.getModelById(modelId || '');
-        const useXmlFormat = model?.groupChatFormat === 'xml';
         
-        if (useXmlFormat) {
+        // Check if we need XML format
+        const useXmlFormat = modelConfig?.groupChatFormat === 'xml';
+        
+        if (participantName === '') {
+          // Raw continuation - no prefix
+          formattedContent = activeBranch.content;
+        } else if (useXmlFormat) {
           // XML format: <msg username="name">content</msg>
           formattedContent = `<msg username="${participantName}">${activeBranch.content}</msg>`;
         } else {
@@ -442,8 +511,6 @@ export class InferenceService {
           }
         }
         
-        console.log(`${role}: ${formattedContent.substring(0, 50)}...`);
-        
         // Create formatted message
         const formattedMessage: Message = {
           id: message.id,
@@ -463,8 +530,6 @@ export class InferenceService {
         
         messagesFormatted.push(formattedMessage);
       }
-      
-      console.log('========== END MESSAGES MODE ==========\n');
       
       // For Bedrock, we need to consolidate consecutive user messages
       if (provider === 'bedrock') {

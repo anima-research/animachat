@@ -108,7 +108,7 @@ const treeData = computed(() => {
     
     const { message, branch } = data;
     const content = branch.content || '';
-    const preview = content.slice(0, 50) + (content.length > 50 ? '...' : '');
+    const preview = content.slice(0, 100) + (content.length > 100 ? '...' : '');
     
     // Get participant name - similar to MessageComponent logic
     let participantName: string;
@@ -117,7 +117,16 @@ const treeData = computed(() => {
       // Look up participant by ID
       const participant = props.participants.find(p => p.id === branch.participantId);
       if (participant) {
-        participantName = participant.name;
+        // If participant has empty name, show appropriate continuation format
+        if (participant.name === '') {
+          if (participant.type === 'assistant' && participant.model) {
+            participantName = `${participant.model} (continue)`;
+          } else {
+            participantName = '(continue)';
+          }
+        } else {
+          participantName = participant.name;
+        }
       } else {
         // If we have participants but can't find this one, use role-based fallback
         participantName = branch.role === 'user' ? 'User' : (branch.model || 'Assistant');
@@ -260,6 +269,47 @@ function initializeTree() {
   renderTree();
 }
 
+function fillColor(d: d3.HierarchyPointNode<TreeNode>) {
+  if (d.data.role === 'user') {
+    return '#412961'; // Primary theme color for users
+  }
+  
+  // For assistants, use model color
+  // Try to get model from the branch data
+  const branchData = branchToMessageMap.get(d.data.branchId);
+  if (branchData) {
+    const { branch } = branchData;
+    
+    // Try to get model from participant or branch
+    let model: string | undefined;
+    
+    if (props.participants && branch.participantId) {
+      const participant = props.participants.find(p => p.id === branch.participantId);
+      model = participant?.model;
+    }
+    
+    // Fallback to branch model
+    if (!model) {
+      model = branch.model;
+    }
+    
+    return getModelColor(model);
+  }
+  
+  return '#757575'; // Default grey
+}
+
+function hasBlueOutline(d: d3.HierarchyPointNode<TreeNode>) {
+  return (props.selectedParentMessageId && props.selectedParentBranchId &&
+         d.data.messageId === props.selectedParentMessageId && 
+         d.data.branchId === props.selectedParentBranchId) ||
+        (!props.selectedParentMessageId && 
+         d.data.messageId === props.currentMessageId && 
+         d.data.branchId === props.currentBranchId);
+}
+
+
+
 function renderTree() {
   if (!g || !treeData.value) return;
   
@@ -278,13 +328,11 @@ function renderTree() {
   // Apply compact mode filtering if enabled
   let root = originalRoot;
   if (compactMode.value) {
-    console.log('Applying compact mode filter');
     root = filterCompactNodes(originalRoot);
   }
   
   // Count total nodes to determine sizing
   const nodeCount = root.descendants().length;
-  console.log(`Tree has ${nodeCount} nodes (compact: ${compactMode.value})`);
   
   // Dynamic node size based on tree size
   const baseNodeRadius = Math.max(10, Math.min(20, 400 / Math.sqrt(nodeCount)));
@@ -326,11 +374,11 @@ function renderTree() {
     .style('stroke', d => {
       // Color edges based on whether they're in the active path
       const targetId = `${d.target.data.messageId}-${d.target.data.branchId}`;
-      return activePath.has(targetId) ? '#03dac6' : '#757575';
+      return activePath.has(targetId) ? '#bb86fc' : '#757575';
     })
     .style('stroke-width', d => {
       const targetId = `${d.target.data.messageId}-${d.target.data.branchId}`;
-      return activePath.has(targetId) ? 4 : 2;
+      return activePath.has(targetId) ? 4 : 3;
     });
   
   // Add nodes
@@ -345,74 +393,22 @@ function renderTree() {
   node.append('circle')
     .attr('r', baseNodeRadius)
     .style('fill', d => {
-      // Node fill based on role and model
-      if (d.data.role === 'user') {
-        return '#412961'; // Primary theme color for users
-      }
-      
-      // For assistants, use model color
-      // Try to get model from the branch data
-      const branchData = branchToMessageMap.get(d.data.branchId);
-      if (branchData) {
-        const { branch } = branchData;
-        
-        // Try to get model from participant or branch
-        let model: string | undefined;
-        
-        if (props.participants && branch.participantId) {
-          const participant = props.participants.find(p => p.id === branch.participantId);
-          model = participant?.model;
-        }
-        
-        // Fallback to branch model
-        if (!model) {
-          model = branch.model;
-        }
-        
-        return getModelColor(model);
-      }
-      
       return '#757575'; // Default grey
+    })
+    .style('fill-opacity', d => {
+      return 0.5;
     })
     .style('stroke', d => {
       // Outline based on selected parent or current position
       const nodeId = `${d.data.messageId}-${d.data.branchId}`;
-      
-      // Check if this is the selected parent (for branching)
-      if (props.selectedParentMessageId && props.selectedParentBranchId &&
-          d.data.messageId === props.selectedParentMessageId && 
-          d.data.branchId === props.selectedParentBranchId) {
-        return '#2196f3'; // Selected parent - blue outline
-      }
-      
-      // If no selected parent, show current position
-      if (!props.selectedParentMessageId && 
-          d.data.messageId === props.currentMessageId && 
-          d.data.branchId === props.currentBranchId) {
-        return '#2196f3'; // Current position - blue outline
-      }
+    
       
       if (activePath.has(nodeId)) {
-        return '#03dac6'; // Active path - green outline
+        return '#bb86fc'; // Active path - green outline
       }
       return 'none';
     })
     .style('stroke-width', d => {
-      // Make blue outline thicker for better visibility
-      const nodeId = `${d.data.messageId}-${d.data.branchId}`;
-      
-      // Check if this node has the blue outline
-      const hasBlueOutline = 
-        (props.selectedParentMessageId && props.selectedParentBranchId &&
-         d.data.messageId === props.selectedParentMessageId && 
-         d.data.branchId === props.selectedParentBranchId) ||
-        (!props.selectedParentMessageId && 
-         d.data.messageId === props.currentMessageId && 
-         d.data.branchId === props.currentBranchId);
-      
-      if (hasBlueOutline) {
-        return Math.max(4, baseNodeRadius / 3); // Thicker for blue outline
-      }
       
       return Math.max(2, baseNodeRadius / 5); // Normal thickness
     })
@@ -423,9 +419,46 @@ function renderTree() {
     .on('mouseenter', (event, d) => {
       hoveredNode.value = d.data;
       const [x, y] = d3.pointer(event, svgRef.value);
+      
+      // Get container dimensions
+      const containerWidth = svgRef.value?.clientWidth || 400;
+      const containerHeight = svgRef.value?.clientHeight || 600;
+      
+      // Estimate tooltip dimensions (max-width is 300px in CSS)
+      const tooltipMaxWidth = 300;
+      const tooltipEstimatedHeight = 80; // Approximate height for 2-3 lines of text
+      
+      // Calculate position with bounds checking
+      let left = x + 10;
+      let top = y - 10;
+      
+      // Check right boundary
+      if (left + tooltipMaxWidth > containerWidth) {
+        // Position to the left of the cursor instead
+        left = x - tooltipMaxWidth - 10;
+        // If that would go off the left edge, position at the right edge
+        if (left < 0) {
+          left = containerWidth - tooltipMaxWidth - 10;
+        }
+      }
+      
+      // Check bottom boundary
+      if (top + tooltipEstimatedHeight > containerHeight) {
+        // Position above the cursor instead
+        top = y - tooltipEstimatedHeight - 10;
+        // If that would go off the top edge, position at the bottom edge
+        if (top < 0) {
+          top = containerHeight - tooltipEstimatedHeight - 10;
+        }
+      }
+      
+      // Ensure we don't go off the left or top edges
+      left = Math.max(10, left);
+      top = Math.max(10, top);
+      
       tooltipStyle.value = {
-        left: `${x + 10}px`,
-        top: `${y - 10}px`
+        left: `${left}px`,
+        top: `${top}px`
       };
     })
     .on('mouseleave', () => {
@@ -436,13 +469,24 @@ function renderTree() {
   const iconScale = baseNodeRadius / 20; // Scale icons based on node size
   node.each(function(d) {
     const g = d3.select(this);
+    if (hasBlueOutline(d)) {
+      // draw a larger blue circle
+      g.append('circle')
+        .attr('cx', 0)
+        .attr('cy', 0)
+        .attr('r', baseNodeRadius * 1.5)
+        .style('fill', 'none')
+        .style('stroke', '#2196f3')
+        .style('stroke-width', Math.max(2, baseNodeRadius / 5))
+        .style('pointer-events', 'none');
+    }
     
     if (d.data.role === 'user') {
       // User icon (simplified person shape)
       g.append('path')
         .attr('d', 'M -8,-8 A 8,8 0 0,1 8,-8 A 8,8 0 0,1 8,0 L 8,8 L -8,8 L -8,0 A 8,8 0 0,1 -8,-8')
         .attr('transform', `scale(${iconScale * 0.8})`)
-        .style('fill', 'white')
+        .style('fill', fillColor(d))
         .style('pointer-events', 'none');
     } else {
       // Robot icon (simplified robot shape)
@@ -452,7 +496,7 @@ function renderTree() {
         .attr('width', 20 * iconScale)
         .attr('height', 20 * iconScale)
         .attr('rx', 4 * iconScale)
-        .style('fill', 'white')
+        .style('fill', fillColor(d))
         .style('pointer-events', 'none');
       
       // Robot eyes
@@ -460,14 +504,14 @@ function renderTree() {
         .attr('cx', -5 * iconScale)
         .attr('cy', -3 * iconScale)
         .attr('r', 2 * iconScale)
-        .style('fill', '#757575')
+        .style('fill', 'var(--v-theme-background)')
         .style('pointer-events', 'none');
       
       g.append('circle')
         .attr('cx', 5 * iconScale)
         .attr('cy', -3 * iconScale)
         .attr('r', 2 * iconScale)
-        .style('fill', '#757575')
+        .style('fill', 'var(--v-theme-background)')
         .style('pointer-events', 'none');
     }
   });
@@ -565,6 +609,7 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   background: var(--v-theme-background);
+  overflow: hidden; /* Prevent tooltip from causing overflow */
 }
 
 .tree-controls {

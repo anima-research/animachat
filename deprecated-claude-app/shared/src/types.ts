@@ -105,6 +105,15 @@ export const ParticipantSchema = z.object({
 
 export type Participant = z.infer<typeof ParticipantSchema>;
 
+export const UpdateParticipantSchema = z.object({
+  name: z.string().optional(),
+  model: z.string().optional(),
+  systemPrompt: z.string().optional(),
+  settings: ModelSettingsSchema.optional(),
+  contextManagement: ContextManagementSchema.optional(),
+  isActive: z.boolean().optional()
+}).transform((o) => ({ ...o, contextManagement: o.contextManagement })); // specifically pass through undefined and null
+
 // Attachment types
 export const AttachmentSchema = z.object({
   id: z.string().uuid(),
@@ -146,6 +155,13 @@ export type Message = z.infer<typeof MessageSchema>;
 export const ConversationFormatSchema = z.enum(['standard', 'prefill']);
 export type ConversationFormat = z.infer<typeof ConversationFormatSchema>;
 
+// Prefill settings
+export const PrefillSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  content: z.string().default('<cmd>cat untitled.log</cmd>')
+});
+export type PrefillSettings = z.infer<typeof PrefillSettingsSchema>;
+
 // Conversation types
 export const ConversationSchema = z.object({
   id: z.string().uuid(),
@@ -158,7 +174,8 @@ export const ConversationSchema = z.object({
   updatedAt: z.date(),
   archived: z.boolean().default(false),
   settings: ModelSettingsSchema,
-  contextManagement: ContextManagementSchema.optional() // Conversation-level default
+  contextManagement: ContextManagementSchema.optional(), // Conversation-level default
+  prefillUserMessage: PrefillSettingsSchema.optional() // Settings for initial user message in prefill mode
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;
@@ -228,7 +245,8 @@ export const CreateConversationRequestSchema = z.object({
   format: ConversationFormatSchema.optional(),
   systemPrompt: z.string().optional(),
   settings: ModelSettingsSchema.optional(),
-  contextManagement: ContextManagementSchema.optional()
+  contextManagement: ContextManagementSchema.optional(),
+  prefillUserMessage: PrefillSettingsSchema.optional()
 });
 
 export type CreateConversationRequest = z.infer<typeof CreateConversationRequestSchema>;
@@ -251,35 +269,46 @@ export const ImportConversationRequestSchema = z.object({
 export type ImportConversationRequest = z.infer<typeof ImportConversationRequestSchema>;
 
 // Conversation metrics types
-export interface ConversationMetrics {
-  conversationId: string;
-  lastCompletion?: {
-    timestamp: string;
-    model: string;
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens: number;
-    cost: number;
-    cacheSavings: number;
-    responseTime: number;
-  };
-  totals: {
-    messageCount: number;
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens: number;
-    totalCost: number;
-    totalSavings: number;
-    completionCount: number;
-  };
-  contextManagement: {
-    strategy: 'append' | 'rolling';
-    currentWindowSize: number;
-    cacheMarkerPosition?: number;
-    parameters?: {
-      maxTokens?: number;
-      maxGraceTokens?: number;
-      cacheInterval?: number;
-    };
-  };
-}
+const LastCompletionMetricsSchema = z.object({
+  timestamp:     z.string(),
+  model:         z.string(),
+  inputTokens:   z.number(),
+  outputTokens:  z.number(),
+  cachedTokens:  z.number(),
+  cost:          z.number(),
+  cacheSavings:  z.number(),
+  responseTime:  z.number()
+});
+
+export type LastCompletionMetrics = z.infer<typeof LastCompletionMetricsSchema>;
+
+export const TotalsMetricsSchema = z.object({
+  inputTokens:     z.number().default(0),
+  outputTokens:    z.number().default(0),
+  cachedTokens:    z.number().default(0),
+  totalCost:       z.number().default(0),
+  totalSavings:    z.number().default(0),
+  completionCount: z.number().default(0)
+});
+
+export type TotalsMetrics = z.infer<typeof TotalsMetricsSchema>;
+
+export const ModelConversationMetricsSchema = z.object({
+  participant: ParticipantSchema,
+  lastCompletion: LastCompletionMetricsSchema.optional(),
+  totals: TotalsMetricsSchema.default({}),
+  contextManagement: ContextManagementSchema.optional()
+});
+
+export type ModelConversationMetrics = z.infer<typeof ModelConversationMetricsSchema>;
+
+export const ConversationMetricsSchema = z.object({
+  conversationId:   z.string(),
+  messageCount:    z.number().default(0),
+  perModelMetrics: z.record(z.string(), ModelConversationMetricsSchema).default({}),
+  lastCompletion: LastCompletionMetricsSchema.optional(),
+  totals: TotalsMetricsSchema.default({}),
+  contextManagement: ContextManagementSchema.optional()
+});
+
+export type ConversationMetrics = z.infer<typeof ConversationMetricsSchema>;

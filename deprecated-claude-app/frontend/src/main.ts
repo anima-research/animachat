@@ -19,6 +19,7 @@ import { createStore } from './store';
 import ConversationView from './views/ConversationView.vue';
 import LoginView from './views/LoginView.vue';
 import AboutView from './views/AboutView.vue';
+import SharedView from './views/SharedView.vue';
 
 const vuetify = createVuetify({
   components,
@@ -62,6 +63,12 @@ const router = createRouter({
       path: '/about',
       name: 'about',
       component: AboutView,
+    },
+    {
+      path: '/share/:token',
+      name: 'share',
+      component: SharedView,
+      // No auth required - public route
     },
     {
       path: '/',

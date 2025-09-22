@@ -3,9 +3,7 @@
     <!-- Sidebar -->
     <v-navigation-drawer
       v-model="drawer"
-      :rail="rail"
       permanent
-      @click="rail = false"
     >
       <v-list>
         <v-list-item
@@ -17,13 +15,6 @@
             <div class="mr-3">
               <ArcLogo :size="40" />
             </div>
-          </template>
-          <template v-slot:append>
-            <v-btn
-              variant="text"
-              icon="mdi-chevron-left"
-              @click.stop="rail = !rail"
-            />
           </template>
         </v-list-item>
       </v-list>
@@ -133,7 +124,7 @@
     <!-- Main Content -->
     <v-main class="d-flex flex-column" style="height: 100vh;">
       <!-- Top Bar -->
-      <v-app-bar density="compact" flat>
+      <v-app-bar density="compact">
         <v-app-bar-nav-icon @click="drawer = !drawer" />
         
         <v-toolbar-title>
@@ -195,15 +186,15 @@
           </v-tooltip>
         </v-chip>
         
-        <!-- Fix branches button (hidden - only for debugging) -->
-        <!-- <v-btn
+        <!-- Share button -->
+        <v-btn
           v-if="currentConversation"
-          icon="mdi-wrench"
+          icon="mdi-share-variant"
           size="small"
-          color="orange"
-          @click="fixConversationBranches"
-          title="Fix branch structure issues"
-        /> -->
+          variant="text"
+          @click="shareDialog = true"
+          title="Share conversation"
+        />
         
         <!-- Import raw messages button (hidden - kept for potential debugging use) -->
         <!-- <v-btn
@@ -215,13 +206,14 @@
           title="Import raw messages backup"
         /> -->
         
-        <v-btn
+        <!-- Export button (hidden - available in conversation dropdown menu) -->
+        <!-- <v-btn
           v-if="currentConversation"
           icon="mdi-export"
           variant="text"
           @click="exportConversation(currentConversation.id)"
           title="Export conversation"
-        />
+        /> -->
         
         <v-btn
           v-if="allMessages.length > 0"
@@ -237,7 +229,7 @@
       <v-container
         ref="messagesContainer"
         class="flex-grow-1 overflow-y-auto messages-container"
-        style="max-height: calc(100vh - 200px);"
+        style="max-height: calc(100vh - 160px);"
       >
         <div v-if="!currentConversation" class="text-center mt-12">
           <v-icon size="64" color="grey">mdi-message-text-outline</v-icon>
@@ -254,27 +246,21 @@
             :is-selected-parent="selectedBranchForParent?.messageId === message.id && 
                                  selectedBranchForParent?.branchId === message.activeBranchId"
             :is-last-message="index === messages.length - 1"
+            :is-streaming="isStreaming && message.id === streamingMessageId"
+            :has-error="streamingError?.messageId === message.id"
+            :error-message="streamingError?.messageId === message.id ? streamingError.error : undefined"
             @regenerate="regenerateMessage"
             @edit="editMessage"
             @switch-branch="switchBranch"
             @delete="deleteMessage"
             @select-as-parent="selectBranchAsParent"
+            @stop-auto-scroll="stopAutoScroll"
           />
-          
-          <div v-if="isStreaming" class="d-flex align-center mt-4">
-            <v-progress-circular
-              indeterminate
-              size="20"
-              width="2"
-              class="mr-2"
-            />
-            <span class="text-caption">Generating response...</span>
-          </div>
         </div>
       </v-container>
 
       <!-- Input Area -->
-      <v-container v-if="currentConversation" class="pa-4">
+      <v-container v-if="currentConversation" class="pa-4" style="padding-top: 0 !important">
         <!-- Branch selection indicator -->
         <v-alert
           v-if="selectedBranchForParent"
@@ -290,7 +276,7 @@
         
         <!-- Model Quick Access Bar -->
         <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
-             class="mb-3">
+             class="mb-0 d-flex align-center justify-space-around">
           <div class="d-flex align-center gap-2 flex-wrap">
             
             <!-- Existing participants sorted by last spoken -->
@@ -303,9 +289,15 @@
               @click="triggerParticipantResponse(participant)"
               :disabled="isStreaming"
               class="clickable-chip"
+              style="margin: 0 2px 0 2px"
             >
               <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
-              {{ participant.name }}
+              {{ participant.name === '' 
+                ? `${participant.model} (continue)`
+                : participant.name }}
+              <v-tooltip activator="parent" location="top">
+                {{ participant.name === '' ? `Continue with ${participant.model}` : `Response from ${participant.name}` }}
+              </v-tooltip>
             </v-chip>
             
             <!-- Divider between participants and suggested models -->
@@ -324,6 +316,7 @@
                 @click="triggerModelResponse(model)"
                 :disabled="isStreaming"
                 class="clickable-chip"
+                style="margin: 0 2px 0 2px"
               >
                 <v-icon size="x-small" start>{{ getProviderIcon(model.provider) }}</v-icon>
                 {{ model.shortName || model.displayName }}
@@ -335,8 +328,59 @@
           </div>
         </div>
         
-        <div v-if="currentConversation.format !== 'standard'" class="mb-2 d-flex gap-2">
+        <div class="mb-2 d-flex gap-2 align-center justify-space-around">
           <v-select
+            v-if="currentConversation.format !== 'standard'"
+            v-model="selectedResponder"
+            :items="responderOptions"
+            item-title="name"
+            item-value="id"
+            label="Response from"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="flex-grow-1 mr-2"
+          >
+            <template v-slot:selection="{ item }">
+              <div class="d-flex align-center">
+                <v-icon 
+                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                  size="small"
+                  class="mr-2"
+                />
+                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
+                  {{ item.raw.name }}
+                </span>
+              </div>
+            </template>
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:prepend>
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                  />
+                </template>
+                <template v-slot:title>
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
+                    {{ item.raw.name }}
+                  </span>
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
+          <v-btn
+            :disabled="isStreaming"
+            :color="continueButtonColor"
+            icon="mdi-robot"
+            variant="text"
+            :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
+            @click="continueGeneration"
+            class="mr-2"
+          />
+          <v-select
+            v-if="currentConversation.format !== 'standard'"
             v-model="selectedParticipant"
             :items="allParticipants"
             item-title="name"
@@ -376,46 +420,13 @@
               </v-list-item>
             </template>
           </v-select>
-          <v-select
-            v-model="selectedResponder"
-            :items="responderOptions"
-            item-title="name"
-            item-value="id"
-            label="Response from"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="flex-grow-1"
-          >
-            <template v-slot:selection="{ item }">
-              <div class="d-flex align-center">
-                <v-icon 
-                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
-                  size="small"
-                  class="mr-2"
-                />
-                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
-                  {{ item.raw.name }}
-                </span>
-              </div>
-            </template>
-            <template v-slot:item="{ props, item }">
-              <v-list-item v-bind="props">
-                <template v-slot:prepend>
-                  <v-icon 
-                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
-                  />
-                </template>
-                <template v-slot:title>
-                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
-                    {{ item.raw.name }}
-                  </span>
-                </template>
-              </v-list-item>
-            </template>
-          </v-select>
+          
+          <!-- <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
+                       vertical 
+                       class="mx-1" 
+                       style="height: 30px" /> -->
+          
+          
         </div>
         
         <!-- Attachments display -->
@@ -450,7 +461,7 @@
           label="Type your message..."
           rows="3"
           auto-grow
-          max-rows="10"
+          max-rows="15"
           variant="outlined"
           hide-details
           @keydown.enter.exact.prevent="sendMessage"
@@ -466,17 +477,9 @@
               class="mr-1"
             />
             
+            
             <v-btn
-              :disabled="isStreaming"
-              :color="continueButtonColor"
-              icon="mdi-robot"
-              variant="text"
-              :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
-              @click="continueGeneration"
-              class="mr-1"
-            />
-            <v-btn
-              :disabled="!messageInput.trim() || isStreaming"
+              :disabled="!messageInput || isStreaming"
               color="primary"
               icon="mdi-send"
               variant="text"
@@ -504,17 +507,7 @@
       :width="400"
       permanent
     >
-      <v-toolbar density="compact">
-        <v-toolbar-title>Conversation Tree</v-toolbar-title>
-        <v-spacer />
-        <v-btn
-          icon="mdi-close"
-          size="small"
-          variant="text"
-          @click="treeDrawer = false"
-        />
-      </v-toolbar>
-      
+
       <ConversationTree
         v-if="allMessages.length > 0"
         :messages="allMessages"
@@ -525,6 +518,8 @@
         :selected-parent-branch-id="selectedBranchForParent?.branchId"
         @navigate-to-branch="navigateToTreeBranch"
         class="flex-grow-1"
+        style="overflow-y: hidden"
+
       />
       
       <v-container v-else class="d-flex align-center justify-center" style="height: calc(100% - 48px);">
@@ -583,6 +578,12 @@
       @update-participants="updateParticipants"
     />
     
+    <ShareDialog
+      v-model="shareDialog"
+      :conversation="currentConversation"
+      :current-branch-id="currentBranchId"
+    />
+    
 
     
     <WelcomeDialog
@@ -597,13 +598,16 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
 import type { Conversation, Message, Participant, Model } from '@deprecated-claude/shared';
+import { UpdateParticipantSchema } from '@deprecated-claude/shared';
 import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
+import ShareDialog from '@/components/ShareDialog.vue';
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
@@ -615,16 +619,20 @@ const router = useRouter();
 const store = useStore();
 
 const drawer = ref(true);
-const rail = ref(false);
 const treeDrawer = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
+const shareDialog = ref(false);
 const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
 const rawImportData = ref('');
 const messageInput = ref('');
 const isStreaming = ref(false);
+const streamingMessageId = ref<string | null>(null);
+const autoScrollEnabled = ref(true);
+const isSwitchingBranch = ref(false);
+const streamingError = ref<{ messageId: string; error: string } | null>(null);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
 
@@ -660,7 +668,6 @@ const currentBranchId = computed(() => {
 });
 const currentModel = computed(() => store.currentModel);
 
-
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
   return responder?.name || 'Assistant';
@@ -668,7 +675,12 @@ const selectedResponderName = computed(() => {
 
 // Allow sending as any participant type (user or assistant)
 const allParticipants = computed(() => {
-  return participants.value.filter(p => p.isActive);
+  return participants.value.filter(p => p.isActive).map(p => ({
+    ...p,
+    name: p.name === '' 
+      ? (p.type === 'assistant' && p.model ? `${p.model} (continue)` : '(continue)')
+      : p.name
+  }));
 });
 
 const assistantParticipants = computed(() => {
@@ -680,7 +692,9 @@ const responderOptions = computed(() => {
   // Include full participant objects to have access to type and model
   const assistantOptions = assistantParticipants.value.map(p => ({
     id: p.id,
-    name: p.name,
+    name: p.name === '' 
+      ? (p.model ? `${p.model} (continue)` : '(continue)')
+      : p.name,
     type: p.type,
     model: p.model || ''
   }));
@@ -784,6 +798,55 @@ onMounted(async () => {
   
   store.connectWebSocket();
   
+  // Set up WebSocket listeners for streaming after a small delay
+  nextTick(() => {
+    if (store.state.wsService) {
+      store.state.wsService.on('message_created', (data: any) => {
+        // A new message was created, start tracking streaming
+        if (data.message && data.message.branches?.length > 0) {
+          const lastBranch = data.message.branches[data.message.branches.length - 1];
+          if (lastBranch.role === 'assistant') {
+            streamingMessageId.value = data.message.id;
+            isStreaming.value = true;
+            autoScrollEnabled.value = true; // Re-enable auto-scroll for new messages
+            streamingError.value = null; // Clear any previous errors
+          }
+        }
+      });
+      
+      store.state.wsService.on('stream', (data: any) => {
+        // Streaming content update
+        if (data.messageId === streamingMessageId.value) {
+          // Check if streaming is complete
+          if (data.isComplete) {
+            isStreaming.value = false;
+            streamingMessageId.value = null;
+          } else {
+            // Still streaming
+            if (!isStreaming.value) {
+              isStreaming.value = true;
+            }
+          }
+        }
+      });
+      
+      store.state.wsService.on('error', (data: any) => {
+        // Handle streaming errors
+        console.error('WebSocket error:', data);
+        
+        // If we're currently streaming, mark it as failed
+        if (isStreaming.value && streamingMessageId.value) {
+          streamingError.value = {
+            messageId: streamingMessageId.value,
+            error: data.error || 'Failed to generate response'
+          };
+          isStreaming.value = false;
+          // Don't clear streamingMessageId so we can show the error on the right message
+        }
+      });
+    }
+  });
+  
   // Load participants for multi-participant conversations
   for (const conversation of conversations.value) {
     if (conversation.format === 'prefill') {
@@ -808,11 +871,17 @@ onMounted(async () => {
       scrollToBottom();
     }, 100);
   }
+  
 });
 
 // Watch route changes
 watch(() => route.params.id, async (newId) => {
   if (newId) {
+    // Clear selected branch when switching conversations
+    if (selectedBranchForParent.value) {
+      cancelBranchSelection();
+    }
+    
     await store.loadConversation(newId as string);
     await loadParticipants();
     // Ensure DOM is updated before scrolling
@@ -826,9 +895,48 @@ watch(() => route.params.id, async (newId) => {
 
 // Watch for new messages to scroll
 watch(messages, () => {
-  nextTick(() => {
-    scrollToBottom(true); // Smooth scroll for new messages
-  });
+  // Don't auto-scroll if we're switching branches via the navigation arrows
+  if (autoScrollEnabled.value && !isSwitchingBranch.value) {
+    nextTick(() => {
+      scrollToBottom(true); // Smooth scroll for new messages
+    });
+  }
+}, { deep: true });
+
+// Watch for branch changes to clear selected parent if it's no longer in active path
+watch(messages, () => {
+  if (selectedBranchForParent.value && messages.value.length > 0) {
+    const { messageId, branchId } = selectedBranchForParent.value;
+    
+    // Check if the selected branch is still in the active path
+    let isInActivePath = false;
+    
+    // Find the message with the selected branch
+    const selectedMessage = messages.value.find(m => m.id === messageId);
+    if (selectedMessage && selectedMessage.activeBranchId === branchId) {
+      // Now trace forward from this message to see if it leads to the current position
+      let currentMsg = selectedMessage;
+      const currentBranch = currentMsg.branches.find(b => b.id === branchId);
+      
+      if (currentBranch) {
+        // Check if any message has this branch as its parent in the active path
+        isInActivePath = messages.value.some(msg => {
+          const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+          return activeBranch && activeBranch.parentBranchId === branchId;
+        });
+        
+        // Also check if this is the last message (no children)
+        if (!isInActivePath && messages.value[messages.value.length - 1]?.id === messageId) {
+          isInActivePath = true;
+        }
+      }
+    }
+    
+    // Clear selection if it's not in the active path
+    if (!isInActivePath) {
+      cancelBranchSelection();
+    }
+  }
 }, { deep: true });
 
 function scrollToBottom(smooth: boolean = false) {
@@ -870,15 +978,21 @@ async function createNewConversation() {
   // Use default model from system config, or fallback to first model or hardcoded default
   const defaultModel = store.state.systemConfig?.defaultModel || 
                       store.state.models[0]?.id || 
-                      'claude-3.5-sonnet';
+                      'claude-3.6-sonnet';
   const conversation = await store.createConversation(defaultModel);
   router.push(`/conversation/${conversation.id}`);
   // Load participants for the new conversation
   await loadParticipants();
+  
+  // Automatically open the settings dialog for the new conversation
+  // Use nextTick to ensure the route has changed and currentConversation is updated
+  await nextTick();
+  conversationSettingsDialog.value = true;
 }
 
 async function sendMessage() {
-  const content = messageInput.value.trim();
+  // const content = messageInput.value.trim();
+  const content = messageInput.value;
   if (!content || isStreaming.value) return;
   
   console.log('ConversationView sendMessage:', content);
@@ -888,7 +1002,6 @@ async function sendMessage() {
   const attachmentsCopy = [...attachments.value];
   messageInput.value = '';
   attachments.value = [];
-  isStreaming.value = true;
   
   try {
     let participantId: string | undefined;
@@ -916,8 +1029,9 @@ async function sendMessage() {
     if (selectedBranchForParent.value) {
       selectedBranchForParent.value = null;
     }
-  } finally {
-    isStreaming.value = false;
+  } catch (error) {
+    console.error('Failed to send message:', error);
+    messageInput.value = content; // Restore input on error
   }
 }
 
@@ -926,8 +1040,6 @@ async function continueGeneration() {
   
   console.log('ConversationView continueGeneration');
   console.log('Selected parent branch:', selectedBranchForParent.value);
-  
-  isStreaming.value = true;
   
   try {
     let responderId: string | undefined;
@@ -951,8 +1063,8 @@ async function continueGeneration() {
     if (selectedBranchForParent.value) {
       selectedBranchForParent.value = null;
     }
-  } finally {
-    isStreaming.value = false;
+  } catch (error) {
+    console.error('Failed to continue generation:', error);
   }
 }
 
@@ -1024,12 +1136,7 @@ async function triggerParticipantResponse(participant: Participant) {
 }
 
 async function regenerateMessage(messageId: string, branchId: string) {
-  isStreaming.value = true;
-  try {
-    await store.regenerateMessage(messageId, branchId);
-  } finally {
-    isStreaming.value = false;
-  }
+  await store.regenerateMessage(messageId, branchId);
 }
 
 async function editMessage(messageId: string, branchId: string, content: string) {
@@ -1049,7 +1156,12 @@ async function editMessage(messageId: string, branchId: string, content: string)
 }
 
 function switchBranch(messageId: string, branchId: string) {
+  isSwitchingBranch.value = true;
   store.switchBranch(messageId, branchId);
+  // Reset the flag after a short delay to allow the watch to process
+  setTimeout(() => {
+    isSwitchingBranch.value = false;
+  }, 100);
 }
 
 async function navigateToTreeBranch(messageId: string, branchId: string) {
@@ -1084,6 +1196,9 @@ async function navigateToTreeBranch(messageId: string, branchId: string) {
   
   console.log('Path to switch:', pathToRoot);
   
+  // Set flag to prevent auto-scrolling during branch switches
+  isSwitchingBranch.value = true;
+  
   // Switch branches along the path
   for (const { messageId: msgId, branchId: brId } of pathToRoot) {
     const message = allMessages.value.find(m => m.id === msgId);
@@ -1092,6 +1207,11 @@ async function navigateToTreeBranch(messageId: string, branchId: string) {
       store.switchBranch(msgId, brId);
     }
   }
+  
+  // Reset the flag after branches are switched
+  setTimeout(() => {
+    isSwitchingBranch.value = false;
+  }, 100);
   
   // Wait for DOM to update, then scroll to the clicked message
   await nextTick();
@@ -1284,6 +1404,10 @@ function selectBranchAsParent(messageId: string, branchId: string) {
   }
 }
 
+function stopAutoScroll() {
+  autoScrollEnabled.value = false;
+}
+
 function cancelBranchSelection() {
   selectedBranchForParent.value = null;
 }
@@ -1324,7 +1448,6 @@ async function loadParticipants() {
   try {
     const response = await api.get(`/participants/conversation/${currentConversation.value.id}`);
     participants.value = response.data;
-    
     // Set default selected participant
     if (currentConversation.value.format !== 'standard') {
       const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
@@ -1357,21 +1480,20 @@ async function updateParticipants(updatedParticipants: Participant[]) {
         }
       } else if (!existing.id.startsWith('temp-')) {
         // Check if participant was actually updated by comparing relevant fields
-        const hasChanges = 
-          existing.name !== updated.name ||
+        const hasChanges = existing.name !== updated.name ||
           existing.model !== updated.model ||
           existing.systemPrompt !== updated.systemPrompt ||
-          existing.settings?.temperature !== updated.settings?.temperature ||
-          existing.settings?.maxTokens !== updated.settings?.maxTokens;
-        
+          !isEqual(existing.settings, updated.settings) ||
+          !isEqual(existing.contextManagement, updated.contextManagement);
         if (hasChanges) {
           // Participant was updated
-          const updateData = {
+          const updateData = UpdateParticipantSchema.parse({
             name: updated.name,
             model: updated.model,
             systemPrompt: updated.systemPrompt,
-            settings: updated.settings
-          };
+            settings: updated.settings,
+            contextManagement: updated.contextManagement
+          });
           
           console.log('Updating participant:', existing.id, updateData);
           
@@ -1423,46 +1545,6 @@ function logout() {
 
 // Cache for conversation participants to avoid repeated API calls
 const conversationParticipantsCache = ref<Record<string, any[]>>({});
-
-// Branch structure analysis function (disabled - only reports issues, doesn't fix)
-// async function fixConversationBranches() {
-//   if (!currentConversation.value) return;
-  
-//   const conversationId = currentConversation.value.id;
-//   console.log(`Analyzing branch structure for conversation: ${conversationId}`);
-  
-//   try {
-//     const token = localStorage.getItem('token');
-//     if (!token) {
-//       alert('Not authenticated');
-//       return;
-//     }
-    
-//     const response = await fetch(`http://localhost:3010/api/conversations/${conversationId}/fix-branches`, {
-//       method: 'POST',
-//       headers: {
-//         'Authorization': `Bearer ${token}`,
-//         'Content-Type': 'application/json'
-//       }
-//     });
-    
-//     const result = await response.json();
-    
-//     if (response.ok) {
-//       console.log('Branch structure analysis:', result);
-//       alert(`Branch structure analysis complete!\n\nCheck console for details.`);
-      
-//       // Reload the conversation to see any changes
-//       await store.loadConversation(conversationId);
-//     } else {
-//       console.error('Failed to analyze branches:', result);
-//       alert(`Failed to analyze branches: ${result.error || 'Unknown error'}`);
-//     }
-//   } catch (error) {
-//     console.error('Error analyzing branches:', error);
-//     alert('Error analyzing branches. Check console for details.');
-//   }
-// }
 
 async function importRawMessages() {
   if (!currentConversation.value || !rawImportData.value.trim()) return;

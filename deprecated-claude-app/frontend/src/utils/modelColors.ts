@@ -1,16 +1,16 @@
 // Model color definitions
 export const MODEL_COLORS: Record<string, string> = {
-  // Claude Opus models - Bright cyan/gold
-  'claude-opus-4-1-20250805': '#00e5ff',      // Very bright cyan
-  'claude-opus-4-20250514': '#00e5ff',        // Very bright cyan
-  'claude-3-opus-20240229': '#ffc107',        // Gold
+  // Claude Opus models
+  'claude-opus-4-1-20250805': '#e07102',      // Deep orange
+  'claude-opus-4-20250514': '#00e5ff',        // Bright cyan
+  'claude-3-opus-20240229': '#ffc300',        // Golden yellow
   
-  // Claude Sonnet models - Very bright blues and red
-  'claude-sonnet-4-20250514': '#40c4ff',      // Very bright blue
-  'claude-3-7-sonnet-20250219': '#00b0ff',    // Bright sky blue
-  'claude-3-6-sonnet-20241022': '#448aff',    // Bright blue
-  'claude-3-5-sonnet-20241022': '#2979ff',    // Electric blue
-  'claude-3-sonnet-20240229': '#f44336',      // Red
+  // Claude Sonnet models
+  'claude-sonnet-4-20250514': '#86a3b0',      // Light sky blue
+  'claude-3-7-sonnet-20250219': '#00b0ff',    // Vivid light blue
+  'claude-3-5-sonnet-20241022': '#ed098e',    // Hot pink/magenta
+  'claude-3-5-sonnet-20240620': '#146fff',    // Vivid blue
+  'claude-3-sonnet-20240229': '#f44336',      // Bright red
   
   // Claude Haiku models - Bright green
   'claude-3-5-haiku-20241022': '#4caf50',     // Bright green
@@ -88,10 +88,10 @@ export function getModelColor(model: string | undefined): string {
     return MODEL_COLORS['claude-3-7-sonnet-20250219'];
   }
   if (modelLower.includes('3-6-sonnet') || modelLower.includes('3.6-sonnet') || modelLower.includes('sonnet-3.6') || modelLower.includes('sonnet 3.6')) {
-    return MODEL_COLORS['claude-3-6-sonnet-20241022'];
+    return MODEL_COLORS['claude-3-5-sonnet-20241022'];
   }
   if (modelLower.includes('3-5-sonnet') || modelLower.includes('3.5-sonnet') || modelLower.includes('sonnet-3.5') || modelLower.includes('sonnet 3.5')) {
-    return MODEL_COLORS['claude-3-5-sonnet-20241022'];
+    return MODEL_COLORS['claude-3-5-sonnet-20240620'];
   }
   if (modelLower.includes('sonnet')) {
     return MODEL_COLORS['claude-3-sonnet-20240229'];

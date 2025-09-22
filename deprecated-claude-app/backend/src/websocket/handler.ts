@@ -14,6 +14,61 @@ interface AuthenticatedWebSocket extends WebSocket {
   isAlive?: boolean;
 }
 
+/**
+ * Build conversation history by following the active branch path backwards
+ * from a given branch ID to the root.
+ * 
+ * @param allMessages - All messages in the conversation
+ * @param fromBranchId - The branch ID to start from (going backwards)
+ * @param includeMessage - Optional message to include/replace in the history
+ * @returns Array of messages in chronological order (oldest first)
+ */
+function buildConversationHistory(
+  allMessages: Message[],
+  fromBranchId: string | undefined,
+  includeMessage?: { messageId: string; message: Message }
+): Message[] {
+  const history: Message[] = [];
+  
+  // Build a map for quick lookup
+  const messagesByBranchId = new Map<string, Message>();
+  for (const msg of allMessages) {
+    for (const branch of msg.branches) {
+      messagesByBranchId.set(branch.id, msg);
+    }
+  }
+  
+  // Start from the specified branch and work backwards
+  let currentBranchId = fromBranchId;
+  
+  while (currentBranchId && currentBranchId !== 'root') {
+    const message = messagesByBranchId.get(currentBranchId);
+    if (!message) {
+      console.log('[buildConversationHistory] Could not find message for branch:', currentBranchId);
+      break;
+    }
+    
+    // Use the provided message if this is the one to replace
+    const messageToAdd = includeMessage && message.id === includeMessage.messageId 
+      ? includeMessage.message 
+      : message;
+    
+    // Add to beginning of history (we're building backwards)
+    history.unshift(messageToAdd);
+    
+    // Find the branch and get its parent
+    const branch = messageToAdd.branches.find(b => b.id === currentBranchId);
+    if (!branch) {
+      console.log('[buildConversationHistory] Could not find branch:', currentBranchId);
+      break;
+    }
+    
+    currentBranchId = branch.parentBranchId;
+  }
+  
+  return history;
+}
+
 export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessage, db: Database) {
   // Extract token from query params
   const url = new URL(req.url || '', `http://${req.headers.host}`);
@@ -272,46 +327,11 @@ async function handleChatMessage(
     message: assistantMessage
   }));
 
-  // Get conversation history - build backwards from the user message
+  // Get conversation history using the utility function
   const allMessages = await db.getConversationMessages(message.conversationId);
-  const visibleHistory: Message[] = [];
   
-  console.log('Building visible history backwards from parentBranchId:', message.parentBranchId);
-  
-  // Build a map for quick lookup
-  const messagesByBranchId = new Map<string, Message>();
-  for (const msg of allMessages) {
-    for (const branch of msg.branches) {
-      messagesByBranchId.set(branch.id, msg);
-    }
-  }
-  
-  // Start from the parent of the new user message and work backwards
-  let currentParentBranchId = message.parentBranchId;
-  
-  while (currentParentBranchId && currentParentBranchId !== 'root') {
-    const parentMessage = messagesByBranchId.get(currentParentBranchId);
-    if (!parentMessage) {
-      console.log('Could not find message for branch:', currentParentBranchId);
-      break;
-    }
-    
-    // Add to beginning of history (we're building backwards)
-    visibleHistory.unshift(parentMessage);
-    const role = parentMessage.branches.find(b => b.id === currentParentBranchId)?.role || 'unknown';
-    // console.log('Added to visible history:', parentMessage.id, 'role:', role);
-    
-    // Find the branch and get its parent
-    const branch = parentMessage.branches.find(b => b.id === currentParentBranchId);
-    if (!branch) {
-      console.log('Could not find branch:', currentParentBranchId, 'in message:', parentMessage.id);
-      break;
-    }
-    
-    currentParentBranchId = branch.parentBranchId || '';
-  }
-  
-  // Add the new user message at the end
+  // Build history from the parent branch and add the new user message
+  const visibleHistory = buildConversationHistory(allMessages, message.parentBranchId);
   visibleHistory.push(userMessage);
   console.log('Final visible history length:', visibleHistory.length);
   
@@ -455,13 +475,23 @@ async function handleRegenerate(
   console.log('[Regenerate] Original branch parent:', originalBranch?.parentBranchId);
   console.log('[Regenerate] Using parent branch:', correctParentBranchId);
   
-  // Create new branch with correct parent
+  // Get the participant's model if in prefill mode
+  let regenerateModel = conversation.model;
+  if (conversation.format === 'prefill' && participantId) {
+    const participants = await db.getConversationParticipants(conversation.id);
+    const participant = participants.find(p => p.id === participantId);
+    if (participant && participant.model) {
+      regenerateModel = participant.model;
+    }
+  }
+  
+  // Create new branch with correct parent and model
   const updatedMessage = await db.addMessageBranch(
     message.messageId,
     '',
     'assistant',
     correctParentBranchId,
-    conversation.model,
+    regenerateModel,
     participantId
   );
 
@@ -476,41 +506,8 @@ async function handleRegenerate(
     message: updatedMessage
   }));
 
-  // Get conversation history - build backwards from the parent branch
-  const visibleHistory: Message[] = [];
-  
-  // Build a map for quick lookup
-  const messagesByBranchId = new Map<string, Message>();
-  for (const msg of allMessages) {
-    for (const branch of msg.branches) {
-      messagesByBranchId.set(branch.id, msg);
-    }
-  }
-  
-  // Start from the parent of the message being regenerated and work backwards
-  let currentParentBranchId = correctParentBranchId;
-  
-  while (currentParentBranchId && currentParentBranchId !== 'root') {
-    const parentMessage = messagesByBranchId.get(currentParentBranchId);
-    if (!parentMessage) {
-      console.log('Regenerate: Could not find message for branch:', currentParentBranchId);
-      break;
-    }
-    
-    // Add to beginning of history (we're building backwards)
-    visibleHistory.unshift(parentMessage);
-    
-    // Find the branch and get its parent
-    const branch = parentMessage.branches.find(b => b.id === currentParentBranchId);
-    if (!branch) {
-      console.log('Regenerate: Could not find branch:', currentParentBranchId);
-      break;
-    }
-    
-    currentParentBranchId = branch.parentBranchId || '';
-  }
-  
-  const historyMessages = visibleHistory;
+  // Get conversation history using the utility function
+  const historyMessages = buildConversationHistory(allMessages, correctParentBranchId);
 
   // Get participants for the conversation
   const participants = await db.getConversationParticipants(conversation.id);
@@ -689,6 +686,15 @@ async function handleEdit(
       responderId = defaultAssistant?.id;
     }
     
+    // Get the responder's model early for branch creation
+    let responderModel = conversation.model;
+    if (responderId && participants.length > 0) {
+      const responderParticipant = participants.find(p => p.id === responderId);
+      if (responderParticipant && responderParticipant.model) {
+        responderModel = responderParticipant.model;
+      }
+    }
+    
     // Check if there's already an assistant message after this user message
     const nextMessage = editedMessageIndex + 1 < allMessages.length ? allMessages[editedMessageIndex + 1] : null;
     
@@ -701,7 +707,7 @@ async function handleEdit(
         '',
         'assistant',
         updatedMessage.activeBranchId, // Parent is the edited user message's active branch
-        conversation.model,
+        responderModel,  // Use responder's model, not conversation model
         responderId // Assistant participant ID
       );
       
@@ -724,7 +730,7 @@ async function handleEdit(
         msg.conversationId,
         '',
         'assistant',
-        conversation.model,
+        responderModel,  // Use responder's model, not conversation model
         updatedMessage.activeBranchId, // Parent is the edited user message's active branch
         responderId // Assistant participant ID
       );
@@ -736,25 +742,23 @@ async function handleEdit(
       }));
     }
     
-    // Get conversation history up to and including the edited message
-    const historyMessages = allMessages.slice(0, editedMessageIndex + 1);
+    // Build conversation history using the utility function
+    // We need to include the edited message in place of the original
+    const historyMessages = buildConversationHistory(
+      allMessages, 
+      updatedMessage.activeBranchId,
+      { messageId: updatedMessage.id, message: updatedMessage }
+    );
     
-    // Make sure we're using the edited branch for the user message in history
-    if (historyMessages[editedMessageIndex]) {
-      historyMessages[editedMessageIndex] = updatedMessage;
-    }
-    
-    // Get the responder's settings
+    // Get the responder's settings (we already have responderModel from earlier)
     let responderSettings = conversation.settings;
     // For group chats, conversation-level system prompts should not be used
-  let responderSystemPrompt = conversation.format === 'prefill' ? undefined : conversation.systemPrompt;
-    let responderModel = conversation.model;
+    let responderSystemPrompt = conversation.format === 'prefill' ? undefined : conversation.systemPrompt;
     let responderParticipant: Participant | undefined;
     
     if (responderId && participants.length > 0) {
       responderParticipant = participants.find(p => p.id === responderId);
       if (responderParticipant) {
-        responderModel = responderParticipant.model || conversation.model;
         // For group chats, only use participant system prompts
         responderSystemPrompt = conversation.format === 'prefill'
           ? responderParticipant.systemPrompt
@@ -987,48 +991,10 @@ async function handleContinue(
       model: responder.model || conversation.model
     });
 
-    // Build visible history backwards from the parent branch (same as in handleChatMessage)
-    const visibleHistory: Message[] = [];
-    
-    if (parentBranchId) {
-      console.log('Continue: Building visible history backwards from parentBranchId:', parentBranchId);
-      
-      // Build a map for quick lookup
-      const messagesByBranchId = new Map<string, Message>();
-      for (const msg of messages) {
-        for (const branch of msg.branches) {
-          messagesByBranchId.set(branch.id, msg);
-        }
-      }
-      
-      // Start from the specified parent and work backwards
-      let currentParentBranchId: string | undefined = parentBranchId;
-      
-      while (currentParentBranchId && currentParentBranchId !== 'root') {
-        const parentMessage = messagesByBranchId.get(currentParentBranchId);
-        if (!parentMessage) {
-          console.log('Could not find message for branch:', currentParentBranchId);
-          break;
-        }
-        
-        // Add to beginning of history (we're building backwards)
-        visibleHistory.unshift(parentMessage);
-        
-        // Find the branch and get its parent
-        const branch = parentMessage.branches.find(b => b.id === currentParentBranchId);
-        if (!branch) {
-          console.log('Could not find branch:', currentParentBranchId, 'in message:', parentMessage.id);
-          break;
-        }
-        
-        currentParentBranchId = branch.parentBranchId || '';
-      }
-      
-      console.log('Continue: Final visible history length:', visibleHistory.length);
-    } else {
-      // No parent specified, use all messages (default behavior)
-      visibleHistory.push(...messages);
-    }
+    // Build conversation history using the utility function
+    const visibleHistory = parentBranchId 
+      ? buildConversationHistory(messages, parentBranchId)
+      : messages; // No parent specified, use all messages (default behavior)
     
     // Include the new assistant message in the messages array for prefill formatting
     const messagesWithNewAssistant = [...visibleHistory, assistantMessage];

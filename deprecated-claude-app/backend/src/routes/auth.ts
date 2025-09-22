@@ -177,10 +177,9 @@ export function authRouter(db: Database): Router {
       if (!req.userId) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
-
-      // For now, just return success as delete is not implemented in the in-memory DB
-      // In a real implementation, you would delete the key from the database
-      res.json({ success: true });
+      const { id } = req.params;
+      const didRemove = db.deleteApiKey(id);
+      res.json({ success: didRemove });
     } catch (error) {
       console.error('Delete API key error:', error);
       res.status(500).json({ error: 'Internal server error' });

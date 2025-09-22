@@ -77,6 +77,27 @@ export class AnthropicService {
         stream: true
       };
       
+      // Log the full prompt being sent to the model
+      console.log('\n========== FULL PROMPT TO ANTHROPIC ==========');
+      if (systemContent) {
+        console.log('SYSTEM:', systemContent);
+      }
+      for (const msg of anthropicMessages) {
+        if (typeof msg.content === 'string') {
+          console.log(`${msg.role.toUpperCase()}:`, msg.content);
+        } else if (Array.isArray(msg.content)) {
+          console.log(`${msg.role.toUpperCase()}: [multipart content with ${msg.content.length} parts]`);
+          for (const part of msg.content) {
+            if (part.type === 'text') {
+              console.log(`  TEXT:`, part.text);
+            } else if (part.type === 'image') {
+              console.log(`  IMAGE: [base64 data]`);
+            }
+          }
+        }
+      }
+      console.log('========== END PROMPT ==========\n');
+      
       requestId = `anthropic-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
       // Log the request
@@ -110,18 +131,14 @@ export class AnthropicService {
       };
       
       for await (const chunk of stream) {
-        // Log all chunk types for debugging
-        console.log(`[Anthropic API] Chunk type: ${chunk.type}`, {
-          type: chunk.type,
-          ...(chunk.type === 'message_start' && { message: chunk.message }),
-          ...(chunk.type === 'content_block_start' && { content_block: chunk.content_block }),
-          ...(chunk.type === 'content_block_stop' && { index: chunk.index }),
-          ...(chunk.type === 'message_delta' && { 
-            stop_reason: chunk.delta?.stop_reason,
-            stop_sequence: chunk.delta?.stop_sequence,
-            usage: chunk.usage 
-          })
-        });
+        // Only log important events, not every chunk
+        if (chunk.type === 'message_start') {
+          console.log(`[Anthropic API] Stream started`);
+        } else if (chunk.type === 'message_stop') {
+          console.log(`[Anthropic API] Stream completed`);
+        } else if (chunk.type === 'error') {
+          console.log(`[Anthropic API] Stream error:`, chunk.error);
+        }
         
         // Capture cache metrics from message_start
         if (chunk.type === 'message_start' && chunk.message?.usage) {
@@ -214,7 +231,7 @@ export class AnthropicService {
     }
   }
 
-  private formatMessagesForAnthropic(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: any }> {
+  formatMessagesForAnthropic(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: any }> {
     const formattedMessages: Array<{ role: 'user' | 'assistant'; content: any }> = [];
 
     for (const message of messages) {

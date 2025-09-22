@@ -202,7 +202,7 @@ export class OpenAICompatibleService {
     }
   }
 
-  private formatMessagesForOpenAI(messages: Message[], systemPrompt?: string): OpenAIMessage[] {
+  formatMessagesForOpenAI(messages: Message[], systemPrompt?: string): OpenAIMessage[] {
     const formatted: OpenAIMessage[] = [];
 
     // Add system prompt if provided
