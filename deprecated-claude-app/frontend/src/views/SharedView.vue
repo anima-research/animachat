@@ -64,9 +64,9 @@
             variant="outlined"
             density="compact"
             class="ma-4 mb-0"
-            style="background: rgba(var(--v-theme-info), 0.05);"
+            style="background: rgba(var(--v-theme-info), 0.05); overflow: visible;"
           >
-            <div style="color: rgba(var(--v-theme-on-surface), 0.87);">
+            <div style="color: rgba(var(--v-theme-on-surface), 0.87); word-wrap: break-word;">
               {{ shareData.share.settings.description }}
             </div>
           </v-alert>
