@@ -189,7 +189,6 @@ export function createShareRouter(db: Database): Router {
       const sanitizedMessages = filteredMessages.map(msg => ({
         ...msg,
         conversationId: undefined,
-        createdAt: share.settings.showTimestamps ? msg.createdAt : undefined,
         branches: msg.branches.map((branch: any) => ({
           ...branch,
           createdAt: share.settings.showTimestamps ? branch.createdAt : undefined,

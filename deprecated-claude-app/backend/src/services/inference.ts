@@ -67,21 +67,19 @@ export class InferenceService {
         apiMessages = this.bedrockService.formatMessagesForClaude(formattedMessages);
         break;
       case 'openai-compatible':
-        // For OpenAI-compatible, we need to get the API key first
-        const openAIKey = await this.apiKeyManager.getApiKey('openai-compatible');
-        if (!openAIKey) throw new Error('OpenAI-compatible API key not configured');
+        // For prompt building, we don't need actual API keys, just format the messages
         const openAIService = new OpenAICompatibleService(
           this.db,
-          openAIKey.key,
-          openAIKey.baseUrl || 'http://localhost:11434',
-          openAIKey.modelPrefix
+          'dummy-key', // Not used for formatting
+          'http://localhost:11434',
+          undefined
         );
         apiMessages = openAIService.formatMessagesForOpenAI(formattedMessages, systemPrompt);
         apiSystemPrompt = undefined; // System prompt is included in messages for OpenAI
         break;
       case 'openrouter':
-        const openRouterKey = await this.apiKeyManager.getApiKey('openrouter');
-        const openRouterService = new OpenRouterService(this.db, openRouterKey?.key);
+        // For prompt building, we don't need actual API keys, just format the messages
+        const openRouterService = new OpenRouterService(this.db, undefined);
         apiMessages = openRouterService.formatMessagesForOpenRouter(formattedMessages, systemPrompt);
         apiSystemPrompt = undefined; // System prompt is included in messages for OpenRouter
         break;
