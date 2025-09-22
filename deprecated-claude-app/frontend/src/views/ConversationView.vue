@@ -668,15 +668,6 @@ const currentBranchId = computed(() => {
 });
 const currentModel = computed(() => store.currentModel);
 
-const currentBranchId = computed(() => {
-  // Get the active branch ID of the last message
-  const msgs = messages.value;
-  if (!msgs || msgs.length === 0) return null;
-  
-  const lastMessage = msgs[msgs.length - 1];
-  return lastMessage.activeBranchId;
-});
-
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
   return responder?.name || 'Assistant';

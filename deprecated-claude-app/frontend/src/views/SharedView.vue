@@ -125,17 +125,31 @@ const displayMessages = computed(() => {
   
   const messages = shareData.value.messages;
   
-  // If tree view, we might want to show branch indicators
+  // If tree view, only show messages on the active path
   if (shareData.value.share.shareType === 'tree') {
-    // For tree view, show all messages but highlight the active path
-    return messages.map((msg: any) => ({
-      ...msg,
-      // Mark which branch is active for display
-      branches: msg.branches.map((branch: any) => ({
-        ...branch,
-        isInActivePath: activeBranchPath.value.has(branch.id)
-      }))
-    }));
+    const visibleMessages: any[] = [];
+    let lastBranchId = 'root';
+    
+    for (const msg of messages) {
+      // Find a branch that continues from the last branch
+      const continuingBranch = msg.branches.find((b: any) => 
+        b.parentBranchId === lastBranchId && b.id === msg.activeBranchId
+      );
+      
+      if (continuingBranch) {
+        visibleMessages.push({
+          ...msg,
+          // Mark which branch is active for display
+          branches: msg.branches.map((branch: any) => ({
+            ...branch,
+            isInActivePath: activeBranchPath.value.has(branch.id)
+          }))
+        });
+        lastBranchId = continuingBranch.id;
+      }
+    }
+    
+    return visibleMessages;
   }
   
   // For branch view, messages are already filtered by the backend
@@ -214,29 +228,60 @@ function navigateBranch(messageId: string, branchId: string) {
   if (message) {
     message.activeBranchId = branchId;
     
-    // Rebuild the active path from this point
-    buildActivePath(branchId);
-    
-    // Update all downstream messages' active branches
-    updateDownstreamBranches(messageId, branchId);
+    // Rebuild the entire conversation path from this branch
+    rebuildConversationPath(branchId);
   }
 }
 
-function updateDownstreamBranches(messageId: string, branchId: string) {
-  // Find messages that have this branch as parent and update their active branch
-  const messageIndex = shareData.value.messages.findIndex((m: any) => m.id === messageId);
+function rebuildConversationPath(changedBranchId: string) {
+  // First, build the path from root to the changed branch
+  const pathToChanged: string[] = [];
+  let currentBranchId: string | undefined = changedBranchId;
   
-  for (let i = messageIndex + 1; i < shareData.value.messages.length; i++) {
-    const msg = shareData.value.messages[i];
-    
-    // Find a branch that has the current branch as parent
-    const childBranch = msg.branches.find((b: any) => b.parentBranchId === branchId);
-    if (childBranch) {
-      msg.activeBranchId = childBranch.id;
-      buildActivePath(childBranch.id);
-      break;
+  const messagesByBranchId = new Map<string, any>();
+  for (const msg of shareData.value.messages) {
+    for (const branch of msg.branches) {
+      messagesByBranchId.set(branch.id, { message: msg, branch });
     }
   }
+  
+  // Build path backwards from changed branch to root
+  while (currentBranchId && currentBranchId !== 'root') {
+    pathToChanged.unshift(currentBranchId);
+    const entry = messagesByBranchId.get(currentBranchId);
+    if (!entry) break;
+    currentBranchId = entry.branch.parentBranchId;
+  }
+  
+  // Now update all messages to follow this path
+  let lastBranchId = 'root';
+  
+  for (const msg of shareData.value.messages) {
+    // Find if this message has a branch that continues from the last branch
+    const continuingBranch = msg.branches.find((b: any) => 
+      b.parentBranchId === lastBranchId
+    );
+    
+    if (continuingBranch) {
+      // Check if this message is on our path
+      const pathBranch = msg.branches.find((b: any) => 
+        pathToChanged.includes(b.id)
+      );
+      
+      if (pathBranch) {
+        // Use the branch that's on our path
+        msg.activeBranchId = pathBranch.id;
+        lastBranchId = pathBranch.id;
+      } else {
+        // Not on our path, use the first valid continuing branch
+        msg.activeBranchId = continuingBranch.id;
+        lastBranchId = continuingBranch.id;
+      }
+    }
+  }
+  
+  // Rebuild the active path for visualization
+  buildActivePath(lastBranchId);
 }
 
 async function downloadConversation() {
