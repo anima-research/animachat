@@ -45,7 +45,7 @@
     </v-app-bar>
     
     <v-main>
-      <div class="d-flex flex-column" style="height: calc(100vh - 48px - 40px);">
+      <div class="d-flex flex-column" style="height: calc(100vh - 48px);">
         <div v-if="isLoading" class="flex-grow-1 d-flex align-center justify-center">
           <v-progress-circular indeterminate color="primary" />
         </div>
