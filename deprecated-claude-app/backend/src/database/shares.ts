@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import crypto from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
 // Schema for shared conversations
 export const SharedConversationSchema = z.object({
@@ -35,6 +36,37 @@ export interface SharesDatabase {
 export class SharesStore {
   private shares: Map<string, SharedConversation> = new Map();
   private sharesByToken: Map<string, string> = new Map();
+  
+  /**
+   * Replay an event to rebuild state (called from Database during init)
+   */
+  replayEvent(event: any): void {
+    switch (event.type) {
+      case 'share_created':
+        const share = {
+          ...event.data,
+          createdAt: new Date(event.data.createdAt),
+          expiresAt: event.data.expiresAt ? new Date(event.data.expiresAt) : undefined
+        } as SharedConversation;
+        this.shares.set(share.id, share);
+        this.sharesByToken.set(share.shareToken, share.id);
+        break;
+      case 'share_deleted':
+        const { id, shareToken } = event.data;
+        this.shares.delete(id);
+        if (shareToken) {
+          this.sharesByToken.delete(shareToken);
+        }
+        break;
+      case 'share_viewed':
+        const { id: viewedId, viewCount } = event.data;
+        const viewedShare = this.shares.get(viewedId);
+        if (viewedShare) {
+          viewedShare.viewCount = viewCount;
+        }
+        break;
+    }
+  }
 
   /**
    * Generate a unique share token
@@ -82,7 +114,7 @@ export class SharesStore {
 
     this.shares.set(id, share);
     this.sharesByToken.set(shareToken, id);
-    
+
     return share;
   }
 

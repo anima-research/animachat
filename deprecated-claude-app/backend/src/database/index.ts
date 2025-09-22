@@ -387,6 +387,13 @@ export class Database {
         break;
       }
       
+      // Share events
+      case 'share_created':
+      case 'share_deleted':
+      case 'share_viewed':
+        this.sharesStore.replayEvent(event);
+        break;
+      
       // Add more cases as needed
       }
     } catch (error) {
@@ -1229,7 +1236,7 @@ export class Database {
       throw new Error('Conversation not found or unauthorized');
     }
     
-    return this.sharesStore.createShare(
+    const share = await this.sharesStore.createShare(
       conversationId,
       userId,
       shareType,
@@ -1237,6 +1244,16 @@ export class Database {
       settings,
       expiresAt
     );
+    
+    // Persist the share creation event
+    const event: Event = {
+      timestamp: new Date(),
+      type: 'share_created',
+      data: share
+    };
+    await this.eventStore.appendEvent(event);
+    
+    return share;
   }
   
   async getShareByToken(token: string): Promise<SharedConversation | null> {
@@ -1248,7 +1265,19 @@ export class Database {
   }
   
   async deleteShare(id: string, userId: string): Promise<boolean> {
-    return this.sharesStore.deleteShare(id, userId);
+    const deleted = await this.sharesStore.deleteShare(id, userId);
+    
+    if (deleted) {
+      // Persist the share deletion event
+      const event: Event = {
+        timestamp: new Date(),
+        type: 'share_deleted',
+        data: { id }
+      };
+      await this.eventStore.appendEvent(event);
+    }
+    
+    return deleted;
   }
 
   // Close database connection
