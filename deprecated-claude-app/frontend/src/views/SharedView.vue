@@ -120,7 +120,7 @@
                             class="mr-1"
                           />
                           <span class="text-caption font-weight-medium">
-                            {{ getParticipantName(node.branch) || (node.branch.role === 'user' ? 'User' : 'Assistant') }}
+                            {{ getParticipantName(node.branch) || (node.branch.role === 'user' ? 'H' : 'A') }}
                           </span>
                           <v-spacer />
                           <div class="d-flex gap-2">
