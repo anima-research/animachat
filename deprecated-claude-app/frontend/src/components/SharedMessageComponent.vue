@@ -126,6 +126,12 @@ const modelColor = computed(() => {
 const renderedContent = computed(() => {
   const content = currentBranch.value.content || '';
   
+  // Configure marked to respect single line breaks
+  marked.setOptions({
+    breaks: true,  // This makes single newlines render as <br>
+    gfm: true      // GitHub Flavored Markdown
+  });
+  
   // Simple markdown rendering
   try {
     const html = marked.parse ? marked.parse(content) : (marked as any)(content);
