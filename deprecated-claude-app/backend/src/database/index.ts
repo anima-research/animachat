@@ -534,7 +534,7 @@ export class Database {
     // Create default participants
     if (format === 'standard' || !format) {
       // Standard format: fixed User and Assistant
-      await this.createParticipant(conversation.id, 'User', 'user');
+      await this.createParticipant(conversation.id, 'H', 'user');
       await this.createParticipant(conversation.id, 'A', 'assistant', model, systemPrompt, settings);
     } else {
       // Prefill format: starts with default participants but can add more
@@ -543,7 +543,7 @@ export class Database {
       const modelConfig = await modelLoader.getModelById(model);
       const assistantName = modelConfig?.displayName || 'A';
       
-      await this.createParticipant(conversation.id, 'User', 'user');
+      await this.createParticipant(conversation.id, 'H', 'user');
       await this.createParticipant(conversation.id, assistantName, 'assistant', model, systemPrompt, settings);
     }
 

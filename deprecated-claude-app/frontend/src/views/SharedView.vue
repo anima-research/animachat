@@ -44,8 +44,8 @@
       />
     </v-app-bar>
     
-    <v-main class="d-flex flex-column">
-      <div class="flex-grow-1 d-flex flex-column" style="min-height: 0;">
+    <v-main>
+      <div class="d-flex flex-column" style="height: calc(100vh - 48px - 40px);">
         <div v-if="isLoading" class="flex-grow-1 d-flex align-center justify-center">
           <v-progress-circular indeterminate color="primary" />
         </div>
@@ -56,7 +56,7 @@
           </v-alert>
         </div>
         
-        <div v-else-if="shareData" class="flex-grow-1 d-flex flex-column" style="min-height: 0;">
+        <div v-else-if="shareData" class="flex-grow-1 d-flex flex-column" style="overflow: hidden;">
           <!-- Description if provided -->
           <v-alert
             v-if="shareData.share.settings.description"
@@ -196,25 +196,24 @@
           </div>
           
         </div>
-      </div>
-      
-      <!-- Footer outside of scrollable content -->
-      <v-footer 
-        v-if="shareData" 
-        height="auto" 
-        class="pa-2 text-caption flex-shrink-0"
-        style="border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));"
-      >
-        <div>
-          Shared {{ formatDate(shareData?.share?.createdAt) }}
-          <span v-if="shareData?.share?.viewCount">
-            • {{ shareData.share.viewCount }} view{{ shareData.share.viewCount !== 1 ? 's' : '' }}
-          </span>
-          <span v-if="shareData?.share?.expiresAt">
-            • Expires {{ formatDate(shareData.share.expiresAt) }}
-          </span>
+        
+        <!-- Footer at bottom of viewport -->
+        <div 
+          v-if="shareData" 
+          class="pa-2 text-caption flex-shrink-0"
+          style="border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); background: rgba(var(--v-theme-surface), 0.95);"
+        >
+          <div>
+            Shared {{ formatDate(shareData?.share?.createdAt) }}
+            <span v-if="shareData?.share?.viewCount">
+              • {{ shareData.share.viewCount }} view{{ shareData.share.viewCount !== 1 ? 's' : '' }}
+            </span>
+            <span v-if="shareData?.share?.expiresAt">
+              • Expires {{ formatDate(shareData.share.expiresAt) }}
+            </span>
+          </div>
         </div>
-      </v-footer>
+      </div>
     </v-main>
   </v-app>
 </template>
