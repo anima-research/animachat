@@ -74,7 +74,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Routes
 app.use('/api/auth', authRouter(db));
 app.use('/api/conversations', authenticateToken, conversationRouter(db));
-app.use('/api/models', authenticateToken, modelRouter());
+app.use('/api/models', authenticateToken, modelRouter(db));
 app.use('/api/participants', authenticateToken, participantRouter(db));
 app.use('/api/import', authenticateToken, importRouter(db));
 app.use('/api/system', systemRouter());

@@ -27,31 +27,57 @@ export class OpenAICompatibleService {
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
     stopSequences?: string[],
-    onTokenUsage?: (usage: TokenUsage) => Promise<void>
+    onTokenUsage?: (usage: TokenUsage) => Promise<void>,
+    apiType?: 'chat' | 'completion',
+    assistantName?: string
   ): Promise<void> {
     const requestId = `openai-compatible-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const startTime = Date.now();
     const chunks: string[] = [];
 
     try {
-      // Convert messages to OpenAI format
-      const openAIMessages = this.formatMessagesForOpenAI(messages, systemPrompt);
-      
       // Apply model prefix if configured
       const actualModelId = this.modelPrefix ? `${this.modelPrefix}${modelId}` : modelId;
       
-      const requestBody = {
-        model: actualModelId,
-        messages: openAIMessages,
-        stream: true,
-        temperature: settings.temperature,
-        max_tokens: settings.maxTokens,
-        ...(settings.topP !== undefined && { top_p: settings.topP }),
-        ...(settings.topK !== undefined && { top_k: settings.topK }),
-        ...(stopSequences && stopSequences.length > 0 && { stop: stopSequences })
-      };
+      // Determine API type (default to chat)
+      const useCompletionAPI = apiType === 'completion';
+      
+      let requestBody: any;
+      let endpoint: string;
+      
+      if (useCompletionAPI) {
+        // Format for completion API
+        const prompt = this.formatMessagesAsPrompt(messages, systemPrompt, assistantName);
+        requestBody = {
+          model: actualModelId,
+          prompt,
+          stream: true,
+          temperature: settings.temperature,
+          max_tokens: settings.maxTokens,
+          ...(settings.topP !== undefined && { top_p: settings.topP }),
+          ...(settings.topK !== undefined && { top_k: settings.topK }),
+          ...(stopSequences && stopSequences.length > 0 && { stop: stopSequences })
+        };
+        endpoint = `${this.baseUrl}/v1/completions`;
+      } else {
+        // Format for chat completion API
+        const openAIMessages = this.formatMessagesForOpenAI(messages, systemPrompt);
+        requestBody = {
+          model: actualModelId,
+          messages: openAIMessages,
+          stream: true,
+          temperature: settings.temperature,
+          max_tokens: settings.maxTokens,
+          ...(settings.topP !== undefined && { top_p: settings.topP }),
+          ...(settings.topK !== undefined && { top_k: settings.topK }),
+          ...(stopSequences && stopSequences.length > 0 && { stop: stopSequences })
+        };
+        endpoint = `${this.baseUrl}/v1/chat/completions`;
+      }
 
       // Log the request
+      console.log(`[OpenAI-Compatible] Request to ${endpoint}:`, JSON.stringify(requestBody, null, 2));
+      
       await llmLogger.logRequest({
         requestId,
         service: 'openai-compatible' as any,
@@ -62,12 +88,12 @@ export class OpenAICompatibleService {
         topP: settings.topP,
         topK: settings.topK,
         stopSequences,
-        messageCount: openAIMessages.length,
+        messageCount: messages.length,
         requestBody,
-        format: this.baseUrl
+        format: `${this.baseUrl} (${useCompletionAPI ? 'completion' : 'chat'})`
       });
 
-      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
@@ -78,6 +104,7 @@ export class OpenAICompatibleService {
 
       if (!response.ok) {
         const errorText = await response.text();
+        console.error(`[OpenAI-Compatible] Error response:`, errorText);
         throw new Error(`OpenAI-compatible API error: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
@@ -108,11 +135,26 @@ export class OpenAICompatibleService {
 
             try {
               const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content;
+              
+              // Handle both chat and completion API responses
+              let content: string | undefined;
+              if (useCompletionAPI) {
+                // Completion API: choices[0].text
+                content = parsed.choices?.[0]?.text;
+              } else {
+                // Chat API: choices[0].delta.content
+                content = parsed.choices?.[0]?.delta?.content;
+              }
               
               if (content) {
-                chunks.push(content);
-                await onChunk(content, false);
+                // For XML format completions, strip any trailing </msg> that might be included
+                let processedContent = content;
+                if (useCompletionAPI && requestBody.prompt.includes('<msg username=')) {
+                  // Check if this chunk ends with </msg> and remove it
+                  processedContent = content.replace(/<\/msg>$/, '');
+                }
+                chunks.push(processedContent);
+                await onChunk(processedContent, false);
               }
 
               // Check if we have usage data
@@ -192,6 +234,51 @@ export class OpenAICompatibleService {
     }
 
     return formatted;
+  }
+
+  private formatMessagesAsPrompt(messages: Message[], systemPrompt?: string, assistantName?: string): string {
+    // For completion API, we need to format messages as a single prompt string
+    // Messages passed here should already be formatted with participant names
+    let prompt = '';
+    
+    // Add system prompt if provided
+    if (systemPrompt) {
+      prompt += `${systemPrompt}\n\n`;
+    }
+    
+    // Convert messages to prompt format
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i];
+      const activeBranch = getActiveBranch(message);
+      if (activeBranch) {
+        // The content should already include formatting from formatMessagesForConversation
+        // (either "name: content" or "<msg username="name">content</msg>")
+        prompt += activeBranch.content;
+        
+        // Add spacing between messages (but not after the last one)
+        if (i < messages.length - 1) {
+          // For XML format, use single newline between messages
+          const useXmlFormat = activeBranch.content.includes('<msg username=');
+          prompt += useXmlFormat ? '\n' : '\n\n';
+        }
+      }
+    }
+    
+    // For completion models, we need to start the assistant's response
+    // Check if we're using XML format by looking at the last message
+    if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      const lastBranch = getActiveBranch(lastMessage);
+      if (lastBranch && lastBranch.content.includes('<msg username=')) {
+        // XML format - add the start of assistant's message with single newline
+        const name = assistantName || 'Assistant';
+        prompt += `\n<msg username="${name}">`;
+      }
+      // For colon format, the model can continue naturally
+    }
+    
+    // Return the prompt as-is (don't trim, as spacing is intentional)
+    return prompt;
   }
 
   // List available models from the API

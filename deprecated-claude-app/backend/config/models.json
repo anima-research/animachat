@@ -541,6 +541,37 @@
           "step": 0.01
         }
       }
+    },
+    {
+      "id": "antratune",
+      "providerModelId": "borgcord",
+      "displayName": "antratune",
+      "shortName": "Antratune",
+      "provider": "openai-compatible",
+      "deprecated": false,
+      "contextWindow": 128000,
+      "outputTokenLimit": 4096,
+      "groupChatFormat": "xml",
+      "apiType": "completion",
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 4096,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        }
+      }
     }
   ]
 }

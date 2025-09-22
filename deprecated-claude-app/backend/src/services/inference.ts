@@ -6,6 +6,7 @@ import { OpenRouterService } from './openrouter.js';
 import { OpenAICompatibleService } from './openai-compatible.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
+import { ModelAccessService } from './model-access.js';
 
 // Internal format type that includes 'messages' mode
 type InternalConversationFormat = ConversationFormat | 'messages';
@@ -15,12 +16,14 @@ export class InferenceService {
   private anthropicService: AnthropicService;
   private apiKeyManager: ApiKeyManager;
   private modelLoader: ModelLoader;
+  private modelAccessService: ModelAccessService;
   private db: Database;
 
   constructor(db: Database) {
     this.db = db;
     this.apiKeyManager = new ApiKeyManager(db);
     this.modelLoader = ModelLoader.getInstance();
+    this.modelAccessService = ModelAccessService.getInstance();
     this.bedrockService = new BedrockService(db);
     this.anthropicService = new AnthropicService(db);
   }
@@ -45,6 +48,17 @@ export class InferenceService {
     }
     console.log(`[InferenceService] Found model: provider=${model.provider}, providerModelId=${model.providerModelId}`)
     
+    // Check if user has access to this model
+    const user = await this.db.getUserById(userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    const access = await this.modelAccessService.checkModelAccess(modelId, user.email);
+    if (!access.allowed) {
+      throw new Error(access.message || `Access denied to model ${modelId}`);
+    }
+    
     // Determine the actual format to use
     let actualFormat: InternalConversationFormat = format;
     if (format === 'prefill') {
@@ -60,17 +74,23 @@ export class InferenceService {
     }
     
     // Format messages based on conversation format
-    const formattedMessages = this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider);
+    const formattedMessages = await this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider, modelId);
 
     // Build stop sequences for prefill/messages formats
     let stopSequences: string[] | undefined;
     if (actualFormat === 'prefill' || actualFormat === 'messages') {
-      // Always include these common stop sequences
-      const baseStopSequences = ['User:', 'A:', "Claude:"];
-      // Add participant names as stop sequences
-      const participantStopSequences = participants.map(p => `${p.name}:`);
-      // Combine and deduplicate
-      stopSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
+      // Check if we're using XML format for completion API
+      if (model.provider === 'openai-compatible' && model.apiType === 'completion' && model.groupChatFormat === 'xml') {
+        // For XML format, stop at closing tag and next message start
+        stopSequences = ['</msg>', '\n<msg'];
+      } else {
+        // For colon format, use participant names
+        const baseStopSequences = ['User:', 'A:', "Claude:"];
+        // Add participant names as stop sequences
+        const participantStopSequences = participants.map(p => `${p.name}:`);
+        // Combine and deduplicate
+        stopSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
+      }
     }
 
     // Route to appropriate service based on provider
@@ -148,13 +168,23 @@ export class InferenceService {
         selectedKey.credentials.modelPrefix
       );
       
+      // Get the assistant name for completion API
+      let assistantName: string | undefined;
+      if (responderId) {
+        const responder = participants.find(p => p.id === responderId);
+        assistantName = responder?.name;
+      }
+      
       await openAIService.streamCompletion(
         model.providerModelId,
         formattedMessages,
         systemPrompt,
         settings,
         finalOnChunk,
-        stopSequences
+        stopSequences,
+        undefined, // onTokenUsage
+        model.apiType, // Pass the API type from model config
+        assistantName // Pass assistant name for completion API
       );
     } else {
       throw new Error(`Unsupported provider: ${model.provider}`);
@@ -207,13 +237,14 @@ export class InferenceService {
     return false;
   }
   
-  private formatMessagesForConversation(
+  private async formatMessagesForConversation(
     messages: Message[],
     format: InternalConversationFormat,
     participants: Participant[],
     responderId?: string,
-    provider?: string
-  ): Message[] {
+    provider?: string,
+    modelId?: string
+  ): Promise<Message[]> {
     if (format === 'standard') {
       // Standard format - just log for debugging
       console.log('\n========== STANDARD FORMAT MESSAGES ==========');
@@ -382,8 +413,19 @@ export class InferenceService {
                           (activeBranch.role === 'assistant' && !activeBranch.participantId && participantName === responderName);
         const role = isResponder ? 'assistant' : 'user';
         
-        // Format content with participant name prefix
-        let formattedContent = `${participantName}: ${activeBranch.content}`;
+        // Format content based on model's groupChatFormat preference
+        let formattedContent: string;
+        const modelLoader = ModelLoader.getInstance();
+        const model = await modelLoader.getModelById(modelId || '');
+        const useXmlFormat = model?.groupChatFormat === 'xml';
+        
+        if (useXmlFormat) {
+          // XML format: <msg username="name">content</msg>
+          formattedContent = `<msg username="${participantName}">${activeBranch.content}</msg>`;
+        } else {
+          // Default colon format: name: content
+          formattedContent = `${participantName}: ${activeBranch.content}`;
+        }
         
         // Handle attachments for non-responder messages
         if (role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {

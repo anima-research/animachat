@@ -53,6 +53,10 @@ jobs:
         # Copy configuration files
         mkdir -p deploy/backend/config
         cp backend/config/models.json deploy/backend/config/
+        # Copy model-access.json if it exists
+        if [ -f backend/config/model-access.json ]; then
+          cp backend/config/model-access.json deploy/backend/config/
+        fi
         
         # Copy shared module (to be copied into node_modules after npm install)
         cp -r shared/dist/* deploy/shared/
@@ -113,12 +117,22 @@ jobs:
           mkdir -p node_modules/@deprecated-claude/shared
           cp -r /var/www/deprecated-claude-app/shared/* node_modules/@deprecated-claude/shared/
           
-          # Create config directory and copy models.json
+          # Create config directory and copy configuration files
           sudo -n mkdir -p /etc/claude-app
           sudo -n cp /var/www/deprecated-claude-app/backend/config/models.json /etc/claude-app/models.json
           sudo -n chown www-data:www-data /etc/claude-app/models.json
           sudo -n chmod 644 /etc/claude-app/models.json
           echo "✅ Copied models.json to /etc/claude-app/"
+          
+          # Copy model-access.json if it exists
+          if [ -f /var/www/deprecated-claude-app/backend/config/model-access.json ]; then
+            sudo -n cp /var/www/deprecated-claude-app/backend/config/model-access.json /etc/claude-app/model-access.json
+            sudo -n chown www-data:www-data /etc/claude-app/model-access.json
+            sudo -n chmod 644 /etc/claude-app/model-access.json
+            echo "✅ Copied model-access.json to /etc/claude-app/"
+          else
+            echo "ℹ️ No model-access.json found, using default access policy"
+          fi
           
           # Set correct permissions (without sudo since we're already antra)
           # The directory should already have correct permissions from server setup

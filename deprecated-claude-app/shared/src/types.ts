@@ -27,6 +27,8 @@ export const ModelSchema = z.object({
   deprecated: z.boolean(),
   contextWindow: z.number(),
   outputTokenLimit: z.number(),
+  groupChatFormat: z.enum(['colon', 'xml']).optional(), // Format for group chat messages
+  apiType: z.enum(['chat', 'completion']).optional(), // API type for openai-compatible models
   settings: z.object({
     temperature: z.object({
       min: z.number(),

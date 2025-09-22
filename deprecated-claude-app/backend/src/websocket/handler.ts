@@ -308,7 +308,7 @@ async function handleChatMessage(
       break;
     }
     
-    currentParentBranchId = branch.parentBranchId;
+    currentParentBranchId = branch.parentBranchId || '';
   }
   
   // Add the new user message at the end
@@ -324,7 +324,10 @@ async function handleChatMessage(
   // Stream response from appropriate service
   try {
     const inferenceModel = responder.model || conversation.model;
-    const inferenceSystemPrompt = responder.systemPrompt || conversation.systemPrompt;
+    // For group chats (prefill), only use participant system prompts, never conversation-level
+    const inferenceSystemPrompt = conversation.format === 'prefill' 
+      ? responder.systemPrompt 
+      : (responder.systemPrompt || conversation.systemPrompt);
     const inferenceSettings = responder.settings || conversation.settings;
     
     // Log WebSocket event
@@ -504,7 +507,7 @@ async function handleRegenerate(
       break;
     }
     
-    currentParentBranchId = branch.parentBranchId;
+    currentParentBranchId = branch.parentBranchId || '';
   }
   
   const historyMessages = visibleHistory;
@@ -522,14 +525,18 @@ async function handleRegenerate(
   
   // Get the participant who should respond
   let responderSettings = conversation.settings;
-  let responderSystemPrompt = conversation.systemPrompt;
+  // For group chats, conversation-level system prompts should not be used
+  let responderSystemPrompt = conversation.format === 'prefill' ? undefined : conversation.systemPrompt;
   let responderModel = conversation.model;
   
   if (participantId && participants.length > 0) {
     const participant = participants.find(p => p.id === participantId);
     if (participant) {
       responderModel = participant.model || conversation.model;
-      responderSystemPrompt = participant.systemPrompt || conversation.systemPrompt;
+      // For group chats, only use participant system prompts
+      responderSystemPrompt = conversation.format === 'prefill'
+        ? participant.systemPrompt
+        : (participant.systemPrompt || conversation.systemPrompt);
       responderSettings = participant.settings || conversation.settings;
     }
   }
@@ -739,7 +746,8 @@ async function handleEdit(
     
     // Get the responder's settings
     let responderSettings = conversation.settings;
-    let responderSystemPrompt = conversation.systemPrompt;
+    // For group chats, conversation-level system prompts should not be used
+  let responderSystemPrompt = conversation.format === 'prefill' ? undefined : conversation.systemPrompt;
     let responderModel = conversation.model;
     let responderParticipant: Participant | undefined;
     
@@ -747,7 +755,10 @@ async function handleEdit(
       responderParticipant = participants.find(p => p.id === responderId);
       if (responderParticipant) {
         responderModel = responderParticipant.model || conversation.model;
-        responderSystemPrompt = responderParticipant.systemPrompt || conversation.systemPrompt;
+        // For group chats, only use participant system prompts
+        responderSystemPrompt = conversation.format === 'prefill'
+          ? responderParticipant.systemPrompt
+          : (responderParticipant.systemPrompt || conversation.systemPrompt);
         responderSettings = responderParticipant.settings || conversation.settings;
       }
     }
@@ -1010,7 +1021,7 @@ async function handleContinue(
           break;
         }
         
-        currentParentBranchId = branch.parentBranchId;
+        currentParentBranchId = branch.parentBranchId || '';
       }
       
       console.log('Continue: Final visible history length:', visibleHistory.length);
@@ -1033,7 +1044,10 @@ async function handleContinue(
     await inferenceService.streamCompletion(
       modelConfig,
       messagesWithNewAssistant,
-      responder.systemPrompt || conversation.systemPrompt || '',
+      // For group chats, only use participant system prompts
+      conversation.format === 'prefill' 
+        ? (responder.systemPrompt || '')
+        : (responder.systemPrompt || conversation.systemPrompt || ''),
       responder.settings || conversation.settings || {
         temperature: 1.0,
         maxTokens: 1024
