@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
 import { ModelLoader } from '../config/model-loader.js';
+import { SharesStore, SharedConversation } from './shares.js';
 
 // Metrics interface for tracking token usage
 export interface MetricsData {
@@ -31,10 +32,12 @@ export class Database {
   private conversationMetrics: Map<string, MetricsData[]> = new Map(); // conversationId -> metrics
   
   private eventStore: EventStore;
+  private sharesStore: SharesStore;
   private initialized: boolean = false;
 
   constructor() {
     this.eventStore = new EventStore();
+    this.sharesStore = new SharesStore();
   }
   
   async init(): Promise<void> {
@@ -1209,6 +1212,43 @@ export class Database {
       lastCompletion: metrics[metrics.length-1],
       totals: totals
     }
+  }
+
+  // Share management methods
+  async createShare(
+    conversationId: string,
+    userId: string,
+    shareType: 'branch' | 'tree',
+    branchId?: string,
+    settings?: Partial<SharedConversation['settings']>,
+    expiresAt?: Date
+  ): Promise<SharedConversation> {
+    // Verify the user owns the conversation
+    const conversation = await this.getConversation(conversationId);
+    if (!conversation || conversation.userId !== userId) {
+      throw new Error('Conversation not found or unauthorized');
+    }
+    
+    return this.sharesStore.createShare(
+      conversationId,
+      userId,
+      shareType,
+      branchId,
+      settings,
+      expiresAt
+    );
+  }
+  
+  async getShareByToken(token: string): Promise<SharedConversation | null> {
+    return this.sharesStore.getShareByToken(token);
+  }
+  
+  async getSharesByUser(userId: string): Promise<SharedConversation[]> {
+    return this.sharesStore.getSharesByUser(userId);
+  }
+  
+  async deleteShare(id: string, userId: string): Promise<boolean> {
+    return this.sharesStore.deleteShare(id, userId);
   }
 
   // Close database connection

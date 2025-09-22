@@ -1,0 +1,240 @@
+<template>
+  <v-card flat class="message-card">
+    <v-card-text class="pa-4">
+      <!-- Message header -->
+      <div class="d-flex align-center mb-2">
+        <v-icon 
+          :icon="currentBranch.role === 'user' ? 'mdi-account' : 'mdi-robot'"
+          :color="currentBranch.role === 'user' ? 'primary' : modelColor"
+          size="small"
+          class="mr-2"
+        />
+        
+        <div class="font-weight-medium">
+          {{ participantName || (currentBranch.role === 'user' ? 'User' : 'Assistant') }}
+        </div>
+        
+        <div v-if="showModelInfo && currentBranch.model" class="text-caption ml-2 text-grey">
+          ({{ currentBranch.model }})
+        </div>
+        
+        <div v-if="showTimestamps && currentBranch.createdAt" class="text-caption ml-2 text-grey">
+          {{ formatTimestamp(currentBranch.createdAt) }}
+        </div>
+        
+        <v-spacer />
+        
+        <!-- Branch navigation for tree view -->
+        <div v-if="isTreeView && message.branches.length > 1" class="d-flex align-center gap-1">
+          <v-btn
+            icon="mdi-chevron-left"
+            size="x-small"
+            variant="text"
+            :disabled="currentBranchIndex === 0"
+            @click="navigateBranch(-1)"
+          />
+          <span class="text-caption">
+            {{ currentBranchIndex + 1 }} / {{ message.branches.length }}
+          </span>
+          <v-btn
+            icon="mdi-chevron-right"
+            size="x-small"
+            variant="text"
+            :disabled="currentBranchIndex === message.branches.length - 1"
+            @click="navigateBranch(1)"
+          />
+        </div>
+        
+        <!-- Action buttons -->
+        <div class="d-flex gap-1">
+          <v-btn
+            icon="mdi-content-copy"
+            size="x-small"
+            variant="text"
+            @click="copyContent"
+            title="Copy message"
+          />
+          
+          <v-btn
+            v-if="allowDownload"
+            icon="mdi-code-json"
+            size="x-small"
+            variant="text"
+            @click="downloadPrompt"
+            title="Download prompt"
+          />
+        </div>
+      </div>
+      
+      <!-- Message content -->
+      <div class="message-content" v-html="renderedContent" />
+    </v-card-text>
+  </v-card>
+</template>
+
+<script setup lang="ts">
+import { ref, computed } from 'vue';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import { getModelColor } from '@/utils/modelColors';
+import { api } from '@/services/api';
+
+const props = defineProps<{
+  message: any;
+  participants?: any[];
+  showTimestamps?: boolean;
+  showModelInfo?: boolean;
+  allowDownload?: boolean;
+  conversationId: string;
+  isTreeView?: boolean;
+}>();
+
+const emit = defineEmits<{
+  'navigate-branch': [messageId: string, branchId: string];
+}>();
+
+const currentBranchIndex = computed(() => {
+  return props.message.branches.findIndex((b: any) => b.id === props.message.activeBranchId) || 0;
+});
+
+const currentBranch = computed(() => {
+  return props.message.branches[currentBranchIndex.value] || props.message.branches[0];
+});
+
+const participantName = computed(() => {
+  if (!props.participants || !currentBranch.value.participantId) {
+    return null;
+  }
+  const participant = props.participants.find(p => p.id === currentBranch.value.participantId);
+  return participant?.name || null;
+});
+
+const modelColor = computed(() => {
+  if (!currentBranch.value.model) return 'grey';
+  return getModelColor(currentBranch.value.model);
+});
+
+const renderedContent = computed(() => {
+  const content = currentBranch.value.content || '';
+  
+  // Simple markdown rendering
+  try {
+    const html = marked.parse ? marked.parse(content) : (marked as any)(content);
+    return DOMPurify.sanitize(html, {
+      ALLOWED_TAGS: [
+        'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+        'blockquote', 'ul', 'ol', 'li', 'a', 'img',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'table', 'thead', 'tbody', 'tr', 'th', 'td',
+        'hr', 'sup', 'sub', 'del', 'ins'
+      ],
+      ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel']
+    });
+  } catch (e) {
+    // Fallback to plain text with line breaks
+    return content.replace(/\n/g, '<br>');
+  }
+});
+
+function navigateBranch(direction: number) {
+  const newIndex = currentBranchIndex.value + direction;
+  if (newIndex >= 0 && newIndex < props.message.branches.length) {
+    const newBranch = props.message.branches[newIndex];
+    emit('navigate-branch', props.message.id, newBranch.id);
+  }
+}
+
+function copyContent() {
+  navigator.clipboard.writeText(currentBranch.value.content);
+}
+
+async function downloadPrompt() {
+  try {
+    // Build the prompt from this point
+    // Since we don't have auth, we'll build it client-side from the available data
+    const messages = buildMessagesUpToHere();
+    
+    const blob = new Blob([JSON.stringify(messages, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `prompt-${props.message.id}-${currentBranch.value.id}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Failed to download prompt:', error);
+  }
+}
+
+function buildMessagesUpToHere(): any[] {
+  // This is a simplified version - in production you'd want to
+  // properly build the message history following the branch path
+  return [{
+    role: currentBranch.value.role,
+    content: currentBranch.value.content
+  }];
+}
+
+function formatTimestamp(timestamp: string | Date): string {
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  if (diffDays === 0) {
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+  }
+  
+  if (diffDays === 1) {
+    return `Yesterday ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+  }
+  
+  if (diffDays < 7) {
+    return date.toLocaleDateString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+  }
+  
+  return date.toLocaleDateString('en-US', { 
+    month: 'short', 
+    day: 'numeric', 
+    year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined 
+  });
+}
+</script>
+
+<style scoped>
+.message-card {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.message-content {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.message-content :deep(pre) {
+  background: rgba(var(--v-theme-surface-variant), 0.5);
+  padding: 12px;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.message-content :deep(code) {
+  background: rgba(var(--v-theme-surface-variant), 0.5);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.message-content :deep(blockquote) {
+  border-left: 3px solid rgba(var(--v-theme-primary), 0.5);
+  padding-left: 12px;
+  margin-left: 0;
+  color: rgba(var(--v-theme-on-surface), 0.8);
+}
+</style>

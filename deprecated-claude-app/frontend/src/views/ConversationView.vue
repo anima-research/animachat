@@ -186,6 +186,16 @@
           </v-tooltip>
         </v-chip>
         
+        <!-- Share button -->
+        <v-btn
+          v-if="currentConversation"
+          icon="mdi-share-variant"
+          size="small"
+          variant="text"
+          @click="shareDialog = true"
+          title="Share conversation"
+        />
+        
         <!-- Import raw messages button (hidden - kept for potential debugging use) -->
         <!-- <v-btn
           v-if="currentConversation"
@@ -568,6 +578,12 @@
       @update-participants="updateParticipants"
     />
     
+    <ShareDialog
+      v-model="shareDialog"
+      :conversation="currentConversation"
+      :current-branch-id="currentBranchId"
+    />
+    
 
     
     <WelcomeDialog
@@ -591,6 +607,7 @@ import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
+import ShareDialog from '@/components/ShareDialog.vue';
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
@@ -606,6 +623,7 @@ const treeDrawer = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
+const shareDialog = ref(false);
 const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
 const rawImportData = ref('');
@@ -650,6 +668,14 @@ const currentBranchId = computed(() => {
 });
 const currentModel = computed(() => store.currentModel);
 
+const currentBranchId = computed(() => {
+  // Get the active branch ID of the last message
+  const msgs = messages.value;
+  if (!msgs || msgs.length === 0) return null;
+  
+  const lastMessage = msgs[msgs.length - 1];
+  return lastMessage.activeBranchId;
+});
 
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
