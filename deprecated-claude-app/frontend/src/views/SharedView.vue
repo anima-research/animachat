@@ -91,7 +91,7 @@
                 <div class="tree-node" v-for="(node, index) in treeNodes" :key="index">
                   <div 
                     class="tree-indent"
-                    :style="{ marginLeft: `${node.depth * 20}px` }"
+                    :style="{ marginLeft: `${node.depth * 10}px` }"
                   >
                     <div v-if="node.type === 'branch'" class="branch-indicator">
                       <v-icon size="x-small">mdi-source-branch</v-icon>
@@ -120,26 +120,38 @@
                             {{ getParticipantName(node.branch) || (node.branch.role === 'user' ? 'User' : 'Assistant') }}
                           </span>
                           <v-spacer />
-                          <v-btn
-                            icon="mdi-target"
-                            size="x-small"
-                            variant="text"
-                            density="compact"
-                            color="primary"
-                            @click.stop="focusOnNode(node.branch.id)"
-                            title="Focus on this node"
-                          />
-                          <v-btn
-                            icon="mdi-link"
-                            size="x-small"
-                            variant="text"
-                            density="compact"
-                            @click.stop="copyMessageLink(node.message.id)"
-                            title="Copy link to this message"
-                          />
+                          <div class="d-flex gap-2">
+                            <v-btn
+                              icon="mdi-target"
+                              size="small"
+                              variant="tonal"
+                              color="primary"
+                              @click.stop="focusOnNode(node.branch.id)"
+                              title="Focus on this node"
+                            />
+                            <v-btn
+                              icon="mdi-link"
+                              size="small"
+                              variant="tonal"
+                              @click.stop="copyMessageLink(node.message.id)"
+                              title="Copy link to this message"
+                            />
+                          </div>
                         </div>
-                        <div class="text-body-2 message-preview">
-                          {{ node.branch.content.substring(0, 150) }}{{ node.branch.content.length > 150 ? '...' : '' }}
+                        <div 
+                          class="text-body-2 message-content-tree"
+                          :class="{ 'expanded': node.isActive || expandedNodes.has(node.branch.id) }"
+                          @click="toggleNodeExpansion(node.branch.id)"
+                          style="cursor: pointer"
+                        >
+                          <v-icon 
+                            v-if="node.branch.content.length > 150"
+                            size="x-small" 
+                            class="mr-1"
+                          >
+                            {{ (node.isActive || expandedNodes.has(node.branch.id)) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
+                          </v-icon>
+                          {{ (node.isActive || expandedNodes.has(node.branch.id)) ? node.branch.content : (node.branch.content.substring(0, 150) + (node.branch.content.length > 150 ? '...' : '')) }}
                         </div>
                         <div v-if="node.message.branches.length > 1" class="text-caption text-grey mt-1">
                           Branch {{ node.branchIndex + 1 }} of {{ node.message.branches.length }}
@@ -212,6 +224,7 @@ const error = ref('');
 const messagesContainer = ref<HTMLElement>();
 const showTreeView = ref(false);
 const focusNodeId = ref<string | null>(null);
+const expandedNodes = ref<Set<string>>(new Set());
 
 // For tree navigation
 const activeBranchPath = ref<Set<string>>(new Set());
@@ -536,6 +549,16 @@ function getFocusedNodePreview(): string {
   return 'Unknown';
 }
 
+function toggleNodeExpansion(branchId: string) {
+  if (expandedNodes.value.has(branchId)) {
+    expandedNodes.value.delete(branchId);
+  } else {
+    expandedNodes.value.add(branchId);
+  }
+  // Force reactivity update
+  expandedNodes.value = new Set(expandedNodes.value);
+}
+
 function formatDate(date: string | Date): string {
   const d = new Date(date);
   const now = new Date();
@@ -584,8 +607,9 @@ function formatDate(date: string | Date): string {
 }
 
 .tree-message-card.active-branch {
-  border-color: rgba(var(--v-theme-primary), 0.5);
-  background: rgba(var(--v-theme-primary), 0.05);
+  border: 2px solid rgba(var(--v-theme-primary), 0.5);
+  background: rgba(var(--v-theme-primary), 0.08);
+  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.15);
 }
 
 .tree-message-card.clickable {
@@ -607,13 +631,25 @@ function formatDate(date: string | Date): string {
   background: rgba(var(--v-theme-on-surface), 0.02);
 }
 
-.message-preview {
+.message-content-tree {
   white-space: pre-wrap;
   word-break: break-word;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+  transition: all 0.3s ease;
+}
+
+.message-content-tree.expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 8px;
+  background: rgba(var(--v-theme-surface), 0.5);
+  border-radius: 4px;
+  margin-top: 4px;
 }
 
 .highlight-message {
