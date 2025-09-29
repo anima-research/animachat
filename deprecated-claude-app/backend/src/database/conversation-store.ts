@@ -8,13 +8,13 @@ export interface ConversationEvents {
 }
 
 export class ConversationEventStore {
-    baseDir;
+    baseDir : string;
     mostRecentUserIds: string[] = [];
     mostRecentUserEventStores: Map<string, EventStore> = new Map();
     // We hold handles only for most recently accessed users
     // this is necessary because os can limit number of open files to 1024 or less
     // (type ulimit -n to see the limit on your machine)
-    maxFilesOpened;
+    maxFilesOpened : number;
     
     constructor(baseDir = './data/conversations', maxFilesOpened = 100) {
         this.baseDir = baseDir;

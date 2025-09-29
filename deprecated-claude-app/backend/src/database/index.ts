@@ -1183,7 +1183,7 @@ export class Database {
     
     const conversation = this.conversations.get(participant.conversationId);
     if (conversation) {
-      await this.logConversationEvent(participant.conversationId, 'participant_deleted', { participantId, conversationId: participant.conversationId });
+      await this.logConversationEvent(conversation.userId, 'participant_deleted', { participantId, conversationId: participant.conversationId });
     }
 
     return true;
@@ -1218,7 +1218,7 @@ export class Database {
     // Store event
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
-      this.logConversationEvent(conversation.userId, 'metrics_added', { conversationId, metrics });
+      await this.logConversationEvent(conversation.userId, 'metrics_added', { conversationId, metrics });
     }
   }
   
