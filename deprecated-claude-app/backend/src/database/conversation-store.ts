@@ -26,7 +26,7 @@ export class ConversationEventStore {
     }
 
     getUserFileName(userId : string) : string {
-        return `${userId}.json`;
+        return `${userId}.jsonl`;
     }
 
     async getWritableUserEventStore(userId: string) : Promise<EventStore> {
@@ -74,8 +74,8 @@ export class ConversationEventStore {
             files = await fs.readdir(this.baseDir);
         }
         catch (error) {
-            if (error === 'ENOENT') {
-                return; // none populated yet, that's okay, return empty array
+            if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+              return; // none populated yet, that's okay, return empty array
             }
             throw error;
         }
@@ -84,9 +84,7 @@ export class ConversationEventStore {
                 continue;
             }
             const userId = path.basename(fileName, '.jsonl');
-
-            const filePath = path.join(this.baseDir, fileName);
-            const userEventStore = new EventStore(this.baseDir, filePath); // doesn't require init for just calling loadEvents
+            const userEventStore = new EventStore(this.baseDir, fileName); // doesn't require init for just calling loadEvents
             yield { userId: userId, events: await userEventStore.loadEvents() };
         }
     }

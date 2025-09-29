@@ -47,6 +47,7 @@ export class Database {
     if (this.initialized) return;
     
     await this.eventStore.init();
+    await this.conversationEventStore.init();
     
     // Load all events and rebuild state
     const events = await this.eventStore.loadEvents();
