@@ -16,7 +16,7 @@ export class ConversationEventStore {
     // (type ulimit -n to see the limit on your machine)
     maxFilesOpened : number;
     
-    constructor(baseDir = './data/conversations', maxFilesOpened = 100) {
+    constructor(baseDir = './data/conversationDataPerUser', maxFilesOpened = 100) {
         this.baseDir = baseDir;
         this.maxFilesOpened = maxFilesOpened;
     }
