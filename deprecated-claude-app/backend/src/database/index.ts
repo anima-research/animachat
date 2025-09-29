@@ -55,6 +55,18 @@ export class Database {
     for (const event of events) {
       await this.replayEvent(event);
     }
+
+    console.log(`Loading conversation events from disk...`);
+
+    var numUserEvents = 0;
+    for await (const {userId, events} of this.conversationEventStore.loadAllEvents()) {
+      for (const event of events) {
+        numUserEvents += 1;
+        await this.replayEvent(event);
+      }
+    }
+
+    console.log(`Loaded ${numUserEvents} conversation events from disk.`);
     
     // Create test user if no users exist
     if (this.users.size === 0) {

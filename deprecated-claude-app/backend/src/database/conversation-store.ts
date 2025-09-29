@@ -4,12 +4,12 @@ import { Event, EventStore } from './persistence.js';
 
 export interface ConversationEvents {
   userId: string;
-  events: Array<Event>;
+  events: Event[];
 }
 
 export class ConversationEventStore {
     baseDir;
-    mostRecentUserIds: Array<string> = [];
+    mostRecentUserIds: string[] = [];
     mostRecentUserEventStores: Map<string, EventStore> = new Map();
     // We hold handles only for most recently accessed users
     // this is necessary because os can limit number of open files to 1024 or less
@@ -20,12 +20,15 @@ export class ConversationEventStore {
         this.baseDir = baseDir;
         this.maxFilesOpened = maxFilesOpened;
     }
+
     async init() {
         await fs.mkdir(this.baseDir, { recursive: true });
     }
+
     getUserFileName(userId : string) : string {
         return `${userId}.json`;
     }
+
     async getWritableUserEventStore(userId: string) : Promise<EventStore> {
         const existing = this.mostRecentUserEventStores.get(userId);
         if (existing) {
@@ -40,7 +43,8 @@ export class ConversationEventStore {
     }
 
     async purgeOldUsers() : Promise<void> {
-        while (this.mostRecentUserIds.length > this.maxFilesOpened) {
+        // greater than or equal to so we have space for new opened in caller
+        while (this.mostRecentUserIds.length >= this.maxFilesOpened) {
             const purgedUserId = this.mostRecentUserIds.shift();
             if (purgedUserId) {
               const purgedUserEventStore : EventStore | undefined = this.mostRecentUserEventStores.get(purgedUserId);
@@ -58,12 +62,12 @@ export class ConversationEventStore {
         await userEventStore.appendEvent(event);
     }
 
-    async loadUserEvents(userId: string) {
-        const userEventStore = new EventStore(this.baseDir, this.getUserFileName(userId)); // doesn't require init for just calling loadEvents
-        return userEventStore.loadEvents();
+    async loadUserEvents(userId: string) : Promise<Event[]> {
+        const userEventStore : EventStore = new EventStore(this.baseDir, this.getUserFileName(userId)); // doesn't require init for just calling loadEvents
+        return await userEventStore.loadEvents();
     }
 
-    async loadAllEvents() {
+    async *loadAllEvents() : AsyncGenerator<ConversationEvents, void, void> {
         const events = new Array<ConversationEvents>();
         let files = [];
         try {
@@ -71,7 +75,7 @@ export class ConversationEventStore {
         }
         catch (error) {
             if (error === 'ENOENT') {
-                return events; // none populated yet, that's okay, return empty array
+                return; // none populated yet, that's okay, return empty array
             }
             throw error;
         }
@@ -83,10 +87,10 @@ export class ConversationEventStore {
 
             const filePath = path.join(this.baseDir, fileName);
             const userEventStore = new EventStore(this.baseDir, filePath); // doesn't require init for just calling loadEvents
-            events.push({ userId: userId, events: await userEventStore.loadEvents() })
+            yield { userId: userId, events: await userEventStore.loadEvents() };
         }
-        return events;
     }
+
     async close() {
         for (var closingUser of this.mostRecentUserIds) {
             var closingUserEventStore = this.mostRecentUserEventStores.get(closingUser);
