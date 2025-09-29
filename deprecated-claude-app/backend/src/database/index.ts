@@ -3,6 +3,7 @@ import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConv
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
+import { ConversationEventStore } from './conversation-store.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { SharesStore, SharedConversation } from './shares.js';
 
@@ -32,11 +33,13 @@ export class Database {
   private conversationMetrics: Map<string, MetricsData[]> = new Map(); // conversationId -> metrics
   
   private eventStore: EventStore;
+  private conversationEventStore: ConversationEventStore; // per user event store with conversation data
   private sharesStore: SharesStore;
   private initialized: boolean = false;
 
   constructor() {
     this.eventStore = new EventStore();
+    this.conversationEventStore = new ConversationEventStore();
     this.sharesStore = new SharesStore();
   }
   
@@ -109,6 +112,16 @@ export class Database {
     };
     
     await this.eventStore.appendEvent(event);
+  }
+
+  private async logConversationEvent(userId: string, type: string, data: any): Promise<void> {
+    const event: Event = {
+      timestamp: new Date(),
+      type,
+      data: JSON.parse(JSON.stringify(data)) // Deep clone to avoid mutations
+    };
+    
+    await this.conversationEventStore.appendEvent(userId, event);
   }
   
   private async replayEvent(event: Event): Promise<void> {
@@ -536,7 +549,7 @@ export class Database {
     
     this.conversationMessages.set(conversation.id, []);
 
-    await this.logEvent('conversation_created', conversation);
+    await this.logConversationEvent(userId, 'conversation_created', conversation);
     
     // Create default participants
     if (format === 'standard' || !format) {
@@ -580,7 +593,7 @@ export class Database {
     };
 
     this.conversations.set(id, updated);
-    await this.logEvent('conversation_updated', { id, updates });
+    await this.logConversationEvent(conversation.userId, 'conversation_updated', { id, updates });
 
     // If the model was updated and this is a standard conversation, 
     // update the assistant participant's model (but NOT the name)
@@ -610,7 +623,7 @@ export class Database {
     };
     
     this.conversations.set(id, updated);
-    await this.logEvent('conversation_archived', { id });
+    await this.logConversationEvent(conversation.userId, 'conversation_archived', { id });
     
     return true;
   }
@@ -648,7 +661,7 @@ export class Database {
       this.conversationMessages.set(duplicate.id, convMessages);
     }
 
-    await this.logEvent('conversation_duplicated', { originalId: id, duplicateId: duplicate.id });
+    await this.logConversationEvent(userId, 'conversation_duplicated', { originalId: id, duplicateId: duplicate.id });
 
     return duplicate;
   }
@@ -731,9 +744,8 @@ export class Database {
     if (conversation) {
       const updated = { ...conversation, updatedAt: new Date() };
       this.conversations.set(conversationId, updated);
+      await this.logConversationEvent(conversation.userId, 'message_created', message);
     }
-
-    await this.logEvent('message_created', message);
 
     return message;
   }
@@ -775,9 +787,8 @@ export class Database {
     if (conversation) {
       const updated = { ...conversation, updatedAt: new Date() };
       this.conversations.set(message.conversationId, updated);
+      await this.logConversationEvent(conversation.userId, 'message_branch_added', { messageId, branch: newBranch });
     }
-
-    await this.logEvent('message_branch_added', { messageId, branch: newBranch });
 
     return updatedMessage;
   }
@@ -793,7 +804,10 @@ export class Database {
     const updated = { ...message, activeBranchId: branchId };
     this.messages.set(messageId, updated);
     
-    await this.logEvent('active_branch_changed', { messageId, branchId });
+    const conversation = this.conversations.get(message.conversationId);
+    if (conversation) {
+      await this.logConversationEvent(conversation.userId, 'active_branch_changed', { messageId, branchId });
+    }
 
     return true;
   }
@@ -802,7 +816,11 @@ export class Database {
     if (!this.messages.has(messageId)) return false;
     
     this.messages.set(messageId, message);
-    await this.logEvent('message_updated', { messageId, message });
+    
+    const conversation = this.conversations.get(message.conversationId);
+    if (conversation) {
+      await this.logConversationEvent(conversation.userId, 'message_updated', { messageId, message });
+    }
     
     return true;
   }
@@ -823,7 +841,10 @@ export class Database {
       }
     }
     
-    await this.logEvent('message_deleted', { messageId, conversationId: message.conversationId });
+    const conversation = this.conversations.get(message.conversationId);
+    if (conversation) {
+      await this.logConversationEvent(conversation.userId, 'message_deleted', { messageId, conversationId: message.conversationId });
+    }
     return true;
   }
   
@@ -876,7 +897,10 @@ export class Database {
     
     // Instead of logging a minimal import event, log a full message_created event
     // This ensures the message can be recreated during event replay
-    await this.logEvent('message_created', message);
+    const conversation = this.conversations.get(message.conversationId);
+    if (conversation) {
+      await this.logConversationEvent(conversation.userId, 'message_created', message);
+    }
   }
   
   async updateMessageContent(messageId: string, branchId: string, content: string): Promise<boolean> {
@@ -895,8 +919,10 @@ export class Database {
     const updated = { ...message, branches: updatedBranches };
     this.messages.set(messageId, updated);
     
-    await this.logEvent('message_content_updated', { messageId, branchId, content });
-    
+    const conversation = this.conversations.get(message.conversationId);
+    if (conversation) {
+      await this.logConversationEvent(conversation.userId, 'message_content_updated', { messageId, branchId, content });
+    }
     return true;
   }
   
@@ -907,6 +933,9 @@ export class Database {
     const branch = message.branches.find(b => b.id === branchId);
     if (!branch) return null;
     
+    const conversation = this.conversations.get(message.conversationId);
+    if (!conversation) return null;
+
     const deletedMessageIds: string[] = [];
     
     // If this is the only branch, delete the entire message and cascade
@@ -928,7 +957,7 @@ export class Database {
             }
           }
           
-          await this.logEvent('message_deleted', { 
+          await this.logConversationEvent(conversation.userId, 'message_deleted', { 
             messageId: msgId,
             conversationId: msg.conversationId
           });
@@ -945,7 +974,7 @@ export class Database {
         }
       }
       
-      await this.logEvent('message_deleted', { 
+      await this.logConversationEvent(conversation.userId, 'message_deleted', { 
         messageId,
         conversationId: message.conversationId
       });
@@ -962,7 +991,7 @@ export class Database {
       
       this.messages.set(messageId, updatedMessage);
       
-      await this.logEvent('message_branch_deleted', { 
+      await this.logConversationEvent(conversation.userId, 'message_branch_deleted', { 
         messageId,
         branchId,
         conversationId: message.conversationId
@@ -984,7 +1013,7 @@ export class Database {
             }
           }
           
-          await this.logEvent('message_deleted', { 
+          await this.logConversationEvent(conversation.userId, 'message_deleted', { 
             messageId: msgId,
             conversationId: msg.conversationId
           });
@@ -1083,7 +1112,10 @@ export class Database {
     convParticipants.push(participant.id);
     this.conversationParticipants.set(conversationId, convParticipants);
     
-    await this.logEvent('participant_created', { participant });
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) {
+      await this.logConversationEvent(conversation.userId, 'participant_created', { participant });
+    }
     
     return participant;
   }
@@ -1112,8 +1144,12 @@ export class Database {
     };
     
     this.participants.set(participantId, updated);
-    
-    await this.logEvent('participant_updated', { participantId, updates });
+  
+
+    const conversation = this.conversations.get(participant.conversationId);
+    if (conversation) {
+      await this.logConversationEvent(conversation.userId, 'participant_updated', { participantId, updates });
+    }
     
     return updated;
   }
@@ -1132,8 +1168,11 @@ export class Database {
       }
     }
     
-    await this.logEvent('participant_deleted', { participantId, conversationId: participant.conversationId });
-    
+    const conversation = this.conversations.get(participant.conversationId);
+    if (conversation) {
+      await this.logConversationEvent(participant.conversationId, 'participant_deleted', { participantId, conversationId: participant.conversationId });
+    }
+
     return true;
   }
 
@@ -1164,7 +1203,10 @@ export class Database {
     convMetrics.push(metrics);
     
     // Store event
-    this.logEvent('metrics_added', { conversationId, metrics });
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) {
+      this.logConversationEvent(conversation.userId, 'metrics_added', { conversationId, metrics });
+    }
   }
   
   async getConversationMetrics(conversationId: string): Promise<MetricsData[]> {

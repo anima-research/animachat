@@ -11,8 +11,8 @@ export class EventStore {
   private filePath: string;
   private writeStream: fs.FileHandle | null = null;
   
-  constructor(dataDir: string = './data') {
-    this.filePath = path.join(dataDir, 'events.jsonl');
+  constructor(dataDir: string = './data', fileName: string = 'events.jsonl') {
+    this.filePath = path.join(dataDir, fileName);
   }
   
   async init(): Promise<void> {
