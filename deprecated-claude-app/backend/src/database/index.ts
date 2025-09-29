@@ -50,24 +50,19 @@ export class Database {
     await this.conversationEventStore.init();
     
     // Load all events and rebuild state
-    const events = await this.eventStore.loadEvents();
-    console.log(`Loading ${events.length} events from disk...`);
-    
-    for (const event of events) {
+    var allEvents = await this.eventStore.loadEvents();
+    for await (const {userId, events} of this.conversationEventStore.loadAllEvents()) {
+      allEvents.push(...events);
+    }
+    // Sort events by timestamp to ensure consistent replay back order
+    allEvents.sort(((a: Event, b: Event) => a.timestamp.getTime() - b.timestamp.getTime()));
+
+    // Replay events
+    console.log(`Loading ${allEvents.length} events from disk...`);
+
+    for (const event of allEvents) {
       await this.replayEvent(event);
     }
-
-    console.log(`Loading conversation events from disk...`);
-
-    var numUserEvents = 0;
-    for await (const {userId, events} of this.conversationEventStore.loadAllEvents()) {
-      for (const event of events) {
-        numUserEvents += 1;
-        await this.replayEvent(event);
-      }
-    }
-
-    console.log(`Loaded ${numUserEvents} conversation events from disk.`);
     
     // Create test user if no users exist
     if (this.users.size === 0) {
