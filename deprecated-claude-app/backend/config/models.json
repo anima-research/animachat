@@ -1,6 +1,41 @@
 {
   "models": [
     {
+      "id": "claude-sonnet-4.5",
+      "providerModelId": "claude-sonnet-4-5-20250929",
+      "displayName": "Claude Sonnet 4.5",
+      "shortName": "Sonnet 4.5",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 8192,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
       "id": "claude-opus-4.1",
       "providerModelId": "claude-opus-4-1-20250805",
       "displayName": "Claude Opus 4.1",
