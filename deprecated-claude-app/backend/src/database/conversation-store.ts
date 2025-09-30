@@ -32,6 +32,12 @@ export class ConversationEventStore {
     async getWritableUserEventStore(userId: string) : Promise<EventStore> {
         const existing = this.mostRecentUserEventStores.get(userId);
         if (existing) {
+            const posOfUserId = this.mostRecentUserIds.indexOf(userId);
+            if (posOfUserId != -1) {
+                // move user to end of queue
+                this.mostRecentUserIds.splice(posOfUserId, 1);
+                this.mostRecentUserIds.push(userId);
+            }
             return existing;
         }
         const userEventStore = new EventStore(this.baseDir, this.getUserFileName(userId));
