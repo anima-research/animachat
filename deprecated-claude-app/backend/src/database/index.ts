@@ -3,7 +3,7 @@ import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConv
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import { EventStore, Event } from './persistence.js';
-import { ConversationEventStore } from './conversation-store.js';
+import { BulkEventStore } from './bulk-event-store.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { SharesStore, SharedConversation } from './shares.js';
 
@@ -19,6 +19,7 @@ export interface MetricsData {
   responseTime: number;
 }
 
+
 export class Database {
   private users: Map<string, User> = new Map();
   private usersByEmail: Map<string, string> = new Map(); // email -> userId
@@ -31,31 +32,37 @@ export class Database {
   private participants: Map<string, Participant> = new Map(); // participantId -> Participant
   private conversationParticipants: Map<string, string[]> = new Map(); // conversationId -> participantIds
   private conversationMetrics: Map<string, MetricsData[]> = new Map(); // conversationId -> metrics
+
+  private loadedUsers: Set<string> = new Set(); // userId
+  private loadedConversations: Set<string> = new Set(); // conversationId
   
+  // contains api key events and other general events
   private eventStore: EventStore;
-  private conversationEventStore: ConversationEventStore; // per user event store with conversation data
+  // per user, contains conversation metadata events and participant events
+  private userEventStore: BulkEventStore;
+  // per conversation, contains message and branch events
+  private conversationEventStore: BulkEventStore; // per conversation event store
   private sharesStore: SharesStore;
   private initialized: boolean = false;
 
   constructor() {
-    this.eventStore = new EventStore();
-    this.conversationEventStore = new ConversationEventStore();
+    this.eventStore = new EventStore('./data', 'mainEvents.jsonl');
+    this.userEventStore = new BulkEventStore("./data/users");
+    this.conversationEventStore = new BulkEventStore("./data/conversations");
+
     this.sharesStore = new SharesStore();
   }
   
   async init(): Promise<void> {
     if (this.initialized) return;
     
+    if path.exist(path.join()./data', 'mainEvents.jsonl')
     await this.eventStore.init();
     await this.conversationEventStore.init();
+    await this.userEventStore.init();
     
     // Load all events and rebuild state
     var allEvents = await this.eventStore.loadEvents();
-    for await (const {conversationId, events} of this.conversationEventStore.loadAllEvents()) {
-      allEvents.push(...events);
-    }
-    // Sort events by timestamp to ensure consistent replay back order
-    allEvents.sort(((a: Event, b: Event) => a.timestamp.getTime() - b.timestamp.getTime()));
 
     // Replay events
     console.log(`Loading ${allEvents.length} events from disk...`);
@@ -70,6 +77,54 @@ export class Database {
     }
     
     this.initialized = true;
+  }
+
+  async loadUser(userId: string) {
+    if (!this.loadedUsers.has(userId)) {
+      for (const event of await this.userEventStore.loadEvents(userId)) {
+        await this.replayEvent(event);
+      }
+      this.loadedUsers.add(userId);
+    }
+  }
+
+  async loadConversation(userId: string, conversationId: string) {
+    await this.loadUser(userId); // user contains conversation metadata, need to do this first
+    // if we haven't loaded this conversation
+    // and this conversation exists (loading the user will populate that metadata)
+    if (!this.loadedConversations.has(conversationId) && this.conversations.has(conversationId)) {
+      // then load its messages and metrics
+      for (const event of await this.conversationEventStore.loadEvents(conversationId)) {
+        await this.replayEvent(event);
+      }
+      this.loadedConversations.add(conversationId);
+    }
+  }
+
+  unloadConversation(conversationId: string) {
+    // we only remove messages and metrics, since conversation metadata is managed via load/unload user
+    this.conversationMessages.get(conversationId)?.forEach((messageId) => {
+      this.messages.delete(messageId);
+    });
+    this.conversationMessages.delete(conversationId);;
+    this.conversationMetrics.delete(conversationId);
+
+    this.loadedConversations.delete(conversationId);
+  }
+
+  unloadUser(userId: string) {
+    this.userConversations.get(userId)?.forEach((conversationId) => {
+      // remove metadata (this is stored in the per-user event files)
+      this.conversations.delete(conversationId);
+      this.conversationParticipants.get(conversationId)?.forEach((participantId) => {
+        this.participants.delete(participantId);
+      });
+      this.conversationParticipants.delete(conversationId)
+      // remove messages and metrics (this is stored in per-conversation event files)
+      this.unloadConversation(conversationId);
+    });
+    this.userConversations.delete(userId);
+    this.loadedUsers.delete(userId);
   }
 
   private async createTestUser() {
@@ -131,6 +186,17 @@ export class Database {
     
     await this.conversationEventStore.appendEvent(conversationId, event);
   }
+
+  private async logUserEvent(userId: string, type: string, data: any): Promise<void> {
+    const event: Event = {
+      timestamp: new Date(),
+      type,
+      data: JSON.parse(JSON.stringify(data)) // Deep clone to avoid mutations
+    };
+    
+    await this.userEventStore.appendEvent(userId, event);
+  }
+  
   
   private async replayEvent(event: Event): Promise<void> {
     try {
@@ -557,7 +623,7 @@ export class Database {
     
     this.conversationMessages.set(conversation.id, []);
 
-    await this.logConversationEvent(conversation.id, 'conversation_created', conversation);
+    await this.logUserEvent(conversation.userId, 'conversation_created', conversation);
     
     // Create default participants
     if (format === 'standard' || !format) {
@@ -601,7 +667,8 @@ export class Database {
     };
 
     this.conversations.set(id, updated);
-    await this.logConversationEvent(conversation.id, 'conversation_updated', { id, updates });
+
+    await this.logUserEvent(conversation.userId, 'conversation_updated', { id, updates });
 
     // If the model was updated and this is a standard conversation, 
     // update the assistant participant's model (but NOT the name)
@@ -619,6 +686,10 @@ export class Database {
     return updated;
   }
 
+  async updateConversationTimestamp(conversationId: string) {
+      await this.updateConversation(conversationId, { updatedAt: new Date() });
+  }
+
   async archiveConversation(id: string): Promise<boolean> {
     const conversation = this.conversations.get(id);
     if (!conversation) return false;
@@ -631,7 +702,7 @@ export class Database {
     };
     
     this.conversations.set(id, updated);
-    await this.logConversationEvent(conversation.id, 'conversation_archived', { id });
+    await this.logUserEvent(conversation.userId, 'conversation_archived', { id });
     
     return true;
   }
@@ -668,8 +739,8 @@ export class Database {
       convMessages.push(newMessage.id);
       this.conversationMessages.set(duplicate.id, convMessages);
     }
-
-    await this.logConversationEvent(duplicate.id, 'conversation_duplicated', { originalId: id, duplicateId: duplicate.id });
+    
+    await this.logUserEvent(duplicate.userId, 'conversation_duplicated', { originalId: id, duplicateId: duplicate.id });
 
     return duplicate;
   }
@@ -747,12 +818,7 @@ export class Database {
     
     console.log(`Stored message ${message.id} for conversation ${conversationId}. Total messages: ${convMessages.length}`);
     
-    // Update conversation timestamp
-    const conversation = this.conversations.get(conversationId);
-    if (conversation) {
-      const updated = { ...conversation, updatedAt: new Date() };
-      this.conversations.set(conversationId, updated);
-    }
+    await this.updateConversationTimestamp(conversationId);
     await this.logConversationEvent(conversationId, 'message_created', message);
 
     return message;
@@ -790,13 +856,7 @@ export class Database {
     
     this.messages.set(messageId, updatedMessage);
 
-    // Update conversation timestamp
-    const conversation = this.conversations.get(message.conversationId);
-    if (conversation) {
-      const updated = { ...conversation, updatedAt: new Date() };
-      this.conversations.set(message.conversationId, updated);
-    }
-
+    await this.updateConversationTimestamp(message.conversationId);
     await this.logConversationEvent(message.conversationId, 'message_branch_added', { messageId, branch: newBranch });
 
     return updatedMessage;
@@ -813,6 +873,7 @@ export class Database {
     const updated = { ...message, activeBranchId: branchId };
     this.messages.set(messageId, updated);
 
+    await this.updateConversationTimestamp(message.conversationId);
     await this.logConversationEvent(message.conversationId, 'active_branch_changed', { messageId, branchId });
 
     return true;
@@ -823,6 +884,7 @@ export class Database {
     
     this.messages.set(messageId, message);
     
+    await this.updateConversationTimestamp(message.conversationId);
     await this.logConversationEvent(message.conversationId, 'message_updated', { messageId, message });
     
     return true;
@@ -844,6 +906,7 @@ export class Database {
       }
     }
     
+    await this.updateConversationTimestamp(message.conversationId);
     await this.logConversationEvent(message.conversationId, 'message_deleted', { messageId, conversationId: message.conversationId });
 
     return true;
@@ -898,6 +961,7 @@ export class Database {
     
     // Instead of logging a minimal import event, log a full message_created event
     // This ensures the message can be recreated during event replay
+    await this.updateConversationTimestamp(conversationId);
     await this.logConversationEvent(conversationId, 'message_created', message);
   }
   
@@ -917,6 +981,7 @@ export class Database {
     const updated = { ...message, branches: updatedBranches };
     this.messages.set(messageId, updated);
     
+    await this.updateConversationTimestamp(message.conversationId);
     await this.logConversationEvent(message.conversationId, 'message_content_updated', { messageId, branchId, content });
 
     return true;
@@ -1016,6 +1081,7 @@ export class Database {
         }
       }
     }
+    await this.updateConversationTimestamp(message.conversationId);
     
     return deletedMessageIds;
   }
@@ -1108,7 +1174,10 @@ export class Database {
     convParticipants.push(participant.id);
     this.conversationParticipants.set(conversationId, convParticipants);
 
-    await this.logConversationEvent(conversationId, 'participant_created', { participant });
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) {
+      await this.logUserEvent(conversation.userId, 'participant_created', { participant });
+    }
     
     return participant;
   }
@@ -1138,7 +1207,10 @@ export class Database {
     
     this.participants.set(participantId, updated);
   
-    await this.logConversationEvent(participant.conversationId, 'participant_updated', { participantId, updates });
+    const conversation = this.conversations.get(participant.conversationId);
+    if (conversation) {
+      await this.logUserEvent(conversation.userId, 'participant_updated', { participantId, updates });
+    }
     
     return updated;
   }
@@ -1157,7 +1229,10 @@ export class Database {
       }
     }
     
-    await this.logConversationEvent(participant.conversationId, 'participant_deleted', { participantId, conversationId: participant.conversationId });
+    const conversation = this.conversations.get(participant.conversationId);
+    if (conversation) {
+      await this.logUserEvent(conversation.userId, 'participant_deleted', { participantId, conversationId: participant.conversationId });
+    }
 
     return true;
   }
@@ -1189,7 +1264,10 @@ export class Database {
     convMetrics.push(metrics);
     
     // Store event
-    await this.logConversationEvent(conversationId, 'metrics_added', { conversationId, metrics });
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) {
+      await this.logUserEvent(conversation.userId, 'metrics_added', { conversationId, metrics });
+    }
   }
   
   async getConversationMetrics(conversationId: string): Promise<MetricsData[]> {
