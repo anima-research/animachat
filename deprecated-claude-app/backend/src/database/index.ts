@@ -2,6 +2,10 @@ import { User, Conversation, Message, Participant, ApiKey } from '@deprecated-cl
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
+import path from 'path';
+import fs from 'fs';
+import { promises as fsAsync } from 'fs';
+import { migrateDatabase } from './migration.js'
 import { EventStore, Event } from './persistence.js';
 import { BulkEventStore } from './bulk-event-store.js';
 import { ModelLoader } from '../config/model-loader.js';
@@ -18,7 +22,6 @@ export interface MetricsData {
   timestamp: string;
   responseTime: number;
 }
-
 
 export class Database {
   private users: Map<string, User> = new Map();
@@ -55,11 +58,14 @@ export class Database {
   
   async init(): Promise<void> {
     if (this.initialized) return;
-    
-    if path.exist(path.join()./data', 'mainEvents.jsonl')
+
+
     await this.eventStore.init();
     await this.conversationEventStore.init();
     await this.userEventStore.init();
+
+    // if needed
+    await this.migrateDatabase();
     
     // Load all events and rebuild state
     var allEvents = await this.eventStore.loadEvents();
@@ -77,6 +83,46 @@ export class Database {
     }
     
     this.initialized = true;
+  }
+
+  async migrateDatabase(): Promise<void> {
+    const oldDatabasePath = path.join('./data', 'events.jsonl');
+    if (fs.existsSync(oldDatabasePath)) {
+      console.log(`Migrating database at ${oldDatabasePath} and moving to ${oldDatabasePath}.bkp...`)
+      const oldEventStore = new EventStore('./data', 'events.jsonl');
+      await oldEventStore.init();
+      // reply them all back to gather metadata needed for migration (needed to lookup userId and conversationId of events)
+      const oldEvents = await oldEventStore.loadEvents();
+      console.log(`Migration: Loading ${oldEvents.length} events from disk...`);
+      for (var event of oldEvents) {
+        await this.replayEvent(event);
+      }
+      oldEventStore.close();
+
+      // backup old data
+      const oldConversations = this.conversations;
+      const oldMessages = this.messages;
+
+      // reset back to blank state
+      this.conversations = new Map();
+      this.users = new Map();
+      this.usersByEmail = new Map();
+      this.conversations = new Map();
+      this.messages = new Map();
+      this.apiKeys = new Map();
+      this.userConversations = new Map();
+      this.conversationMessages = new Map();
+      this.passwordHashes = new Map();
+      this.participants = new Map();
+      this.conversationParticipants = new Map();
+      this.conversationMetrics = new Map();
+
+      await migrateDatabase(oldEvents, oldConversations, oldMessages,
+          this.eventStore, this.userEventStore, this.conversationEventStore
+      );
+      // move old database to backup file so we don't do this again, but it's not deleted in case something goes wrong
+      await fsAsync.rename(oldDatabasePath, oldDatabasePath + ".bkp");
+    }
   }
 
   async loadUser(userId: string) {

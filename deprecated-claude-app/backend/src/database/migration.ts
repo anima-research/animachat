@@ -1,5 +1,6 @@
 import { User, Conversation, Message, Participant, ApiKey } from '@deprecated-claude/shared';
 import { EventStore, Event } from './persistence.js';
+import { BulkEventStore } from './bulk-event-store.js';
 
 enum EventCategory {
   Main,
@@ -13,7 +14,32 @@ interface EventCategoryInfo {
   conversationId?: string
 }
 
-function getEventType(event: Event, conversations: Map<string, Conversation>, messages: Map<string, Message>, ): EventCategoryInfo {
+export async function migrateDatabase(
+    events: Event[],
+    conversations: Map<string, Conversation>,
+    messages: Map<string, Message>,
+    mainEventStore: EventStore,
+    userEventStore: BulkEventStore,
+    conversationEventStore: BulkEventStore
+) {
+
+    for (const event of events) {
+        const eventCategoryInfo = getEventCategoryInfo(event, conversations, messages);
+        switch (eventCategoryInfo.category) {
+            case EventCategory.Main:
+                mainEventStore.appendEvent(event);
+                break;
+            case EventCategory.User:
+                userEventStore.appendEvent(eventCategoryInfo.userId!, event);
+                break;
+            case EventCategory.Conversation:
+                conversationEventStore.appendEvent(eventCategoryInfo.conversationId!, event);
+                break;
+        }
+    }
+}
+
+function getEventCategoryInfo(event: Event, conversations: Map<string, Conversation>, messages: Map<string, Message>): EventCategoryInfo {
   var userId: string = "";
   var conversationId: string = "";
   var category: EventCategory = EventCategory.Main;
