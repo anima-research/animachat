@@ -99,6 +99,7 @@ export function importRouter(db: Database): Router {
             // Create assistant participant with settings
             const newParticipant = await db.createParticipant(
               conversation.id,
+              conversation.userId,
               exportedParticipant.name,
               exportedParticipant.type,
               exportedParticipant.model
