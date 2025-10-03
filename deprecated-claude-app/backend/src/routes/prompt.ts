@@ -23,13 +23,13 @@ export function createPromptRouter(db: Database): Router {
       const params = GetPromptSchema.parse(req.body);
 
       // Get the conversation
-      const conversation = await db.getConversation(params.conversationId);
+      const conversation = await db.getConversation(params.conversationId, userId);
       if (!conversation || conversation.userId !== userId) {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
       // Get all messages
-      const allMessages = await db.getConversationMessages(params.conversationId);
+      const allMessages = await db.getConversationMessages(params.conversationId, conversation.userId);
       
       // Build conversation history from the specified branch
       const history = buildConversationHistory(allMessages, params.branchId);
@@ -39,7 +39,7 @@ export function createPromptRouter(db: Database): Router {
       let responderId: string | undefined;
       
       if (conversation.format === 'prefill') {
-        participants = await db.getConversationParticipants(conversation.id);
+        participants = await db.getConversationParticipants(conversation.id, conversation.userId);
         
         // Find the next responder (assistant participant)
         const activeAssistants = participants.filter(p => p.type === 'assistant' && p.isActive);

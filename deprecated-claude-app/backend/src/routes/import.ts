@@ -63,7 +63,7 @@ export function importRouter(db: Database): Router {
       );
 
       // Get default participants
-      const participants = await db.getConversationParticipants(conversation.id);
+      const participants = await db.getConversationParticipants(conversation.id, conversation.userId);
       const participantMap = new Map<string, string>(); // sourceName -> participantId
 
       // Special handling for Arc Chat format - restore participants with settings
@@ -71,12 +71,12 @@ export function importRouter(db: Database): Router {
         console.log('Arc Chat import - exported participants:', preview.metadata.participants);
         
         // Get fresh list of default participants
-        const defaultParticipants = await db.getConversationParticipants(conversation.id);
+        const defaultParticipants = await db.getConversationParticipants(conversation.id, conversation.userId);
         
         // Remove default assistant participants
         for (const p of defaultParticipants) {
           if (p.type === 'assistant') {
-            await db.deleteParticipant(p.id);
+            await db.deleteParticipant(p.id, conversation.userId);
           }
         }
         
@@ -88,7 +88,7 @@ export function importRouter(db: Database): Router {
             if (userParticipant) {
               // Update the user participant's name if needed
               if (exportedParticipant.name !== userParticipant.name) {
-                await db.updateParticipant(userParticipant.id, {
+                await db.updateParticipant(userParticipant.id, conversation.userId, {
                   name: exportedParticipant.name
                 });
               }
@@ -106,7 +106,7 @@ export function importRouter(db: Database): Router {
             
             // Update with settings if present
             if (exportedParticipant.settings) {
-              await db.updateParticipant(newParticipant.id, {
+              await db.updateParticipant(newParticipant.id, conversation.userId, {
                 settings: exportedParticipant.settings
               });
             }
@@ -128,6 +128,7 @@ export function importRouter(db: Database): Router {
             // Create new participant
             participant = await db.createParticipant(
               conversation.id,
+              conversation.userId,
               mapping.targetName,
               mapping.type,
               mapping.type === 'assistant' ? importRequest.model : undefined
@@ -211,6 +212,7 @@ export function importRouter(db: Database): Router {
           // Create the message with first branch
           const message = await db.createMessage(
             conversation.id,
+            conversation.userId,
             firstBranch.content,
             firstBranch.role, // Use role from the branch
             firstBranch.model,
@@ -260,6 +262,8 @@ export function importRouter(db: Database): Router {
             
             const updatedMessage = await db.addMessageBranch(
               message.id,
+              message.conversationId,
+              conversation.userId,
               branch.content,
               branch.role, // Use role from the branch
               branchParentId,
@@ -284,9 +288,9 @@ export function importRouter(db: Database): Router {
           
           // Set active branch if different from default
           if (exportedMsg.activeBranchId && activeBranchIndex > 0) {
-            const refetchedMessage = await db.getMessageById(message.id);
+            const refetchedMessage = await db.getMessage(message.id, message.conversationId, conversation.userId);
             if (refetchedMessage && refetchedMessage.branches[activeBranchIndex]) {
-              await db.setActiveBranch(message.id, refetchedMessage.branches[activeBranchIndex].id);
+              await db.setActiveBranch(message.id, message.conversationId, conversation.userId, refetchedMessage.branches[activeBranchIndex].id);
             }
           }
         }
@@ -333,12 +337,14 @@ export function importRouter(db: Database): Router {
           // This is an alternative branch - add it to the existing message with the same parent and role
           console.log(`Adding branch to existing message ${existingMessageId}`);
           
-          const existingMessage = await db.getMessageById(existingMessageId);
+          const existingMessage = await db.getMessage(existingMessageId, conversation.id, conversation.userId);
           if (existingMessage) {
             // Find the parent branch from the previous message
             const parentBranch = existingMessage.branches[0]; // Use the first branch's parent
             const updatedMessage = await db.addMessageBranch(
               existingMessageId,
+              existingMessage.conversationId,
+              conversation.userId,
               parsedMsg.content,
               parsedMsg.role,
               parentBranch?.parentBranchId,  // Use same parent as the first branch
@@ -358,7 +364,7 @@ export function importRouter(db: Database): Router {
                 
                 // If this branch is marked as active, set it
                 if (isActive) {
-                  await db.setActiveBranch(existingMessageId, newBranch.id);
+                  await db.setActiveBranch(existingMessageId, conversation.id, conversation.userId, newBranch.id);
                 }
               }
             }
@@ -375,7 +381,7 @@ export function importRouter(db: Database): Router {
               const parentMessageId = messageIdMap.get(parentUuid);
               if (parentMessageId) {
                 // Get the active branch of that message
-                const parentMessage = await db.getMessageById(parentMessageId);
+                const parentMessage = await db.getMessage(parentMessageId, conversation.id, conversation.userId);
                 if (parentMessage) {
                   const activeBranch = parentMessage.branches.find(b => b.id === parentMessage.activeBranchId);
                   if (activeBranch) {
@@ -389,6 +395,7 @@ export function importRouter(db: Database): Router {
           console.log(`Creating message: role=${parsedMsg.role}, parentBranchId=${parentBranchId}, participantId=${participantId}`);
           const createdMessage = await db.createMessage(
             conversation.id,
+            conversation.userId,
             parsedMsg.content,
             parsedMsg.role,
             parsedMsg.model,
@@ -440,7 +447,7 @@ export function importRouter(db: Database): Router {
       }
 
       // Check if conversation exists and belongs to user
-      const conversation = await db.getConversation(conversationId);
+      const conversation = await db.getConversation(conversationId, req.userId);
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
       }
@@ -449,10 +456,10 @@ export function importRouter(db: Database): Router {
       }
 
       // Clear existing messages for this conversation
-      const existingMessages = await db.getConversationMessages(conversationId);
+      const existingMessages = await db.getConversationMessages(conversationId, req.userId);
       console.log(`[Raw Import] Clearing ${existingMessages.length} existing messages`);
       for (const msg of existingMessages) {
-        await db.deleteMessage(msg.id);
+        await db.deleteMessage(msg.id, conversation.id, conversation.userId);
       }
 
       // Import the new messages directly
@@ -460,7 +467,7 @@ export function importRouter(db: Database): Router {
       for (const message of messages) {
         try {
           // Directly save the message with all its branches
-          await db.importRawMessage(conversationId, message);
+          await db.importRawMessage(conversationId, conversation.userId, message);
           importedCount++;
         } catch (error) {
           console.error(`Failed to import message ${message.id}:`, error);
