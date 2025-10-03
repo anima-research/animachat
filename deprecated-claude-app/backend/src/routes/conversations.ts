@@ -58,7 +58,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const conversation = await db.getConversation(req.params.id);
+      const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
@@ -82,7 +82,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const conversation = await db.getConversation(req.params.id);
+      const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
@@ -92,7 +92,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const updated = await db.updateConversation(req.params.id, req.body);
+      const updated = await db.updateConversation(req.params.id, req.userId, req.body);
       res.json(updated);
     } catch (error) {
       console.error('Update conversation error:', error);
@@ -107,7 +107,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const conversation = await db.getConversation(req.params.id);
+      const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
@@ -117,7 +117,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      await db.archiveConversation(req.params.id);
+      await db.archiveConversation(req.params.id, req.userId);
       res.json({ success: true });
     } catch (error) {
       console.error('Archive conversation error:', error);
@@ -132,7 +132,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const duplicate = await db.duplicateConversation(req.params.id, req.userId);
+      const duplicate = await db.duplicateConversation(req.params.id, req.userId, req.userId);
       
       if (!duplicate) {
         return res.status(404).json({ error: 'Conversation not found or access denied' });
@@ -152,7 +152,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const conversation = await db.getConversation(req.params.id);
+      const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
@@ -162,7 +162,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const messages = await db.getConversationMessages(req.params.id);
+      const messages = await db.getConversationMessages(req.params.id, req.userId);
       res.json(messages);
     } catch (error) {
       console.error('Get messages error:', error);
@@ -191,16 +191,19 @@ export function conversationRouter(db: Database): Router {
       for (const msg of data.messages) {
         const message = await db.createMessage(
           conversation.id,
+          req.userId,
           msg.content,
           msg.role,
           msg.role === 'assistant' ? data.model : undefined
         );
 
         // Add branches if provided
-        if (msg.branches && msg.branches.length > 0) {
+        if (message && msg.branches && msg.branches.length > 0) {
           for (const branch of msg.branches) {
             await db.addMessageBranch(
               message.id,
+              conversation.id,
+              req.userId,
               branch.content,
               msg.role,
               message.branches[0].id,
@@ -232,13 +235,13 @@ export function conversationRouter(db: Database): Router {
         return res.status(400).json({ error: 'messageId and branchId are required' });
       }
       
-      const conversation = await db.getConversation(req.params.id);
+      const conversation = await db.getConversation(req.params.id, req.userId);
       if (!conversation || conversation.userId !== req.userId) {
         return res.status(404).json({ error: 'Conversation not found' });
       }
       
       // Set the active branch
-      const success = await db.setActiveBranch(messageId, branchId);
+      const success = await db.setActiveBranch(messageId, conversation.id, req.userId, branchId);
       
       if (success) {
         res.json({ success: true });
@@ -258,7 +261,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const conversation = await db.getConversation(req.params.id);
+      const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
@@ -293,7 +296,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const conversation = await db.getConversation(req.params.id);
+      const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
@@ -304,7 +307,11 @@ export function conversationRouter(db: Database): Router {
       }
 
       // Get metrics summary from database
-      const summary = await db.getConversationMetricsSummary(req.params.id);
+      const summary = await db.getConversationMetricsSummary(req.params.id, req.userId);
+      
+      if (!summary) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
       
       const metrics: ConversationMetrics = {
         conversationId: req.params.id,
@@ -329,7 +336,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const conversation = await db.getConversation(req.params.id);
+      const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
@@ -339,7 +346,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const exportData = await db.exportConversation(req.params.id);
+      const exportData = await db.exportConversation(req.params.id, req.userId);
       res.json(exportData);
     } catch (error) {
       console.error('Export conversation error:', error);
