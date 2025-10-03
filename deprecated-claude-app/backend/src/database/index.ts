@@ -36,8 +36,8 @@ export class Database {
   private conversationParticipants: Map<string, string[]> = new Map(); // conversationId -> participantIds
   private conversationMetrics: Map<string, MetricsData[]> = new Map(); // conversationId -> metrics
 
-  private loadedUsers: Set<string> = new Set(); // userId
-  private loadedConversations: Set<string> = new Set(); // conversationId
+  private userLastAccessedTimes: Map<string, Date> = new Map(); // userId -> last accessed time
+  private conversationsLastAccessedTimes: Map<string, Date> = new Map(); // conversationId -> last accessed time
   
   // contains api key events and other general events
   private eventStore: EventStore;
@@ -75,6 +75,15 @@ export class Database {
 
     for (const event of allEvents) {
       await this.replayEvent(event);
+    }
+
+    // Replay user events (TODO: make these load as needed. For now, it's so little data that this is fine)
+    for await (const {id, events} of this.userEventStore.loadAllEvents()) {
+      for (const event of events) {
+        await this.replayEvent(event);
+      }
+      // add that user to list of loaded users
+      this.userLastAccessedTimes.set(id, new Date());
     }
     
     // Create test user if no users exist
@@ -126,25 +135,25 @@ export class Database {
   }
 
   async loadUser(userId: string) {
-    if (!this.loadedUsers.has(userId)) {
+    if (!this.userLastAccessedTimes.has(userId)) {
       for (const event of await this.userEventStore.loadEvents(userId)) {
         await this.replayEvent(event);
       }
-      this.loadedUsers.add(userId);
     }
+    this.userLastAccessedTimes.set(userId, new Date());
   }
 
-  async loadConversation(userId: string, conversationId: string) {
-    await this.loadUser(userId); // user contains conversation metadata, need to do this first
+  async loadConversation(conversationId: string, conversationOwnerUserId: string) {
+    await this.loadUser(conversationOwnerUserId); // user contains conversation metadata, need to do this first
     // if we haven't loaded this conversation
     // and this conversation exists (loading the user will populate that metadata)
-    if (!this.loadedConversations.has(conversationId) && this.conversations.has(conversationId)) {
+    if (!this.conversationsLastAccessedTimes.has(conversationId) && this.conversations.has(conversationId)) {
       // then load its messages and metrics
       for (const event of await this.conversationEventStore.loadEvents(conversationId)) {
         await this.replayEvent(event);
       }
-      this.loadedConversations.add(conversationId);
     }
+    this.conversationsLastAccessedTimes.set(conversationId, new Date());
   }
 
   unloadConversation(conversationId: string) {
@@ -155,7 +164,7 @@ export class Database {
     this.conversationMessages.delete(conversationId);;
     this.conversationMetrics.delete(conversationId);
 
-    this.loadedConversations.delete(conversationId);
+    this.conversationsLastAccessedTimes.delete(conversationId);
   }
 
   unloadUser(userId: string) {
@@ -170,7 +179,7 @@ export class Database {
       this.unloadConversation(conversationId);
     });
     this.userConversations.delete(userId);
-    this.loadedUsers.delete(userId);
+    this.userLastAccessedTimes.delete(userId);
   }
 
   private async createTestUser() {
@@ -661,6 +670,9 @@ export class Database {
       contextManagement
     };
 
+    // Load this user's current conversations if not already loaded
+    await this.loadUser(userId);
+
     this.conversations.set(conversation.id, conversation);
     
     const userConvs = this.userConversations.get(userId) || new Set();
@@ -674,8 +686,8 @@ export class Database {
     // Create default participants
     if (format === 'standard' || !format) {
       // Standard format: fixed User and Assistant
-      await this.createParticipant(conversation.id, 'H', 'user');
-      await this.createParticipant(conversation.id, 'A', 'assistant', model, systemPrompt, settings);
+      await this.createParticipant(conversation.id, userId, 'H', 'user');
+      await this.createParticipant(conversation.id, userId, 'A', 'assistant', model, systemPrompt, settings);
     } else {
       // Prefill format: starts with default participants but can add more
       // Get model display name for assistant participant
@@ -683,18 +695,20 @@ export class Database {
       const modelConfig = await modelLoader.getModelById(model);
       const assistantName = modelConfig?.displayName || 'A';
       
-      await this.createParticipant(conversation.id, 'H', 'user');
-      await this.createParticipant(conversation.id, assistantName, 'assistant', model, systemPrompt, settings);
+      await this.createParticipant(conversation.id, userId, 'H', 'user');
+      await this.createParticipant(conversation.id, userId, assistantName, 'assistant', model, systemPrompt, settings);
     }
 
     return conversation;
   }
 
-  async getConversation(id: string): Promise<Conversation | null> {
-    return this.conversations.get(id) || null;
+  async getConversation(conversationId: string, conversationOwnerUserId: string): Promise<Conversation | null> {
+    await this.loadUser(conversationOwnerUserId); // load user if not already loaded, which contains conversation metadata
+    return this.conversations.get(conversationId) || null;
   }
 
   async getUserConversations(userId: string): Promise<Conversation[]> {
+    await this.loadUser(userId); // load user if not already loaded
     const convIds = this.userConversations.get(userId) || new Set();
     return Array.from(convIds)
       .map(id => this.conversations.get(id))
@@ -702,9 +716,14 @@ export class Database {
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   }
 
-  async updateConversation(id: string, updates: Partial<Conversation>): Promise<Conversation | null> {
-    const conversation = this.conversations.get(id);
+  async updateConversation(conversationId: string, conversationOwnerUserId: string, updates: Partial<Conversation>): Promise<Conversation | null> {
+    await this.loadUser(conversationOwnerUserId);
+    const conversation = this.conversations.get(conversationId);
     if (!conversation) return null;
+    if (conversation.userId !== conversationOwnerUserId) {
+      console.warn(`Conversation owner mismatch for conversation ${conversationId}: Given ${conversationOwnerUserId} as owner but actual owner is ${conversation.userId}`);
+      return null;
+    }
 
     const updated = {
       ...conversation,
@@ -712,18 +731,18 @@ export class Database {
       updatedAt: new Date()
     };
 
-    this.conversations.set(id, updated);
+    this.conversations.set(conversationId, updated);
 
-    await this.logUserEvent(conversation.userId, 'conversation_updated', { id, updates });
+    await this.logUserEvent(conversationOwnerUserId, 'conversation_updated', { id: conversationId, updates });
 
     // If the model was updated and this is a standard conversation, 
     // update the assistant participant's model (but NOT the name)
     if (updates.model && conversation.format === 'standard') {
-      const participants = await this.getConversationParticipants(id);
+      const participants = await this.getConversationParticipants(conversationId, conversationOwnerUserId);
       const defaultAssistant = participants.find(p => p.type === 'assistant');
       if (defaultAssistant) {
         // Only update the model, keep the name as "Assistant"
-        await this.updateParticipant(defaultAssistant.id, { 
+        await this.updateParticipant(defaultAssistant.id, conversationOwnerUserId, { 
           model: updates.model
         });
       }
@@ -732,13 +751,18 @@ export class Database {
     return updated;
   }
 
-  async updateConversationTimestamp(conversationId: string) {
-      await this.updateConversation(conversationId, { updatedAt: new Date() });
+  async updateConversationTimestamp(conversationId: string, conversationOwnerUserId: string) {
+      await this.updateConversation(conversationId, conversationOwnerUserId, { updatedAt: new Date() });
   }
 
-  async archiveConversation(id: string): Promise<boolean> {
-    const conversation = this.conversations.get(id);
+  async archiveConversation(conversationId: string, conversationOwnerUserId: string): Promise<boolean> {
+    await this.loadUser(conversationOwnerUserId);
+    const conversation = this.conversations.get(conversationId);
     if (!conversation) return false;
+    if (conversation.userId !== conversationOwnerUserId) {
+      console.warn(`Conversation owner mismatch for conversation ${conversationId}: Given ${conversationOwnerUserId} as owner but actual owner is ${conversation.userId}`);
+      return false;
+    }
 
     // Create new object instead of mutating
     const updated = {
@@ -747,18 +771,21 @@ export class Database {
       updatedAt: new Date()
     };
     
-    this.conversations.set(id, updated);
-    await this.logUserEvent(conversation.userId, 'conversation_archived', { id });
+    this.conversations.set(conversationId, updated);
+    await this.logUserEvent(conversation.userId, 'conversation_archived', { id: conversationId });
     
     return true;
   }
 
-  async duplicateConversation(id: string, userId: string): Promise<Conversation | null> {
-    const original = this.conversations.get(id);
-    if (!original || original.userId !== userId) return null;
+  async duplicateConversation(conversationId: string, originalOwnerUserId: string, duplicateOwnerUserId: string): Promise<Conversation | null> {
+    await this.loadUser(originalOwnerUserId);
+    await this.loadUser(duplicateOwnerUserId);
+    const original = this.conversations.get(conversationId);
+    if (!original || original.userId !== originalOwnerUserId) return null;
+    await this.loadConversation(conversationId, originalOwnerUserId);
 
     const duplicate = await this.createConversation(
-      userId,
+      duplicateOwnerUserId,
       `${original.title} (Copy)`,
       original.model,
       original.systemPrompt,
@@ -766,8 +793,9 @@ export class Database {
     );
 
     // Copy messages
-    const messages = await this.getConversationMessages(id);
+    const messages = await this.getConversationMessages(conversationId, originalOwnerUserId);
     for (const message of messages) {
+      // Todo: fix duplication logic
       const newMessage: Message = {
         ...message,
         id: uuidv4(),
@@ -780,21 +808,22 @@ export class Database {
       newMessage.activeBranchId = newMessage.branches[0]?.id || '';
       
       this.messages.set(newMessage.id, newMessage);
-      
       const convMessages = this.conversationMessages.get(duplicate.id) || [];
       convMessages.push(newMessage.id);
       this.conversationMessages.set(duplicate.id, convMessages);
     }
     
-    await this.logUserEvent(duplicate.userId, 'conversation_duplicated', { originalId: id, duplicateId: duplicate.id });
+    await this.logUserEvent(duplicate.userId, 'conversation_duplicated', { originalId: conversationId, duplicateId: duplicate.id });
 
     return duplicate;
   }
 
   // Message methods
-  async createMessage(conversationId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[]): Promise<Message> {
+  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[]): Promise<Message> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
     // Get conversation messages to determine parent
-    const existingMessages = await this.getConversationMessages(conversationId);
+    const existingMessages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
     
     console.log(`createMessage called with explicitParentBranchId: ${explicitParentBranchId} (type: ${typeof explicitParentBranchId})`);
     
@@ -864,16 +893,35 @@ export class Database {
     
     console.log(`Stored message ${message.id} for conversation ${conversationId}. Total messages: ${convMessages.length}`);
     
-    await this.updateConversationTimestamp(conversationId);
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
     await this.logConversationEvent(conversationId, 'message_created', message);
 
     return message;
   }
 
-  async addMessageBranch(messageId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[]): Promise<Message | null> {
+  async tryLoadMessageAndVerifyIds(messageId: string, conversationId: string, conversationOwnerUserId: string) : Promise<Message | null> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
     const message = this.messages.get(messageId);
     if (!message) return null;
+    if (message.conversationId !== conversationId) {
+      console.warn(`Mismatched message.conversationId ${message.conversationId} does not match given conversationId ${conversationId}`);
+      return null;
+    }
 
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return null;
+    if (conversation.userId !== conversationOwnerUserId) {
+      console.warn(`Mismatched conversation.userId ${message.conversationId} does not match given conversationOwnerUserId ${conversationOwnerUserId}`);
+      return null;
+    }
+    return message;
+  }
+
+  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[]): Promise<Message | null> {
+    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
+    if (!message) return null;
+    
     const newBranch = {
       id: uuidv4(),
       content,
@@ -902,16 +950,16 @@ export class Database {
     
     this.messages.set(messageId, updatedMessage);
 
-    await this.updateConversationTimestamp(message.conversationId);
-    await this.logConversationEvent(message.conversationId, 'message_branch_added', { messageId, branch: newBranch });
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    await this.logConversationEvent(conversationId, 'message_branch_added', { messageId, branch: newBranch });
 
     return updatedMessage;
   }
 
-  async setActiveBranch(messageId: string, branchId: string): Promise<boolean> {
-    const message = this.messages.get(messageId);
+  async setActiveBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string): Promise<boolean> {
+    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
-
+    
     const branch = message.branches.find(b => b.id === branchId);
     if (!branch) return false;
 
@@ -919,25 +967,26 @@ export class Database {
     const updated = { ...message, activeBranchId: branchId };
     this.messages.set(messageId, updated);
 
-    await this.updateConversationTimestamp(message.conversationId);
-    await this.logConversationEvent(message.conversationId, 'active_branch_changed', { messageId, branchId });
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    await this.logConversationEvent(conversationId, 'active_branch_changed', { messageId, branchId });
 
     return true;
   }
   
-  async updateMessage(messageId: string, message: Message): Promise<boolean> {
-    if (!this.messages.has(messageId)) return false;
+  async updateMessage(messageId: string, conversationId: string, conversationOwnerUserId: string, message: Message): Promise<boolean> {
+    const oldMessage = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
+    if (!oldMessage) return false;
     
     this.messages.set(messageId, message);
     
-    await this.updateConversationTimestamp(message.conversationId);
-    await this.logConversationEvent(message.conversationId, 'message_updated', { messageId, message });
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    await this.logConversationEvent(conversationId, 'message_updated', { messageId, message });
     
     return true;
   }
   
-  async deleteMessage(messageId: string): Promise<boolean> {
-    const message = this.messages.get(messageId);
+  async deleteMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<boolean> {
+    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
     
     // Remove from messages map
@@ -952,16 +1001,23 @@ export class Database {
       }
     }
     
-    await this.updateConversationTimestamp(message.conversationId);
-    await this.logConversationEvent(message.conversationId, 'message_deleted', { messageId, conversationId: message.conversationId });
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    await this.logConversationEvent(conversationId, 'message_deleted', { messageId, conversationId });
 
     return true;
   }
   
-  async importRawMessage(conversationId: string, messageData: any): Promise<void> {
-    // Validate the conversation exists
-    if (!this.conversations.has(conversationId)) {
+  async importRawMessage(conversationId: string, conversationOwnerUserId: string, messageData: any): Promise<void> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
+    
+    const conversation = this.conversations.get(conversationId);
+    // Validate the conversation exists and we have correct user owner
+    if (!conversation) {
       throw new Error('Conversation not found');
+    }
+    if (conversation.userId !== conversationOwnerUserId) {
+      throw new Error(`Mismatched given owner id ${conversationOwnerUserId} and actual conversation.userId ${conversation.userId}`);
     }
     
     // Create the message object with all branches
@@ -1007,12 +1063,12 @@ export class Database {
     
     // Instead of logging a minimal import event, log a full message_created event
     // This ensures the message can be recreated during event replay
-    await this.updateConversationTimestamp(conversationId);
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
     await this.logConversationEvent(conversationId, 'message_created', message);
   }
   
-  async updateMessageContent(messageId: string, branchId: string, content: string): Promise<boolean> {
-    const message = this.messages.get(messageId);
+  async updateMessageContent(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string, content: string): Promise<boolean> {
+    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
     
     const branch = message.branches.find(b => b.id === branchId);
@@ -1027,21 +1083,18 @@ export class Database {
     const updated = { ...message, branches: updatedBranches };
     this.messages.set(messageId, updated);
     
-    await this.updateConversationTimestamp(message.conversationId);
-    await this.logConversationEvent(message.conversationId, 'message_content_updated', { messageId, branchId, content });
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    await this.logConversationEvent(conversationId, 'message_content_updated', { messageId, branchId, content });
 
     return true;
   }
   
-  async deleteMessageBranch(messageId: string, branchId: string): Promise<string[] | null> {
-    const message = this.messages.get(messageId);
+  async deleteMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string): Promise<string[] | null> {
+    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
     
     const branch = message.branches.find(b => b.id === branchId);
     if (!branch) return null;
-    
-    const conversation = this.conversations.get(message.conversationId);
-    if (!conversation) return null;
 
     const deletedMessageIds: string[] = [];
     
@@ -1064,9 +1117,9 @@ export class Database {
             }
           }
           
-          await this.logConversationEvent(conversation.id, 'message_deleted', { 
+          await this.logConversationEvent(conversationId, 'message_deleted', { 
             messageId: msgId,
-            conversationId: msg.conversationId
+            conversationId
           });
         }
       }
@@ -1081,9 +1134,9 @@ export class Database {
         }
       }
       
-      await this.logConversationEvent(conversation.id, 'message_deleted', { 
+      await this.logConversationEvent(conversationId, 'message_deleted', { 
         messageId,
-        conversationId: message.conversationId
+        conversationId
       });
     } else {
       // Just remove this branch
@@ -1098,10 +1151,10 @@ export class Database {
       
       this.messages.set(messageId, updatedMessage);
       
-      await this.logConversationEvent(conversation.id, 'message_branch_deleted', { 
+      await this.logConversationEvent(conversationId, 'message_branch_deleted', { 
         messageId,
         branchId,
-        conversationId: message.conversationId
+        conversationId
       });
       
       // Still need to cascade delete messages that reply to this specific branch
@@ -1120,14 +1173,15 @@ export class Database {
             }
           }
           
-          await this.logConversationEvent(conversation.id, 'message_deleted', { 
+          await this.logConversationEvent(conversationId, 'message_deleted', { 
             messageId: msgId,
-            conversationId: msg.conversationId
+            conversationId
           });
         }
       }
     }
-    await this.updateConversationTimestamp(message.conversationId);
+
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
     
     return deletedMessageIds;
   }
@@ -1169,7 +1223,9 @@ export class Database {
     return descendants;
   }
 
-  async getConversationMessages(conversationId: string): Promise<Message[]> {
+  async getConversationMessages(conversationId: string, conversationOwnerUserId: string): Promise<Message[]> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
     const messageIds = this.conversationMessages.get(conversationId) || [];
     const messages = messageIds
       .map(id => this.messages.get(id))
@@ -1184,17 +1240,30 @@ export class Database {
     return messages;
   }
 
-  async getMessage(id: string): Promise<Message | null> {
-    return this.messages.get(id) || null;
+  async getMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<Message | null> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
+
+    return this.messages.get(messageId) || null;
   }
 
-  async getMessageById(id: string): Promise<Message | null> {
-    return this.getMessage(id);
+  async tryLoadAndVerifyParticipant(participantId: string, conversationOwnerUserId: string) : Promise<Participant | null> {
+    await this.loadUser(conversationOwnerUserId); // participant data is stored in user files
+    const participant = this.participants.get(participantId);
+    if (!participant) return null;
+    const conversation = this.conversations.get(participant.conversationId);
+    if (!conversation) return null;
+    if (conversation.userId != conversationOwnerUserId) {
+      console.warn(`Mismatched participant.conversation.userId ${conversation.userId} and provided conversationOwnerUserId ${conversationOwnerUserId}`);
+      return null;
+    }
+    return participant;
   }
   
   // Participant methods
   async createParticipant(
     conversationId: string, 
+    conversationOwnerUserId: string,
     name: string, 
     type: 'user' | 'assistant', 
     model?: string,
@@ -1202,6 +1271,7 @@ export class Database {
     settings?: any,
     contextManagement?: any
   ): Promise<Participant> {
+    await this.loadUser(conversationOwnerUserId);
     const participant: Participant = {
       id: uuidv4(),
       conversationId,
@@ -1222,13 +1292,14 @@ export class Database {
 
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
-      await this.logUserEvent(conversation.userId, 'participant_created', { participant });
+      await this.logUserEvent(conversationId, 'participant_created', { participant });
     }
     
     return participant;
   }
   
-  async getConversationParticipants(conversationId: string): Promise<Participant[]> {
+  async getConversationParticipants(conversationId: string, conversationOwnerUserId: string): Promise<Participant[]> {
+    await this.loadUser(conversationOwnerUserId);
     const participantIds = this.conversationParticipants.get(conversationId) || [];
     const participants = participantIds
       .map(id => this.participants.get(id))
@@ -1238,12 +1309,12 @@ export class Database {
     return participants;
   }
   
-  async getParticipant(participantId: string): Promise<Participant | null> {
-    return this.participants.get(participantId) || null;
+  async getParticipant(participantId: string, conversationOwnerUserId: string): Promise<Participant | null> {
+    return await this.tryLoadAndVerifyParticipant(participantId, conversationOwnerUserId);
   }
   
-  async updateParticipant(participantId: string, updates: Partial<Participant>): Promise<Participant | null> {
-    const participant = this.participants.get(participantId);
+  async updateParticipant(participantId: string, conversationOwnerUserId: string, updates: Partial<Participant>): Promise<Participant | null> {
+    const participant = await this.tryLoadAndVerifyParticipant(participantId, conversationOwnerUserId);
     if (!participant) return null;
     
     const updated = {
@@ -1253,16 +1324,13 @@ export class Database {
     
     this.participants.set(participantId, updated);
   
-    const conversation = this.conversations.get(participant.conversationId);
-    if (conversation) {
-      await this.logUserEvent(conversation.userId, 'participant_updated', { participantId, updates });
-    }
+    await this.logUserEvent(conversationOwnerUserId, 'participant_updated', { participantId, updates });
     
     return updated;
   }
   
-  async deleteParticipant(participantId: string): Promise<boolean> {
-    const participant = this.participants.get(participantId);
+  async deleteParticipant(participantId: string, conversationOwnerUserId: string): Promise<boolean> {
+    const participant = await this.tryLoadAndVerifyParticipant(participantId, conversationOwnerUserId);
     if (!participant) return false;
     
     this.participants.delete(participantId);
@@ -1275,21 +1343,18 @@ export class Database {
       }
     }
     
-    const conversation = this.conversations.get(participant.conversationId);
-    if (conversation) {
-      await this.logUserEvent(conversation.userId, 'participant_deleted', { participantId, conversationId: participant.conversationId });
-    }
+    await this.logUserEvent(conversationOwnerUserId, 'participant_deleted', { participantId, conversationId: participant.conversationId });
 
     return true;
   }
 
   // Export/Import functionality
-  async exportConversation(conversationId: string): Promise<any> {
-    const conversation = await this.getConversation(conversationId);
+  async exportConversation(conversationId: string, conversationOwnerUserId: string): Promise<any> {
+    const conversation = await this.getConversation(conversationId, conversationOwnerUserId);
     if (!conversation) return null;
 
-    const messages = await this.getConversationMessages(conversationId);
-    const participants = await this.getConversationParticipants(conversationId);
+    const messages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
+    const participants = await this.getConversationParticipants(conversationId, conversationOwnerUserId);
 
     return {
       conversation,
@@ -1301,7 +1366,9 @@ export class Database {
   }
 
   // Metrics methods
-  async addMetrics(conversationId: string, metrics: MetricsData): Promise<void> {
+  async addMetrics(conversationId: string, conversationOwnerUserId: string, metrics: MetricsData): Promise<void> {
+    await this.loadUser(conversationOwnerUserId);
+
     if (!this.conversationMetrics.has(conversationId)) {
       this.conversationMetrics.set(conversationId, []);
     }
