@@ -702,9 +702,19 @@ export class Database {
     return conversation;
   }
 
-  async getConversation(conversationId: string, conversationOwnerUserId: string): Promise<Conversation | null> {
+  async tryLoadAndVerifyConversation(conversationId: string, conversationOwnerUserId: string) : Promise<Conversation | null> {
     await this.loadUser(conversationOwnerUserId); // load user if not already loaded, which contains conversation metadata
-    return this.conversations.get(conversationId) || null;
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return null;
+    if (conversation.userId !== conversationOwnerUserId) {
+      console.warn(`Conversation owner mismatch for conversation ${conversationId}: Actual conversation.userId is ${conversation.userId} but given conversationOwnerUserId ${conversationOwnerUserId}`);
+      return null;
+    }
+    return conversation;
+  }
+
+  async getConversation(conversationId: string, conversationOwnerUserId: string): Promise<Conversation | null> {
+    return await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
   }
 
   async getUserConversations(userId: string): Promise<Conversation[]> {
@@ -717,13 +727,8 @@ export class Database {
   }
 
   async updateConversation(conversationId: string, conversationOwnerUserId: string, updates: Partial<Conversation>): Promise<Conversation | null> {
-    await this.loadUser(conversationOwnerUserId);
-    const conversation = this.conversations.get(conversationId);
+    const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) return null;
-    if (conversation.userId !== conversationOwnerUserId) {
-      console.warn(`Conversation owner mismatch for conversation ${conversationId}: Given ${conversationOwnerUserId} as owner but actual owner is ${conversation.userId}`);
-      return null;
-    }
 
     const updated = {
       ...conversation,
@@ -756,13 +761,8 @@ export class Database {
   }
 
   async archiveConversation(conversationId: string, conversationOwnerUserId: string): Promise<boolean> {
-    await this.loadUser(conversationOwnerUserId);
-    const conversation = this.conversations.get(conversationId);
+    const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) return false;
-    if (conversation.userId !== conversationOwnerUserId) {
-      console.warn(`Conversation owner mismatch for conversation ${conversationId}: Given ${conversationOwnerUserId} as owner but actual owner is ${conversation.userId}`);
-      return false;
-    }
 
     // Create new object instead of mutating
     const updated = {
@@ -778,11 +778,9 @@ export class Database {
   }
 
   async duplicateConversation(conversationId: string, originalOwnerUserId: string, duplicateOwnerUserId: string): Promise<Conversation | null> {
-    await this.loadUser(originalOwnerUserId);
+    const original = await this.tryLoadAndVerifyConversation(conversationId, originalOwnerUserId);
+    if (!original) return null;
     await this.loadUser(duplicateOwnerUserId);
-    const original = this.conversations.get(conversationId);
-    if (!original || original.userId !== originalOwnerUserId) return null;
-    await this.loadConversation(conversationId, originalOwnerUserId);
 
     const duplicate = await this.createConversation(
       duplicateOwnerUserId,
@@ -819,9 +817,9 @@ export class Database {
   }
 
   // Message methods
-  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[]): Promise<Message> {
-    await this.loadUser(conversationOwnerUserId);
-    await this.loadConversation(conversationId, conversationOwnerUserId);
+  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[]): Promise<Message | null> {
+    const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
+    if (!conversation) return null;
     // Get conversation messages to determine parent
     const existingMessages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
     
@@ -899,7 +897,7 @@ export class Database {
     return message;
   }
 
-  async tryLoadMessageAndVerifyIds(messageId: string, conversationId: string, conversationOwnerUserId: string) : Promise<Message | null> {
+  async tryLoadAndVerifyMessage(messageId: string, conversationId: string, conversationOwnerUserId: string) : Promise<Message | null> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
     const message = this.messages.get(messageId);
@@ -919,7 +917,7 @@ export class Database {
   }
 
   async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[]): Promise<Message | null> {
-    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
+    const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
     
     const newBranch = {
@@ -957,7 +955,7 @@ export class Database {
   }
 
   async setActiveBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string): Promise<boolean> {
-    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
+    const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
     
     const branch = message.branches.find(b => b.id === branchId);
@@ -974,7 +972,7 @@ export class Database {
   }
   
   async updateMessage(messageId: string, conversationId: string, conversationOwnerUserId: string, message: Message): Promise<boolean> {
-    const oldMessage = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
+    const oldMessage = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!oldMessage) return false;
     
     this.messages.set(messageId, message);
@@ -986,7 +984,7 @@ export class Database {
   }
   
   async deleteMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<boolean> {
-    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
+    const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
     
     // Remove from messages map
@@ -1068,7 +1066,7 @@ export class Database {
   }
   
   async updateMessageContent(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string, content: string): Promise<boolean> {
-    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
+    const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
     
     const branch = message.branches.find(b => b.id === branchId);
@@ -1090,7 +1088,7 @@ export class Database {
   }
   
   async deleteMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string): Promise<string[] | null> {
-    const message = await this.tryLoadMessageAndVerifyIds(messageId, conversationId, conversationOwnerUserId);
+    const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
     
     const branch = message.branches.find(b => b.id === branchId);
@@ -1241,10 +1239,7 @@ export class Database {
   }
 
   async getMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<Message | null> {
-    await this.loadUser(conversationOwnerUserId);
-    await this.loadConversation(conversationId, conversationOwnerUserId);
-
-    return this.messages.get(messageId) || null;
+    return await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
   }
 
   async tryLoadAndVerifyParticipant(participantId: string, conversationOwnerUserId: string) : Promise<Participant | null> {
@@ -1350,7 +1345,7 @@ export class Database {
 
   // Export/Import functionality
   async exportConversation(conversationId: string, conversationOwnerUserId: string): Promise<any> {
-    const conversation = await this.getConversation(conversationId, conversationOwnerUserId);
+    const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) return null;
 
     const messages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
@@ -1367,7 +1362,9 @@ export class Database {
 
   // Metrics methods
   async addMetrics(conversationId: string, conversationOwnerUserId: string, metrics: MetricsData): Promise<void> {
-    await this.loadUser(conversationOwnerUserId);
+
+    const conversation = this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
+    if (!conversation) return;
 
     if (!this.conversationMetrics.has(conversationId)) {
       this.conversationMetrics.set(conversationId, []);
@@ -1377,25 +1374,24 @@ export class Database {
     convMetrics.push(metrics);
     
     // Store event
-    const conversation = this.conversations.get(conversationId);
-    if (conversation) {
-      await this.logUserEvent(conversation.userId, 'metrics_added', { conversationId, metrics });
-    }
+    await this.logUserEvent(conversationOwnerUserId, 'metrics_added', { conversationId, metrics });
   }
   
-  async getConversationMetrics(conversationId: string): Promise<MetricsData[]> {
+  async getConversationMetrics(conversationId: string, conversationOwnerUserId: string): Promise<MetricsData[]> {
+    const conversation = this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
+    if (!conversation) return [];
     return this.conversationMetrics.get(conversationId) || [];
   }
   
-  async getConversationMetricsSummary(conversationId: string): Promise<{
+  async getConversationMetricsSummary(conversationId: string, conversationOwnerUserId: string): Promise<{
     messageCount: number;
     perModelMetrics: Map<string, ModelConversationMetrics>;
     lastCompletion?: MetricsData;
     totals: TotalsMetrics;
-  }> {
-    const metrics = await this.getConversationMetrics(conversationId);
-    const messages = await this.getConversationMessages(conversationId);
-    const participants = await this.getConversationParticipants(conversationId);
+  } | null> {
+    const metrics = await this.getConversationMetrics(conversationId, conversationOwnerUserId);
+    const messages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
+    const participants = await this.getConversationParticipants(conversationId, conversationOwnerUserId);
     
     const perModelMetrics = new Map<string, ModelConversationMetrics>(
       participants
@@ -1440,21 +1436,21 @@ export class Database {
   // Share management methods
   async createShare(
     conversationId: string,
-    userId: string,
+    conversationOwnerUserId: string,
     shareType: 'branch' | 'tree',
     branchId?: string,
     settings?: Partial<SharedConversation['settings']>,
     expiresAt?: Date
   ): Promise<SharedConversation> {
     // Verify the user owns the conversation
-    const conversation = await this.getConversation(conversationId);
-    if (!conversation || conversation.userId !== userId) {
+    const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
+    if (!conversation) {
       throw new Error('Conversation not found or unauthorized');
     }
     
     const share = await this.sharesStore.createShare(
       conversationId,
-      userId,
+      conversationOwnerUserId,
       shareType,
       branchId,
       settings,
