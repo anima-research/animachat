@@ -106,7 +106,7 @@ export class Database {
       for (var event of oldEvents) {
         await this.replayEvent(event);
       }
-      oldEventStore.close();
+      await oldEventStore.close();
 
       // backup old data
       const oldConversations = this.conversations;
@@ -1569,5 +1569,7 @@ export class Database {
   // Close database connection
   async close(): Promise<void> {
     await this.eventStore.close();
+    await this.userEventStore.close();
+    await this.conversationEventStore.close();
   }
 }

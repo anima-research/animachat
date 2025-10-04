@@ -92,7 +92,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const updated = await db.updateConversation(req.params.id, req.userId, req.body);
+      const updated = await db.updateConversation(req.params.id, conversation.userId, req.body);
       res.json(updated);
     } catch (error) {
       console.error('Update conversation error:', error);
@@ -117,7 +117,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      await db.archiveConversation(req.params.id, req.userId);
+      await db.archiveConversation(req.params.id, conversation.userId);
       res.json({ success: true });
     } catch (error) {
       console.error('Archive conversation error:', error);
@@ -162,7 +162,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const messages = await db.getConversationMessages(req.params.id, req.userId);
+      const messages = await db.getConversationMessages(req.params.id, conversation.userId);
       res.json(messages);
     } catch (error) {
       console.error('Get messages error:', error);
@@ -191,7 +191,7 @@ export function conversationRouter(db: Database): Router {
       for (const msg of data.messages) {
         const message = await db.createMessage(
           conversation.id,
-          req.userId,
+          conversation.userId,
           msg.content,
           msg.role,
           msg.role === 'assistant' ? data.model : undefined
@@ -203,7 +203,7 @@ export function conversationRouter(db: Database): Router {
             await db.addMessageBranch(
               message.id,
               conversation.id,
-              req.userId,
+              conversation.userId,
               branch.content,
               msg.role,
               message.branches[0].id,
@@ -241,7 +241,7 @@ export function conversationRouter(db: Database): Router {
       }
       
       // Set the active branch
-      const success = await db.setActiveBranch(messageId, conversation.id, req.userId, branchId);
+      const success = await db.setActiveBranch(messageId, conversation.id, conversation.userId, branchId);
       
       if (success) {
         res.json({ success: true });
@@ -307,7 +307,7 @@ export function conversationRouter(db: Database): Router {
       }
 
       // Get metrics summary from database
-      const summary = await db.getConversationMetricsSummary(req.params.id, req.userId);
+      const summary = await db.getConversationMetricsSummary(req.params.id, conversation.userId);
       
       if (!summary) {
         return res.status(403).json({ error: 'Access denied' });
@@ -346,7 +346,7 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const exportData = await db.exportConversation(req.params.id, req.userId);
+      const exportData = await db.exportConversation(req.params.id, conversation.userId);
       res.json(exportData);
     } catch (error) {
       console.error('Export conversation error:', error);
