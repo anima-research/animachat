@@ -798,6 +798,11 @@ export class Database {
       original.format,
       original.contextManagement
     );
+    
+    // carry over prefill user message
+    if (original.prefillUserMessage) {
+      await this.updateConversation(duplicate.id, duplicate.userId, { prefillUserMessage: original.prefillUserMessage });
+    }
 
     const originalParticipants = await this.getConversationParticipants(
       conversationId,
