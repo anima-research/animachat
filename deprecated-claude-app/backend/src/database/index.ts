@@ -731,10 +731,15 @@ export class Database {
     const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) return null;
 
+    // also update updatedAt to now
+    updates = {
+      ...updates,
+      updatedAt: new Date()
+    };
+
     const updated = {
       ...conversation,
       ...updates,
-      updatedAt: new Date()
     };
 
     this.conversations.set(conversationId, updated);
@@ -821,6 +826,10 @@ export class Database {
         participant.settings,
         participant.contextManagement
       );
+      // We need to mirror this flag as well, by default they are active
+      if (!participant.isActive) {
+        await this.updateParticipant(cloned.id, duplicateOwnerUserId, { isActive: false});
+      }
       participantIdMap.set(participant.id, cloned.id);
     }
 
