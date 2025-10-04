@@ -111,6 +111,7 @@ export class Database {
       // backup old data
       const oldConversations = this.conversations;
       const oldMessages = this.messages;
+      const oldParticipants = this.participants;
 
       // reset back to blank state
       this.conversations = new Map();
@@ -126,7 +127,7 @@ export class Database {
       this.conversationParticipants = new Map();
       this.conversationMetrics = new Map();
 
-      await migrateDatabase(oldEvents, oldConversations, oldMessages,
+      await migrateDatabase(oldEvents, oldConversations, oldParticipants, oldMessages,
           this.eventStore, this.userEventStore, this.conversationEventStore
       );
       // move old database to backup file so we don't do this again, but it's not deleted in case something goes wrong
@@ -1436,7 +1437,7 @@ export class Database {
   // Metrics methods
   async addMetrics(conversationId: string, conversationOwnerUserId: string, metrics: MetricsData): Promise<void> {
 
-    const conversation = this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
+    const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) return;
 
     if (!this.conversationMetrics.has(conversationId)) {

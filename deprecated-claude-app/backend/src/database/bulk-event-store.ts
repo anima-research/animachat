@@ -102,12 +102,12 @@ export class BulkEventStore {
             throw error;
         }
         for (const fileName of files) {
+            console.log(`Loading from file ${fileName}`);
             if (!fileName.endsWith('.jsonl')) {
                 continue;
             }
             const id = path.basename(fileName, '.jsonl');
-            var baseDir = path.dirname(fileName);
-            const eventStore = new EventStore(baseDir, this.getFileForId(id)); // doesn't require init for just calling loadEvents
+            const eventStore = new EventStore(this.baseDir, this.getFileForId(id)); // doesn't require init for just calling loadEvents
             yield { id: id, events: await eventStore.loadEvents() };
         }
     }

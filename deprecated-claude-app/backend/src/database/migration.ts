@@ -17,6 +17,7 @@ interface EventCategoryInfo {
 export async function migrateDatabase(
     events: Event[],
     conversations: Map<string, Conversation>,
+    participants: Map<string, Participant>,
     messages: Map<string, Message>,
     mainEventStore: EventStore,
     userEventStore: BulkEventStore,
@@ -24,7 +25,7 @@ export async function migrateDatabase(
 ) {
 
     for (const event of events) {
-        const eventCategoryInfo = getEventCategoryInfo(event, conversations, messages);
+        const eventCategoryInfo = getEventCategoryInfo(event, conversations, participants, messages);
         switch (eventCategoryInfo.category) {
             case EventCategory.Main:
                 mainEventStore.appendEvent(event);
@@ -39,7 +40,7 @@ export async function migrateDatabase(
     }
 }
 
-function getEventCategoryInfo(event: Event, conversations: Map<string, Conversation>, messages: Map<string, Message>): EventCategoryInfo {
+function getEventCategoryInfo(event: Event, conversations: Map<string, Conversation>, participants: Map<string, Participant>, messages: Map<string, Message>): EventCategoryInfo {
   var userId: string = "";
   var conversationId: string = "";
   var category: EventCategory = EventCategory.Main;
@@ -58,21 +59,37 @@ function getEventCategoryInfo(event: Event, conversations: Map<string, Conversat
     conversationId = event.data.id;
     category = EventCategory.User;
     break;
-    case 'participant_created':
     case 'participant_updated':
     case 'participant_deleted':
+    var participant = participants.get(event.data.participantId);
+    if (participant) conversationId = participant.conversationId;
+    category = EventCategory.User;
+    break;
+    case 'participant_created':
+    participant = event.data;
+    if (participant) conversationId = participant.conversationId;
+    category = EventCategory.User;
+    break;
     case 'metrics_added':
     conversationId = event.data.conversationId;
     category = EventCategory.User;
     break;
     case 'message_created':
+    var message = messages.get(event.data.id);
+    if (!message) {
+      console.error(`Error: event ${event.type} of type User had message id ${event.data.messageId} which does not exist, skipping.`);
+      return { category: EventCategory.Main }; // broken, just default to main
+    }
+    conversationId = message.conversationId;
+    category = EventCategory.Conversation;
+    break;
     case 'message_branch_added':
     case 'active_branch_changed':
     case 'message_content_updated':
     case 'message_deleted':
     case 'message_imported_raw':
     case 'message_branch_deleted':
-    const message = messages.get(event.data.messageId);
+    message = messages.get(event.data.messageId);
     if (!message) {
       console.error(`Error: event ${event.type} of type User had message id ${event.data.messageId} which does not exist, skipping.`);
       return { category: EventCategory.Main }; // broken, just default to main
