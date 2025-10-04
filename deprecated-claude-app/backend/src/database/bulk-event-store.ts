@@ -102,7 +102,6 @@ export class BulkEventStore {
             throw error;
         }
         for (const fileName of files) {
-            console.log(`Loading from file ${fileName}`);
             if (!fileName.endsWith('.jsonl')) {
                 continue;
             }
