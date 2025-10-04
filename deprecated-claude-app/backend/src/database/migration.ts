@@ -54,6 +54,10 @@ function getEventCategoryInfo(event: Event, conversations: Map<string, Conversat
     break;
 
     case 'conversation_created':
+    if (!conversations.get(event.data.id)) {
+      conversations.set(event.data.id, event.data);
+    }
+    
     case 'conversation_updated':
     case 'conversation_archived':
     conversationId = event.data.id;
