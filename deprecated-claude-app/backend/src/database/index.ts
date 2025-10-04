@@ -794,6 +794,36 @@ export class Database {
       original.contextManagement
     );
 
+    const originalParticipants = await this.getConversationParticipants(
+      conversationId,
+      originalOwnerUserId
+    );
+    const duplicateDefaults = await this.getConversationParticipants(
+      duplicate.id,
+      duplicateOwnerUserId
+    );
+
+    // Drop the auto-created defaults so we can mirror the original exactly.
+    for (const participant of duplicateDefaults) {
+      await this.deleteParticipant(participant.id, duplicateOwnerUserId);
+    }
+
+    const participantIdMap = new Map<string, string>();
+    for (const participant of originalParticipants) {
+      // this will also send the events to the conversation logs
+      const cloned = await this.createParticipant(
+        duplicate.id,
+        duplicateOwnerUserId,
+        participant.name,
+        participant.type,
+        participant.model,
+        participant.systemPrompt,
+        participant.settings,
+        participant.contextManagement
+      );
+      participantIdMap.set(participant.id, cloned.id);
+    }
+
     // Copy messages
     const messages = await this.getConversationMessages(conversationId, originalOwnerUserId);
     const oldMessageBranchIdToNewMessageBranchId : Map<string, string> = new Map();
@@ -812,10 +842,15 @@ export class Database {
         return {
           ...branch,
           id: newBranchId,
+          // remap participant id to the new participants
+          participantId: branch.participantId ? participantIdMap.get(branch.participantId) : undefined
         };
       });
 
-      newMessage.activeBranchId = newMessage.branches[0]?.id || '';
+      var mappedActiveBranchId = oldMessageBranchIdToNewMessageBranchId.get(newMessage.activeBranchId);
+
+      // If can't map, just use first branch
+      newMessage.activeBranchId = mappedActiveBranchId ? mappedActiveBranchId : newMessage.branches[0]?.id;
 
       newMessages.push(newMessage);
     }
