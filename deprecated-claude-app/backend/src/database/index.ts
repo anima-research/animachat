@@ -806,7 +806,7 @@ export class Database {
       };
       
       // remap any branches to new ids
-      newMessage.branches.map((branch) => {
+      newMessage.branches = newMessage.branches.map((branch) => {
         const newBranchId: string = uuidv4();
         oldMessageBranchIdToNewMessageBranchId.set(branch.id, newBranchId);
         return {
@@ -817,7 +817,7 @@ export class Database {
 
       newMessage.activeBranchId = newMessage.branches[0]?.id || '';
 
-      newMessages.push(message);
+      newMessages.push(newMessage);
     }
 
     // map the parent branch ids to the new ones
@@ -834,7 +834,7 @@ export class Database {
     for (const newMessage of newMessages) {
       this.messages.set(newMessage.id, newMessage);
       // log full message creation events so they can be recreated
-      this.logConversationEvent(duplicate.id, 'message_created', newMessage);
+      await this.logConversationEvent(duplicate.id, 'message_created', newMessage);
     }
     
     return duplicate;
