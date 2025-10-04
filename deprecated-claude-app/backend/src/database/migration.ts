@@ -54,7 +54,7 @@ function getEventCategoryInfo(event: Event, conversations: Map<string, Conversat
     break;
 
     case 'conversation_created':
-    if (!conversations.get(event.data.id)) {
+    if (!conversations.get(event.data.id)) { // cache later deleted ones for reference
       conversations.set(event.data.id, event.data);
     }
     
