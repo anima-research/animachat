@@ -4,10 +4,10 @@ import { Database } from './index.js';
 /**
  * Ensure the active branch is set to a valid branch
  */
-export async function validateActiveBranches(db: Database, conversationId: string): Promise<void> {
+export async function validateActiveBranches(db: Database, conversationId: string, conversationOwnerUserId: string): Promise<void> {
   console.log(`[Branch Validation] Checking conversation: ${conversationId}`);
   
-  const messages = await db.getConversationMessages(conversationId);
+  const messages = await db.getConversationMessages(conversationId, conversationOwnerUserId);
   let fixCount = 0;
   
   for (const message of messages) {
@@ -26,7 +26,7 @@ export async function validateActiveBranches(db: Database, conversationId: strin
         const newActiveBranch = sortedBranches[0];
         console.log(`[Branch Validation] Setting active branch to ${newActiveBranch.id}`);
         
-        await db.setActiveBranch(message.id, newActiveBranch.id);
+        await db.setActiveBranch(message.id, conversationId, conversationOwnerUserId, newActiveBranch.id);
         fixCount++;
       }
     }

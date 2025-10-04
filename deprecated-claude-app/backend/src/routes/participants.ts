@@ -30,12 +30,12 @@ export function participantRouter(db: Database): Router {
       }
 
       // Verify conversation ownership
-      const conversation = await db.getConversation(req.params.conversationId);
+      const conversation = await db.getConversation(req.params.conversationId, req.userId);
       if (!conversation || conversation.userId !== req.userId) {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const participants = await db.getConversationParticipants(req.params.conversationId);
+      const participants = await db.getConversationParticipants(req.params.conversationId, conversation.userId);
       res.json(participants);
     } catch (error) {
       console.error('Get participants error:', error);
@@ -53,13 +53,14 @@ export function participantRouter(db: Database): Router {
       const data = CreateParticipantSchema.parse(req.body);
 
       // Verify conversation ownership
-      const conversation = await db.getConversation(data.conversationId);
+      const conversation = await db.getConversation(data.conversationId, req.userId);
       if (!conversation || conversation.userId !== req.userId) {
         return res.status(403).json({ error: 'Access denied' });
       }
 
       const participant = await db.createParticipant(
         data.conversationId,
+        conversation.userId,
         data.name,
         data.type,
         data.model,
@@ -88,18 +89,18 @@ export function participantRouter(db: Database): Router {
       const data = UpdateParticipantSchema.parse(req.body);
 
       // Get participant to verify conversation ownership
-      const participant = await db.getParticipant(req.params.id);
+      const participant = await db.getParticipant(req.params.id, req.userId);
       if (!participant) {
         return res.status(404).json({ error: 'Participant not found' });
       }
 
       // Verify conversation ownership
-      const conversation = await db.getConversation(participant.conversationId);
+      const conversation = await db.getConversation(participant.conversationId, req.userId);
       if (!conversation || conversation.userId !== req.userId) {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const updated = await db.updateParticipant(req.params.id, data);
+      const updated = await db.updateParticipant(req.params.id, conversation.userId, data);
       res.json(updated);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -119,7 +120,7 @@ export function participantRouter(db: Database): Router {
 
       // For now, we'll need to implement a getParticipant method in the database
       // This is a temporary workaround - we should add getParticipant to Database class
-      const success = await db.deleteParticipant(req.params.id);
+      const success = await db.deleteParticipant(req.params.id, req.userId);
       if (success) {
         res.json({ success: true });
       } else {

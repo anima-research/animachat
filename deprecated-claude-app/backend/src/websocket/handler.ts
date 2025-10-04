@@ -168,7 +168,7 @@ async function handleChatMessage(
   if (!ws.userId) return;
 
   // Verify conversation ownership
-  const conversation = await db.getConversation(message.conversationId);
+  const conversation = await db.getConversation(message.conversationId, ws.userId);
   if (!conversation || conversation.userId !== ws.userId) {
     ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
     return;
@@ -196,7 +196,7 @@ async function handleChatMessage(
   
   if (message.parentBranchId) {
     // Check if this parent branch has siblings (i.e., we're branching from within history)
-    const allMessages = await db.getConversationMessages(message.conversationId);
+    const allMessages = await db.getConversationMessages(message.conversationId, conversation.userId);
     const messageWithSiblings = allMessages.find(msg => 
       msg.branches.some(b => b.parentBranchId === message.parentBranchId)
     );
@@ -206,6 +206,8 @@ async function handleChatMessage(
       console.log('Adding branch to existing message:', messageWithSiblings.id);
       userMessage = await db.addMessageBranch(
         messageWithSiblings.id,
+        messageWithSiblings.conversationId,
+        conversation.userId,
         message.content,
         'user',
         message.parentBranchId,
@@ -218,6 +220,7 @@ async function handleChatMessage(
       console.log('Creating new message (no siblings found)');
       userMessage = await db.createMessage(
         message.conversationId,
+        conversation.userId,
         message.content,
         'user',
         undefined, // model
@@ -230,6 +233,7 @@ async function handleChatMessage(
     // No parent specified, create new message as usual
     userMessage = await db.createMessage(
       message.conversationId,
+      conversation.userId,
       message.content,
       'user',
       undefined, // model
@@ -249,7 +253,7 @@ async function handleChatMessage(
   }));
 
   // Get participants for the conversation
-  const participants = await db.getConversationParticipants(message.conversationId);
+  const participants = await db.getConversationParticipants(message.conversationId, conversation.userId);
   
   // Handle response generation based on conversation format
   let responder: typeof participants[0] | undefined;
@@ -280,7 +284,7 @@ async function handleChatMessage(
   
   // Check if we should add to an existing message or create a new one
   let assistantMessage: Message | null;
-  const allMessagesForAssistant = await db.getConversationMessages(message.conversationId);
+  const allMessagesForAssistant = await db.getConversationMessages(message.conversationId, conversation.userId);
   const messageWithAssistantSiblings = allMessagesForAssistant.find(msg => 
     msg.branches.some(b => b.parentBranchId === userBranch?.id)
   );
@@ -290,6 +294,8 @@ async function handleChatMessage(
     console.log('Adding assistant branch to existing message:', messageWithAssistantSiblings.id);
     assistantMessage = await db.addMessageBranch(
       messageWithAssistantSiblings.id,
+      messageWithAssistantSiblings.conversationId,
+      conversation.userId,
       '',
       'assistant',
       userBranch?.id,
@@ -301,6 +307,7 @@ async function handleChatMessage(
     // No siblings exist yet, create a new message
     assistantMessage = await db.createMessage(
       message.conversationId,
+      conversation.userId,
       '',
       'assistant',
       responder.model || conversation.model,
@@ -328,7 +335,7 @@ async function handleChatMessage(
   }));
 
   // Get conversation history using the utility function
-  const allMessages = await db.getConversationMessages(message.conversationId);
+  const allMessages = await db.getConversationMessages(message.conversationId, conversation.userId);
   
   // Build history from the parent branch and add the new user message
   const visibleHistory = buildConversationHistory(allMessages, message.parentBranchId);
@@ -381,6 +388,8 @@ async function handleChatMessage(
           if (currentBranch.content.length % 500 === 0 || isComplete) {
             await db.updateMessageContent(
               assistantMessage.id,
+              assistantMessage.conversationId,
+              conversation.userId,
               assistantMessage.activeBranchId,
               currentBranch.content
             );
@@ -401,20 +410,22 @@ async function handleChatMessage(
           if (currentBranch) {
             await db.updateMessageContent(
               assistantMessage.id,
+              assistantMessage.conversationId,
+              conversation.userId,
               assistantMessage.activeBranchId,
               currentBranch.content
             );
           }
           
           // Update conversation timestamp
-          await db.updateConversation(conversation.id, { updatedAt: new Date() });
+          await db.updateConversation(conversation.id, conversation.userId, { updatedAt: new Date() });
         }
       },
       conversation,
       responder,
       async (metrics) => {
         // Store metrics in database
-        await db.addMetrics(conversation.id, metrics);
+        await db.addMetrics(conversation.id, conversation.userId, metrics);
         
         // Send metrics update to client
         ws.send(JSON.stringify({
@@ -442,20 +453,20 @@ async function handleRegenerate(
 ) {
   if (!ws.userId) return;
 
-  const msg = await db.getMessage(message.messageId);
+  const msg = await db.getMessage(message.messageId, message.conversationId, ws.userId);
   if (!msg) {
     ws.send(JSON.stringify({ type: 'error', error: 'Message not found' }));
     return;
   }
 
-  const conversation = await db.getConversation(msg.conversationId);
+  const conversation = await db.getConversation(msg.conversationId, ws.userId);
   if (!conversation || conversation.userId !== ws.userId) {
     ws.send(JSON.stringify({ type: 'error', error: 'Access denied' }));
     return;
   }
 
   // Find the parent branch (the user message branch that this is responding to)
-  const allMessages = await db.getConversationMessages(msg.conversationId);
+  const allMessages = await db.getConversationMessages(msg.conversationId, conversation.userId);
   const targetMessageIndex = allMessages.findIndex(m => m.id === message.messageId);
   const parentUserMessage = targetMessageIndex > 0 ? allMessages[targetMessageIndex - 1] : null;
   const parentUserBranch = parentUserMessage ? parentUserMessage.branches.find(b => b.id === parentUserMessage.activeBranchId) : null;
@@ -475,7 +486,7 @@ async function handleRegenerate(
   // Get the participant's model if in prefill mode
   let regenerateModel = conversation.model;
   if (conversation.format === 'prefill' && participantId) {
-    const participants = await db.getConversationParticipants(conversation.id);
+    const participants = await db.getConversationParticipants(conversation.id, conversation.userId);
     const participant = participants.find(p => p.id === participantId);
     if (participant && participant.model) {
       regenerateModel = participant.model;
@@ -485,6 +496,8 @@ async function handleRegenerate(
   // Create new branch with correct parent and model
   const updatedMessage = await db.addMessageBranch(
     message.messageId,
+    message.conversationId,
+    conversation.userId,
     '',
     'assistant',
     correctParentBranchId,
@@ -507,7 +520,7 @@ async function handleRegenerate(
   const historyMessages = buildConversationHistory(allMessages, correctParentBranchId);
 
   // Get participants for the conversation
-  const participants = await db.getConversationParticipants(conversation.id);
+  const participants = await db.getConversationParticipants(conversation.id, conversation.userId);
   
   // Determine the responder ID for streaming
   let responderId = participantId;
@@ -558,7 +571,7 @@ async function handleRegenerate(
       historyMessages,
       responderSystemPrompt || '',
       responderSettings,
-      ws.userId,
+      conversation.userId,
       async (chunk: string, isComplete: boolean) => {
         const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
         if (currentBranch) {
@@ -568,6 +581,8 @@ async function handleRegenerate(
           if (currentBranch.content.length % 500 === 0 || isComplete) {
             await db.updateMessageContent(
               updatedMessage.id,
+              updatedMessage.conversationId,
+              conversation.userId,
               updatedMessage.activeBranchId,
               currentBranch.content
             );
@@ -586,7 +601,7 @@ async function handleRegenerate(
       responderParticipant,
       async (metrics) => {
         // Store metrics in database
-        await db.addMetrics(conversation.id, metrics);
+        await db.addMetrics(conversation.id, conversation.userId, metrics);
         
         // Send metrics update to client
         ws.send(JSON.stringify({
@@ -614,13 +629,13 @@ async function handleEdit(
 ) {
   if (!ws.userId) return;
 
-  const msg = await db.getMessage(message.messageId);
+  const msg = await db.getMessage(message.messageId, message.conversationId, ws.userId);
   if (!msg) {
     ws.send(JSON.stringify({ type: 'error', error: 'Message not found' }));
     return;
   }
 
-  const conversation = await db.getConversation(msg.conversationId);
+  const conversation = await db.getConversation(msg.conversationId, ws.userId);
   if (!conversation || conversation.userId !== ws.userId) {
     ws.send(JSON.stringify({ type: 'error', error: 'Access denied' }));
     return;
@@ -637,6 +652,8 @@ async function handleEdit(
   // The parent should be the same as the original branch's parent (the previous message)
   const updatedMessage = await db.addMessageBranch(
     message.messageId,
+    message.conversationId,
+    conversation.userId,
     message.content,
     branch.role,
     branch.parentBranchId, // Use the same parent as the original branch
@@ -657,11 +674,11 @@ async function handleEdit(
   // If this was a user message, automatically generate an assistant response
   if (branch.role === 'user') {
     // Get all messages to find the position of the edited message
-    const allMessages = await db.getConversationMessages(msg.conversationId);
+    const allMessages = await db.getConversationMessages(msg.conversationId, ws.userId);
     const editedMessageIndex = allMessages.findIndex(m => m.id === msg.id);
     
     // Get participants early to determine responderId
-    const participants = await db.getConversationParticipants(conversation.id);
+    const participants = await db.getConversationParticipants(conversation.id, ws.userId);
     
     // Determine which assistant should respond
     let responderId: string | undefined;
@@ -691,12 +708,14 @@ async function handleEdit(
     // Check if there's already an assistant message after this user message
     const nextMessage = editedMessageIndex + 1 < allMessages.length ? allMessages[editedMessageIndex + 1] : null;
     
-    let assistantMessage: Message;
+    let assistantMessage: Message | null;
     
     if (nextMessage && nextMessage.branches.some(b => b.role === 'assistant')) {
       // Add a new branch to the existing assistant message
       const newBranch = await db.addMessageBranch(
         nextMessage.id,
+        nextMessage.conversationId,
+        conversation.userId,
         '',
         'assistant',
         updatedMessage.activeBranchId, // Parent is the edited user message's active branch
@@ -721,6 +740,7 @@ async function handleEdit(
       // But we need to manually set the parentBranchId
       assistantMessage = await db.createMessage(
         msg.conversationId,
+        conversation.userId,
         '',
         'assistant',
         responderModel,  // Use responder's model, not conversation model
@@ -758,7 +778,7 @@ async function handleEdit(
     
     // Stream response
     try {
-      const targetMessage = assistantMessage;
+      const targetMessage = assistantMessage!;
       const targetBranchId = targetMessage.activeBranchId;
       
       // Log WebSocket event
@@ -783,7 +803,7 @@ async function handleEdit(
         historyMessages,
         responderSystemPrompt || '',
         responderSettings,
-        ws.userId,
+        conversation.userId,
         async (chunk: string, isComplete: boolean) => {
           const currentBranch = targetMessage.branches.find(b => b.id === targetBranchId);
           if (currentBranch) {
@@ -793,6 +813,8 @@ async function handleEdit(
             if (currentBranch.content.length % 500 === 0 || isComplete) {
               await db.updateMessageContent(
                 targetMessage.id,
+                targetMessage.conversationId,
+                conversation.userId!,
                 targetBranchId,
                 currentBranch.content
               );
@@ -811,7 +833,7 @@ async function handleEdit(
         responderParticipant,
         async (metrics) => {
           // Store metrics in database
-          await db.addMetrics(conversation.id, metrics);
+          await db.addMetrics(conversation.id, conversation.userId, metrics);
           
           // Send metrics update to client
           ws.send(JSON.stringify({
@@ -841,14 +863,14 @@ async function handleDelete(
     const { conversationId, messageId, branchId } = message;
     
     // Get the message to verify ownership
-    const conversation = await db.getConversation(conversationId);
+    const conversation = await db.getConversation(conversationId, ws.userId!);
     if (!conversation || conversation.userId !== ws.userId) {
       ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
       return;
     }
     
     // Delete the message branch and all its descendants
-    const deleted = await db.deleteMessageBranch(messageId, branchId);
+    const deleted = await db.deleteMessageBranch(messageId, conversationId, conversation.userId, branchId);
     
     if (deleted) {
       ws.send(JSON.stringify({
@@ -878,14 +900,14 @@ async function handleContinue(
   
   try {
     // Verify conversation ownership
-    const conversation = await db.getConversation(conversationId);
+    const conversation = await db.getConversation(conversationId, ws.userId);
     if (!conversation || conversation.userId !== ws.userId) {
       ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
       return;
     }
 
     // Get participants
-    const participants = await db.getConversationParticipants(conversationId);
+    const participants = await db.getConversationParticipants(conversationId, conversation.userId);
     
     // Determine the responder
     let responder: Participant | undefined;
@@ -907,7 +929,7 @@ async function handleContinue(
     }
 
     // Get messages and determine parent
-    const messages = await db.getConversationMessages(conversationId);
+    const messages = await db.getConversationMessages(conversationId, conversation.userId);
     
     // Check if we should add to an existing message or create a new one
     let assistantMessage: Message | null;
@@ -923,6 +945,8 @@ async function handleContinue(
         console.log('Continue: Adding branch to existing message:', messageWithSiblings.id);
         assistantMessage = await db.addMessageBranch(
           messageWithSiblings.id,
+          messageWithSiblings.conversationId,
+          conversation.userId,
           '', // empty content initially
           'assistant',
           parentBranchId,
@@ -935,6 +959,7 @@ async function handleContinue(
         console.log('Continue: Creating new message (no siblings found)');
         assistantMessage = await db.createMessage(
           conversationId,
+          conversation.userId,
           '', // empty content initially
           'assistant',
           responder.model || conversation.model,
@@ -946,6 +971,7 @@ async function handleContinue(
       // No parent specified, create new message as usual
       assistantMessage = await db.createMessage(
         conversationId,
+        conversation.userId,
         '', // empty content initially
         'assistant',
         responder.model || conversation.model,
@@ -1010,7 +1036,7 @@ async function handleContinue(
         
         // Save partial content periodically
         if (assistantBranch.content.length % 500 === 0 || isComplete) {
-          await db.updateMessageContent(assistantMessage.id, assistantBranch.id, assistantBranch.content);
+          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content);
         }
         
         ws.send(JSON.stringify({
@@ -1023,10 +1049,10 @@ async function handleContinue(
 
         if (isComplete) {
           // Final save
-          await db.updateMessageContent(assistantMessage.id, assistantBranch.id, assistantBranch.content);
+          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content);
           
           // Send updated conversation
-          const updatedConversation = await db.getConversation(conversationId);
+          const updatedConversation = await db.getConversation(conversationId, conversation.userId);
           if (updatedConversation) {
             ws.send(JSON.stringify({
               type: 'conversation_updated',
@@ -1039,7 +1065,7 @@ async function handleContinue(
       responder,
       async (metrics) => {
         // Store metrics in database
-        await db.addMetrics(conversation.id, metrics);
+        await db.addMetrics(conversation.id, conversation.userId, metrics);
         
         // Send metrics update to client
         ws.send(JSON.stringify({

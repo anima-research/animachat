@@ -112,18 +112,18 @@ export function createShareRouter(db: Database): Router {
       }
       
       // Get the conversation
-      const conversation = await db.getConversation(share.conversationId);
+      const conversation = await db.getConversation(share.conversationId, share.userId);
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
       }
       
       // Get messages
-      const messages = await db.getConversationMessages(share.conversationId);
+      const messages = await db.getConversationMessages(share.conversationId, conversation.userId);
       
       // Get participants if it's a multi-participant conversation
       let participants: any[] = [];
       if (conversation.format === 'prefill') {
-        participants = await db.getConversationParticipants(share.conversationId);
+        participants = await db.getConversationParticipants(share.conversationId, conversation.userId);
       }
       
       // Filter messages if sharing only a branch
