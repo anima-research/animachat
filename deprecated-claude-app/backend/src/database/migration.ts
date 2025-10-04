@@ -92,13 +92,15 @@ function getEventCategoryInfo(event: Event, conversations: Map<string, Conversat
     case 'message_branch_deleted':
     message = messages.get(event.data.messageId);
     if (!message) { // this can happen for deleted messages since they won't exist anymore
-      conversationId = event.data.conversationId;
+      conversationId = event.data.conversationId; // fallback, often this exists and we are ok
       if (!conversationId) {
         console.error(`Error: event ${event.type} of type User had message id ${event.data.messageId} which does not exist, skipping.`);
         return { category: EventCategory.Main }; // broken, just default to main
       }
     }
-    conversationId = message.conversationId;
+    else {
+      conversationId = message.conversationId;
+    }
     category = EventCategory.Conversation;
     break;
     default:
