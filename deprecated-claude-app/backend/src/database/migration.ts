@@ -28,13 +28,13 @@ export async function migrateDatabase(
         const eventCategoryInfo = getEventCategoryInfo(event, conversations, participants, messages);
         switch (eventCategoryInfo.category) {
             case EventCategory.Main:
-                mainEventStore.appendEvent(event);
+                await mainEventStore.appendEvent(event);
                 break;
             case EventCategory.User:
-                userEventStore.appendEvent(eventCategoryInfo.userId!, event);
+                await userEventStore.appendEvent(eventCategoryInfo.userId!, event);
                 break;
             case EventCategory.Conversation:
-                conversationEventStore.appendEvent(eventCategoryInfo.conversationId!, event);
+                await conversationEventStore.appendEvent(eventCategoryInfo.conversationId!, event);
                 break;
         }
     }
@@ -63,6 +63,7 @@ function getEventCategoryInfo(event: Event, conversations: Map<string, Conversat
     case 'participant_deleted':
     var participant = participants.get(event.data.participantId);
     if (participant) conversationId = participant.conversationId;
+    else conversationId = event.data.conversationId; // for deleted, it won't be there anymore, use this as fallback
     category = EventCategory.User;
     break;
     case 'participant_created':
