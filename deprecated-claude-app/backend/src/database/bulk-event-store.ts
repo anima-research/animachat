@@ -107,7 +107,7 @@ export class BulkEventStore {
                 continue;
             }
             const id = path.basename(fileName, '.jsonl');
-            const eventStore = new EventStore(this.baseDir, this.getFileForId(id)); // doesn't require init for just calling loadEvents
+            const eventStore = new EventStore(await this.getBaseDirForId(id), this.getFileForId(id)); // doesn't require init for just calling loadEvents
             yield { id: id, events: await eventStore.loadEvents() };
         }
     }

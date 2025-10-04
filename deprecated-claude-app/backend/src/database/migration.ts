@@ -66,7 +66,7 @@ function getEventCategoryInfo(event: Event, conversations: Map<string, Conversat
     category = EventCategory.User;
     break;
     case 'participant_created':
-    participant = event.data;
+    participant = event.data.participant;
     if (participant) conversationId = participant.conversationId;
     category = EventCategory.User;
     break;

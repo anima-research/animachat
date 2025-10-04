@@ -1452,7 +1452,7 @@ export class Database {
   }
   
   async getConversationMetrics(conversationId: string, conversationOwnerUserId: string): Promise<MetricsData[]> {
-    const conversation = this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
+    const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) return [];
     return this.conversationMetrics.get(conversationId) || [];
   }
