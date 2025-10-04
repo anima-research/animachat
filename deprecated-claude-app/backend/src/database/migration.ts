@@ -81,6 +81,7 @@ function getEventCategoryInfo(event: Event, conversations: Map<string, Conversat
     case 'message_created':
     var message = messages.get(event.data.id);
     if (!message) {
+      messages.set(event.data.id, event.data); // store it in case it was deleted
       conversationId = event.data.conversationId; // needed in case this message later deleted
       if (!conversationId) {
         console.error(`Error: event ${event.type} of type User had message id ${event.data.messageId} which does not exist, skipping.`);
