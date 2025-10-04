@@ -68,7 +68,10 @@ function getEventCategoryInfo(event: Event, conversations: Map<string, Conversat
     break;
     case 'participant_created':
     participant = event.data.participant;
-    if (participant) conversationId = participant.conversationId;
+    if (participant) {
+      conversationId = participant.conversationId;
+      participants.set(participant.id, participant); // add this so we can still see it even if deleted later
+    }
     category = EventCategory.User;
     break;
     case 'metrics_added':
@@ -78,10 +81,15 @@ function getEventCategoryInfo(event: Event, conversations: Map<string, Conversat
     case 'message_created':
     var message = messages.get(event.data.id);
     if (!message) {
-      console.error(`Error: event ${event.type} of type User had message id ${event.data.messageId} which does not exist, skipping.`);
-      return { category: EventCategory.Main }; // broken, just default to main
+      conversationId = event.data.conversationId; // needed in case this message later deleted
+      if (!conversationId) {
+        console.error(`Error: event ${event.type} of type User had message id ${event.data.messageId} which does not exist, skipping.`);
+        return { category: EventCategory.Main }; // broken, just default to main
+      }
     }
-    conversationId = message.conversationId;
+    else {
+      conversationId = message.conversationId;
+    }
     category = EventCategory.Conversation;
     break;
     case 'message_branch_added':
