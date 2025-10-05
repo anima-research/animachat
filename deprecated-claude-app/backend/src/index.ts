@@ -14,6 +14,7 @@ import { importRouter } from './routes/import.js';
 import { systemRouter } from './routes/system.js';
 import { createPromptRouter } from './routes/prompt.js';
 import { createShareRouter } from './routes/shares.js';
+import { createBookmarksRouter } from './routes/bookmarks.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
 import { authenticateToken } from './middleware/auth.js';
@@ -81,6 +82,7 @@ app.use('/api/participants', authenticateToken, participantRouter(db));
 app.use('/api/import', authenticateToken, importRouter(db));
 app.use('/api/prompt', createPromptRouter(db));
 app.use('/api/shares', createShareRouter(db));
+app.use('/api/bookmarks', createBookmarksRouter(db));
 app.use('/api/system', systemRouter());
 
 // Health check

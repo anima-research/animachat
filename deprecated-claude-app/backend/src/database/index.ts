@@ -1,4 +1,4 @@
-import { User, Conversation, Message, Participant, ApiKey } from '@deprecated-claude/shared';
+import { User, Conversation, Message, Participant, ApiKey, Bookmark } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -30,7 +30,9 @@ export class Database {
   private participants: Map<string, Participant> = new Map(); // participantId -> Participant
   private conversationParticipants: Map<string, string[]> = new Map(); // conversationId -> participantIds
   private conversationMetrics: Map<string, MetricsData[]> = new Map(); // conversationId -> metrics
-  
+  private bookmarks: Map<string, Bookmark> = new Map(); // bookmarkId -> Bookmark
+  private branchBookmarks: Map<string, string> = new Map(); // `${messageId}-${branchId}` -> bookmarkId
+
   private eventStore: EventStore;
   private sharesStore: SharesStore;
   private initialized: boolean = false;
@@ -393,7 +395,38 @@ export class Database {
       case 'share_viewed':
         this.sharesStore.replayEvent(event);
         break;
-      
+
+      // Bookmark events
+      case 'bookmark_created': {
+        const { bookmark } = event.data;
+        const bookmarkWithDate = {
+          ...bookmark,
+          createdAt: new Date(bookmark.createdAt)
+        };
+        this.bookmarks.set(bookmark.id, bookmarkWithDate);
+        const key = `${bookmark.messageId}-${bookmark.branchId}`;
+        this.branchBookmarks.set(key, bookmark.id);
+        break;
+      }
+
+      case 'bookmark_updated': {
+        const { bookmarkId, label } = event.data;
+        const bookmark = this.bookmarks.get(bookmarkId);
+        if (bookmark) {
+          const updated = { ...bookmark, label };
+          this.bookmarks.set(bookmarkId, updated);
+        }
+        break;
+      }
+
+      case 'bookmark_deleted': {
+        const { bookmarkId, messageId, branchId } = event.data;
+        this.bookmarks.delete(bookmarkId);
+        const key = `${messageId}-${branchId}`;
+        this.branchBookmarks.delete(key);
+        break;
+      }
+
       // Add more cases as needed
       }
     } catch (error) {
@@ -1278,6 +1311,81 @@ export class Database {
     }
     
     return deleted;
+  }
+
+  // Bookmark methods
+  async createOrUpdateBookmark(
+    conversationId: string,
+    messageId: string,
+    branchId: string,
+    label: string
+  ): Promise<Bookmark> {
+    const key = `${messageId}-${branchId}`;
+    const existingBookmarkId = this.branchBookmarks.get(key);
+
+    if (existingBookmarkId) {
+      // Update existing bookmark
+      const existingBookmark = this.bookmarks.get(existingBookmarkId);
+      if (existingBookmark) {
+        const updated = { ...existingBookmark, label };
+        this.bookmarks.set(existingBookmarkId, updated);
+
+        this.logEvent('bookmark_updated', {
+          bookmarkId: existingBookmarkId,
+          label
+        });
+
+        return updated;
+      }
+    }
+
+    // Create new bookmark
+    const bookmark: Bookmark = {
+      id: uuidv4(),
+      conversationId,
+      messageId,
+      branchId,
+      label,
+      createdAt: new Date()
+    };
+
+    this.bookmarks.set(bookmark.id, bookmark);
+    this.branchBookmarks.set(key, bookmark.id);
+
+    this.logEvent('bookmark_created', { bookmark });
+
+    return bookmark;
+  }
+
+  async deleteBookmark(messageId: string, branchId: string): Promise<boolean> {
+    const key = `${messageId}-${branchId}`;
+    const bookmarkId = this.branchBookmarks.get(key);
+
+    if (!bookmarkId) {
+      return false;
+    }
+
+    this.bookmarks.delete(bookmarkId);
+    this.branchBookmarks.delete(key);
+
+    this.logEvent('bookmark_deleted', {
+      bookmarkId,
+      messageId,
+      branchId
+    });
+
+    return true;
+  }
+
+  async getConversationBookmarks(conversationId: string): Promise<Bookmark[]> {
+    return Array.from(this.bookmarks.values())
+      .filter(bookmark => bookmark.conversationId === conversationId);
+  }
+
+  async getBookmarkForBranch(messageId: string, branchId: string): Promise<Bookmark | null> {
+    const key = `${messageId}-${branchId}`;
+    const bookmarkId = this.branchBookmarks.get(key);
+    return bookmarkId ? this.bookmarks.get(bookmarkId) || null : null;
   }
 
   // Close database connection

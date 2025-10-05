@@ -166,6 +166,25 @@
           :disabled="isLastMessage"
         />
 
+        <v-btn
+          ref="bookmarkButtonRef"
+          :icon="hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline'"
+          :color="hasBookmark ? participantColor : undefined"
+          size="small"
+          variant="text"
+          density="compact"
+          :style="hasBookmark ? 'opacity: 0.8' : 'opacity: 0.6'"
+          @click="toggleBookmark"
+        />
+        <v-tooltip
+          v-if="hasBookmark"
+          :activator="bookmarkButtonRef"
+          location="end"
+          content-class="bookmark-tooltip"
+        >
+          <span :style="`color: ${participantColor}; font-weight: 600;`">{{ bookmarkLabel }}</span>
+        </v-tooltip>
+
         <v-spacer />
 
         <div class="d-flex gap-1">
@@ -248,6 +267,43 @@
         </v-chip>
       </div>
     </v-card-text>
+
+    <!-- Bookmark dialog -->
+    <v-dialog v-model="bookmarkDialog" max-width="400">
+      <v-card>
+        <v-card-title>{{ hasBookmark ? 'Edit Bookmark' : 'Add Bookmark' }}</v-card-title>
+        <v-card-text>
+          <v-text-field
+            v-model="bookmarkInput"
+            label="Bookmark label"
+            placeholder="Enter a label for this message..."
+            variant="outlined"
+            density="compact"
+            autofocus
+            @keydown.enter="saveBookmark"
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-btn
+            v-if="hasBookmark"
+            color="error"
+            variant="text"
+            @click="deleteBookmark"
+          >
+            Delete
+          </v-btn>
+          <v-spacer />
+          <v-btn @click="bookmarkDialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            @click="saveBookmark"
+            :disabled="!bookmarkInput.trim()"
+          >
+            Save
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-card>
 </template>
 
@@ -277,12 +333,18 @@ const emit = defineEmits<{
   delete: [messageId: string, branchId: string];
   'select-as-parent': [messageId: string, branchId: string];
   'stop-auto-scroll': [];
+  'bookmark-changed': [];
 }>();
 
 const isEditing = ref(false);
 const editContent = ref('');
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
+const bookmarkDialog = ref(false);
+const bookmarkInput = ref('');
+const bookmarkLabel = ref<string | null>(null);
+const showBookmarkTooltip = ref(false);
+const bookmarkButtonRef = ref<HTMLElement>();
 
 const branchIndex = computed(() => {
   return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;
@@ -293,9 +355,14 @@ const currentBranch = computed(() => {
   return branch;
 });
 
+const hasBookmark = computed(() => {
+  return bookmarkLabel.value !== null && bookmarkLabel.value !== '';
+});
+
 // Check if message is long enough to need scroll button
-onMounted(() => {
+onMounted(async () => {
   checkMessageHeight();
+  await loadBookmark();
 });
 
 onUpdated(() => {
@@ -378,7 +445,7 @@ const participantColor = computed(() => {
   
   // Only color assistant messages
   if (branch.role !== 'assistant') {
-    return undefined;
+    return '#bb86fc'
   }
   
   // Try to get model from participant or branch
@@ -599,14 +666,14 @@ async function downloadPrompt() {
       console.error('No conversation ID available');
       return;
     }
-    
+
     // Call the API to get the prompt
     const response = await api.post('/prompt/build', {
       conversationId,
       branchId: currentBranch.value.id,
       includeSystemPrompt: true
     });
-    
+
     // Create a downloadable JSON file with just the messages array
     const blob = new Blob([JSON.stringify(response.data.messages, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -621,6 +688,81 @@ async function downloadPrompt() {
     console.error('Failed to download prompt:', error);
   }
 }
+
+// Bookmark management
+async function loadBookmark() {
+  try {
+    const conversationId = store.state.currentConversation?.id;
+    if (!conversationId) return;
+
+    const response = await api.get(`/bookmarks/conversation/${conversationId}`);
+    const bookmarks = response.data;
+
+    // Find bookmark for current branch
+    const bookmark = bookmarks.find((b: any) =>
+      b.messageId === props.message.id && b.branchId === currentBranch.value.id
+    );
+
+    if (bookmark) {
+      bookmarkLabel.value = bookmark.label;
+    }
+  } catch (error) {
+    console.error('Failed to load bookmark:', error);
+  }
+}
+
+function toggleBookmark() {
+  if (hasBookmark.value) {
+    bookmarkInput.value = bookmarkLabel.value || '';
+  } else {
+    bookmarkInput.value = '';
+  }
+  bookmarkDialog.value = true;
+}
+
+async function saveBookmark() {
+  try {
+    const conversationId = store.state.currentConversation?.id;
+    if (!conversationId) return;
+
+    const label = bookmarkInput.value.trim();
+    if (!label) return;
+
+    await api.post('/bookmarks', {
+      conversationId,
+      messageId: props.message.id,
+      branchId: currentBranch.value.id,
+      label
+    });
+
+    bookmarkLabel.value = label;
+    bookmarkDialog.value = false;
+
+    // Notify parent that bookmarks changed
+    emit('bookmark-changed');
+  } catch (error) {
+    console.error('Failed to save bookmark:', error);
+  }
+}
+
+async function deleteBookmark() {
+  try {
+    await api.delete(`/bookmarks/${props.message.id}/${currentBranch.value.id}`);
+
+    bookmarkLabel.value = null;
+    bookmarkDialog.value = false;
+
+    // Notify parent that bookmarks changed
+    emit('bookmark-changed');
+  } catch (error) {
+    console.error('Failed to delete bookmark:', error);
+  }
+}
+
+// Watch for branch changes and reload bookmark
+watch(() => currentBranch.value.id, async () => {
+  await loadBookmark();
+});
 </script>
 
 <style scoped>
@@ -659,6 +801,14 @@ async function downloadPrompt() {
 
 .flip-vertical {
   transform: scaleY(-1);
+}
+</style>
+
+<style>
+/* Global style for bookmark tooltip - needs to be unscoped to override Vuetify */
+.bookmark-tooltip {
+  background-color: transparent !important;
+  box-shadow: none !important;
 }
 </style>
 

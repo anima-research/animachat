@@ -4,121 +4,137 @@
     <v-navigation-drawer
       v-model="drawer"
       permanent
+      class="sidebar-drawer"
     >
-      <v-list>
-        <v-list-item
-          :title="store.state.user?.name"
-          :subtitle="store.state.user?.email"
-          nav
-        >
-          <template v-slot:prepend>
-            <div class="mr-3">
-              <ArcLogo :size="40" />
-            </div>
-          </template>
-        </v-list-item>
-      </v-list>
-
-      <v-divider />
-
-      <v-list density="compact" nav>
-        <v-list-item
-          prepend-icon="mdi-plus"
-          title="New Conversation"
-          @click="createNewConversation"
-        />
-        
-        <v-list-item
-          prepend-icon="mdi-import"
-          title="Import Conversation"
-          @click="importDialog = true"
-        />
-      </v-list>
-
-      <v-divider />
-
-      <v-list density="compact" nav>
-        <v-list-subheader>Conversations</v-list-subheader>
-        
-        <v-list-item
-          v-for="conversation in conversations"
-          :key="conversation.id"
-          :to="`/conversation/${conversation.id}`"
-          class="conversation-list-item"
-          :lines="'three'"
-        >
-          <template v-slot:title>
-            <div class="text-truncate">{{ conversation.title }}</div>
-          </template>
-          <template v-slot:subtitle>
-            <div>
-              <div class="text-caption" v-html="getConversationModelsHtml(conversation)"></div>
-              <div class="text-caption text-medium-emphasis">{{ formatDate(conversation.updatedAt) }}</div>
-            </div>
-          </template>
-          <template v-slot:append>
-            <v-menu>
-              <template v-slot:activator="{ props }">
-                <v-btn
-                  icon="mdi-dots-vertical"
-                  size="small"
-                  variant="text"
-                  v-bind="props"
-                  @click.prevent
-                />
+      <div class="d-flex flex-column h-100">
+        <!-- Fixed header section -->
+        <div class="sidebar-header">
+          <v-list>
+            <v-list-item
+              :title="store.state.user?.name"
+              :subtitle="store.state.user?.email"
+              nav
+            >
+              <template v-slot:prepend>
+                <div class="mr-3">
+                  <ArcLogo :size="40" />
+                </div>
               </template>
-              
-              <v-list density="compact">
-                <v-list-item
-                  prepend-icon="mdi-pencil"
-                  title="Rename"
-                  @click="renameConversation(conversation)"
-                />
-                <v-list-item
-                  prepend-icon="mdi-content-copy"
-                  title="Duplicate"
-                  @click="duplicateConversation(conversation.id)"
-                />
-                <v-list-item
-                  prepend-icon="mdi-download"
-                  title="Export"
-                  @click="exportConversation(conversation.id)"
-                />
-                <v-list-item
-                  prepend-icon="mdi-archive"
-                  title="Archive"
-                  @click="archiveConversation(conversation.id)"
-                />
-              </v-list>
-            </v-menu>
-          </template>
-        </v-list-item>
-      </v-list>
+            </v-list-item>
+          </v-list>
 
-      <template v-slot:append>
-        <v-list density="compact" nav>
-          <v-list-item
-            prepend-icon="mdi-help-circle"
-            title="Getting Started"
-            @click="welcomeDialog = true"
-          />
-          <v-list-item
-            prepend-icon="mdi-information"
-            title="About The Arc"
-            @click="$router.push('/about')"
-          />
-          <v-list-item
-            prepend-icon="mdi-cog"
-            title="Settings"
-            @click="settingsDialog = true"
-          />
-          <v-list-item
-            prepend-icon="mdi-logout"
-            title="Logout"
-            @click="logout"
-          />
-        </v-list>
-      </template>
+          <v-divider />
+
+          <v-list density="compact" nav>
+            <v-list-item
+              prepend-icon="mdi-plus"
+              title="New Conversation"
+              @click="createNewConversation"
+            />
+            
+            <v-list-item
+              prepend-icon="mdi-import"
+              title="Import Conversation"
+              @click="importDialog = true"
+            />
+          </v-list>
+
+          <v-divider />
+        </div>
+
+        <!-- Scrollable conversations section -->
+        <div class="sidebar-conversations flex-grow-1">
+          <v-list density="compact" nav>
+            <v-list-subheader>Conversations</v-list-subheader>
+            
+            <v-list-item
+              v-for="conversation in conversations"
+              :key="conversation.id"
+              :to="`/conversation/${conversation.id}`"
+              class="conversation-list-item"
+              :lines="'three'"
+            >
+              <template v-slot:title>
+                <div class="text-truncate">{{ conversation.title }}</div>
+              </template>
+              <template v-slot:subtitle>
+                <div>
+                  <div class="text-caption" v-html="getConversationModelsHtml(conversation)"></div>
+                  <div class="text-caption text-medium-emphasis">{{ formatDate(conversation.updatedAt) }}</div>
+                </div>
+              </template>
+              <template v-slot:append>
+                <v-menu>
+                  <template v-slot:activator="{ props }">
+                    <v-btn
+                      icon="mdi-dots-vertical"
+                      size="small"
+                      variant="text"
+                      v-bind="props"
+                      @click.prevent
+                    />
+                  </template>
+                  
+                  <v-list density="compact">
+                    <v-list-item
+                      prepend-icon="mdi-pencil"
+                      title="Rename"
+                      @click="renameConversation(conversation)"
+                    />
+                    <v-list-item
+                      prepend-icon="mdi-content-copy"
+                      title="Duplicate"
+                      @click="duplicateConversation(conversation.id)"
+                    />
+                    <v-list-item
+                      prepend-icon="mdi-share-variant"
+                      title="Share"
+                      @click="shareConversation(conversation)"
+                    />
+                    <v-list-item
+                      prepend-icon="mdi-download"
+                      title="Export"
+                      @click="exportConversation(conversation.id)"
+                    />
+                    <v-list-item
+                      prepend-icon="mdi-archive"
+                      title="Archive"
+                      @click="archiveConversation(conversation.id)"
+                    />
+                  </v-list>
+                </v-menu>
+              </template>
+            </v-list-item>
+          </v-list>
+        </div>
+
+        <!-- Fixed footer section -->
+        <div class="sidebar-footer">
+          <v-divider />
+          <v-list density="compact" nav>
+            <v-list-item
+              prepend-icon="mdi-help-circle"
+              title="Getting Started"
+              @click="welcomeDialog = true"
+            />
+            <v-list-item
+              prepend-icon="mdi-information"
+              title="About The Arc"
+              @click="$router.push('/about')"
+            />
+            <v-list-item
+              prepend-icon="mdi-cog"
+              title="Settings"
+              @click="settingsDialog = true"
+            />
+            <v-list-item
+              prepend-icon="mdi-logout"
+              title="Logout"
+              @click="logout"
+            />
+          </v-list>
+        </div>
+      </div>
     </v-navigation-drawer>
 
     <!-- Main Content -->
@@ -126,94 +142,67 @@
       <!-- Top Bar -->
       <v-app-bar density="compact">
         <v-app-bar-nav-icon @click="drawer = !drawer" />
-        
-        <v-toolbar-title>
-          {{ currentConversation?.title || 'New Conversation' }}
-        </v-toolbar-title>
-        
-        <v-spacer />
-        
-        <!-- Metrics Display -->
-        <MetricsDisplay 
-          v-if="currentConversation"
-          :conversation-id="currentConversation.id"
-          class="mr-4"
-        />
-        
-        <!-- Group Chat Mode Button -->
-        <v-btn
-          v-if="currentConversation?.format === 'standard'"
-          size="small"
-          variant="text"
-          color="primary"
-          class="mr-2"
-          @click="switchToGroupChat"
-        >
-          <v-icon size="small" class="mr-1">mdi-account-group</v-icon>
-          Group Chat
-          <v-tooltip activator="parent" location="bottom">
-            Switch to Group Chat mode
-          </v-tooltip>
-        </v-btn>
+
+        <!-- Breadcrumb navigation with fixed title and scrollable bookmarks -->
+        <div v-if="currentConversation" class="d-flex align-center breadcrumb-container">
+          <!-- Conversation Title (always visible) -->
+          <div
+            class="conversation-title cursor-pointer"
+            @click="scrollToTop"
+          >
+            {{ currentConversation.title || 'New Conversation' }}
+          </div>
+
+          <!-- Scrollable bookmarks section -->
+          <div v-if="bookmarksInActivePath.length > 0" class="d-flex align-center bookmarks-scroll-container">
+            <v-icon icon="mdi-map-marker-right" size="small" class="mx-0" />
+            <div ref="bookmarksScrollRef" class="bookmarks-scroll">
+              <div class="d-flex align-center">
+                <template v-for="(bookmark, index) in bookmarksInActivePath" :key="bookmark.id">
+                  <span
+                    :ref="el => bookmarkRefs[index] = el as HTMLElement"
+                    class="bookmark-item cursor-pointer"
+                    :class="{ 'bookmark-current': index === currentBookmarkIndex }"
+                    @click="scrollToMessage(bookmark.messageId)"
+                  >
+                    {{ bookmark.label }}
+                  </span>
+                  <v-icon
+                    v-if="index < bookmarksInActivePath.length - 1"
+                    icon="mdi-chevron-right"
+                    size="small"
+                    class="mx-0"
+                    :style="{ opacity: index < currentBookmarkIndex ? 0.4 : 1 }"
+                  />
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <v-spacer class="breadcrumb-spacer"/>
         
         <v-chip 
-          v-if="currentConversation?.format === 'standard'"
           class="mr-2 clickable-chip" 
           size="small"
           variant="outlined"
-          :color="getModelColor(currentConversation?.model)"
+          :color="currentConversation?.format === 'standard' ? getModelColor(currentConversation?.model) : 'info'"
           @click="conversationSettingsDialog = true"
         >
-          {{ currentModel?.displayName || 'Select Model' }}
+          <v-icon v-if="currentConversation?.format !== 'standard'" class="mr-2">mdi-account-group</v-icon>
+          {{ currentConversation?.format !== 'standard' ? 'Group Chat' : currentModel?.displayName || 'Select Model' }}
           <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
           <v-tooltip activator="parent" location="bottom">
             Click to change model and settings
           </v-tooltip>
         </v-chip>
         
-        <v-chip 
-          v-else
-          class="mr-2 clickable-chip" 
-          size="small" 
-          variant="outlined"
-          color="info"
-          @click="conversationSettingsDialog = true"
-        >
-          Group Chat Mode
-          <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
-          <v-tooltip activator="parent" location="bottom">
-            Click to configure participants and settings
-          </v-tooltip>
-        </v-chip>
-        
-        <!-- Share button -->
-        <v-btn
+        <!-- Metrics Display -->
+        <MetricsDisplay 
           v-if="currentConversation"
-          icon="mdi-share-variant"
-          size="small"
-          variant="text"
-          @click="shareDialog = true"
-          title="Share conversation"
+          :conversation-id="currentConversation.id"
+          class="mr-2"
         />
-        
-        <!-- Import raw messages button (hidden - kept for potential debugging use) -->
-        <!-- <v-btn
-          v-if="currentConversation"
-          icon="mdi-database-import"
-          size="small"
-          color="green"
-          @click="showRawImportDialog = true"
-          title="Import raw messages backup"
-        /> -->
-        
-        <!-- Export button (hidden - available in conversation dropdown menu) -->
-        <!-- <v-btn
-          v-if="currentConversation"
-          icon="mdi-export"
-          variant="text"
-          @click="exportConversation(currentConversation.id)"
-          title="Export conversation"
-        /> -->
         
         <v-btn
           v-if="allMessages.length > 0"
@@ -243,7 +232,7 @@
             :key="message.id"
             :message="message"
             :participants="participants"
-            :is-selected-parent="selectedBranchForParent?.messageId === message.id && 
+            :is-selected-parent="selectedBranchForParent?.messageId === message.id &&
                                  selectedBranchForParent?.branchId === message.activeBranchId"
             :is-last-message="index === messages.length - 1"
             :is-streaming="isStreaming && message.id === streamingMessageId"
@@ -255,6 +244,7 @@
             @delete="deleteMessage"
             @select-as-parent="selectBranchAsParent"
             @stop-auto-scroll="stopAutoScroll"
+            @bookmark-changed="handleBookmarkChanged"
           />
         </div>
       </v-container>
@@ -328,7 +318,20 @@
           </div>
         </div>
         
-        <div class="mb-2 d-flex gap-2 align-center justify-space-around">
+        <div class="mb-2 d-flex gap-2 align-center justify-center">
+          <v-chip 
+            class="mr-2 clickable-chip" 
+            variant="outlined"
+            :color="currentConversation?.format === 'standard' ? getModelColor(currentConversation?.model) : 'info'"
+            @click="conversationSettingsDialog = true"
+          >
+            <v-icon v-if="currentConversation?.format !== 'standard'" class="mr-2">mdi-account-group</v-icon>
+            {{ currentConversation?.format !== 'standard' ? '' : currentModel?.displayName || 'Select Model' }}
+            <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
+            <v-tooltip activator="parent" location="bottom">
+              Click to change model and settings
+            </v-tooltip>
+          </v-chip>
           <v-select
             v-if="currentConversation.format !== 'standard'"
             v-model="selectedResponder"
@@ -373,7 +376,7 @@
           <v-btn
             :disabled="isStreaming"
             :color="continueButtonColor"
-            icon="mdi-robot"
+            icon="mdi-send"
             variant="text"
             :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
             @click="continueGeneration"
@@ -420,13 +423,6 @@
               </v-list-item>
             </template>
           </v-select>
-          
-          <!-- <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
-                       vertical 
-                       class="mx-1" 
-                       style="height: 30px" /> -->
-          
-          
         </div>
         
         <!-- Attachments display -->
@@ -502,14 +498,16 @@
 
     <!-- Right sidebar with conversation tree -->
     <v-navigation-drawer
-      v-model="treeDrawer"
+      v-if="treeDrawer"
       location="right"
       :width="400"
       permanent
+      class="tree-drawer"
     >
 
       <ConversationTree
         v-if="allMessages.length > 0"
+        ref="conversationTreeRef"
         :messages="allMessages"
         :participants="participants"
         :current-message-id="currentMessageId"
@@ -535,37 +533,6 @@
       v-model="importDialog"
     />
     
-    <!-- Raw Import Dialog -->
-    <v-dialog v-model="showRawImportDialog" max-width="600">
-      <v-card>
-        <v-card-title>Import Raw Messages Backup</v-card-title>
-        <v-card-text>
-          <v-alert type="warning" class="mb-4">
-            This will replace ALL messages in the current conversation with the imported data.
-            Make sure you have the right conversation selected!
-          </v-alert>
-          <v-textarea
-            v-model="rawImportData"
-            label="Paste the messages JSON array here"
-            placeholder='[{"id": "...", "conversationId": "...", "branches": [...], ...}]'
-            rows="10"
-            variant="outlined"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn @click="showRawImportDialog = false">Cancel</v-btn>
-          <v-btn 
-            color="primary" 
-            @click="importRawMessages"
-            :disabled="!rawImportData.trim()"
-          >
-            Import
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-    
     <SettingsDialog
       v-model="settingsDialog"
     />
@@ -584,7 +551,6 @@
       :current-branch-id="currentBranchId"
     />
     
-
     
     <WelcomeDialog
       v-model="welcomeDialog"
@@ -601,7 +567,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
-import type { Conversation, Message, Participant, Model } from '@deprecated-claude/shared';
+import type { Conversation, Message, Participant, Model, Bookmark } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema } from '@deprecated-claude/shared';
 import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
@@ -642,6 +608,12 @@ const messagesContainer = ref<HTMLElement>();
 const participants = ref<Participant[]>([]);
 const selectedParticipant = ref<string>('');
 const selectedResponder = ref<string>('');
+const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
+const bookmarks = ref<Bookmark[]>([]);
+const bookmarksScrollRef = ref<HTMLElement>();
+const bookmarkRefs = ref<HTMLElement[]>([]);
+const isUserScrollingBookmarks = ref(false);
+const currentBookmarkIndex = ref(0);
 
 const conversations = computed(() => store.state.conversations);
 const currentConversation = computed(() => store.state.currentConversation);
@@ -667,6 +639,27 @@ const currentBranchId = computed(() => {
   return undefined;
 });
 const currentModel = computed(() => store.currentModel);
+
+// Get bookmarks in the order they appear in the active conversation path
+const bookmarksInActivePath = computed(() => {
+  const visibleMessages = messages.value;
+  const result: Array<Bookmark & { messageId: string; branchId: string }> = [];
+
+  for (const message of visibleMessages) {
+    const bookmark = bookmarks.value.find(
+      b => b.messageId === message.id && b.branchId === message.activeBranchId
+    );
+    if (bookmark) {
+      result.push({
+        ...bookmark,
+        messageId: message.id,
+        branchId: message.activeBranchId
+      });
+    }
+  }
+
+  return result;
+});
 
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
@@ -694,6 +687,8 @@ const responderOptions = computed(() => {
     id: p.id,
     name: p.name === '' 
       ? (p.model ? `${p.model} (continue)` : '(continue)')
+      : p.name === 'A' 
+      ? `A (${p.model})`
       : p.name,
     type: p.type,
     model: p.model || ''
@@ -759,7 +754,7 @@ const systemConfig = ref<{ features?: any; groupChatSuggestedModels?: string[] }
 
 // Get suggested models that aren't already participants
 const suggestedNonParticipantModels = computed(() => {
-  if (!currentConversation.value || currentConversation.value.format === 'standard') {
+  if (!currentConversation.value || currentConversation.value.format === 'standard' || participants.value.length > 3) {
     return [];
   }
   
@@ -864,6 +859,7 @@ onMounted(async () => {
   if (route.params.id) {
     await store.loadConversation(route.params.id as string);
     await loadParticipants();
+    await loadBookmarks();
     // Scroll to bottom after messages load
     await nextTick();
     // Add small delay for long conversations
@@ -871,7 +867,7 @@ onMounted(async () => {
       scrollToBottom();
     }, 100);
   }
-  
+
 });
 
 // Watch route changes
@@ -881,9 +877,10 @@ watch(() => route.params.id, async (newId) => {
     if (selectedBranchForParent.value) {
       cancelBranchSelection();
     }
-    
+
     await store.loadConversation(newId as string);
     await loadParticipants();
+    await loadBookmarks();
     // Ensure DOM is updated before scrolling
     await nextTick();
     // Add small delay for long conversations
@@ -902,6 +899,43 @@ watch(messages, () => {
     });
   }
 }, { deep: true });
+
+// Set up scroll sync for breadcrumb navigation
+let scrollTimeout: number;
+watch(messagesContainer, (container) => {
+  if (container) {
+    // Vuetify components expose their DOM element via $el
+    const element = (container as any).$el || container;
+
+    if (element && element.addEventListener) {
+      const handleScroll = () => {
+        // Debounce the sync to avoid too many calls
+        clearTimeout(scrollTimeout);
+        scrollTimeout = window.setTimeout(() => {
+          syncBreadcrumbScroll();
+        }, 50);
+      };
+
+      element.addEventListener('scroll', handleScroll);
+    }
+  }
+});
+
+// Track when user is manually scrolling bookmarks to prevent sync
+let userScrollTimeout: number;
+watch(bookmarksScrollRef, (scrollEl) => {
+  if (scrollEl) {
+    const handleBookmarkScroll = () => {
+      isUserScrollingBookmarks.value = true;
+      clearTimeout(userScrollTimeout);
+      userScrollTimeout = window.setTimeout(() => {
+        isUserScrollingBookmarks.value = false;
+      }, 150);
+    };
+
+    scrollEl.addEventListener('scroll', handleBookmarkScroll);
+  }
+});
 
 // Watch for branch changes to clear selected parent if it's no longer in active path
 watch(messages, () => {
@@ -1235,6 +1269,15 @@ async function renameConversation(conversation: Conversation) {
   }
 }
 
+function shareConversation(conversation: Conversation) {
+  // Navigate to the conversation if it's not the current one
+  if (currentConversation.value?.id !== conversation.id) {
+    router.push(`/conversation/${conversation.id}`);
+  }
+  // Open the share dialog
+  shareDialog.value = true;
+}
+
 async function duplicateConversation(id: string) {
   const duplicate = await store.duplicateConversation(id);
   router.push(`/conversation/${duplicate.id}`);
@@ -1412,6 +1455,116 @@ function cancelBranchSelection() {
   selectedBranchForParent.value = null;
 }
 
+async function loadBookmarks() {
+  try {
+    const conversationId = currentConversation.value?.id;
+    if (!conversationId) return;
+
+    const response = await api.get(`/bookmarks/conversation/${conversationId}`);
+    bookmarks.value = response.data;
+  } catch (error) {
+    console.error('Failed to load bookmarks:', error);
+  }
+}
+
+async function handleBookmarkChanged() {
+  // Reload bookmarks in both the view and the tree
+  await loadBookmarks();
+  if (conversationTreeRef.value) {
+    await (conversationTreeRef.value as any).loadBookmarks();
+  }
+}
+
+function scrollToMessage(messageId: string) {
+  const element = document.getElementById(`message-${messageId}`);
+  if (element) {
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+function scrollToTop() {
+  if (messagesContainer.value) {
+    messagesContainer.value.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
+// Sync breadcrumb scroll position with page scroll
+function syncBreadcrumbScroll() {
+  if (!messagesContainer.value || !bookmarksScrollRef.value || bookmarksInActivePath.value.length === 0) {
+    return;
+  }
+
+  // Don't sync if user is manually scrolling the bookmarks
+  if (isUserScrollingBookmarks.value) {
+    return;
+  }
+
+  // Vuetify components expose their DOM element via $el
+  const container = (messagesContainer.value as any).$el || messagesContainer.value;
+  if (!container || !container.scrollTop) return;
+
+  const containerRect = container.getBoundingClientRect();
+
+  // Find the lowest visible message (bottom of viewport)
+  let lowestVisibleMessageId: string | null = null;
+
+  for (const message of messages.value) {
+    const element = document.getElementById(`message-${message.id}`);
+    if (!element) continue;
+
+    const rect = element.getBoundingClientRect();
+    // Check if message is at least partially visible in viewport
+    if (rect.top < containerRect.bottom && rect.bottom > containerRect.top) {
+      lowestVisibleMessageId = message.id;
+    }
+  }
+
+  if (!lowestVisibleMessageId) return;
+
+  // Find the last bookmark in the ancestry of the lowest visible message
+  let lastBookmarkIndex = -1;
+  for (let i = bookmarksInActivePath.value.length - 1; i >= 0; i--) {
+    const bookmark = bookmarksInActivePath.value[i];
+    const bookmarkMsgIndex = messages.value.findIndex(m => m.id === bookmark.messageId);
+    const currentMsgIndex = messages.value.findIndex(m => m.id === lowestVisibleMessageId);
+
+    if (bookmarkMsgIndex <= currentMsgIndex) {
+      lastBookmarkIndex = i;
+      break;
+    }
+  }
+
+  // Update current bookmark index for opacity styling
+  // -1 means we're before the first bookmark (no bookmark should be highlighted)
+  currentBookmarkIndex.value = lastBookmarkIndex;
+
+  const scrollContainer = bookmarksScrollRef.value;
+
+  // If we're before the first bookmark, scroll to the beginning of the list
+  if (lastBookmarkIndex === -1) {
+    const currentScroll = scrollContainer.scrollLeft;
+    if (currentScroll > 0) {
+      scrollContainer.scrollTo({ left: 0, behavior: 'smooth' });
+    }
+    return;
+  }
+
+  // Otherwise, scroll the current bookmark into view if needed
+  const bookmarkEl = bookmarkRefs.value[lastBookmarkIndex];
+  if (!bookmarkEl) return;
+
+  // Check if the bookmark is already in view in the navigator
+  const navRect = scrollContainer.getBoundingClientRect();
+  const bookmarkRect = bookmarkEl.getBoundingClientRect();
+
+  const isInView = bookmarkRect.left >= navRect.left && bookmarkRect.right <= navRect.right;
+
+  // Only scroll if bookmark is out of view
+  if (!isInView) {
+    bookmarkEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }
+}
+
 function getProviderIcon(provider: string): string {
   switch (provider) {
     case 'anthropic':
@@ -1449,17 +1602,15 @@ async function loadParticipants() {
     const response = await api.get(`/participants/conversation/${currentConversation.value.id}`);
     participants.value = response.data;
     // Set default selected participant
-    if (currentConversation.value.format !== 'standard') {
-      const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
-      if (defaultUser) {
-        selectedParticipant.value = defaultUser.id;
-      }
-      
-      // Set default responder to first assistant
-      const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.isActive);
-      if (defaultAssistant) {
-        selectedResponder.value = defaultAssistant.id;
-      }
+    const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
+    if (defaultUser) {
+      selectedParticipant.value = defaultUser.id;
+    }
+    
+    // Set default responder to first assistant
+    const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.isActive);
+    if (defaultAssistant) {
+      selectedResponder.value = defaultAssistant.id;
     }
   } catch (error) {
     console.error('Failed to load participants:', error);
@@ -1659,53 +1810,6 @@ function getConversationModelsHtml(conversation: Conversation): string {
   return '<span style="color: #757575; font-weight: 500;">Group Chat</span>';
 }
 
-function getConversationModels(conversation: Conversation): string {
-  if (!conversation) return '';
-  
-  // For standard conversations, show the model name
-  if (conversation.format === 'standard' || !conversation.format) {
-    const model = store.state.models.find(m => m.id === conversation.model);
-    if (model) {
-      // Shorten the display name if needed
-      return model.displayName
-        .replace('Claude ', '')
-        .replace(' (Bedrock)', ' B')
-        .replace(' (OpenRouter)', ' OR');
-    }
-    return conversation.model;
-  }
-  
-  // For multi-participant conversations, try to show participant models
-  const cachedParticipants = conversationParticipantsCache.value[conversation.id];
-  if (cachedParticipants) {
-    const assistants = cachedParticipants.filter(p => p.type === 'assistant' && p.isActive);
-    if (assistants.length > 0) {
-      const modelNames = assistants.map(a => {
-        const model = store.state.models.find(m => m.id === a.model);
-        if (model) {
-          return model.displayName
-            .replace('Claude ', '')
-            .replace(' (Bedrock)', ' B')
-            .replace(' (OpenRouter)', ' OR');
-        }
-        return a.model || 'Default';
-      });
-      
-      // Remove duplicates and join
-      const uniqueModels = [...new Set(modelNames)];
-      return `👥 ${uniqueModels.join(', ')}`;
-    }
-  }
-  
-  // Fallback - load participants async and trigger re-render
-  loadConversationParticipants(conversation.id).then(() => {
-    // This will trigger a re-render when the data is loaded
-    conversationParticipantsCache.value = { ...conversationParticipantsCache.value };
-  });
-  
-  return '👥 Group Chat';
-}
-
 function formatDate(date: Date | string): string {
   const d = new Date(date);
   const now = new Date();
@@ -1793,5 +1897,138 @@ function formatDate(date: Date | string): string {
 
 .clickable-chip:active {
   transform: translateY(0);
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+/* Breadcrumb container */
+.breadcrumb-container {
+  flex: 2 1 auto;
+  min-width: 200px;
+  max-width: 70%;
+  overflow: hidden;
+}
+
+/* Spacer after breadcrumb - reduced flex to give more space to breadcrumb */
+.breadcrumb-spacer {
+  flex: 0.5 1 auto !important;
+}
+
+/* Tree drawer styling - fix transform issue */
+.tree-drawer {
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.tree-drawer.v-navigation-drawer--active {
+  transform: translateX(0) !important;
+}
+
+.tree-drawer:not(.v-navigation-drawer--active) {
+  transform: translateX(100%) !important;
+}
+
+/* Sidebar layout styles */
+.sidebar-drawer .v-navigation-drawer__content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden !important;
+}
+
+.sidebar-header {
+  flex-shrink: 0;
+}
+
+.sidebar-conversations {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-conversations::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar-conversations::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-conversations::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.sidebar-conversations::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.sidebar-footer {
+  flex-shrink: 0;
+  margin-top: auto;
+}
+
+/* Conversation title styling */
+.conversation-title {
+  font-size: 1.0rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.conversation-title:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Scrollable bookmarks container */
+.bookmarks-scroll-container {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 2px 8px;
+  margin-left: 8px;
+}
+
+.bookmarks-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none; /* Hide scrollbar for Firefox */
+  -ms-overflow-style: none; /* Hide scrollbar for IE and Edge */
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.bookmarks-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Bookmark items */
+.bookmark-item {
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  opacity: 0.6;
+  transition: all 0.2s;
+}
+
+.bookmark-item.bookmark-current {
+  opacity: 1;
+  font-weight: 600;
+  background-color: rgba(187, 134, 252, 0.15);
+}
+
+.bookmark-item:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  opacity: 0.9;
 }
 </style>

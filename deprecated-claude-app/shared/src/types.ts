@@ -124,6 +124,18 @@ export const AttachmentSchema = z.object({
 
 export type Attachment = z.infer<typeof AttachmentSchema>;
 
+// Bookmark types
+export const BookmarkSchema = z.object({
+  id: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  messageId: z.string().uuid(),
+  branchId: z.string().uuid(),
+  label: z.string(),
+  createdAt: z.date()
+});
+
+export type Bookmark = z.infer<typeof BookmarkSchema>;
+
 // Message types
 export const MessageBranchSchema = z.object({
   id: z.string().uuid(),
@@ -134,7 +146,8 @@ export const MessageBranchSchema = z.object({
   model: z.string().optional(),
   parentBranchId: z.string().uuid().optional(),
   isActive: z.boolean().optional(), // Deprecated - not used, kept for backward compatibility
-  attachments: z.array(AttachmentSchema).optional() // Attachments for this branch
+  attachments: z.array(AttachmentSchema).optional(), // Attachments for this branch
+  bookmark: BookmarkSchema.optional() // Optional bookmark for this branch
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;
