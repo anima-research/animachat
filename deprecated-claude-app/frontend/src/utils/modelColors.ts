@@ -6,6 +6,7 @@ export const MODEL_COLORS: Record<string, string> = {
   'claude-3-opus-20240229': '#ffc300',        // Golden yellow
   
   // Claude Sonnet models
+  'claude-sonnet-4-5-20250929': '#af8c8eff',
   'claude-sonnet-4-20250514': '#86a3b0',      // Light sky blue
   'claude-3-7-sonnet-20250219': '#00b0ff',    // Vivid light blue
   'claude-3-5-sonnet-20241022': '#ed098e',    // Hot pink/magenta
@@ -81,6 +82,9 @@ export function getModelColor(model: string | undefined): string {
   }
   
   // Claude Sonnet variants
+  if (modelLower.includes('sonnet-4-5') || modelLower.includes('sonnet-4.5') || modelLower.includes('sonnet 4.5')) {
+    return MODEL_COLORS['claude-sonnet-4-5-20250929'];
+  }
   if (modelLower.includes('sonnet-4') || modelLower.includes('sonnet 4')) {
     return MODEL_COLORS['claude-sonnet-4-20250514'];
   }

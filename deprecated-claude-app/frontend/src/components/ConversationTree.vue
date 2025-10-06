@@ -44,8 +44,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import * as d3 from 'd3';
-import type { Message, MessageBranch } from '@deprecated-claude/shared';
+import type { Message, MessageBranch, Bookmark } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
+import { api } from '@/services/api';
+import { useStore } from '@/store';
 
 const props = defineProps<{
   messages: Message[];
@@ -69,6 +71,7 @@ interface TreeNode {
   participantName?: string;
   preview: string;
   isActive: boolean;
+  bookmarkLabel?: string;
   children: TreeNode[];
 }
 
@@ -77,6 +80,8 @@ const hoveredNode = ref<TreeNode | null>(null);
 const tooltipStyle = ref({ left: '0px', top: '0px' });
 const compactMode = ref(false);
 const compactModeManuallySet = ref(false); // Track if user manually toggled
+const store = useStore();
+const bookmarks = ref<Bookmark[]>([]);
 
 let svg: d3.Selection<SVGElement, unknown, null, undefined>;
 let g: d3.Selection<SVGGElement, unknown, null, undefined>;
@@ -139,6 +144,11 @@ const treeData = computed(() => {
       participantName = branch.role === 'user' ? 'User' : (branch.model || 'Assistant');
     }
     
+    // Find bookmark for this branch
+    const bookmark = bookmarks.value.find(b =>
+      b.messageId === message.id && b.branchId === branch.id
+    );
+
     const node: TreeNode = {
       id: `${message.id}-${branch.id}`,
       messageId: message.id,
@@ -148,6 +158,7 @@ const treeData = computed(() => {
       participantName,
       preview,
       isActive: message.activeBranchId === branch.id,
+      bookmarkLabel: bookmark?.label,
       children: []
     };
     
@@ -211,13 +222,16 @@ function filterCompactNodes(originalRoot: d3.HierarchyNode<TreeNode>): d3.Hierar
     const isSelectedParent = props.selectedParentMessageId && props.selectedParentBranchId &&
                             node.data.messageId === props.selectedParentMessageId &&
                             node.data.branchId === props.selectedParentBranchId;
-    
+
+    // Always keep bookmarked nodes
+    const isBookmarked = node.data.bookmarkLabel && node.data.bookmarkLabel.length > 0;
+
     const hasMultipleChildren = node.children && node.children.length > 1;
     const hasSiblings = node.parent.children && node.parent.children.length > 1;
     const isLeaf = !node.children || node.children.length === 0;
-    
-    // Keep this node if it's a decision point, leaf, or selected parent
-    if (hasMultipleChildren || hasSiblings || isLeaf || isSelectedParent) {
+
+    // Keep this node if it's a decision point, leaf, bookmarked, or selected parent
+    if (hasMultipleChildren || hasSiblings || isLeaf || isSelectedParent || isBookmarked) {
       return {
         ...node.data,
         children: node.children ? node.children.map(c => simplifyNode(c)).filter(c => c !== null) as TreeNode[] : []
@@ -404,7 +418,7 @@ function renderTree() {
     
       
       if (activePath.has(nodeId)) {
-        return '#bb86fc'; // Active path - green outline
+        return '#bb86fc'; // Active path - purple outline
       }
       return 'none';
     })
@@ -514,8 +528,37 @@ function renderTree() {
         .style('fill', 'var(--v-theme-background)')
         .style('pointer-events', 'none');
     }
+
+    // Add bookmark label if present
+    if (d.data.bookmarkLabel) {
+      const labelWidth = baseNodeRadius * 4; // Wider to better utilize the spacing
+      const labelYOffset = baseNodeRadius + 2; // Position below the node
+
+      // Get the participant color for this node
+      const color = fillColor(d);
+
+      // Use foreignObject to enable text wrapping
+      const fo = g.append('foreignObject')
+        .attr('x', -labelWidth / 2)
+        .attr('y', labelYOffset)
+        .attr('width', labelWidth)
+        .attr('height', 100) // Max height for wrapped text
+        .style('pointer-events', 'none');
+
+      fo.append('xhtml:div')
+        .style('width', '100%')
+        .style('font-size', '11px')
+        .style('font-weight', '600')
+        .style('color', color)
+        .style('text-align', 'center')
+        .style('word-wrap', 'break-word')
+        .style('overflow-wrap', 'break-word')
+        .style('hyphens', 'auto')
+        .style('line-height', '1.2')
+        .text(d.data.bookmarkLabel);
+    }
   });
-  
+
   // Center the tree initially
   centerTree();
 }
@@ -558,14 +601,28 @@ function toggleCompactMode() {
   compactModeManuallySet.value = true; // User has manually toggled
 }
 
+// Load bookmarks
+async function loadBookmarks() {
+  try {
+    const conversationId = store.state.currentConversation?.id;
+    if (!conversationId) return;
+
+    const response = await api.get(`/bookmarks/conversation/${conversationId}`);
+    bookmarks.value = response.data;
+  } catch (error) {
+    console.error('Failed to load bookmarks:', error);
+  }
+}
+
 // Watch for changes and re-render
 watch([
-  () => props.messages, 
-  () => props.currentMessageId, 
+  () => props.messages,
+  () => props.currentMessageId,
   () => props.currentBranchId,
   () => props.selectedParentMessageId,
   () => props.selectedParentBranchId,
   () => props.participants,
+  bookmarks,
   compactMode
 ], () => {
   renderTree();
@@ -585,9 +642,10 @@ watch(() => props.messages, (newMessages, oldMessages) => {
 // Handle resize
 let resizeObserver: ResizeObserver;
 
-onMounted(() => {
+onMounted(async () => {
+  await loadBookmarks();
   initializeTree();
-  
+
   if (svgRef.value) {
     resizeObserver = new ResizeObserver(() => {
       initializeTree();
@@ -596,10 +654,20 @@ onMounted(() => {
   }
 });
 
+// Reload bookmarks when conversation changes
+watch(() => store.state.currentConversation?.id, async () => {
+  await loadBookmarks();
+});
+
 onUnmounted(() => {
   if (resizeObserver && svgRef.value) {
     resizeObserver.unobserve(svgRef.value);
   }
+});
+
+// Expose loadBookmarks so parent can trigger reload
+defineExpose({
+  loadBookmarks
 });
 </script>
 
