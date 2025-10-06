@@ -868,8 +868,8 @@ export class Database {
         participant.type,
         participant.model,
         participant.systemPrompt,
-        original.settings ? JSON.parse(JSON.stringify(original.settings)) : undefined,
-        original.contextManagement ? JSON.parse(JSON.stringify(original.contextManagement)) : undefined
+        participant.settings ? JSON.parse(JSON.stringify(participant.settings)) : undefined,
+        participant.contextManagement ? JSON.parse(JSON.stringify(participant.contextManagement)) : undefined
       );
       // We need to mirror this flag as well, by default they are active
       if (!participant.isActive) {
