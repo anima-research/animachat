@@ -716,6 +716,9 @@ export class Database {
     
     this.conversationMessages.set(conversation.id, []);
 
+    // manually set as loaded to avoid duplicate loading
+    this.conversationsLastAccessedTimes.set(conversation.id, new Date());
+
     await this.logUserEvent(conversation.userId, 'conversation_created', conversation);
     
     // Create default participants
