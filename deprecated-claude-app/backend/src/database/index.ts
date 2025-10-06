@@ -599,6 +599,9 @@ export class Database {
     this.usersByEmail.set(email, user.id);
     this.userConversations.set(user.id, new Set());
     this.passwordHashes.set(email, hashedPassword);
+
+    // Set user as loaded to avoid duplicate loading
+    this.userLastAccessedTimes.set(user.id, new Date());
     
     // Store password separately (not in User object)
     this.logEvent('user_created', { user, passwordHash: hashedPassword });
