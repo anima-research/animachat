@@ -833,7 +833,7 @@ export class Database {
       original.systemPrompt,
       original.settings,
       original.format,
-      original.contextManagement
+      original.contextManagement ? JSON.parse(JSON.stringify(original.contextManagement)) : undefined
     );
     
     // carry over prefill user message
@@ -865,8 +865,8 @@ export class Database {
         participant.type,
         participant.model,
         participant.systemPrompt,
-        participant.settings,
-        participant.contextManagement
+        original.settings ? JSON.parse(JSON.stringify(original.settings)) : undefined,
+        original.contextManagement ? JSON.parse(JSON.stringify(original.contextManagement)) : undefined
       );
       // We need to mirror this flag as well, by default they are active
       if (!participant.isActive) {
