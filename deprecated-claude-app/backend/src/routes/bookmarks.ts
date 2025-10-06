@@ -17,7 +17,7 @@ export function createBookmarksRouter(db: Database): Router {
       });
 
       if (!req.userId) {
-        return res.status(404).json({ error: 'Need permission to access, please specify user id' });
+        return res.status(401).json({ error: 'Unauthorized' });
       }
 
       const { conversationId, messageId, branchId, label } = schema.parse(req.body);
@@ -51,7 +51,7 @@ export function createBookmarksRouter(db: Database): Router {
       const { messageId, branchId } = req.params;
 
       if (!req.userId) {
-        return res.status(404).json({ error: 'Need permission to access, please specify user id' });
+        return res.status(401).json({ error: 'Unauthorized' });
       }
 
       // Get the bookmark to verify ownership
@@ -85,7 +85,7 @@ export function createBookmarksRouter(db: Database): Router {
       const { conversationId } = req.params;
 
       if (!req.userId) {
-        return res.status(404).json({ error: 'Need permission to access, please specify user id' });
+        return res.status(401).json({ error: 'Unauthorized' });
       }
 
       // Verify the user owns the conversation
