@@ -16,10 +16,14 @@ export function createBookmarksRouter(db: Database): Router {
         label: z.string().min(1).max(200)
       });
 
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
       const { conversationId, messageId, branchId, label } = schema.parse(req.body);
 
       // Verify the user owns the conversation
-      const conversation = await db.getConversation(conversationId);
+      const conversation = await db.getConversation(conversationId, req.userId);
       if (!conversation || conversation.userId !== req.userId) {
         return res.status(404).json({ error: 'Conversation not found' });
       }
@@ -46,6 +50,10 @@ export function createBookmarksRouter(db: Database): Router {
     try {
       const { messageId, branchId } = req.params;
 
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
       // Get the bookmark to verify ownership
       const bookmark = await db.getBookmarkForBranch(messageId, branchId);
       if (!bookmark) {
@@ -53,7 +61,7 @@ export function createBookmarksRouter(db: Database): Router {
       }
 
       // Verify the user owns the conversation
-      const conversation = await db.getConversation(bookmark.conversationId);
+      const conversation = await db.getConversation(bookmark.conversationId, req.userId);
       if (!conversation || conversation.userId !== req.userId) {
         return res.status(404).json({ error: 'Bookmark not found' });
       }
@@ -76,8 +84,12 @@ export function createBookmarksRouter(db: Database): Router {
     try {
       const { conversationId } = req.params;
 
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
       // Verify the user owns the conversation
-      const conversation = await db.getConversation(conversationId);
+      const conversation = await db.getConversation(conversationId, req.userId);
       if (!conversation || conversation.userId !== req.userId) {
         return res.status(404).json({ error: 'Conversation not found' });
       }
