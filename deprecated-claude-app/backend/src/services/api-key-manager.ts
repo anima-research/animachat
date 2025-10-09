@@ -147,7 +147,13 @@ export class ApiKeyManager {
             baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
           }
         } : null;
-
+      
+      case 'mock':
+        return {
+          source: 'config',
+          credentials: {}
+        };
+      
       default:
         return null;
     }
