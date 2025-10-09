@@ -6,7 +6,7 @@ import { OpenRouterService } from './openrouter.js';
 import { OpenAICompatibleService } from './openai-compatible.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
-import { MockModelService } from './mock-model.js';
+import { MockService } from './mock-service.js';
 
 // Internal format type that includes 'messages' mode
 type InternalConversationFormat = ConversationFormat | 'messages';
@@ -14,7 +14,7 @@ type InternalConversationFormat = ConversationFormat | 'messages';
 export class InferenceService {
   private bedrockService: BedrockService;
   private anthropicService: AnthropicService;
-  private mockModelService: MockModelService;
+  private mockService: MockService;
   private apiKeyManager: ApiKeyManager;
   private modelLoader: ModelLoader;
   private db: Database;
@@ -25,7 +25,7 @@ export class InferenceService {
     this.modelLoader = ModelLoader.getInstance();
     this.bedrockService = new BedrockService(db);
     this.anthropicService = new AnthropicService(db);
-    this.mockModelService = new MockModelService();
+    this.mockService = new MockService();
   }
 
   /**
@@ -87,7 +87,7 @@ export class InferenceService {
         apiSystemPrompt = undefined; // System prompt is included in messages for OpenRouter
         break;
       case 'mock':
-        apiMessages = this.toPlainMessagesForPrompt(formattedMessages);
+        apiMessages = this.mockService.formatMessagesForMock(formattedMessages);
         break;
       default:
         throw new Error(`Unknown provider: ${model.provider}`);
@@ -164,7 +164,7 @@ export class InferenceService {
       : trackingOnChunk;
 
     if (model.provider === 'mock') {
-      await this.mockModelService.streamCompletion(
+      await this.mockService.streamCompletion(
         model.providerModelId,
         formattedMessages,
         systemPrompt,
@@ -272,21 +272,6 @@ export class InferenceService {
       return activeBranch?.content || '';
     }).join(' ');
     return Math.ceil(text.length / 4);
-  }
-
-  private toPlainMessagesForPrompt(messages: Message[]): Array<{ role: Message['branches'][number]['role']; content: string }> {
-    const plain: Array<{ role: Message['branches'][number]['role']; content: string }> = [];
-    for (const message of messages) {
-      const activeBranch = message.branches.find(b => b.id === message.activeBranchId) || message.branches[0];
-      if (!activeBranch) {
-        continue;
-      }
-      plain.push({
-        role: activeBranch.role,
-        content: activeBranch.content || ''
-      });
-    }
-    return plain;
   }
 
   async validateApiKey(provider: string, apiKey: string): Promise<boolean> {

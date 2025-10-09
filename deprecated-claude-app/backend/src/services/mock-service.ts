@@ -2,7 +2,23 @@ import { Message, ModelSettings } from '@deprecated-claude/shared';
 
 const WORDS = ['bees', 'watermelon', 'juniper'];
 
-export class MockModelService {
+export class MockService {
+  formatMessagesForMock(
+    messages: Message[]
+  ): Array<{ role: Message['branches'][number]['role']; content: string }> {
+    const formatted: Array<{ role: Message['branches'][number]['role']; content: string }> = [];
+    for (const message of messages) {
+      const branch = message.branches.find(b => b.id === message.activeBranchId) || message.branches[0];
+      if (!branch) continue;
+      const normalized = branch.content.replace(/\s+/g, ' ').trim();
+      formatted.push({
+        role: branch.role,
+        content: normalized
+      });
+    }
+    return formatted;
+  }
+
   async streamCompletion(
     modelId: string,
     messages: Message[],
