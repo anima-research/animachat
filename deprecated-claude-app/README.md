@@ -90,6 +90,26 @@ npm run build
 - **Branch navigation**: Use left/right arrows to switch between versions
 - **Export conversations**: Download full conversation data as JSON
 
+## Smoke Test with k6
+
+1. **Start the backend with an isolated datastore (optional but recommended):**
+   ```bash
+   cd deprecated-claude-app
+   DATABASE_ROOT=./tmp/k6-data npm run dev:backend
+   ```
+   The `DATABASE_ROOT` (or `DB_ROOT`) environment variable directs the `Database` to a temporary folder so smoke tests do not mutate real data.
+2. **Execute the smoke test from another terminal:**
+   ```bash
+   cd deprecated-claude-app
+   k6 run backend/scripts/k6-smoke-test.js \
+     --env BASE_URL=http://localhost:3010/api \
+     --env TEST_EMAIL=test@example.com \
+     --env TEST_PASSWORD=password123 \
+     --env TEST_MODEL_ID=mock-claude-local
+   ```
+   The default `mock-claude-local` model streams text locally so you can test end-to-end flows without talking to a real provider. Override the environment variables to target a different deployment, account, or model as needed.
+3. **Review the k6 summary output** and resolve any failed checks before increasing load.
+
 ## API Endpoints
 
 ### Authentication

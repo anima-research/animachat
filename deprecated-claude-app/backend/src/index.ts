@@ -24,7 +24,8 @@ dotenv.config();
 const app = express();
 
 // Initialize database
-const db = new Database();
+const DATABASE_ROOT = process.env.DATABASE_ROOT || process.env.DB_ROOT || './data';
+const db = new Database(DATABASE_ROOT);
 
 // HTTPS configuration
 const USE_HTTPS = process.env.USE_HTTPS === 'true';

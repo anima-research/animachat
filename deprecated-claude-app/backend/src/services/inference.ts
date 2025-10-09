@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage, Conversation } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ModelSettings, Participant, Conversation } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
@@ -6,6 +6,7 @@ import { OpenRouterService } from './openrouter.js';
 import { OpenAICompatibleService } from './openai-compatible.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
+import { MockModelService } from './mock-model.js';
 
 // Internal format type that includes 'messages' mode
 type InternalConversationFormat = ConversationFormat | 'messages';
@@ -13,6 +14,7 @@ type InternalConversationFormat = ConversationFormat | 'messages';
 export class InferenceService {
   private bedrockService: BedrockService;
   private anthropicService: AnthropicService;
+  private mockModelService: MockModelService;
   private apiKeyManager: ApiKeyManager;
   private modelLoader: ModelLoader;
   private db: Database;
@@ -23,6 +25,7 @@ export class InferenceService {
     this.modelLoader = ModelLoader.getInstance();
     this.bedrockService = new BedrockService(db);
     this.anthropicService = new AnthropicService(db);
+    this.mockModelService = new MockModelService();
   }
 
   /**
@@ -82,6 +85,9 @@ export class InferenceService {
         const openRouterService = new OpenRouterService(this.db, undefined);
         apiMessages = openRouterService.formatMessagesForOpenRouter(formattedMessages, systemPrompt);
         apiSystemPrompt = undefined; // System prompt is included in messages for OpenRouter
+        break;
+      case 'mock':
+        apiMessages = this.toPlainMessagesForPrompt(formattedMessages);
         break;
       default:
         throw new Error(`Unknown provider: ${model.provider}`);
@@ -143,6 +149,33 @@ export class InferenceService {
       stopSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
     }
 
+    // Track token usage
+    let inputTokens = 0;
+    let outputTokens = 0;
+    const trackingOnChunk = async (chunk: string, isComplete: boolean) => {
+      await onChunk(chunk, isComplete);
+      // TODO: Implement accurate token counting
+      outputTokens += chunk.length / 4; // Rough estimate
+    };
+    
+    // Wrap chunk handler for messages mode to strip participant names
+    const finalOnChunk = actualFormat === 'messages' 
+      ? this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId)
+      : trackingOnChunk;
+
+    if (model.provider === 'mock') {
+      await this.mockModelService.streamCompletion(
+        model.providerModelId,
+        formattedMessages,
+        systemPrompt,
+        settings,
+        finalOnChunk,
+        stopSequences
+      );
+      inputTokens = this.estimateTokens(formattedMessages);
+      return;
+    }
+
     // Route to appropriate service based on provider
     // Get API key configuration
     const selectedKey = await this.apiKeyManager.getApiKeyForRequest(userId, model.provider, modelId);
@@ -157,20 +190,6 @@ export class InferenceService {
         throw new Error(`Rate limit exceeded. Try again in ${rateLimitCheck.retryAfter} seconds.`);
       }
     }
-
-    // Track token usage
-    let inputTokens = 0;
-    let outputTokens = 0;
-    const trackingOnChunk = async (chunk: string, isComplete: boolean) => {
-      await onChunk(chunk, isComplete);
-      // TODO: Implement accurate token counting
-      outputTokens += chunk.length / 4; // Rough estimate
-    };
-    
-    // Wrap chunk handler for messages mode to strip participant names
-    const finalOnChunk = actualFormat === 'messages' 
-      ? this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId)
-      : trackingOnChunk;
 
     if (model.provider === 'anthropic') {
       const anthropicService = new AnthropicService(
@@ -255,15 +274,19 @@ export class InferenceService {
     return Math.ceil(text.length / 4);
   }
 
-  private async getUserApiKey(userId: string, provider: string): Promise<ApiKey | undefined> {
-    try {
-      const apiKeys = await this.db.getUserApiKeys(userId);
-      const key = apiKeys.find(k => k.provider === provider);
-      return key;
-    } catch (error) {
-      console.error('Error getting user API key:', error);
-      return undefined;
+  private toPlainMessagesForPrompt(messages: Message[]): Array<{ role: Message['branches'][number]['role']; content: string }> {
+    const plain: Array<{ role: Message['branches'][number]['role']; content: string }> = [];
+    for (const message of messages) {
+      const activeBranch = message.branches.find(b => b.id === message.activeBranchId) || message.branches[0];
+      if (!activeBranch) {
+        continue;
+      }
+      plain.push({
+        role: activeBranch.role,
+        content: activeBranch.content || ''
+      });
     }
+    return plain;
   }
 
   async validateApiKey(provider: string, apiKey: string): Promise<boolean> {
@@ -567,8 +590,8 @@ export class InferenceService {
   }
   
   private providerSupportsPrefill(provider: string): boolean {
-    // Only Anthropic and Bedrock (Claude models) reliably support prefill
-    return provider === 'anthropic' || provider === 'bedrock';
+    // Only Anthropic, Bedrock, and the mock local model support prefill
+    return provider === 'anthropic' || provider === 'bedrock' || provider === 'mock';
   }
   
   private createMessagesModeChunkHandler(

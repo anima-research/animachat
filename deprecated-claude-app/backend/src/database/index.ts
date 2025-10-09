@@ -50,10 +50,10 @@ export class Database {
   private sharesStore: SharesStore;
   private initialized: boolean = false;
 
-  constructor() {
-    this.eventStore = new EventStore('./data', 'mainEvents.jsonl');
-    this.userEventStore = new BulkEventStore("./data/users");
-    this.conversationEventStore = new BulkEventStore("./data/conversations");
+  constructor(rootPath: string = './data') {
+    this.eventStore = new EventStore(rootPath, 'mainEvents.jsonl');
+    this.userEventStore = new BulkEventStore(path.join(rootPath, "users"));
+    this.conversationEventStore = new BulkEventStore(path.join(rootPath, "conversations"));
 
     this.sharesStore = new SharesStore();
   }
