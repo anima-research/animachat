@@ -17,7 +17,7 @@ export class BulkEventStore {
     maxFilesOpened : number;
     
     // base dir might be like './data/conversations' or './data/users'
-    constructor(baseDir: string, maxFilesOpened: number = 100) {
+    constructor(baseDir: string, maxFilesOpened: number = 1000000) {
         this.baseDir = baseDir;
         this.maxFilesOpened = maxFilesOpened;
     }

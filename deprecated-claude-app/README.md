@@ -110,6 +110,26 @@ npm run build
    The default `mock-claude-local` model streams text locally so you can test end-to-end flows without talking to a real provider. Override the environment variables to target a different deployment, account, or model as needed.
 3. **Review the k6 summary output** and resolve any failed checks before increasing load.
 
+## Load Test with k6
+
+1. **Launch the backend against disposable data:**
+   ```bash
+   DATABASE_ROOT=./tmp/load-test-data npm run dev:backend
+   ```
+2. **Run the load script with ramping options:**
+   ```bash
+   k6 run backend/scripts/k6-load-test.js \
+     --env BASE_URL=http://localhost:3010/api \
+     --env TEST_EMAIL=test@example.com \
+     --env TEST_PASSWORD=password123 \
+     --env START_RATE=20 \
+     --env PRE_VUS=120 \
+     --env MAX_VUS=400 \
+     --env STAGES='[{"target":100,"duration":"2m"},{"target":200,"duration":"2m"},{"target":300,"duration":"2m"},{"target":0,"duration":"1m"}]'
+   ```
+   Each iteration now sends a chat message over WebSocket, streams the mock response, triggers a regenerate to create an alternate branch, and then archives the conversation. Adjust the arrival rate, virtual users, or stages to explore higher load or longer burn-in periods.
+3. **Watch the backend logs and resource usage** during the run to spot failure thresholds or saturation points.
+
 ## API Endpoints
 
 ### Authentication
