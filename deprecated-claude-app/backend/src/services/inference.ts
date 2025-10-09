@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ModelSettings, Participant, Conversation } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage, Conversation } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
