@@ -8,12 +8,41 @@ const BASE_URL = (__ENV.BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, '');
 const TEST_EMAIL = __ENV.TEST_EMAIL || 'test@example.com';
 const TEST_PASSWORD = __ENV.TEST_PASSWORD || 'password123';
 const TEST_MODEL_ID = __ENV.TEST_MODEL_ID || 'mock-claude-local';
+const USE_WEBSOCKET = (__ENV.USE_WEBSOCKET || 'true').toLowerCase() === 'true';
 
 const DEFAULT_STAGES = [
-  { target: 1000, duration: '2m' },
+  { target: 100, duration: '5m' },
+  { target: 200, duration: '5m' },
+  { target: 400, duration: '5m' },
+  { target: 600, duration: '5m' },
+  { target: 800, duration: '5m' },
+  { target: 1000, duration: '5m' },
   { target: 0, duration: '1m' }
 ];
 
+export const options = {
+  scenarios: {
+    load: {
+      executor: 'ramping-arrival-rate',
+      startRate: Number(__ENV.START_RATE || 20),
+      timeUnit: __ENV.TIME_UNIT || '1s',
+      preAllocatedVUs: Number(__ENV.PRE_VUS || 120),
+      maxVUs: Number(__ENV.MAX_VUS || 400),
+      stages: parseStages()
+    }
+  },
+  thresholds: {
+    http_req_failed: [
+      { threshold: 'rate==0', abortOnFail: true }
+    ],
+    http_req_duration: [
+      { threshold: 'p(95)<1500', abortOnFail: true, delayAbortEval: '30s' }
+    ],
+    checks: [
+      { threshold: 'rate>0.95', abortOnFail: true }
+    ]
+  }
+};
 function parseStages() {
   if (!__ENV.STAGES) {
     return DEFAULT_STAGES;
@@ -30,23 +59,6 @@ function parseStages() {
   return DEFAULT_STAGES;
 }
 
-export const options = {
-  scenarios: {
-    load: {
-      executor: 'ramping-arrival-rate',
-      startRate: Number(__ENV.START_RATE || 20),
-      timeUnit: __ENV.TIME_UNIT || '1s',
-      preAllocatedVUs: Number(__ENV.PRE_VUS || 120),
-      maxVUs: Number(__ENV.MAX_VUS || 400),
-      stages: parseStages()
-    }
-  },
-  thresholds: {
-    http_req_failed: ['rate<0.05'],
-    http_req_duration: ['p(95)<1500'],
-    checks: ['rate>0.95']
-  }
-};
 
 function jsonHeaders(token) {
   return {
@@ -109,6 +121,25 @@ export default function runLoadTest(data) {
   }
 
   const conversationId = createRes.json('id');
+  if (USE_WEBSOCKET) {
+    runWebSocketFlow(conversationId, headers, suffix, data.token);
+  } else {
+    runHttpOnlyFlow(conversationId, headers, suffix);
+  }
+
+  http.post(
+    `${BASE_URL}/conversations/${conversationId}/archive`,
+    JSON.stringify({ reason: 'k6 load test cleanup' }),
+    {
+      headers,
+      tags: { name: 'conversations_archive', url: '/conversations/:id/archive' }
+    }
+  );
+
+  sleep(0.05);
+}
+
+function runWebSocketFlow(conversationId, headers, suffix, token) {
   const participantsRes = http.get(
     `${BASE_URL}/participants/conversation/${conversationId}`,
     {
@@ -116,6 +147,7 @@ export default function runLoadTest(data) {
       tags: { name: 'participants_list', url: '/participants/conversation/:id' }
     }
   );
+
   let responderId;
   if (participantsRes.status === 200) {
     const participants = participantsRes.json();
@@ -123,13 +155,13 @@ export default function runLoadTest(data) {
     responderId = assistant?.id;
   }
 
-  const wsUrl = buildWebSocketUrl(BASE_URL, data.token);
+  const wsUrl = buildWebSocketUrl(BASE_URL, token);
   let assistantMessageId;
   let assistantPrimaryBranchId;
   let alternateBranchId;
   let regenerateSent = false;
   let regenerateComplete = false;
-  
+
   const wsRes = ws.connect(wsUrl, {}, (socket) => {
     socket.setTimeout(() => {
       if (!regenerateComplete) {
@@ -198,14 +230,109 @@ export default function runLoadTest(data) {
     });
   });
 
-  check(wsRes, {
+  const connected = check(wsRes, {
     'websocket connected': (res) => res && res.status === 101
   });
 
-  if (!assistantMessageId || !alternateBranchId) {
+  if (!connected || !assistantMessageId) {
+    return;
+  }
+
+  if (!alternateBranchId) {
     alternateBranchId = assistantPrimaryBranchId;
   }
 
+  loadConversationAndSwitchBranch(
+    conversationId,
+    headers,
+    assistantMessageId,
+    assistantPrimaryBranchId,
+    alternateBranchId
+  );
+}
+
+function runHttpOnlyFlow(conversationId, headers, suffix) {
+  const nowIso = new Date().toISOString();
+  const userMessageId = uuid();
+  const userBranchId = uuid();
+  const assistantMessageId = uuid();
+  const assistantPrimaryBranchId = uuid();
+  const alternateBranchId = uuid();
+
+  const importRes = http.post(
+    `${BASE_URL}/import/messages-raw`,
+    JSON.stringify({
+      conversationId,
+      messages: [
+        {
+          id: userMessageId,
+          order: 0,
+          activeBranchId: userBranchId,
+          branches: [
+            {
+              id: userBranchId,
+              content: `Load user message ${suffix}`,
+              role: 'user',
+              createdAt: nowIso,
+              parentBranchId: 'root'
+            }
+          ]
+        },
+        {
+          id: assistantMessageId,
+          order: 1,
+          activeBranchId: assistantPrimaryBranchId,
+          branches: [
+            {
+              id: assistantPrimaryBranchId,
+              content: `Primary response ${suffix}`,
+              role: 'assistant',
+              createdAt: nowIso,
+              parentBranchId: userBranchId,
+              model: TEST_MODEL_ID
+            },
+            {
+              id: alternateBranchId,
+              content: `Alternate response ${suffix}`,
+              role: 'assistant',
+              createdAt: nowIso,
+              parentBranchId: userBranchId,
+              model: TEST_MODEL_ID
+            }
+          ]
+        }
+      ]
+    }),
+    {
+      headers,
+      tags: { name: 'import_raw', url: '/import/messages-raw' }
+    }
+  );
+
+  const imported = check(importRes, {
+    'messages imported': (res) => res.status === 200 && res.json('success') !== false
+  });
+
+  if (!imported) {
+    return;
+  }
+
+  loadConversationAndSwitchBranch(
+    conversationId,
+    headers,
+    assistantMessageId,
+    assistantPrimaryBranchId,
+    alternateBranchId
+  );
+}
+
+function loadConversationAndSwitchBranch(
+  conversationId,
+  headers,
+  assistantMessageId,
+  primaryBranchId,
+  alternateBranchId
+) {
   const getRes = http.get(`${BASE_URL}/conversations/${conversationId}`, {
     headers,
     tags: { name: 'conversations_get', url: '/conversations/:id' }
@@ -224,9 +351,9 @@ export default function runLoadTest(data) {
 
   if (
     assistantMessageId &&
+    primaryBranchId &&
     alternateBranchId &&
-    assistantPrimaryBranchId &&
-    alternateBranchId !== assistantPrimaryBranchId
+    alternateBranchId !== primaryBranchId
   ) {
     http.post(
       `${BASE_URL}/conversations/${conversationId}/set-active-branch`,
@@ -240,17 +367,6 @@ export default function runLoadTest(data) {
       }
     );
   }
-
-  http.post(
-    `${BASE_URL}/conversations/${conversationId}/archive`,
-    JSON.stringify({ reason: 'k6 load test cleanup' }),
-    {
-      headers,
-      tags: { name: 'conversations_archive', url: '/conversations/:id/archive' }
-    }
-  );
-
-  sleep(0.05);
 }
 
 function uuid() {
