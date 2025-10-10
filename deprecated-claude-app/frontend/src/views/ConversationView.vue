@@ -1588,6 +1588,8 @@ function getProviderIcon(provider: string): string {
     case 'openai':
     case 'openai-compatible':
       return 'mdi-camera-iris';
+    case 'mock':
+      return 'mdi-robot';
     default:
       return 'mdi-robot-outline';
   }
