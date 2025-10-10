@@ -105,7 +105,6 @@ npm run build
      --env BASE_URL=http://localhost:3010/api \
      --env TEST_EMAIL=test@example.com \
      --env TEST_PASSWORD=password123 \
-     --env TEST_MODEL_ID=mock-claude-local
    ```
    The default `mock-claude-local` model streams text locally so you can test end-to-end flows without talking to a real provider. Override the environment variables to target a different deployment, account, or model as needed.
 3. **Review the k6 summary output** and resolve any failed checks before increasing load.
@@ -122,13 +121,12 @@ npm run build
      --env BASE_URL=http://localhost:3010/api \
      --env TEST_EMAIL=test@example.com \
      --env TEST_PASSWORD=password123 \
-     --env USE_WEBSOCKET=true \
+     --env USE_WEBSOCKET=false \
      --env START_RATE=20 \
      --env PRE_VUS=120 \
-     --env MAX_VUS=400 \
-     --env STAGES='[{"target":100,"duration":"2m"},{"target":200,"duration":"2m"},{"target":300,"duration":"2m"},{"target":0,"duration":"1m"}]'
+     --env MAX_VUS=400
    ```
-   `USE_WEBSOCKET=true` exercises the chat WebSocket path (sending a message, streaming the mock response, regenerating an alternate branch). Set `USE_WEBSOCKET=false` to import a small conversation and drive the same branch-swapping flow via pure HTTP, which is useful for isolating HTTP vs. WebSocket bottlenecks. Adjust the arrival rate, virtual users, or stages to explore higher load or longer burn-in periods. The script aborts automatically once any request fails or the latency thresholds are crossed, so you can incrementally increase the ramp until the run stops.
+   `USE_WEBSOCKET=true` exercises the chat WebSocket path (sending a message, streaming the mock response, regenerating an alternate branch). Set `USE_WEBSOCKET=false` to import a small conversation and drive the same branch-swapping flow via pure HTTP, which is useful for isolating HTTP vs. WebSocket bottlenecks. The script aborts automatically once any request fails or the latency thresholds are crossed, and incrementally increases the ramp until the run stops.
 3. **Watch the backend logs and resource usage** during the run to spot failure thresholds or saturation points.
 
 ## API Endpoints
