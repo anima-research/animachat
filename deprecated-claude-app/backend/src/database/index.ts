@@ -376,7 +376,10 @@ export class Database {
         };
         this.messages.set(message.id, message);
         const convMessages = this.conversationMessages.get(message.conversationId) || [];
-        convMessages.push(message.id);
+        // Only add if not already present (prevent duplicates)
+        if (!convMessages.includes(message.id)) {
+          convMessages.push(message.id);
+        }
         this.conversationMessages.set(message.conversationId, convMessages);
         
         // Update conversation timestamp

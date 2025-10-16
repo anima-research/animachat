@@ -1211,7 +1211,10 @@ function switchBranch(messageId: string, branchId: string) {
 }
 
 async function navigateToTreeBranch(messageId: string, branchId: string) {
-  console.log('Navigating to branch:', messageId, branchId);
+  console.log('=== NAVIGATE TO TREE BRANCH ===');
+  console.log('Target:', { messageId, branchId });
+  console.log('All messages count:', allMessages.value.length);
+  console.log('First 3 message IDs:', allMessages.value.slice(0, 3).map(m => m.id));
   
   // Build path from target branch back to root
   const pathToRoot: { messageId: string, branchId: string }[] = [];
@@ -1227,6 +1230,10 @@ async function navigateToTreeBranch(messageId: string, branchId: string) {
     
     if (!message) {
       console.error('Could not find message for branch:', currentBranchId);
+      console.log('Available messages:', allMessages.value.map(m => ({
+        id: m.id,
+        branchIds: m.branches.map(b => b.id)
+      })));
       break;
     }
     

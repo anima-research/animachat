@@ -369,13 +369,20 @@ export function createStore(): {
     },
     
         switchBranch(messageId: string, branchId: string) {
+      console.log('=== SWITCH BRANCH CALLED ===');
+      console.log('Params:', { messageId, branchId });
+      console.log('All messages count:', state.allMessages.length);
+      
       const messageIndex = state.allMessages.findIndex(m => m.id === messageId);
       if (messageIndex === -1) {
-        console.warn('switchBranch: Message not found:', messageId);
+        console.error('switchBranch: Message not found:', messageId);
+        console.log('Available message IDs:', state.allMessages.map(m => m.id));
         return;
       }
       
       const message = state.allMessages[messageIndex];
+      console.log('Found message at index:', messageIndex);
+      console.log('Message branches:', message.branches.map(b => ({ id: b.id, parentBranchId: b.parentBranchId })));
       
       // Skip if already on this branch
       if (message.activeBranchId === branchId) {
