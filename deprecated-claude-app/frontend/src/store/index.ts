@@ -209,8 +209,12 @@ export function createStore(): {
     
     async updateConversation(id: string, updates: Partial<Conversation>) {
       try {
+        console.log('[Store] Updating conversation:', id, 'with updates:', updates);
         const response = await api.patch(`/conversations/${id}`, updates);
         const updated = response.data;
+        console.log('[Store] API response:', response);
+        console.log('[Store] Updated conversation:', updated);
+        console.log('[Store] New settings:', JSON.stringify(updated?.settings, null, 2));
         
         // Update in list
         const index = state.conversations.findIndex(c => c.id === id);
@@ -623,6 +627,10 @@ export function createStore(): {
           const branch = message.branches.find(b => b.id === data.branchId);
           if (branch) {
             branch.content += data.content;
+            // Update content blocks if provided
+            if (data.contentBlocks) {
+              branch.contentBlocks = data.contentBlocks;
+            }
           }
         }
       });

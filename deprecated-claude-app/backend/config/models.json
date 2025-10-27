@@ -1,14 +1,15 @@
 {
   "models": [
     {
-      "id": "claude-sonnet-4.5",
-      "providerModelId": "claude-sonnet-4-5-20250929",
-      "displayName": "Claude Sonnet 4.5",
-      "shortName": "Sonnet 4.5",
+      "id": "claude-haiku-4.5",
+      "providerModelId": "claude-haiku-4-5-20251001",
+      "displayName": "Claude Haiku 4.5",
+      "shortName": "Haiku 4.5",
       "provider": "anthropic",
       "deprecated": false,
       "contextWindow": 200000,
-      "outputTokenLimit": 8192,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
       "settings": {
         "temperature": {
           "min": 0,
@@ -18,8 +19,44 @@
         },
         "maxTokens": {
           "min": 1,
-          "max": 8192,
-          "default": 1024
+          "max": 64000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-sonnet-4.5",
+      "providerModelId": "claude-sonnet-4-5-20250929",
+      "displayName": "Claude Sonnet 4.5",
+      "shortName": "Sonnet 4.5",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 64000,
+          "default": 8096
         },
         "topP": {
           "min": 0,
@@ -43,7 +80,8 @@
       "provider": "anthropic",
       "deprecated": false,
       "contextWindow": 200000,
-      "outputTokenLimit": 8192,
+      "outputTokenLimit": 32000,
+      "supportsThinking": true,
       "settings": {
         "temperature": {
           "min": 0,
@@ -53,8 +91,8 @@
         },
         "maxTokens": {
           "min": 1,
-          "max": 8192,
-          "default": 1024
+          "max": 32000,
+          "default": 8096
         },
         "topP": {
           "min": 0,
@@ -78,7 +116,8 @@
       "provider": "anthropic",
       "deprecated": false,
       "contextWindow": 200000,
-      "outputTokenLimit": 8192,
+      "outputTokenLimit": 32000,
+      "supportsThinking": true,
       "settings": {
         "temperature": {
           "min": 0,
@@ -88,8 +127,8 @@
         },
         "maxTokens": {
           "min": 1,
-          "max": 8192,
-          "default": 1024
+          "max": 32000,
+          "default": 8096
         },
         "topP": {
           "min": 0,
@@ -113,7 +152,8 @@
       "provider": "anthropic",
       "deprecated": false,
       "contextWindow": 200000,
-      "outputTokenLimit": 8192,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
       "settings": {
         "temperature": {
           "min": 0,
@@ -123,8 +163,8 @@
         },
         "maxTokens": {
           "min": 1,
-          "max": 8192,
-          "default": 1024
+          "max": 64000,
+          "default": 8096
         },
         "topP": {
           "min": 0,
@@ -148,7 +188,8 @@
       "provider": "anthropic",
       "deprecated": false,
       "contextWindow": 200000,
-      "outputTokenLimit": 8192,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
       "settings": {
         "temperature": {
           "min": 0,
@@ -158,8 +199,8 @@
         },
         "maxTokens": {
           "min": 1,
-          "max": 8192,
-          "default": 1024
+          "max": 64000,
+          "default": 8096
         },
         "topP": {
           "min": 0,

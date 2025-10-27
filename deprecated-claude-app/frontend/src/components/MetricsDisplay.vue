@@ -61,6 +61,10 @@
             <span>Last Output:</span>
             <span>{{ formatNumber(curModelMetrics.lastCompletion.outputTokens) }}</span>
           </div>
+          <div class="detail-row" v-if="curModelMetrics?.lastCompletion?.thinkingTokens">
+            <span>Last Thinking:</span>
+            <span class="thinking-tokens">{{ formatNumber(curModelMetrics.lastCompletion.thinkingTokens) }}</span>
+          </div>
           <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
             <span>Last Cached:</span>
             <span>{{ formatNumber(curModelMetrics.lastCompletion.cachedTokens) }} 
@@ -420,6 +424,10 @@ const formatCost = (cost: number): string => {
 .cache-percentage {
   color: rgb(var(--v-theme-success));
   font-size: 0.75rem;
+}
+
+.thinking-tokens {
+  color: rgb(var(--v-theme-primary));
 }
 
 .savings {

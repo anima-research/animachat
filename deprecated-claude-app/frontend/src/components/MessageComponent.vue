@@ -92,6 +92,28 @@
         </div>
       </div>
       
+      <!-- Thinking blocks (if present) -->
+      <div v-if="thinkingBlocks.length > 0 && !isEditing" class="thinking-section mb-3">
+        <v-expansion-panels variant="accordion">
+          <v-expansion-panel v-for="(block, index) in thinkingBlocks" :key="index">
+            <v-expansion-panel-title>
+              <v-icon size="small" class="mr-2">mdi-thought-bubble</v-icon>
+              <span class="text-caption">
+                {{ block.type === 'redacted_thinking' ? 'Thinking (Redacted)' : 'Thinking' }}
+              </span>
+            </v-expansion-panel-title>
+            <v-expansion-panel-text>
+              <div v-if="block.type === 'thinking'" class="thinking-content text-caption">
+                <pre style="white-space: pre-wrap; font-family: inherit;">{{ block.thinking }}</pre>
+              </div>
+              <div v-else-if="block.type === 'redacted_thinking'" class="text-caption text-grey">
+                <em>This thinking content has been redacted for safety reasons.</em>
+              </div>
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
+      </div>
+      
       <!-- Message content or edit mode -->
       <div v-if="!isEditing" class="message-content" v-html="renderedContent" />
       
@@ -480,6 +502,19 @@ const siblingIndex = computed(() => {
 // Check if branches are navigable (share the same parent)
 const hasNavigableBranches = computed(() => {
   return siblingBranches.value.length > 1;
+});
+
+// Extract thinking blocks from content blocks
+const thinkingBlocks = computed(() => {
+  const branch = currentBranch.value;
+  if (!branch.contentBlocks || branch.contentBlocks.length === 0) {
+    return [];
+  }
+  
+  // Filter for thinking and redacted_thinking blocks
+  return branch.contentBlocks.filter((block: any) => 
+    block.type === 'thinking' || block.type === 'redacted_thinking'
+  );
 });
 
 const renderedContent = computed(() => {

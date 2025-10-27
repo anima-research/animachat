@@ -113,6 +113,7 @@ export const TokenUsageSchema = z.object({
   completionTokens: z.number(),
   totalTokens: z.number(),
   cachedTokens: z.number().optional(),
+  thinkingTokens: z.number().optional(), // Thinking tokens used (for extended thinking)
   cost: z.number().optional()
 });
 

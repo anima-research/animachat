@@ -352,7 +352,24 @@ async function handleChatMessage(
   try {
     const inferenceModel = responder.model || conversation.model;
     const inferenceSystemPrompt = responder.systemPrompt || conversation.systemPrompt;
-    const inferenceSettings = responder.settings || conversation.settings;
+    
+    // For standard conversations, always use conversation settings
+    // For prefill/group chat, merge participant and conversation settings
+    const inferenceSettings = conversation.format === 'standard' 
+      ? conversation.settings
+      : {
+          temperature: responder.settings?.temperature ?? conversation.settings.temperature,
+          maxTokens: responder.settings?.maxTokens ?? conversation.settings.maxTokens,
+          topP: responder.settings?.topP ?? conversation.settings.topP,
+          topK: responder.settings?.topK ?? conversation.settings.topK,
+          // Always use conversation-level thinking settings
+          thinking: conversation.settings.thinking
+        };
+    
+    // Debug: Log the settings being used
+    console.log('[WebSocket] Conversation settings:', JSON.stringify(conversation.settings, null, 2));
+    console.log('[WebSocket] Responder settings:', JSON.stringify(responder.settings, null, 2));
+    console.log('[WebSocket] Final inference settings:', JSON.stringify(inferenceSettings, null, 2));
     
     // Log WebSocket event
     await llmLogger.logWebSocketEvent({
@@ -378,11 +395,16 @@ async function handleChatMessage(
       inferenceSystemPrompt || '',
       inferenceSettings,
       ws.userId,
-      async (chunk: string, isComplete: boolean) => {
+      async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
         // Update message content in memory (mutation is OK during streaming)
         const currentBranch = assistantMessage.branches.find((b: any) => b.id === assistantMessage.activeBranchId);
         if (currentBranch) {
           currentBranch.content += chunk;
+          
+          // Store content blocks if provided
+          if (contentBlocks && contentBlocks.length > 0) {
+            currentBranch.contentBlocks = contentBlocks;
+          }
           
           // Save partial content every 500 characters to prevent data loss on interruption
           if (currentBranch.content.length % 500 === 0 || isComplete) {
@@ -391,19 +413,28 @@ async function handleChatMessage(
               assistantMessage.conversationId,
               conversation.userId,
               assistantMessage.activeBranchId,
-              currentBranch.content
+              currentBranch.content,
+              currentBranch.contentBlocks
             );
           }
         }
 
         // Send stream update
-        ws.send(JSON.stringify({
+        const streamData = {
           type: 'stream',
           messageId: assistantMessage.id,
           branchId: assistantMessage.activeBranchId,
           content: chunk,
+          contentBlocks: contentBlocks,
           isComplete
-        }));
+        };
+        
+        // Log content blocks being sent
+        if (contentBlocks && contentBlocks.length > 0 && !chunk) {
+          console.log('[WebSocket] Sending content blocks:', contentBlocks.length, 'types:', contentBlocks.map(b => b.type));
+        }
+        
+        ws.send(JSON.stringify(streamData));
 
         if (isComplete) {
           // Final save and update conversation timestamp
@@ -413,7 +444,8 @@ async function handleChatMessage(
               assistantMessage.conversationId,
               conversation.userId,
               assistantMessage.activeBranchId,
-              currentBranch.content
+              currentBranch.content,
+              currentBranch.contentBlocks
             );
           }
           
@@ -540,7 +572,21 @@ async function handleRegenerate(
     if (participant) {
       responderModel = participant.model || conversation.model;
       responderSystemPrompt = participant.systemPrompt || conversation.systemPrompt;
-      responderSettings = participant.settings || conversation.settings;
+      
+      // For standard conversations, always use conversation settings
+      // For prefill/group chat, merge participant and conversation settings
+      if (conversation.format === 'standard') {
+        responderSettings = conversation.settings;
+      } else {
+        responderSettings = {
+          temperature: participant.settings?.temperature ?? conversation.settings.temperature,
+          maxTokens: participant.settings?.maxTokens ?? conversation.settings.maxTokens,
+          topP: participant.settings?.topP ?? conversation.settings.topP,
+          topK: participant.settings?.topK ?? conversation.settings.topK,
+          // Always use conversation-level thinking settings
+          thinking: conversation.settings.thinking
+        };
+      }
     }
   }
   
@@ -572,10 +618,15 @@ async function handleRegenerate(
       responderSystemPrompt || '',
       responderSettings,
       conversation.userId,
-      async (chunk: string, isComplete: boolean) => {
+      async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
         const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
         if (currentBranch) {
           currentBranch.content += chunk;
+          
+          // Store content blocks if provided
+          if (contentBlocks && contentBlocks.length > 0) {
+            currentBranch.contentBlocks = contentBlocks;
+          }
           
           // Save partial content periodically to prevent data loss
           if (currentBranch.content.length % 500 === 0 || isComplete) {
@@ -584,7 +635,8 @@ async function handleRegenerate(
               updatedMessage.conversationId,
               conversation.userId,
               updatedMessage.activeBranchId,
-              currentBranch.content
+              currentBranch.content,
+              currentBranch.contentBlocks
             );
           }
         }
@@ -594,6 +646,7 @@ async function handleRegenerate(
           messageId: updatedMessage.id,
           branchId: updatedMessage.activeBranchId,
           content: chunk,
+          contentBlocks: contentBlocks,
           isComplete
         }));
       },
@@ -772,7 +825,21 @@ async function handleEdit(
       responderParticipant = participants.find(p => p.id === responderId);
       if (responderParticipant) {
         responderSystemPrompt = responderParticipant.systemPrompt || conversation.systemPrompt;
-        responderSettings = responderParticipant.settings || conversation.settings;
+        
+        // For standard conversations, always use conversation settings
+        // For prefill/group chat, merge participant and conversation settings
+        if (conversation.format === 'standard') {
+          responderSettings = conversation.settings;
+        } else {
+          responderSettings = {
+            temperature: responderParticipant.settings?.temperature ?? conversation.settings.temperature,
+            maxTokens: responderParticipant.settings?.maxTokens ?? conversation.settings.maxTokens,
+            topP: responderParticipant.settings?.topP ?? conversation.settings.topP,
+            topK: responderParticipant.settings?.topK ?? conversation.settings.topK,
+            // Always use conversation-level thinking settings
+            thinking: conversation.settings.thinking
+          };
+        }
       }
     }
     
@@ -804,10 +871,15 @@ async function handleEdit(
         responderSystemPrompt || '',
         responderSettings,
         conversation.userId,
-        async (chunk: string, isComplete: boolean) => {
+        async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
           const currentBranch = targetMessage.branches.find(b => b.id === targetBranchId);
           if (currentBranch) {
             currentBranch.content += chunk;
+            
+            // Store content blocks if provided
+            if (contentBlocks && contentBlocks.length > 0) {
+              currentBranch.contentBlocks = contentBlocks;
+            }
             
             // Save partial content periodically
             if (currentBranch.content.length % 500 === 0 || isComplete) {
@@ -816,7 +888,8 @@ async function handleEdit(
                 targetMessage.conversationId,
                 conversation.userId!,
                 targetBranchId,
-                currentBranch.content
+                currentBranch.content,
+                currentBranch.contentBlocks
               );
             }
           }
@@ -826,6 +899,7 @@ async function handleEdit(
             messageId: targetMessage.id,
             branchId: targetBranchId,
             content: chunk,
+            contentBlocks: contentBlocks,
             isComplete
           }));
         },
@@ -1026,17 +1100,28 @@ async function handleContinue(
       modelConfig,
       messagesWithNewAssistant,
       responder.systemPrompt || conversation.systemPrompt || '',
-      responder.settings || conversation.settings || {
-        temperature: 1.0,
-        maxTokens: 1024
-      },
+      conversation.format === 'standard'
+        ? conversation.settings || { temperature: 1.0, maxTokens: 1024 }
+        : {
+            temperature: responder.settings?.temperature ?? conversation.settings?.temperature ?? 1.0,
+            maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 1024,
+            topP: responder.settings?.topP ?? conversation.settings?.topP,
+            topK: responder.settings?.topK ?? conversation.settings?.topK,
+            // Always use conversation-level thinking settings
+            thinking: conversation.settings?.thinking
+          },
       ws.userId!,
-      async (chunk: string, isComplete: boolean) => {
+      async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
         assistantBranch.content += chunk;
+        
+        // Store content blocks if provided
+        if (contentBlocks && contentBlocks.length > 0) {
+          assistantBranch.contentBlocks = contentBlocks;
+        }
         
         // Save partial content periodically
         if (assistantBranch.content.length % 500 === 0 || isComplete) {
-          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content);
+          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
         }
         
         ws.send(JSON.stringify({
@@ -1044,12 +1129,13 @@ async function handleContinue(
           messageId: assistantMessage.id,
           branchId: assistantBranch.id,
           content: chunk,
+          contentBlocks: contentBlocks,
           isComplete
         }));
 
         if (isComplete) {
           // Final save
-          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content);
+          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
           
           // Send updated conversation
           const updatedConversation = await db.getConversation(conversationId, conversation.userId);

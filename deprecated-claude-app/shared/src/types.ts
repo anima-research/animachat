@@ -27,6 +27,7 @@ export const ModelSchema = z.object({
   deprecated: z.boolean(),
   contextWindow: z.number(),
   outputTokenLimit: z.number(),
+  supportsThinking: z.boolean().optional(), // Whether the model supports extended thinking
   settings: z.object({
     temperature: z.object({
       min: z.number(),
@@ -61,7 +62,11 @@ export const ModelSettingsSchema = z.object({
   temperature: z.number(),
   maxTokens: z.number(),
   topP: z.number().optional(),
-  topK: z.number().optional()
+  topK: z.number().optional(),
+  thinking: z.object({
+    enabled: z.boolean(),
+    budgetTokens: z.number().min(1024)
+  }).optional()
 });
 
 export type ModelSettings = z.infer<typeof ModelSettingsSchema>;
@@ -136,10 +141,36 @@ export const BookmarkSchema = z.object({
 
 export type Bookmark = z.infer<typeof BookmarkSchema>;
 
+// Content block types for messages
+export const TextContentBlockSchema = z.object({
+  type: z.literal('text'),
+  text: z.string()
+});
+
+export const ThinkingContentBlockSchema = z.object({
+  type: z.literal('thinking'),
+  thinking: z.string(),
+  signature: z.string().optional() // Encrypted thinking signature
+});
+
+export const RedactedThinkingContentBlockSchema = z.object({
+  type: z.literal('redacted_thinking'),
+  data: z.string() // Encrypted thinking data
+});
+
+export const ContentBlockSchema = z.discriminatedUnion('type', [
+  TextContentBlockSchema,
+  ThinkingContentBlockSchema,
+  RedactedThinkingContentBlockSchema
+]);
+
+export type ContentBlock = z.infer<typeof ContentBlockSchema>;
+
 // Message types
 export const MessageBranchSchema = z.object({
   id: z.string().uuid(),
-  content: z.string(),
+  content: z.string(), // Main text content (for backward compatibility)
+  contentBlocks: z.array(ContentBlockSchema).optional(), // Structured content blocks
   role: z.enum(['user', 'assistant', 'system']),
   participantId: z.string().uuid().optional(), // Link to participant
   createdAt: z.date(),

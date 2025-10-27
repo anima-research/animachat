@@ -92,7 +92,9 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
+      console.log('[API] Updating conversation with:', JSON.stringify(req.body, null, 2));
       const updated = await db.updateConversation(req.params.id, conversation.userId, req.body);
+      console.log('[API] Updated conversation settings:', JSON.stringify(updated?.settings, null, 2));
       res.json(updated);
     } catch (error) {
       console.error('Update conversation error:', error);

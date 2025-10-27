@@ -1181,7 +1181,7 @@ export class Database {
     await this.logConversationEvent(conversationId, 'message_created', message);
   }
   
-  async updateMessageContent(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string, content: string): Promise<boolean> {
+  async updateMessageContent(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string, content: string, contentBlocks?: any[]): Promise<boolean> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
     
@@ -1191,14 +1191,14 @@ export class Database {
     // Create new message object with updated content
     const updatedBranches = message.branches.map(b => 
       b.id === branchId 
-        ? { ...b, content }
+        ? { ...b, content, contentBlocks }
         : b
     );
     const updated = { ...message, branches: updatedBranches };
     this.messages.set(messageId, updated);
     
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'message_content_updated', { messageId, branchId, content });
+    await this.logConversationEvent(conversationId, 'message_content_updated', { messageId, branchId, content, contentBlocks: contentBlocks ? true : false });
 
     return true;
   }

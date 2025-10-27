@@ -101,7 +101,7 @@ export class InferenceService {
     systemPrompt: string | undefined,
     settings: ModelSettings,
     userId: string,
-    onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
+    onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[]) => Promise<void>,
     format: ConversationFormat = 'standard',
     participants: Participant[] = [],
     responderId?: string,
@@ -161,8 +161,8 @@ export class InferenceService {
     // Track token usage
     let inputTokens = 0;
     let outputTokens = 0;
-    const trackingOnChunk = async (chunk: string, isComplete: boolean) => {
-      await onChunk(chunk, isComplete);
+    const trackingOnChunk = async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
+      await onChunk(chunk, isComplete, contentBlocks);
       // TODO: Implement accurate token counting
       outputTokens += chunk.length / 4; // Rough estimate
     };
@@ -572,14 +572,14 @@ export class InferenceService {
   }
   
   private createMessagesModeChunkHandler(
-    originalOnChunk: (chunk: string, isComplete: boolean) => Promise<void>,
+    originalOnChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[]) => Promise<void>,
     participants: Participant[],
     responderId?: string
-  ): (chunk: string, isComplete: boolean) => Promise<void> {
+  ): (chunk: string, isComplete: boolean, contentBlocks?: any[]) => Promise<void> {
     let buffer = '';
     let nameStripped = false;
     
-    return async (chunk: string, isComplete: boolean) => {
+    return async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
       buffer += chunk;
       
       if (!nameStripped) {
@@ -601,26 +601,26 @@ export class InferenceService {
           
           // If we have content after stripping, send it
           if (buffer.length > 0) {
-            await originalOnChunk(buffer, false);
+            await originalOnChunk(buffer, false, contentBlocks);
             buffer = '';
           }
         } else if (buffer.length > responderName.length + 2) {
           // If we have enough buffer and no name match, assume no name prefix
           nameStripped = true;
-          await originalOnChunk(buffer, false);
+          await originalOnChunk(buffer, false, contentBlocks);
           buffer = '';
         }
       } else {
         // Name already stripped, just pass through
-        await originalOnChunk(chunk, false);
+        await originalOnChunk(chunk, false, contentBlocks);
         buffer = '';
       }
       
       // Handle completion
       if (isComplete && buffer.length > 0) {
-        await originalOnChunk(buffer, true);
+        await originalOnChunk(buffer, true, contentBlocks);
       } else if (isComplete) {
-        await originalOnChunk('', true);
+        await originalOnChunk('', true, contentBlocks);
       }
     };
   }

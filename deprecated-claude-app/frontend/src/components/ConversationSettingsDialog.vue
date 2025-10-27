@@ -215,6 +215,50 @@
               </template>
             </v-slider>
           </div>
+          
+          <!-- Extended Thinking (if supported) -->
+          <div v-if="selectedModel?.supportsThinking" class="mt-4">
+            <v-checkbox
+              v-model="thinkingEnabled"
+              label="Enable Extended Thinking"
+              density="compact"
+            >
+              <template v-slot:label>
+                Enable Extended Thinking
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small" class="ml-1">
+                      mdi-help-circle-outline
+                    </v-icon>
+                  </template>
+                  Extended thinking allows Claude to show its step-by-step reasoning process before delivering the final answer.
+                </v-tooltip>
+              </template>
+            </v-checkbox>
+            
+            <v-slider
+              v-if="thinkingEnabled"
+              v-model="thinkingBudgetTokens"
+              :min="1024"
+              :max="32000"
+              :step="1024"
+              thumb-label
+              color="primary"
+              class="mt-2"
+            >
+              <template v-slot:label>
+                Thinking Budget (tokens)
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small" class="ml-1">
+                      mdi-help-circle-outline
+                    </v-icon>
+                  </template>
+                  Maximum tokens Claude can use for internal reasoning. Higher values enable more thorough analysis for complex problems. Minimum: 1024
+                </v-tooltip>
+              </template>
+            </v-slider>
+          </div>
         </div>
         
         <v-divider class="my-4" />
@@ -343,6 +387,8 @@ const emit = defineEmits<{
 
 const topPEnabled = ref(false);
 const topKEnabled = ref(false);
+const thinkingEnabled = ref(false);
+const thinkingBudgetTokens = ref(10000);
 
 const contextStrategy = ref('append');
 const rollingMaxTokens = ref(50000);
@@ -426,6 +472,8 @@ watch(() => props.conversation, async (conversation) => {
     // Set checkbox states based on whether values are defined
     topPEnabled.value = conversation.settings?.topP !== undefined;
     topKEnabled.value = conversation.settings?.topK !== undefined;
+    thinkingEnabled.value = conversation.settings?.thinking?.enabled || false;
+    thinkingBudgetTokens.value = conversation.settings?.thinking?.budgetTokens || 8000;
     
     // Load context management settings
     if (conversation.contextManagement) {
@@ -577,9 +625,11 @@ function resetToDefaults() {
       topK: undefined
     };
     
-    // Disable topP and topK by default
+    // Disable topP, topK, and thinking by default
     topPEnabled.value = false;
     topKEnabled.value = false;
+    thinkingEnabled.value = false;
+    thinkingBudgetTokens.value = 10000;
   }
 }
 
@@ -592,8 +642,16 @@ function save() {
     temperature: settings.value.settings.temperature,
     maxTokens: settings.value.settings.maxTokens,
     ...(topPEnabled.value && settings.value.settings.topP !== undefined && { topP: settings.value.settings.topP }),
-    ...(topKEnabled.value && settings.value.settings.topK !== undefined && { topK: settings.value.settings.topK })
+    ...(topKEnabled.value && settings.value.settings.topK !== undefined && { topK: settings.value.settings.topK }),
+    ...(thinkingEnabled.value && { thinking: { enabled: true, budgetTokens: thinkingBudgetTokens.value } })
   };
+  
+  // Debug log
+  console.log('[Settings Dialog] Saving settings:', {
+    thinkingEnabled: thinkingEnabled.value,
+    thinkingBudgetTokens: thinkingBudgetTokens.value,
+    finalSettings
+  });
   
   // Build context management settings
   let contextManagement: any = undefined;

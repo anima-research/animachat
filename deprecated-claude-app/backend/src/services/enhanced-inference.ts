@@ -40,7 +40,7 @@ export class EnhancedInferenceService {
     systemPrompt: string,
     settings: ModelSettings,
     userId: string,
-    streamCallback: (chunk: string, isComplete: boolean) => Promise<void>,
+    streamCallback: (chunk: string, isComplete: boolean, contentBlocks?: any[]) => Promise<void>,
     conversation?: Conversation,
     participant?: Participant,
     onMetrics?: (metrics: any) => Promise<void>,
@@ -84,11 +84,11 @@ export class EnhancedInferenceService {
     let cacheHit = false;
     
     // Create an enhanced callback to track token usage
-    const enhancedCallback = async (chunk: string, isComplete: boolean) => {
+    const enhancedCallback = async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
       // Track output tokens (simplified - in practice would use tokenizer)
       outputTokens += Math.ceil(chunk.length / 4);
       
-      await streamCallback(chunk, isComplete);
+      await streamCallback(chunk, isComplete, contentBlocks);
       
       if (isComplete) {
         // Log metrics

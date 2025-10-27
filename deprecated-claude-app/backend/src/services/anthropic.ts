@@ -20,7 +20,7 @@ export class AnthropicService {
     messages: Message[],
     systemPrompt: string | undefined,
     settings: ModelSettings,
-    onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
+    onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[]) => Promise<void>,
     stopSequences?: string[]
   ): Promise<void> {
     // Demo mode - simulate streaming response
@@ -73,9 +73,33 @@ export class AnthropicService {
         ...(settings.topK !== undefined && { top_k: settings.topK }),
         ...(systemContent && { system: systemContent }),
         ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences }),
+        ...(settings.thinking && settings.thinking.enabled && {
+          thinking: {
+            type: 'enabled',
+            budget_tokens: settings.thinking.budgetTokens
+          }
+        }),
         messages: anthropicMessages,
         stream: true
       };
+      
+      // Debug log for thinking configuration
+      console.log('[Anthropic API] Settings:', JSON.stringify({
+        thinking: settings.thinking,
+        thinkingEnabled: settings.thinking?.enabled,
+        hasThinkingInRequest: !!requestParams.thinking
+      }));
+      
+      // Log the EXACT request parameters being sent to Anthropic
+      console.log('[Anthropic API] Request params:', JSON.stringify({
+        model: requestParams.model,
+        max_tokens: requestParams.max_tokens,
+        thinking: requestParams.thinking,
+        temperature: requestParams.temperature,
+        top_p: requestParams.top_p,
+        top_k: requestParams.top_k,
+        messageCount: requestParams.messages.length
+      }, null, 2));
       
       // Log the full prompt being sent to the model
       console.log('\n========== FULL PROMPT TO ANTHROPIC ==========');
@@ -120,6 +144,9 @@ export class AnthropicService {
       
       startTime = Date.now();
       const chunks: string[] = [];
+      const contentBlocks: any[] = []; // Store all content blocks
+      let currentBlockIndex = -1;
+      let currentBlock: any = null;
       
       const stream = await this.client.messages.create(requestParams) as any;
 
@@ -148,10 +175,60 @@ export class AnthropicService {
           console.log('[Anthropic API] Cache metrics:', cacheMetrics);
         }
         
-        if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-          chunks.push(chunk.delta.text);
-          await onChunk(chunk.delta.text, false);
-        } else if (chunk.type === 'message_delta') {
+        // Handle content block start
+        if (chunk.type === 'content_block_start') {
+          currentBlockIndex = chunk.index;
+          currentBlock = { ...chunk.content_block };
+          
+          if (chunk.content_block.type === 'thinking') {
+            currentBlock.thinking = '';
+            console.log('[Anthropic API] Thinking block started');
+          } else if (chunk.content_block.type === 'redacted_thinking') {
+            currentBlock.data = '';
+            console.log('[Anthropic API] Redacted thinking block started');
+          } else if (chunk.content_block.type === 'text') {
+            currentBlock.text = '';
+          }
+          
+          contentBlocks[currentBlockIndex] = currentBlock;
+        }
+        
+        // Handle content block deltas
+        if (chunk.type === 'content_block_delta') {
+          if (chunk.delta.type === 'thinking_delta') {
+            // Thinking content
+            if (currentBlock && currentBlock.type === 'thinking') {
+              currentBlock.thinking += chunk.delta.thinking;
+              contentBlocks[currentBlockIndex] = currentBlock;
+              // Stream thinking content
+              await onChunk('', false, contentBlocks);
+            }
+          } else if (chunk.delta.type === 'text_delta') {
+            // Text content
+            if (currentBlock && currentBlock.type === 'text') {
+              currentBlock.text += chunk.delta.text;
+              contentBlocks[currentBlockIndex] = currentBlock;
+            }
+            chunks.push(chunk.delta.text);
+            await onChunk(chunk.delta.text, false, contentBlocks);
+          } else if (chunk.delta.type === 'signature_delta') {
+            // Signature for thinking block
+            if (currentBlock && currentBlock.type === 'thinking') {
+              currentBlock.signature = (currentBlock.signature || '') + chunk.delta.signature;
+              contentBlocks[currentBlockIndex] = currentBlock;
+            }
+          }
+        }
+        
+        // Handle content block stop
+        if (chunk.type === 'content_block_stop') {
+          if (currentBlock) {
+            console.log(`[Anthropic API] Content block ${currentBlock.type} completed`);
+            currentBlock = null;
+          }
+        }
+        
+        if (chunk.type === 'message_delta') {
           // Capture stop reason and usage
           if (chunk.delta?.stop_reason) {
             stopReason = chunk.delta.stop_reason;
@@ -165,13 +242,14 @@ export class AnthropicService {
             console.log(`[Anthropic API] Token usage:`, usage);
           }
         } else if (chunk.type === 'message_stop') {
-          await onChunk('', true);
+          await onChunk('', true, contentBlocks);
           
           // Log complete response summary
           const fullResponse = chunks.join('');
           console.log(`[Anthropic API] Response complete:`, {
             model: requestParams.model,
             totalLength: fullResponse.length,
+            contentBlocks: contentBlocks.length,
             stopReason,
             usage,
             truncated: stopReason === 'max_tokens',
@@ -237,9 +315,34 @@ export class AnthropicService {
     for (const message of messages) {
       const activeBranch = getActiveBranch(message);
       if (activeBranch && activeBranch.role !== 'system' && activeBranch.content.trim() !== '') {
+        let messageContent = activeBranch.content;
+        
+        // In prefill mode, thinking blocks should be wrapped in <thinking> tags and prepended
+        if (activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
+          // Check if we're in a prefill-style format (content contains participant names)
+          const isPrefillFormat = messageContent.includes(':') && messageContent.match(/^[A-Z][a-zA-Z\s]*:/m);
+          
+          if (isPrefillFormat) {
+            // Extract thinking blocks and wrap in XML tags
+            let thinkingContent = '';
+            for (const block of activeBranch.contentBlocks) {
+              if (block.type === 'thinking') {
+                thinkingContent += `<thinking>\n${block.thinking}\n</thinking>\n\n`;
+              } else if (block.type === 'redacted_thinking') {
+                thinkingContent += `<thinking>[Redacted for safety]</thinking>\n\n`;
+              }
+            }
+            
+            // Prepend thinking content to the message
+            if (thinkingContent) {
+              messageContent = thinkingContent + messageContent;
+            }
+          }
+        }
+        
         // Handle attachments for user messages
         if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
-          const contentParts: any[] = [{ type: 'text', text: activeBranch.content }];
+          const contentParts: any[] = [{ type: 'text', text: messageContent }];
           
           console.log(`Processing ${activeBranch.attachments.length} attachments for user message`);
           for (const attachment of activeBranch.attachments) {
@@ -282,7 +385,7 @@ export class AnthropicService {
               role: activeBranch.role as 'user' | 'assistant',
               content: [{
                 type: 'text',
-                text: activeBranch.content,
+                text: messageContent,
                 cache_control: (activeBranch as any)._cacheControl
               }]
             });
@@ -290,7 +393,7 @@ export class AnthropicService {
             // Regular string content
             formattedMessages.push({
               role: activeBranch.role as 'user' | 'assistant',
-              content: activeBranch.content
+              content: messageContent
             });
           }
         }
