@@ -1,4 +1,4 @@
-import { User, Conversation, Message, Participant, ApiKey, Bookmark } from '@deprecated-claude/shared';
+import { User, Conversation, Message, Participant, ApiKey, Bookmark, UserDefinedModel } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -10,6 +10,7 @@ import { EventStore, Event } from './persistence.js';
 import { BulkEventStore } from './bulk-event-store.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { SharesStore, SharedConversation } from './shares.js';
+import { encryption } from '../utils/encryption.js';
 
 // Metrics interface for tracking token usage
 export interface MetricsData {
@@ -41,6 +42,9 @@ export class Database {
 
   private bookmarks: Map<string, Bookmark> = new Map(); // bookmarkId -> Bookmark
   private branchBookmarks: Map<string, string> = new Map(); // `${messageId}-${branchId}` -> bookmarkId
+  
+  private userModels: Map<string, UserDefinedModel> = new Map(); // modelId -> UserDefinedModel
+  private userModelsByUser: Map<string, Set<string>> = new Map(); // userId -> modelIds
 
   private eventStore: EventStore;
   // per user, contains conversation metadata events and participant events
@@ -91,6 +95,23 @@ export class Database {
     // Create test user if no users exist
     if (this.users.size === 0) {
       await this.createTestUser();
+    } else {
+      // If test user exists but has no custom models, create test models
+      const testUserId = 'test-user-id-12345';
+      console.log(`Checking for test user ${testUserId}... exists: ${this.users.has(testUserId)}`);
+      if (this.users.has(testUserId)) {
+        // Ensure user is marked as loaded (in case they were created via old mainEvents)
+        this.userLastAccessedTimes.set(testUserId, new Date());
+        
+        const testUserModels = this.userModelsByUser.get(testUserId);
+        console.log(`Test user models: ${testUserModels ? testUserModels.size : 0}`);
+        if (!testUserModels || testUserModels.size === 0) {
+          console.log('🧪 Test user exists but has no custom models, creating them...');
+          await this.createTestModels(testUserId);
+        } else {
+          console.log('✅ Test user already has custom models');
+        }
+      }
     }
     
     this.initialized = true;
@@ -209,6 +230,50 @@ export class Database {
     console.log('🧪 Test user created:');
     console.log('   Email: test@example.com');
     console.log('   Password: password123');
+    
+    // Create test custom models
+    await this.createTestModels(testUser.id);
+  }
+
+  private async createTestModels(userId: string) {
+    // Test OpenRouter model
+    const openRouterModel: import('@deprecated-claude/shared').CreateUserModel = {
+      displayName: 'Llama 3.1 70B (Test)',
+      shortName: 'Llama 70B',
+      provider: 'openrouter',
+      providerModelId: 'meta-llama/llama-3.1-70b-instruct',
+      contextWindow: 131072,
+      outputTokenLimit: 4096,
+      supportsThinking: false,
+      settings: {
+        temperature: 1.0,
+        maxTokens: 2048,
+        topP: 0.9
+      }
+    };
+
+    // Test OpenAI-compatible model (Ollama)
+    const ollamaModel: import('@deprecated-claude/shared').CreateUserModel = {
+      displayName: 'Local Llama 3 (Test)',
+      shortName: 'Local Llama',
+      provider: 'openai-compatible',
+      providerModelId: 'llama3',
+      contextWindow: 8192,
+      outputTokenLimit: 2048,
+      supportsThinking: false,
+      settings: {
+        temperature: 1.0,
+        maxTokens: 2048
+      },
+      customEndpoint: {
+        baseUrl: 'http://localhost:11434'
+      }
+    };
+
+    await this.createUserModel(userId, openRouterModel);
+    await this.createUserModel(userId, ollamaModel);
+    
+    console.log('🧪 Test custom models created');
   }
 
   private async createDemoUser() {
@@ -282,24 +347,40 @@ export class Database {
       case 'api_key_created': {
         // Handle old event format (just apiKeyId, userId, provider)
         // These events don't contain enough data to reconstruct the API key
-        // So we'll just skip them - the API keys will need to be re-added
         if ('apiKeyId' in event.data && !('apiKey' in event.data)) {
           console.warn(`Skipping old format api_key_created event for key ${event.data.apiKeyId} - API keys need to be re-added`);
           break;
         }
         
-        // Handle new format (if we ever change to store full apiKey object)
+        // Handle new encrypted format
         const { apiKey, userId, masked } = event.data;
         if (!apiKey) {
           console.error('Skipping corrupted api_key_created event - missing apiKey data');
           break;
         }
         
+        // Decrypt credentials if they're encrypted
+        let credentials = apiKey.credentials;
+        if (apiKey.encryptedCredentials) {
+          try {
+            credentials = encryption.decrypt(apiKey.encryptedCredentials);
+          } catch (error) {
+            console.error(`Failed to decrypt credentials for API key ${apiKey.id}:`, error);
+            break; // Skip this key if decryption fails
+          }
+        }
+        
         const apiKeyWithDates = {
-          ...apiKey,
-          createdAt: new Date(apiKey.createdAt)
+          id: apiKey.id,
+          userId: apiKey.userId,
+          name: apiKey.name,
+          provider: apiKey.provider,
+          credentials,
+          createdAt: new Date(apiKey.createdAt),
+          updatedAt: new Date(apiKey.updatedAt || apiKey.createdAt)
         };
-        this.apiKeys.set(apiKey.id, apiKeyWithDates);
+        
+        this.apiKeys.set(apiKey.id, apiKeyWithDates as ApiKey);
         
         const user = this.users.get(userId);
         if (user) {
@@ -574,6 +655,46 @@ export class Database {
         break;
       }
 
+      // User model events
+      case 'user_model_created': {
+        const { model } = event.data;
+        const modelWithDates = {
+          ...model,
+          createdAt: new Date(model.createdAt),
+          updatedAt: new Date(model.updatedAt)
+        };
+        this.userModels.set(model.id, modelWithDates);
+        
+        const userModelIds = this.userModelsByUser.get(model.userId) || new Set();
+        userModelIds.add(model.id);
+        this.userModelsByUser.set(model.userId, userModelIds);
+        break;
+      }
+
+      case 'user_model_updated': {
+        const { modelId, updates } = event.data;
+        const model = this.userModels.get(modelId);
+        if (model) {
+          const updatesWithDates = { ...updates };
+          if (updates.updatedAt) {
+            updatesWithDates.updatedAt = new Date(updates.updatedAt);
+          }
+          const updated = { ...model, ...updatesWithDates };
+          this.userModels.set(modelId, updated);
+        }
+        break;
+      }
+
+      case 'user_model_deleted': {
+        const { modelId, userId } = event.data;
+        this.userModels.delete(modelId);
+        const userModelIds = this.userModelsByUser.get(userId);
+        if (userModelIds) {
+          userModelIds.delete(modelId);
+        }
+        break;
+      }
+
       // Add more cases as needed
       }
     } catch (error) {
@@ -615,10 +736,12 @@ export class Database {
   async getUserByEmail(email: string): Promise<User | null> {
     const userId = this.usersByEmail.get(email);
     if (!userId) return null;
+    await this.loadUser(userId);
     return this.users.get(userId) || null;
   }
 
   async getUserById(id: string): Promise<User | null> {
+    await this.loadUser(id);
     return this.users.get(id) || null;
   }
 
@@ -643,16 +766,16 @@ export class Database {
 
     this.apiKeys.set(apiKey.id, apiKey);
     
+    // Create masked version for display
+    let masked = '****';
+    if ('apiKey' in apiKey.credentials) {
+      masked = '****' + (apiKey.credentials.apiKey as string).slice(-4);
+    } else if ('accessKeyId' in apiKey.credentials) {
+      masked = '****' + (apiKey.credentials.accessKeyId as string).slice(-4);
+    }
+    
     const user = await this.getUserById(userId);
     if (user) {
-      // Create masked version for display
-      let masked = '****';
-      if ('apiKey' in apiKey.credentials) {
-        masked = '****' + (apiKey.credentials.apiKey as string).slice(-4);
-      } else if ('accessKeyId' in apiKey.credentials) {
-        masked = '****' + (apiKey.credentials.accessKeyId as string).slice(-4);
-      }
-      
       // Create new user object with updated apiKeys
       const updatedUser = {
         ...user,
@@ -670,10 +793,21 @@ export class Database {
       this.users.set(userId, updatedUser);
     }
 
+    // Encrypt credentials before storing in event log
+    const encryptedCredentials = encryption.encrypt(apiKey.credentials);
+
     await this.logEvent('api_key_created', { 
-      apiKeyId: apiKey.id,
+      apiKey: {
+        id: apiKey.id,
+        userId: apiKey.userId,
+        name: apiKey.name,
+        provider: apiKey.provider,
+        encryptedCredentials, // Store encrypted, not plain credentials
+        createdAt: apiKey.createdAt,
+        updatedAt: apiKey.updatedAt
+      },
       userId,
-      provider: apiKey.provider
+      masked
     });
     
     return apiKey;
@@ -1681,6 +1815,95 @@ export class Database {
     const key = `${messageId}-${branchId}`;
     const bookmarkId = this.branchBookmarks.get(key);
     return bookmarkId ? this.bookmarks.get(bookmarkId) || null : null;
+  }
+
+  // User Model methods
+  async createUserModel(userId: string, modelData: import('@deprecated-claude/shared').CreateUserModel): Promise<UserDefinedModel> {
+    await this.loadUser(userId); // Ensure user data is loaded
+    
+    // Limit number of custom models per user
+    const existingModels = await this.getUserModels(userId);
+    if (existingModels.length >= 20) {
+      throw new Error('Maximum number of custom models (20) reached');
+    }
+
+    const model: UserDefinedModel = {
+      id: uuidv4(),
+      userId,
+      ...modelData,
+      supportsThinking: modelData.supportsThinking || false,
+      deprecated: false,
+      settings: modelData.settings || {
+        temperature: 1.0,
+        maxTokens: 1024
+      },
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    this.userModels.set(model.id, model);
+    
+    const userModelIds = this.userModelsByUser.get(userId) || new Set();
+    userModelIds.add(model.id);
+    this.userModelsByUser.set(userId, userModelIds);
+
+    await this.logUserEvent(userId, 'user_model_created', { model });
+
+    return model;
+  }
+
+  async getUserModels(userId: string): Promise<UserDefinedModel[]> {
+    await this.loadUser(userId); // Ensure user data is loaded
+    const modelIds = this.userModelsByUser.get(userId) || new Set();
+    return Array.from(modelIds)
+      .map(id => this.userModels.get(id))
+      .filter((model): model is UserDefinedModel => model !== undefined && !model.deprecated);
+  }
+
+  async getUserModel(modelId: string, userId: string): Promise<UserDefinedModel | null> {
+    await this.loadUser(userId); // Ensure user data is loaded
+    const model = this.userModels.get(modelId);
+    if (!model || model.userId !== userId) {
+      return null;
+    }
+    return model;
+  }
+
+  async updateUserModel(modelId: string, userId: string, updates: import('@deprecated-claude/shared').UpdateUserModel): Promise<UserDefinedModel | null> {
+    const model = await this.getUserModel(modelId, userId);
+    if (!model) {
+      return null;
+    }
+
+    const updatedModel = {
+      ...model,
+      ...updates,
+      updatedAt: new Date()
+    };
+
+    this.userModels.set(modelId, updatedModel);
+
+    await this.logUserEvent(userId, 'user_model_updated', { modelId, updates: { ...updates, updatedAt: updatedModel.updatedAt } });
+
+    return updatedModel;
+  }
+
+  async deleteUserModel(modelId: string, userId: string): Promise<boolean> {
+    const model = await this.getUserModel(modelId, userId);
+    if (!model) {
+      return false;
+    }
+
+    this.userModels.delete(modelId);
+    
+    const userModelIds = this.userModelsByUser.get(userId);
+    if (userModelIds) {
+      userModelIds.delete(modelId);
+    }
+
+    await this.logUserEvent(userId, 'user_model_deleted', { modelId, userId });
+
+    return true;
   }
 
   // Close database connection

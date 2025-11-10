@@ -1,5 +1,5 @@
 import { reactive, inject, InjectionKey, App } from 'vue';
-import type { User, Conversation, Message, Model } from '@deprecated-claude/shared';
+import type { User, Conversation, Message, Model, OpenRouterModel, UserDefinedModel, CreateUserModel, UpdateUserModel } from '@deprecated-claude/shared';
 import { api } from '../services/api';
 import { WebSocketService } from '../services/websocket';
 
@@ -9,6 +9,8 @@ interface StoreState {
   currentConversation: Conversation | null;
   allMessages: Message[]; // Store all messages
   models: Model[];
+  openRouterModels: OpenRouterModel[];
+  customModels: UserDefinedModel[];
   isLoading: boolean;
   error: string | null;
   wsService: WebSocketService | null;
@@ -53,6 +55,12 @@ export interface Store {
   getVisibleMessages(): Message[];
   
   loadModels(): Promise<void>;
+  loadOpenRouterModels(): Promise<void>;
+  loadCustomModels(): Promise<void>;
+  createCustomModel(data: CreateUserModel): Promise<UserDefinedModel>;
+  updateCustomModel(id: string, data: UpdateUserModel): Promise<UserDefinedModel>;
+  deleteCustomModel(id: string): Promise<void>;
+  testCustomModel(id: string): Promise<{ success: boolean; message?: string; error?: string; response?: string }>;
   loadSystemConfig(): Promise<void>;
   
   connectWebSocket(): void;
@@ -70,6 +78,8 @@ export function createStore(): {
     currentConversation: null,
     allMessages: [], // Store all messages
     models: [],
+    openRouterModels: [],
+    customModels: [],
     isLoading: false,
     error: null,
     wsService: null,
@@ -581,6 +591,95 @@ export function createStore(): {
       } catch (error) {
         console.error('Failed to load models:', error);
         throw error;
+      }
+    },
+    
+    async loadOpenRouterModels() {
+      try {
+        const response = await api.get('/models/openrouter/available');
+        state.openRouterModels = response.data.models || [];
+        console.log(`Loaded ${state.openRouterModels.length} OpenRouter models ${response.data.cached ? '(cached)' : '(fresh)'}`);
+      } catch (error) {
+        console.error('Failed to load OpenRouter models:', error);
+        // Don't throw - this is not critical
+        state.openRouterModels = [];
+      }
+    },
+    
+    async loadCustomModels() {
+      try {
+        const response = await api.get('/models/custom');
+        state.customModels = response.data;
+        console.log(`Loaded ${state.customModels.length} custom models`);
+      } catch (error) {
+        console.error('Failed to load custom models:', error);
+        state.customModels = [];
+      }
+    },
+    
+    async createCustomModel(data: CreateUserModel): Promise<UserDefinedModel> {
+      try {
+        const response = await api.post('/models/custom', data);
+        const newModel = response.data;
+        state.customModels.push(newModel);
+        
+        // Reload all models to include the new custom model
+        await store.loadModels();
+        
+        return newModel;
+      } catch (error: any) {
+        console.error('Failed to create custom model:', error);
+        throw new Error(error.response?.data?.error || 'Failed to create custom model');
+      }
+    },
+    
+    async updateCustomModel(id: string, data: UpdateUserModel): Promise<UserDefinedModel> {
+      try {
+        const response = await api.patch(`/models/custom/${id}`, data);
+        const updatedModel = response.data;
+        
+        const index = state.customModels.findIndex(m => m.id === id);
+        if (index !== -1) {
+          state.customModels[index] = updatedModel;
+        }
+        
+        // Reload all models to update the merged list
+        await store.loadModels();
+        
+        return updatedModel;
+      } catch (error: any) {
+        console.error('Failed to update custom model:', error);
+        throw new Error(error.response?.data?.error || 'Failed to update custom model');
+      }
+    },
+    
+    async deleteCustomModel(id: string): Promise<void> {
+      try {
+        await api.delete(`/models/custom/${id}`);
+        
+        const index = state.customModels.findIndex(m => m.id === id);
+        if (index !== -1) {
+          state.customModels.splice(index, 1);
+        }
+        
+        // Reload all models to update the merged list
+        await store.loadModels();
+      } catch (error: any) {
+        console.error('Failed to delete custom model:', error);
+        throw new Error(error.response?.data?.error || 'Failed to delete custom model');
+      }
+    },
+    
+    async testCustomModel(id: string): Promise<{ success: boolean; message?: string; error?: string; response?: string }> {
+      try {
+        const response = await api.post(`/models/custom/${id}/test`);
+        return response.data;
+      } catch (error: any) {
+        console.error('Failed to test custom model:', error);
+        return {
+          success: false,
+          error: error.response?.data?.error || error.message || 'Failed to test model'
+        };
       }
     },
     

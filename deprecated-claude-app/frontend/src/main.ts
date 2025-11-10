@@ -20,6 +20,7 @@ import ConversationView from './views/ConversationView.vue';
 import LoginView from './views/LoginView.vue';
 import AboutView from './views/AboutView.vue';
 import SharedView from './views/SharedView.vue';
+import ModelTestView from './views/ModelTestView.vue';
 
 const vuetify = createVuetify({
   components,
@@ -63,6 +64,12 @@ const router = createRouter({
       path: '/about',
       name: 'about',
       component: AboutView,
+    },
+    {
+      path: '/model-test',
+      name: 'model-test',
+      component: ModelTestView,
+      meta: { requiresAuth: true },
     },
     {
       path: '/share/:token',

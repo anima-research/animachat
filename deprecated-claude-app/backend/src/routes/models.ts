@@ -1,14 +1,21 @@
 import { Router } from 'express';
 import { ModelLoader } from '../config/model-loader.js';
+import { OpenRouterService } from '../services/openrouter.js';
 
-export function modelRouter(): Router {
+// Cache for OpenRouter models - refresh every hour
+let openRouterModelsCache: any[] = [];
+let openRouterCacheTime: number = 0;
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+export function modelRouter(db: any): Router {
   const router = Router();
   const modelLoader = ModelLoader.getInstance();
 
-  // Get available models
+  // Get available models (including user's custom models)
   router.get('/', async (req, res) => {
     try {
-      const models = await modelLoader.getAllModels();
+      const userId = (req as any).userId;
+      const models = await modelLoader.getAllModels(userId);
       console.log('Available models:', models.map(m => ({
         id: m.id,
         providerModelId: m.providerModelId,
@@ -22,10 +29,11 @@ export function modelRouter(): Router {
     }
   });
 
-  // Get specific model info
+  // Get specific model info (checks user's custom models too)
   router.get('/:id', async (req, res) => {
     try {
-      const model = await modelLoader.getModelById(req.params.id);
+      const userId = (req as any).userId;
+      const model = await modelLoader.getModelById(req.params.id, userId);
       
       if (!model) {
         return res.status(404).json({ error: 'Model not found' });
@@ -35,6 +43,53 @@ export function modelRouter(): Router {
     } catch (error) {
       console.error('Error loading model:', error);
       res.status(500).json({ error: 'Failed to load model' });
+    }
+  });
+
+  // Get OpenRouter available models with caching
+  router.get('/openrouter/available', async (req, res) => {
+    try {
+      const now = Date.now();
+      
+      // Return cached data if still fresh
+      if (openRouterModelsCache.length > 0 && (now - openRouterCacheTime) < CACHE_TTL) {
+        console.log('Returning cached OpenRouter models');
+        return res.json({
+          models: openRouterModelsCache,
+          cached: true,
+          cacheAge: now - openRouterCacheTime
+        });
+      }
+
+      // Fetch fresh data
+      console.log('Fetching fresh OpenRouter models list');
+      const openRouterService = new OpenRouterService(db);
+      const models = await openRouterService.listModels();
+      
+      // Update cache
+      openRouterModelsCache = models;
+      openRouterCacheTime = now;
+      
+      res.json({
+        models: models,
+        cached: false,
+        cacheAge: 0
+      });
+    } catch (error) {
+      console.error('Error fetching OpenRouter models:', error);
+      
+      // If we have cached data, return it even if expired
+      if (openRouterModelsCache.length > 0) {
+        console.log('Returning stale cached data due to error');
+        return res.json({
+          models: openRouterModelsCache,
+          cached: true,
+          cacheAge: Date.now() - openRouterCacheTime,
+          warning: 'Using cached data due to API error'
+        });
+      }
+      
+      res.status(500).json({ error: 'Failed to fetch OpenRouter models' });
     }
   });
 

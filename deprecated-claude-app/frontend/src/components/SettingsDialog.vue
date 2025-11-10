@@ -11,6 +11,7 @@
       
       <v-tabs v-model="tab">
         <v-tab value="api-keys">API Keys</v-tab>
+        <v-tab value="custom-models">Custom Models</v-tab>
         <v-tab value="appearance">Appearance</v-tab>
         <v-tab value="about">About</v-tab>
       </v-tabs>
@@ -165,6 +166,11 @@
           </v-card-text>
         </v-window-item>
         
+        <!-- Custom Models Tab -->
+        <v-window-item value="custom-models">
+          <CustomModelsTab />
+        </v-window-item>
+        
         <!-- Appearance Tab -->
         <v-window-item value="appearance">
           <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
@@ -248,6 +254,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useTheme } from 'vuetify';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
+import CustomModelsTab from './CustomModelsTab.vue';
 
 const props = defineProps<{
   modelValue: boolean;
