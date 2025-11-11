@@ -223,9 +223,9 @@
                 <v-chip 
                   size="x-small" 
                   class="ml-2"
-                  :color="model.provider === 'anthropic' ? 'primary' : 'secondary'"
+                  :color="getProviderChip(model.provider).color"
                 >
-                  {{ model.provider === 'anthropic' ? 'Anthropic API' : 'AWS Bedrock' }}
+                  {{ getProviderChip(model.provider).label }}
                 </v-chip>
                 <span v-if="model.deprecated" class="text-orange ml-1">(Deprecated)</span>
                 <br>
@@ -293,8 +293,19 @@ const providers = [
 ];
 const codeThemes = ['github', 'monokai', 'dracula', 'vs-dark'];
 
+const providerChipMeta: Record<string, { label: string; color: string }> = {
+  anthropic: { label: 'Anthropic API', color: 'primary' },
+  bedrock: { label: 'AWS Bedrock', color: 'secondary' },
+  openrouter: { label: 'OpenRouter', color: 'purple' },
+  'openai-compatible': { label: 'OpenAI Compatible', color: 'blue' }
+};
+
 const darkMode = ref(theme.global.current.value.dark);
 const codeTheme = ref(localStorage.getItem('codeTheme') || 'github');
+
+function getProviderChip(provider: string) {
+  return providerChipMeta[provider] || { label: provider, color: 'grey' };
+}
 
 // Validation for API key
 const isValidApiKey = computed(() => {
