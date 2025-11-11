@@ -117,7 +117,20 @@
         density="compact"
         placeholder="http://localhost:11434"
         class="mb-2"
-      />
+      >
+        <template #append-inner>
+          <v-tooltip text="Must be reachable by the Arc Chat server. localhost only works when you're self-hosting.">
+            <template #activator="{ props }">
+              <v-icon
+                v-bind="props"
+                icon="mdi-information-outline"
+                size="18"
+                class="text-medium-emphasis"
+              />
+            </template>
+          </v-tooltip>
+        </template>
+      </v-text-field>
       
       <v-text-field
         v-model="customEndpointData.apiKey"
