@@ -1,5 +1,5 @@
 <template>
-  <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
+  <v-card-text style="max-height: calc(100vh - 220px); overflow-y: auto; padding: 24px 24px 32px;">
     <div class="text-body-2 mb-4">
       Add your own models from OpenRouter or connect to custom OpenAI-compatible endpoints (Ollama, LM Studio, vLLM, etc.).
       Your custom models will appear alongside system models in the model selector.
@@ -458,4 +458,3 @@ onMounted(async () => {
   }
 });
 </script>
-

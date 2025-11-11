@@ -195,7 +195,7 @@
         
         <!-- About Tab -->
         <v-window-item value="about">
-          <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
+          <v-card-text style="max-height: calc(100vh - 120px); overflow-y: auto; padding: 24px 24px 32px;">
             <h4 class="text-h6 mb-2">The Arc Chat</h4>
             <p class="text-body-2 mb-4">
               Version 1.0.0
