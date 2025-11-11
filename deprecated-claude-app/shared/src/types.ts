@@ -71,6 +71,50 @@ export const ModelSettingsSchema = z.object({
 
 export type ModelSettings = z.infer<typeof ModelSettingsSchema>;
 
+// User-defined model types
+export const UserDefinedModelSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  displayName: z.string().min(1).max(100),
+  shortName: z.string().min(1).max(50),
+  provider: z.enum(['openrouter', 'openai-compatible']),
+  providerModelId: z.string().min(1).max(500),
+  contextWindow: z.number().min(1000).max(10000000),
+  outputTokenLimit: z.number().min(100).max(1000000),
+  supportsThinking: z.boolean().default(false),
+  deprecated: z.boolean().default(false),
+  settings: ModelSettingsSchema,
+  createdAt: z.date(),
+  updatedAt: z.date(),
+  // Custom endpoint settings (for openai-compatible only)
+  customEndpoint: z.object({
+    baseUrl: z.string().url(),
+    apiKey: z.string().optional()
+  }).optional()
+});
+
+export type UserDefinedModel = z.infer<typeof UserDefinedModelSchema>;
+
+export const CreateUserModelSchema = z.object({
+  displayName: z.string().min(1).max(100),
+  shortName: z.string().min(1).max(50),
+  provider: z.enum(['openrouter', 'openai-compatible']),
+  providerModelId: z.string().min(1).max(500),
+  contextWindow: z.number().min(1000).max(10000000),
+  outputTokenLimit: z.number().min(100).max(1000000),
+  supportsThinking: z.boolean().optional(),
+  settings: ModelSettingsSchema.optional(),
+  customEndpoint: z.object({
+    baseUrl: z.string().url(),
+    apiKey: z.string().optional()
+  }).optional()
+});
+
+export type CreateUserModel = z.infer<typeof CreateUserModelSchema>;
+
+export const UpdateUserModelSchema = CreateUserModelSchema.partial();
+export type UpdateUserModel = z.infer<typeof UpdateUserModelSchema>;
+
 // Context management settings
 export const ContextManagementSchema = z.discriminatedUnion('strategy', [
   z.object({

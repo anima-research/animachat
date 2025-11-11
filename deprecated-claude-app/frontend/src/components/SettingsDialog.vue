@@ -11,6 +11,7 @@
       
       <v-tabs v-model="tab">
         <v-tab value="api-keys">API Keys</v-tab>
+        <v-tab value="custom-models">Custom Models</v-tab>
         <v-tab value="appearance">Appearance</v-tab>
         <v-tab value="about">About</v-tab>
       </v-tabs>
@@ -165,6 +166,11 @@
           </v-card-text>
         </v-window-item>
         
+        <!-- Custom Models Tab -->
+        <v-window-item value="custom-models">
+          <CustomModelsTab />
+        </v-window-item>
+        
         <!-- Appearance Tab -->
         <v-window-item value="appearance">
           <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
@@ -189,7 +195,7 @@
         
         <!-- About Tab -->
         <v-window-item value="about">
-          <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
+          <v-card-text style="max-height: calc(100vh - 120px); overflow-y: auto; padding: 24px 24px 32px;">
             <h4 class="text-h6 mb-2">The Arc Chat</h4>
             <p class="text-body-2 mb-4">
               Version 1.0.0
@@ -217,9 +223,9 @@
                 <v-chip 
                   size="x-small" 
                   class="ml-2"
-                  :color="model.provider === 'anthropic' ? 'primary' : 'secondary'"
+                  :color="getProviderChip(model.provider).color"
                 >
-                  {{ model.provider === 'anthropic' ? 'Anthropic API' : 'AWS Bedrock' }}
+                  {{ getProviderChip(model.provider).label }}
                 </v-chip>
                 <span v-if="model.deprecated" class="text-orange ml-1">(Deprecated)</span>
                 <br>
@@ -248,6 +254,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useTheme } from 'vuetify';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
+import CustomModelsTab from './CustomModelsTab.vue';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -286,8 +293,19 @@ const providers = [
 ];
 const codeThemes = ['github', 'monokai', 'dracula', 'vs-dark'];
 
+const providerChipMeta: Record<string, { label: string; color: string }> = {
+  anthropic: { label: 'Anthropic API', color: 'primary' },
+  bedrock: { label: 'AWS Bedrock', color: 'secondary' },
+  openrouter: { label: 'OpenRouter', color: 'purple' },
+  'openai-compatible': { label: 'OpenAI Compatible', color: 'blue' }
+};
+
 const darkMode = ref(theme.global.current.value.dark);
 const codeTheme = ref(localStorage.getItem('codeTheme') || 'github');
+
+function getProviderChip(provider: string) {
+  return providerChipMeta[provider] || { label: provider, color: 'grey' };
+}
 
 // Validation for API key
 const isValidApiKey = computed(() => {
