@@ -5,7 +5,7 @@ import crypto from 'crypto';
  * Uses AES-256-GCM for authenticated encryption
  */
 export class EncryptionService {
-  private algorithm = 'aes-256-gcm';
+  private readonly algorithm: crypto.CipherGCMTypes = 'aes-256-gcm';
   private key: Buffer;
 
   constructor(secretKey?: string) {
