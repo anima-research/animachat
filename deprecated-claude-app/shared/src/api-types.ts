@@ -118,3 +118,40 @@ export const TokenUsageSchema = z.object({
 });
 
 export type TokenUsage = z.infer<typeof TokenUsageSchema>;
+
+// OpenRouter model info
+export const OpenRouterModelSchema = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  description: z.string().optional(),
+  pricing: z.object({
+    prompt: z.string().or(z.number()).optional(),
+    completion: z.string().or(z.number()).optional()
+  }).optional(),
+  context_length: z.number().optional(),
+  architecture: z.object({
+    modality: z.string().optional(),
+    tokenizer: z.string().optional(),
+    instruct_type: z.string().optional()
+  }).optional(),
+  top_provider: z.object({
+    context_length: z.number().optional(),
+    max_completion_tokens: z.number().optional(),
+    is_moderated: z.boolean().optional()
+  }).optional(),
+  per_request_limits: z.object({
+    prompt_tokens: z.string().or(z.number()).optional(),
+    completion_tokens: z.string().or(z.number()).optional()
+  }).optional()
+});
+
+export type OpenRouterModel = z.infer<typeof OpenRouterModelSchema>;
+
+export const OpenRouterModelsResponseSchema = z.object({
+  models: z.array(OpenRouterModelSchema),
+  cached: z.boolean(),
+  cacheAge: z.number(),
+  warning: z.string().optional()
+});
+
+export type OpenRouterModelsResponse = z.infer<typeof OpenRouterModelsResponseSchema>;

@@ -67,7 +67,16 @@ export class OpenAICompatibleService {
         format: this.baseUrl
       });
 
-      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      // Smart path construction - don't double-add /v1
+      const endpoint = this.baseUrl.endsWith('/v1') 
+        ? `${this.baseUrl}/chat/completions`
+        : `${this.baseUrl}/v1/chat/completions`;
+      
+      console.log(`[OpenAI-Compatible] Making request to: ${endpoint}`);
+      console.log(`[OpenAI-Compatible] Model: ${actualModelId}`);
+      console.log(`[OpenAI-Compatible] Request body:`, JSON.stringify(requestBody, null, 2));
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
@@ -78,6 +87,9 @@ export class OpenAICompatibleService {
 
       if (!response.ok) {
         const errorText = await response.text();
+        console.error(`[OpenAI-Compatible] Error response:`, errorText);
+        console.error(`[OpenAI-Compatible] Request URL was: ${endpoint}`);
+        console.error(`[OpenAI-Compatible] Model ID was: ${actualModelId}`);
         throw new Error(`OpenAI-compatible API error: ${response.status} ${response.statusText} - ${errorText}`);
       }
 

@@ -1,11 +1,13 @@
 import { readFile } from 'fs/promises';
 import { join } from 'path';
-import { Model } from '@deprecated-claude/shared';
+import { Model, UserDefinedModel } from '@deprecated-claude/shared';
+import type { Database } from '../database/index.js';
 
 export class ModelLoader {
   private static instance: ModelLoader;
   private models: Model[] | null = null;
   private modelConfigPath: string;
+  private db: Database | null = null;
 
   private constructor() {
     // Look for models config in these locations (in order):
@@ -22,6 +24,10 @@ export class ModelLoader {
       ModelLoader.instance = new ModelLoader();
     }
     return ModelLoader.instance;
+  }
+
+  setDatabase(db: Database): void {
+    this.db = db;
   }
 
   async loadModels(): Promise<Model[]> {
@@ -43,10 +49,57 @@ export class ModelLoader {
   }
 
   /**
-   * Get all available models
+   * Get all available models, including user-defined models if userId provided
    */
-  async getAllModels(): Promise<Model[]> {
-    return this.loadModels();
+  async getAllModels(userId?: string): Promise<Model[]> {
+    const systemModels = await this.loadModels();
+    
+    if (!userId || !this.db) {
+      return systemModels;
+    }
+
+    // Get user's custom models and convert to Model format
+    const userModels = await this.db.getUserModels(userId);
+    const userModelsAsModels: Model[] = userModels.map((um: UserDefinedModel) => ({
+      id: um.id,
+      providerModelId: um.providerModelId,
+      displayName: um.displayName,
+      shortName: um.shortName,
+      provider: um.provider,
+      deprecated: um.deprecated,
+      contextWindow: um.contextWindow,
+      outputTokenLimit: um.outputTokenLimit,
+      supportsThinking: um.supportsThinking,
+      settings: {
+        temperature: {
+          min: 0,
+          max: 2,
+          default: um.settings.temperature,
+          step: 0.1
+        },
+        maxTokens: {
+          min: 1,
+          max: um.outputTokenLimit,
+          default: um.settings.maxTokens
+        },
+        topP: um.settings.topP ? {
+          min: 0,
+          max: 1,
+          default: um.settings.topP,
+          step: 0.01
+        } : undefined,
+        topK: um.settings.topK ? {
+          min: 1,
+          max: 500,
+          default: um.settings.topK,
+          step: 1
+        } : undefined
+      },
+      // Preserve customEndpoint for OpenAI-compatible models
+      ...(um.customEndpoint ? { customEndpoint: um.customEndpoint } : {})
+    } as Model));
+
+    return [...systemModels, ...userModelsAsModels];
   }
 
   /**
@@ -58,10 +111,10 @@ export class ModelLoader {
   }
 
   /**
-   * Get a specific model by ID
+   * Get a specific model by ID (checks both system and user models)
    */
-  async getModelById(modelId: string): Promise<Model | null> {
-    const models = await this.loadModels();
+  async getModelById(modelId: string, userId?: string): Promise<Model | null> {
+    const models = await this.getAllModels(userId);
     return models.find(m => m.id === modelId) || null;
   }
 

@@ -350,7 +350,12 @@ async function handleChatMessage(
   
   // Stream response from appropriate service
   try {
+    console.log(`[WebSocket] Responder:`, JSON.stringify(responder, null, 2));
+    console.log(`[WebSocket] Conversation model: "${conversation.model}"`);
+    
     const inferenceModel = responder.model || conversation.model;
+    console.log(`[WebSocket] Determined inferenceModel: "${inferenceModel}"`);
+    
     const inferenceSystemPrompt = responder.systemPrompt || conversation.systemPrompt;
     
     // For standard conversations, always use conversation settings
@@ -384,7 +389,7 @@ async function handleChatMessage(
     });
     
     const modelLoader = ModelLoader.getInstance();
-    const modelConfig = await modelLoader.getModelById(inferenceModel);
+    const modelConfig = await modelLoader.getModelById(inferenceModel, conversation.userId);
     if (!modelConfig) {
       throw new Error(`Model ${inferenceModel} not found`);
     }
@@ -394,7 +399,7 @@ async function handleChatMessage(
       messagesForInference,
       inferenceSystemPrompt || '',
       inferenceSettings,
-      ws.userId,
+      conversation.userId,
       async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
         // Update message content in memory (mutation is OK during streaming)
         const currentBranch = assistantMessage.branches.find((b: any) => b.id === assistantMessage.activeBranchId);
@@ -603,14 +608,14 @@ async function handleRegenerate(
       format: conversation.format
     });
     
+    // Get the responder participant object
+    const responderParticipant = responderId ? participants.find(p => p.id === responderId) : undefined;
+    
     const modelLoader = ModelLoader.getInstance();
-    const modelConfig = await modelLoader.getModelById(responderModel);
+    const modelConfig = await modelLoader.getModelById(responderModel, conversation.userId);
     if (!modelConfig) {
       throw new Error(`Model ${responderModel} not found`);
     }
-    
-    // Get the responder participant object
-    const responderParticipant = responderId ? participants.find(p => p.id === responderId) : undefined;
     
     await inferenceService.streamCompletion(
       modelConfig,
@@ -860,7 +865,7 @@ async function handleEdit(
       });
       
       const modelLoader = ModelLoader.getInstance();
-    const modelConfig = await modelLoader.getModelById(responderModel);
+      const modelConfig = await modelLoader.getModelById(responderModel, conversation.userId);
       if (!modelConfig) {
         throw new Error(`Model ${responderModel} not found`);
       }
@@ -1090,8 +1095,13 @@ async function handleContinue(
 
     // Stream the completion
     const modelId = responder.model || conversation.model;
+    
+    if (!modelId) {
+      throw new Error('No model specified for responder or conversation');
+    }
+    
     const modelLoader = ModelLoader.getInstance();
-    const modelConfig = await modelLoader.getModelById(modelId);
+    const modelConfig = await modelLoader.getModelById(modelId, conversation.userId);
     if (!modelConfig) {
       throw new Error(`Model ${modelId} not found`);
     }

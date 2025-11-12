@@ -9,11 +9,13 @@ import dotenv from 'dotenv';
 import { authRouter } from './routes/auth.js';
 import { conversationRouter } from './routes/conversations.js';
 import { modelRouter } from './routes/models.js';
+import { customModelsRouter } from './routes/custom-models.js';
 import { participantRouter } from './routes/participants.js';
 import { importRouter } from './routes/import.js';
 import { systemRouter } from './routes/system.js';
 import { createPromptRouter } from './routes/prompt.js';
 import { createShareRouter } from './routes/shares.js';
+import { ModelLoader } from './config/model-loader.js';
 import { createBookmarksRouter } from './routes/bookmarks.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
@@ -77,7 +79,9 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Routes
 app.use('/api/auth', authRouter(db));
 app.use('/api/conversations', authenticateToken, conversationRouter(db));
-app.use('/api/models', authenticateToken, modelRouter());
+// Mount custom models BEFORE general models to prevent /:id catching /custom
+app.use('/api/models/custom', authenticateToken, customModelsRouter(db));
+app.use('/api/models', authenticateToken, modelRouter(db));
 app.use('/api/participants', authenticateToken, participantRouter(db));
 app.use('/api/import', authenticateToken, importRouter(db));
 app.use('/api/prompt', createPromptRouter(db));
@@ -101,6 +105,11 @@ async function startServer() {
     // Initialize database
     await db.init();
     console.log('Database initialized');
+    
+    // Initialize ModelLoader with database
+    const modelLoader = ModelLoader.getInstance();
+    modelLoader.setDatabase(db);
+    console.log('ModelLoader initialized with database');
     
     const listenPort = USE_HTTPS ? HTTPS_PORT : PORT;
     const protocol = USE_HTTPS ? 'HTTPS' : 'HTTP';

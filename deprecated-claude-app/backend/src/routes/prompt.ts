@@ -66,7 +66,8 @@ export function createPromptRouter(db: Database): Router {
         conversation.format || 'standard',
         participants,
         responderId,
-        conversation
+        conversation,
+        userId
       );
       
       res.json({

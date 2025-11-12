@@ -36,10 +36,11 @@ export class InferenceService {
     format: ConversationFormat = 'standard',
     participants: Participant[] = [],
     responderId?: string,
-    conversation?: Conversation
+    conversation?: Conversation,
+    userId?: string
   ): Promise<{ messages: any[], systemPrompt?: string, provider: string, modelId: string }> {
     // Find the model configuration
-    const model = await this.modelLoader.getModelById(modelId);
+    const model = await this.modelLoader.getModelById(modelId, userId);
     if (!model) {
       throw new Error(`Model ${modelId} not found`);
     }
@@ -68,9 +69,10 @@ export class InferenceService {
         break;
       case 'openai-compatible':
         // For prompt building, we don't need actual API keys, just format the messages
+        // Use dummy values - the actual endpoint/key don't matter for formatting
         const openAIService = new OpenAICompatibleService(
           this.db,
-          'dummy-key', // Not used for formatting
+          'dummy-key',
           'http://localhost:11434',
           undefined
         );
@@ -109,9 +111,16 @@ export class InferenceService {
   ): Promise<void> {
     
     // Find the model configuration
-    console.log(`[InferenceService] Looking up model with ID: ${modelId}`);
-    const model = await this.modelLoader.getModelById(modelId);
+    console.log(`[InferenceService] streamCompletion called with modelId: "${modelId}", type: ${typeof modelId}, userId: ${userId}`);
+    
+    if (!modelId) {
+      console.error(`[InferenceService] ERROR: modelId is ${modelId}!`);
+      throw new Error(`Model ${modelId} not found`);
+    }
+    
+    const model = await this.modelLoader.getModelById(modelId, userId);
     if (!model) {
+      console.error(`[InferenceService] Model lookup failed for ID: "${modelId}", userId: ${userId}`);
       throw new Error(`Model ${modelId} not found`);
     }
     console.log(`[InferenceService] Found model: provider=${model.provider}, providerModelId=${model.providerModelId}`)
@@ -144,18 +153,26 @@ export class InferenceService {
     }
 
     // Route to appropriate service based on provider
-    // Get API key configuration
-    const selectedKey = await this.apiKeyManager.getApiKeyForRequest(userId, model.provider, modelId);
-    if (!selectedKey) {
-      throw new Error(`No API key available for provider: ${model.provider}`);
-    }
-
-    // Check rate limits if using system key
-    if (selectedKey.source === 'config' && selectedKey.profile) {
-      const rateLimitCheck = await this.apiKeyManager.checkRateLimits(userId, model.provider, selectedKey.profile);
-      if (!rateLimitCheck.allowed) {
-        throw new Error(`Rate limit exceeded. Try again in ${rateLimitCheck.retryAfter} seconds.`);
+    // For custom models with embedded endpoints, skip API key manager
+    const isCustomModelWithEndpoint = (model as any).customEndpoint !== undefined;
+    
+    let selectedKey = null;
+    if (!isCustomModelWithEndpoint) {
+      // Get API key configuration from API key manager
+      selectedKey = await this.apiKeyManager.getApiKeyForRequest(userId, model.provider, modelId);
+      if (!selectedKey) {
+        throw new Error(`No API key available for provider: ${model.provider}`);
       }
+
+      // Check rate limits if using system key
+      if (selectedKey.source === 'config' && selectedKey.profile) {
+        const rateLimitCheck = await this.apiKeyManager.checkRateLimits(userId, model.provider, selectedKey.profile);
+        if (!rateLimitCheck.allowed) {
+          throw new Error(`Rate limit exceeded. Try again in ${rateLimitCheck.retryAfter} seconds.`);
+        }
+      }
+    } else {
+      console.log(`[InferenceService] Using custom model with embedded endpoint: ${(model as any).customEndpoint.baseUrl}`);
     }
 
     // Track token usage
@@ -173,6 +190,9 @@ export class InferenceService {
       : trackingOnChunk;
 
     if (model.provider === 'anthropic') {
+      if (!selectedKey) {
+        throw new Error('No API key available for Anthropic');
+      }
       const anthropicService = new AnthropicService(
         this.db, 
         selectedKey.credentials.apiKey
@@ -187,6 +207,9 @@ export class InferenceService {
         stopSequences
       );
     } else if (model.provider === 'bedrock') {
+      if (!selectedKey) {
+        throw new Error('No API key available for Bedrock');
+      }
       const bedrockService = new BedrockService(this.db, selectedKey.credentials);
       await bedrockService.streamCompletion(
         model.providerModelId,
@@ -197,6 +220,9 @@ export class InferenceService {
         stopSequences
       );
     } else if (model.provider === 'openrouter') {
+      if (!selectedKey) {
+        throw new Error('No API key available for OpenRouter');
+      }
       const openRouterService = new OpenRouterService(
         this.db, 
         selectedKey.credentials.apiKey
@@ -211,11 +237,25 @@ export class InferenceService {
         stopSequences
       );
     } else if (model.provider === 'openai-compatible') {
+      // Check if this is a custom user model with its own endpoint
+      const isCustomModel = (model as any).customEndpoint !== undefined;
+      const baseUrl = isCustomModel 
+        ? (model as any).customEndpoint.baseUrl
+        : (selectedKey?.credentials.baseUrl || 'http://localhost:11434');
+      const apiKey = isCustomModel
+        ? ((model as any).customEndpoint.apiKey || '')
+        : (selectedKey?.credentials.apiKey || '');
+      const modelPrefix = isCustomModel
+        ? undefined
+        : selectedKey?.credentials.modelPrefix;
+      
+      console.log(`[InferenceService] OpenAI-compatible model config: isCustomModel=${isCustomModel}, baseUrl=${baseUrl}`);
+      
       const openAIService = new OpenAICompatibleService(
         this.db,
-        selectedKey.credentials.apiKey,
-        selectedKey.credentials.baseUrl,
-        selectedKey.credentials.modelPrefix
+        apiKey,
+        baseUrl,
+        modelPrefix
       );
       
       await openAIService.streamCompletion(
@@ -234,7 +274,7 @@ export class InferenceService {
     inputTokens = this.estimateTokens(formattedMessages);
 
     // Track usage after completion
-    if (selectedKey.source === 'config' && selectedKey.profile) {
+    if (selectedKey && selectedKey.source === 'config' && selectedKey.profile) {
       await this.apiKeyManager.trackUsage(
         userId,
         model.provider,
