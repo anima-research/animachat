@@ -37,6 +37,10 @@ body {
   word-wrap: break-word;
   line-height: 1.5;
   
+  // Prevent layout jumping during streaming
+  contain: layout style;
+  will-change: contents;
+  
   ul, ol {
     padding-left: 24px;
     

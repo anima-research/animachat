@@ -442,6 +442,9 @@ const selectedModel = computed(() => {
   return props.models.find(m => m.id === settings.value.model);
 });
 
+// Flag to prevent loading participants right after saving them
+const justSavedParticipants = ref(false);
+
 // Function to load participants
 async function loadParticipants() {
   if (!props.conversation || props.conversation.format !== 'prefill') {
@@ -449,8 +452,18 @@ async function loadParticipants() {
     return;
   }
   
+  // Don't reload if we just saved - prevents race condition
+  if (justSavedParticipants.value) {
+    console.log('[ConversationSettingsDialog] Skipping loadParticipants (just saved)');
+    justSavedParticipants.value = false;
+    return;
+  }
+  
+  console.log('[ConversationSettingsDialog] loadParticipants called for conversation:', props.conversation.id);
+  
   try {
     const response = await api.get(`/participants/conversation/${props.conversation.id}`);
+    console.log('[ConversationSettingsDialog] Loaded participants from backend:', response.data);
     localParticipants.value = response.data;
   } catch (error) {
     console.error('Failed to load participants:', error);
@@ -692,6 +705,8 @@ function save() {
   
   // If in multi-participant mode, emit participants for parent to update
   if (settings.value.format === 'prefill') {
+    console.log('[ConversationSettingsDialog] Emitting participants:', localParticipants.value);
+    justSavedParticipants.value = true; // Set flag to prevent reload
     emit('update-participants', localParticipants.value);
   }
   

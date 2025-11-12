@@ -791,7 +791,9 @@ export class Database {
 
     // If the model was updated and this is a standard conversation, 
     // update the assistant participant's model (but NOT the name)
-    if (updates.model && conversation.format === 'standard') {
+    // IMPORTANT: Only do this for standard format! Group chats manage participants separately
+    if (updates.model && updated.format === 'standard') {
+      console.log('[Database] Updating participant model to match conversation (standard format only)');
       const participants = await this.getConversationParticipants(conversationId, conversationOwnerUserId);
       const defaultAssistant = participants.find(p => p.type === 'assistant');
       if (defaultAssistant) {
@@ -1416,6 +1418,7 @@ export class Database {
       .map(id => this.participants.get(id))
       .filter((p): p is Participant => p !== undefined);
     
+    console.log(`[Database] getConversationParticipants for ${conversationId}:`, participants.map(p => ({ id: p.id, name: p.name, model: p.model })));
 
     return participants;
   }
@@ -1428,14 +1431,22 @@ export class Database {
     const participant = await this.tryLoadAndVerifyParticipant(participantId, conversationOwnerUserId);
     if (!participant) return null;
     
+    console.log(`[Database] updateParticipant ${participantId}:`);
+    console.log('  Old model:', participant.model);
+    console.log('  Updates:', updates);
+    
     const updated = {
       ...participant,
       ...updates
     };
     
+    console.log('  New model:', updated.model);
+    
     this.participants.set(participantId, updated);
+    console.log('[Database] ✅ Participant updated in memory map');
   
     await this.logUserEvent(conversationOwnerUserId, 'participant_updated', { participantId, updates });
+    console.log('[Database] ✅ Event logged');
     
     return updated;
   }

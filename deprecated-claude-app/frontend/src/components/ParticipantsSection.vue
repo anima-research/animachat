@@ -59,7 +59,8 @@
           <td>
             <div class="editable-name-wrapper">
               <v-text-field
-                v-model="participant.name"
+                :model-value="participant.name"
+                @update:model-value="(value) => updateParticipantName(participant, value)"
                 density="compact"
                 variant="plain"
                 hide-details
@@ -80,7 +81,8 @@
           <td>
             <v-select
               v-if="participant.type === 'assistant'"
-              v-model="participant.model"
+              :model-value="participant.model"
+              @update:model-value="(value) => updateParticipantModel(participant, value)"
               :items="models"
               item-title="displayName"
               item-value="id"
@@ -615,6 +617,50 @@ function closeSettings() {
   showSettingsDialog.value = false;
   selectedParticipantId.value = null;
   participantContextOverride.value = false;
+}
+
+function updateParticipantModel(participant: any, newModelId: string) {
+  console.log('[ParticipantsSection] updateParticipantModel called');
+  console.log('  participant:', participant);
+  console.log('  old model:', participant.model);
+  console.log('  new model:', newModelId);
+  
+  // Find the participant in the array
+  const list = participants.value;
+  const idx = list.findIndex(p => p.id === participant.id);
+  if (idx < 0) {
+    console.log('  ❌ Participant not found in list!');
+    return;
+  }
+  
+  // Create a new array with the updated participant
+  const updated = cloneDeep(list);
+  updated[idx] = {
+    ...updated[idx],
+    model: newModelId
+  };
+  
+  console.log('  ✅ Emitting updated participants:', updated);
+  
+  // Emit the updated array to trigger proper reactivity
+  emit('update:modelValue', updated);
+}
+
+function updateParticipantName(participant: any, newName: string) {
+  // Find the participant in the array
+  const list = participants.value;
+  const idx = list.findIndex(p => p.id === participant.id);
+  if (idx < 0) return;
+  
+  // Create a new array with the updated participant
+  const updated = cloneDeep(list);
+  updated[idx] = {
+    ...updated[idx],
+    name: newName
+  };
+  
+  // Emit the updated array to trigger proper reactivity
+  emit('update:modelValue', updated);
 }
 
 function onModelSelected(modelId: string) {

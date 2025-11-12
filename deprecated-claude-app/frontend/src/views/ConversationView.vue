@@ -285,7 +285,9 @@
               @click="triggerParticipantResponse(participant)"
               :disabled="isStreaming"
               class="clickable-chip"
-              style="margin: 0 2px 0 2px"
+              style="margin: 0 2px 0 2px; pointer-events: auto;"
+              :ripple="false"
+              link
             >
               <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
               {{ participant.name === '' 
@@ -312,7 +314,9 @@
                 @click="triggerModelResponse(model)"
                 :disabled="isStreaming"
                 class="clickable-chip"
-                style="margin: 0 2px 0 2px"
+                style="margin: 0 2px 0 2px; pointer-events: auto;"
+                :ripple="false"
+                link
               >
                 <v-icon size="x-small" start>{{ getProviderIcon(model.provider) }}</v-icon>
                 {{ model.shortName || model.displayName }}
@@ -594,6 +598,9 @@ import { getModelColor } from '@/utils/modelColors';
 const route = useRoute();
 const router = useRouter();
 const store = useStore();
+
+// DEBUG: Verify new code is loaded
+console.log('🔧 ConversationView loaded - UI bug fixes version - timestamp:', new Date().toISOString());
 
 const drawer = ref(true);
 const treeDrawer = ref(false);
@@ -1617,9 +1624,13 @@ function getParticipantIcon(participant: Participant): string {
 async function loadParticipants() {
   if (!currentConversation.value) return;
   
+  console.log('[ConversationView] loadParticipants called');
+  
   try {
     const response = await api.get(`/participants/conversation/${currentConversation.value.id}`);
+    console.log('[ConversationView] Loaded participants from backend:', response.data);
     participants.value = response.data;
+    
     // Set default selected participant
     const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
     if (defaultUser) {
@@ -1629,6 +1640,7 @@ async function loadParticipants() {
     // Set default responder to first assistant
     const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.isActive);
     if (defaultAssistant) {
+      console.log('[ConversationView] Setting selectedResponder to:', defaultAssistant.id, 'model:', defaultAssistant.model);
       selectedResponder.value = defaultAssistant.id;
     }
   } catch (error) {
@@ -1639,6 +1651,9 @@ async function loadParticipants() {
 async function updateParticipants(updatedParticipants: Participant[]) {
   if (!currentConversation.value) return;
   
+  console.log('[updateParticipants] Received updated participants:', updatedParticipants);
+  console.log('[updateParticipants] Current participants:', participants.value);
+  
   try {
     // Handle updates and deletions
     for (const existing of participants.value) {
@@ -1646,6 +1661,7 @@ async function updateParticipants(updatedParticipants: Participant[]) {
       if (!updated) {
         // Participant was deleted (only if not a temp ID)
         if (!existing.id.startsWith('temp-')) {
+          console.log('[updateParticipants] Deleting participant:', existing.id);
           await api.delete(`/participants/${existing.id}`);
         }
       } else if (!existing.id.startsWith('temp-')) {
@@ -1655,6 +1671,12 @@ async function updateParticipants(updatedParticipants: Participant[]) {
           existing.systemPrompt !== updated.systemPrompt ||
           !isEqual(existing.settings, updated.settings) ||
           !isEqual(existing.contextManagement, updated.contextManagement);
+        
+        console.log(`[updateParticipants] Participant ${existing.name} (${existing.id}):`);
+        console.log('  existing.model:', existing.model);
+        console.log('  updated.model:', updated.model);
+        console.log('  hasChanges:', hasChanges);
+        
         if (hasChanges) {
           // Participant was updated
           const updateData = UpdateParticipantSchema.parse({
@@ -1665,7 +1687,7 @@ async function updateParticipants(updatedParticipants: Participant[]) {
             contextManagement: updated.contextManagement
           });
           
-          console.log('Updating participant:', existing.id, updateData);
+          console.log('[updateParticipants] ✅ Updating participant:', existing.id, updateData);
           
           try {
             await api.patch(`/participants/${existing.id}`, updateData);
@@ -1673,6 +1695,8 @@ async function updateParticipants(updatedParticipants: Participant[]) {
             console.error('Failed to update participant:', error.response?.data || error);
             throw error;
           }
+        } else {
+          console.log('[updateParticipants] ⏭️  No changes for participant:', existing.id);
         }
       }
     }
@@ -1702,7 +1726,9 @@ async function updateParticipants(updatedParticipants: Participant[]) {
     }
     
     // Reload participants
+    console.log('[updateParticipants] All updates complete, reloading participants...');
     await loadParticipants();
+    console.log('[updateParticipants] ✅ Participants reloaded');
   } catch (error) {
     console.error('Failed to update participants:', error);
   }
@@ -1890,12 +1916,30 @@ function formatDate(date: Date | string): string {
 /* Clickable chip styles */
 .clickable-chip {
   cursor: pointer;
-  transition: all 0.2s ease;
+  /* Removed hover effects - they were getting sticky after button press */
+  /* DEBUG: If you see this in devtools, the new CSS is loaded! */
 }
 
+/* Override Vuetify's default chip hover states */
 .clickable-chip:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transform: none !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+  /* DEBUG: No hover effects should be applied */
+}
+
+.clickable-chip:active {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Also override Vuetify's internal chip overlay states */
+.clickable-chip :deep(.v-chip__overlay) {
+  opacity: 0 !important;
+}
+
+.clickable-chip:hover :deep(.v-chip__overlay) {
+  opacity: 0 !important;
 }
 
 .highlight-message {
@@ -1914,9 +1958,7 @@ function formatDate(date: Date | string): string {
   }
 }
 
-.clickable-chip:active {
-  transform: translateY(0);
-}
+/* Removed active state - hover effects removed */
 
 .cursor-pointer {
   cursor: pointer;
