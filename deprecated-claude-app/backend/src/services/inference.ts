@@ -488,10 +488,20 @@ export class InferenceService {
                           (activeBranch.role === 'assistant' && !activeBranch.participantId && participantName === responderName);
         const role = isResponder ? 'assistant' : 'user';
         
-        // Format content with participant name prefix (unless name is empty for raw continuation)
-        let formattedContent = participantName === '' 
-          ? activeBranch.content 
-          : `${participantName}: ${activeBranch.content}`;
+        // Format content with participant name prefix
+        // For openai-compatible providers: don't add name prefix to assistant's own messages
+        // This prevents the model from learning it should output its name
+        let formattedContent: string;
+        if (participantName === '') {
+          // Raw continuation - no prefix
+          formattedContent = activeBranch.content;
+        } else if (role === 'assistant' && provider === 'openai-compatible') {
+          // OpenAI-compatible model's own messages - no prefix (prevents name echoing)
+          formattedContent = activeBranch.content;
+        } else {
+          // All other messages - add name prefix
+          formattedContent = `${participantName}: ${activeBranch.content}`;
+        }
         
         // Handle attachments for non-responder messages
         if (role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
