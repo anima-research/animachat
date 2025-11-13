@@ -904,6 +904,34 @@ export class Database {
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   }
 
+  async getUserConversationsWithSummary(userId: string): Promise<any[]> {
+    await this.loadUser(userId); // load user if not already loaded
+    const convIds = this.userConversations.get(userId) || new Set();
+    
+    const conversations = Array.from(convIds)
+      .map(id => this.conversations.get(id))
+      .filter((conv): conv is Conversation => conv !== undefined && !conv.archived)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    
+    // Add participant model summaries for group chat conversations
+    return conversations.map(conv => {
+      const result: any = { ...conv };
+      
+      if (conv.format === 'prefill') {
+        const participantIds = this.conversationParticipants.get(conv.id) || [];
+        const participantModels = participantIds
+          .map(pId => this.participants.get(pId))
+          .filter(p => p && p.type === 'assistant' && p.isActive)
+          .map(p => p!.model)
+          .filter(Boolean);
+        
+        result.participantModels = participantModels;
+      }
+      
+      return result;
+    });
+  }
+
   async updateConversation(conversationId: string, conversationOwnerUserId: string, updates: Partial<Conversation>): Promise<Conversation | null> {
     const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) return null;

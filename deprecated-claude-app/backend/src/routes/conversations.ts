@@ -14,7 +14,8 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const conversations = await db.getUserConversations(req.userId);
+      // Use the new method that includes participant summaries
+      const conversations = await db.getUserConversationsWithSummary(req.userId);
       res.json(conversations);
     } catch (error) {
       console.error('Get conversations error:', error);

@@ -634,7 +634,14 @@ const bookmarkRefs = ref<HTMLElement[]>([]);
 const isUserScrollingBookmarks = ref(false);
 const currentBookmarkIndex = ref(0);
 
-const conversations = computed(() => store.state.conversations);
+// Sort conversations by updatedAt on the client side for real-time updates
+const conversations = computed(() => {
+  return [...store.state.conversations].sort((a, b) => {
+    const dateA = new Date(a.updatedAt).getTime();
+    const dateB = new Date(b.updatedAt).getTime();
+    return dateB - dateA; // Most recent first
+  });
+});
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
@@ -790,13 +797,10 @@ const suggestedNonParticipantModels = computed(() => {
     .filter(Boolean);
 });
 
-// Watch for new conversations and load their participants
+// Watch for new conversations - no longer pre-loading participants
+// The sidebar now uses embedded summaries from the backend
 watch(conversations, (newConversations) => {
-  for (const conversation of newConversations) {
-    if (conversation.format === 'prefill' && !conversationParticipantsCache.value[conversation.id]) {
-      loadConversationParticipants(conversation.id);
-    }
-  }
+  console.log(`[ConversationView] Loaded ${newConversations.length} conversations with embedded summaries`);
 });
 
 // Load initial data
@@ -825,6 +829,15 @@ onMounted(async () => {
             autoScrollEnabled.value = true; // Re-enable auto-scroll for new messages
             streamingError.value = null; // Clear any previous errors
           }
+          
+          // Update the conversation's updatedAt timestamp to move it to the top
+          if (currentConversation.value) {
+            const conv = store.state.conversations.find(c => c.id === currentConversation.value!.id);
+            if (conv) {
+              conv.updatedAt = new Date();
+              console.log(`[WebSocket] Updated conversation ${conv.id} timestamp for sorting`);
+            }
+          }
         }
       });
       
@@ -840,6 +853,103 @@ onMounted(async () => {
             if (!isStreaming.value) {
               isStreaming.value = true;
             }
+          }
+        }
+      });
+      
+      // Listen for conversation updates (e.g., title changes, settings)
+      store.state.wsService.on('conversation_updated', (data: any) => {
+        console.log('[WebSocket] Conversation updated:', data);
+        
+        const conv = store.state.conversations.find(c => c.id === data.id);
+        if (conv && data.updates) {
+          // Update the conversation with new data
+          Object.assign(conv, data.updates);
+          
+          // If updatedAt is included, ensure it's a Date object
+          if (data.updates.updatedAt) {
+            conv.updatedAt = new Date(data.updates.updatedAt);
+          }
+        }
+      });
+      
+      // Listen for participant updates
+      store.state.wsService.on('participant_created', (data: any) => {
+        console.log('[WebSocket] Participant created:', data);
+        
+        // Invalidate cache for the conversation
+        if (data.participant?.conversationId) {
+          participantCache.invalidate(data.participant.conversationId);
+          
+          // Update embedded summary in conversation list
+          const conv = conversations.value.find(c => c.id === data.participant.conversationId);
+          if (conv && data.participant.type === 'assistant' && data.participant.model) {
+            const models = (conv as any).participantModels || [];
+            if (!models.includes(data.participant.model)) {
+              models.push(data.participant.model);
+              (conv as any).participantModels = models;
+            }
+          }
+          
+          // Reload if it's the current conversation
+          if (currentConversation.value?.id === data.participant.conversationId) {
+            loadParticipants();
+          }
+        }
+      });
+      
+      store.state.wsService.on('participant_updated', (data: any) => {
+        console.log('[WebSocket] Participant updated:', data);
+        
+        // Invalidate cache for the conversation
+        const participantId = data.participantId;
+        const participant = participants.value.find(p => p.id === participantId);
+        if (participant) {
+          participantCache.invalidate(participant.conversationId);
+          
+          // Update embedded summary if model changed
+          if (data.updates?.model) {
+            const conv = conversations.value.find(c => c.id === participant.conversationId);
+            if (conv && conv.format === 'prefill') {
+              // Rebuild the model list
+              const updatedParticipants = participants.value.map(p => 
+                p.id === participantId ? { ...p, ...data.updates } : p
+              );
+              (conv as any).participantModels = updatedParticipants
+                .filter(p => p.type === 'assistant' && p.isActive)
+                .map(p => p.model)
+                .filter(Boolean);
+            }
+          }
+          
+          // Reload if it's the current conversation
+          if (currentConversation.value?.id === participant.conversationId) {
+            loadParticipants();
+          }
+        }
+      });
+      
+      store.state.wsService.on('participant_deleted', (data: any) => {
+        console.log('[WebSocket] Participant deleted:', data);
+        
+        // Find the conversation this participant belonged to
+        const participant = participants.value.find(p => p.id === data.participantId);
+        if (participant) {
+          participantCache.invalidate(participant.conversationId);
+          
+          // Update embedded summary
+          const conv = conversations.value.find(c => c.id === participant.conversationId);
+          if (conv && conv.format === 'prefill') {
+            const remainingParticipants = participants.value
+              .filter(p => p.id !== data.participantId && p.type === 'assistant' && p.isActive);
+            (conv as any).participantModels = remainingParticipants
+              .map(p => p.model)
+              .filter(Boolean);
+          }
+          
+          // Reload if it's the current conversation
+          if (currentConversation.value?.id === participant.conversationId) {
+            loadParticipants();
           }
         }
       });
@@ -1626,10 +1736,34 @@ async function loadParticipants() {
   
   console.log('[ConversationView] loadParticipants called');
   
+  // Check cache first
+  const cached = participantCache.get(currentConversation.value.id);
+  if (cached) {
+    console.log('[ConversationView] Using cached participants');
+    participants.value = cached;
+    
+    // Set default selected participant
+    const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
+    if (defaultUser) {
+      selectedParticipant.value = defaultUser.id;
+    }
+    
+    // Set default responder to first assistant
+    const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.isActive);
+    if (defaultAssistant) {
+      console.log('[ConversationView] Setting selectedResponder to:', defaultAssistant.id, 'model:', defaultAssistant.model);
+      selectedResponder.value = defaultAssistant.id;
+    }
+    return;
+  }
+  
   try {
     const response = await api.get(`/participants/conversation/${currentConversation.value.id}`);
     console.log('[ConversationView] Loaded participants from backend:', response.data);
     participants.value = response.data;
+    
+    // Cache the loaded participants
+    participantCache.set(currentConversation.value.id, response.data);
     
     // Set default selected participant
     const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
@@ -1725,6 +1859,19 @@ async function updateParticipants(updatedParticipants: Participant[]) {
       }
     }
     
+    // Invalidate cache for this conversation
+    participantCache.invalidate(currentConversation.value.id);
+    
+    // Also update the participantModels in the conversation list
+    const conv = conversations.value.find(c => c.id === currentConversation.value.id);
+    if (conv && conv.format === 'prefill') {
+      // Update the embedded summary
+      (conv as any).participantModels = updatedParticipants
+        .filter(p => p.type === 'assistant' && p.isActive)
+        .map(p => p.model)
+        .filter(Boolean);
+    }
+    
     // Reload participants
     console.log('[updateParticipants] All updates complete, reloading participants...');
     await loadParticipants();
@@ -1739,8 +1886,62 @@ function logout() {
   router.push('/login');
 }
 
-// Cache for conversation participants to avoid repeated API calls
-const conversationParticipantsCache = ref<Record<string, any[]>>({});
+// Smart LRU Cache for conversation participants with TTL
+class ParticipantCache {
+  private cache = new Map<string, { data: Participant[], timestamp: number }>();
+  private readonly maxSize = 10; // Only keep 10 most recent
+  private readonly ttl = 5 * 60 * 1000; // 5 minute TTL
+  
+  get(conversationId: string): Participant[] | null {
+    const cached = this.cache.get(conversationId);
+    if (!cached) return null;
+    
+    // Check TTL
+    if (Date.now() - cached.timestamp > this.ttl) {
+      this.cache.delete(conversationId);
+      return null;
+    }
+    
+    // Move to end (most recently used)
+    this.cache.delete(conversationId);
+    this.cache.set(conversationId, cached);
+    
+    return cached.data;
+  }
+  
+  set(conversationId: string, participants: Participant[]) {
+    // Remove if already exists (to re-add at end)
+    if (this.cache.has(conversationId)) {
+      this.cache.delete(conversationId);
+    }
+    
+    // LRU eviction if at capacity
+    if (this.cache.size >= this.maxSize) {
+      const firstKey = this.cache.keys().next().value;
+      this.cache.delete(firstKey);
+      console.log(`[ParticipantCache] Evicted ${firstKey} (LRU)`);
+    }
+    
+    this.cache.set(conversationId, {
+      data: participants,
+      timestamp: Date.now()
+    });
+    console.log(`[ParticipantCache] Cached ${conversationId}, size: ${this.cache.size}`);
+  }
+  
+  invalidate(conversationId: string) {
+    if (this.cache.delete(conversationId)) {
+      console.log(`[ParticipantCache] Invalidated ${conversationId}`);
+    }
+  }
+  
+  clear() {
+    this.cache.clear();
+    console.log('[ParticipantCache] Cleared all entries');
+  }
+}
+
+const participantCache = new ParticipantCache();
 
 async function importRawMessages() {
   if (!currentConversation.value || !rawImportData.value.trim()) return;
@@ -1801,23 +2002,11 @@ async function importRawMessages() {
   }
 }
 
-async function loadConversationParticipants(conversationId: string) {
-  if (conversationParticipantsCache.value[conversationId]) {
-    return conversationParticipantsCache.value[conversationId];
-  }
-  
-  try {
-    const response = await api.get(`/participants/conversation/${conversationId}`);
-    const participants = response.data;
-    conversationParticipantsCache.value[conversationId] = participants;
-    return participants;
-  } catch (error) {
-    console.error('Failed to load participants for conversation:', conversationId, error);
-    return [];
-  }
-}
+// Note: loadConversationParticipants has been removed!
+// The sidebar now uses embedded participant summaries from the backend
+// The active conversation uses loadParticipants() with smart caching
 
-function getConversationModelsHtml(conversation: Conversation): string {
+function getConversationModelsHtml(conversation: any): string {
   if (!conversation) return '';
   
   // For standard conversations, show the model name
@@ -1832,24 +2021,20 @@ function getConversationModelsHtml(conversation: Conversation): string {
     return `<span style="color: ${color}; font-weight: 500;">${modelName}</span>`;
   }
   
-  // For multi-participant conversations, try to show participant models
-  const cachedParticipants = conversationParticipantsCache.value[conversation.id];
-  if (cachedParticipants) {
-    const assistants = cachedParticipants.filter(p => p.type === 'assistant' && p.isActive);
-    if (assistants.length > 0) {
-      const modelSpans = assistants.map(a => {
-        const model = store.state.models.find(m => m.id === a.model);
-        const modelName = model ? model.displayName
-          .replace('Claude ', '')
-          .replace(' (Bedrock)', ' B')
-          .replace(' (OpenRouter)', ' OR') : (a.model || 'Default');
-        
-        const color = getModelColor(a.model);
-        return `<span style="color: ${color}; font-weight: 500;">${modelName}</span>`;
-      });
+  // For multi-participant conversations, use embedded participant summaries!
+  if (conversation.participantModels && conversation.participantModels.length > 0) {
+    const modelSpans = conversation.participantModels.map((modelId: string) => {
+      const model = store.state.models.find(m => m.id === modelId);
+      const modelName = model ? model.displayName
+        .replace('Claude ', '')
+        .replace(' (Bedrock)', ' B')
+        .replace(' (OpenRouter)', ' OR') : modelId;
       
-      return modelSpans.join(' • ');
-    }
+      const color = getModelColor(modelId);
+      return `<span style="color: ${color}; font-weight: 500;">${modelName}</span>`;
+    });
+    
+    return modelSpans.join(' • ');
   }
   
   return '<span style="color: #757575; font-weight: 500;">Group Chat</span>';

@@ -266,6 +266,13 @@ export const ConversationSchema = z.object({
 
 export type Conversation = z.infer<typeof ConversationSchema>;
 
+// Conversation with participant summary for list view
+export const ConversationWithSummarySchema = ConversationSchema.extend({
+  participantModels: z.array(z.string()).optional() // Model IDs only for display
+});
+
+export type ConversationWithSummary = z.infer<typeof ConversationWithSummarySchema>;
+
 // WebSocket message types
 export const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({

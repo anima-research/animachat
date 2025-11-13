@@ -327,6 +327,13 @@ export function createStore(): {
       // }
       
       state.wsService.sendMessage(messageData);
+      
+      // Update the conversation's updatedAt timestamp locally for immediate sorting
+      const conv = state.conversations.find(c => c.id === state.currentConversation!.id);
+      if (conv) {
+        conv.updatedAt = new Date();
+        console.log(`[Store] Updated conversation ${conv.id} timestamp for sorting`);
+      }
     },
     
     async continueGeneration(responderId?: string, explicitParentBranchId?: string) {
@@ -356,6 +363,13 @@ export function createStore(): {
         parentBranchId,
         responderId
       });
+      
+      // Update the conversation's updatedAt timestamp locally for immediate sorting
+      const conv = state.conversations.find(c => c.id === state.currentConversation!.id);
+      if (conv) {
+        conv.updatedAt = new Date();
+        console.log(`[Store] Updated conversation ${conv.id} timestamp for continue generation`);
+      }
     },
     
     async regenerateMessage(messageId: string, branchId: string) {
@@ -367,6 +381,12 @@ export function createStore(): {
         messageId,
         branchId
       });
+      
+      // Update the conversation's updatedAt timestamp locally for immediate sorting
+      const conv = state.conversations.find(c => c.id === state.currentConversation!.id);
+      if (conv) {
+        conv.updatedAt = new Date();
+      }
     },
     
     async editMessage(messageId: string, branchId: string, content: string, responderId?: string) {
@@ -380,6 +400,12 @@ export function createStore(): {
         content,
         responderId // Pass the currently selected responder
       } as any);
+      
+      // Update the conversation's updatedAt timestamp locally for immediate sorting
+      const conv = state.conversations.find(c => c.id === state.currentConversation!.id);
+      if (conv) {
+        conv.updatedAt = new Date();
+      }
     },
     
         switchBranch(messageId: string, branchId: string) {
