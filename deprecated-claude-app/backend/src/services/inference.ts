@@ -6,6 +6,7 @@ import { OpenRouterService } from './openrouter.js';
 import { OpenAICompatibleService } from './openai-compatible.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
+import { MockService } from './mock-service.js';
 
 // Internal format type that includes 'messages' mode
 type InternalConversationFormat = ConversationFormat | 'messages';
@@ -84,6 +85,11 @@ export class InferenceService {
         const openRouterService = new OpenRouterService(this.db, undefined);
         apiMessages = openRouterService.formatMessagesForOpenRouter(formattedMessages, systemPrompt);
         apiSystemPrompt = undefined; // System prompt is included in messages for OpenRouter
+        break;
+      case 'mock':
+        const mockService = new MockService();
+        apiMessages = mockService.formatMessagesForMock(formattedMessages);
+        apiSystemPrompt = undefined;
         break;
       default:
         throw new Error(`Unknown provider: ${model.provider}`);
@@ -259,6 +265,17 @@ export class InferenceService {
       );
       
       await openAIService.streamCompletion(
+        model.providerModelId,
+        formattedMessages,
+        systemPrompt,
+        settings,
+        finalOnChunk,
+        stopSequences
+      );
+    } else if (model.provider === 'mock') {
+      const mockService = new MockService();
+      
+      await mockService.streamCompletion(
         model.providerModelId,
         formattedMessages,
         systemPrompt,

@@ -23,7 +23,7 @@ export const ModelSchema = z.object({
   providerModelId: z.string(), // The actual model ID to send to the provider API
   displayName: z.string(), // User-facing display name
   shortName: z.string(), // Short name for participant display
-  provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible']),
+  provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible', 'mock']),
   deprecated: z.boolean(),
   contextWindow: z.number(),
   outputTokenLimit: z.number(),

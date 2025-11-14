@@ -90,6 +90,45 @@ npm run build
 - **Branch navigation**: Use left/right arrows to switch between versions
 - **Export conversations**: Download full conversation data as JSON
 
+## Smoke Test with k6
+
+1. **Start the backend with an isolated datastore (optional but recommended):**
+   ```bash
+   cd deprecated-claude-app
+   DATABASE_ROOT=./tmp/k6-data npm run dev:backend
+   ```
+   The `DATABASE_ROOT` (or `DB_ROOT`) environment variable directs the `Database` to a temporary folder so smoke tests do not mutate real data.
+2. **Execute the smoke test from another terminal:**
+   ```bash
+   cd deprecated-claude-app
+   k6 run backend/scripts/k6-smoke-test.js \
+     --env BASE_URL=http://localhost:3010/api \
+     --env TEST_EMAIL=test@example.com \
+     --env TEST_PASSWORD=password123 \
+   ```
+   The default `mock-claude-local` model streams text locally so you can test end-to-end flows without talking to a real provider. Override the environment variables to target a different deployment, account, or model as needed.
+3. **Review the k6 summary output** and resolve any failed checks before increasing load.
+
+## Load Test with k6
+
+1. **Launch the backend against disposable data:**
+   ```bash
+   DATABASE_ROOT=./tmp/load-test-data npm run dev:backend
+   ```
+2. **Run the load script with ramping options:**
+   ```bash
+   k6 run backend/scripts/k6-load-test.js \
+     --env BASE_URL=http://localhost:3010/api \
+     --env TEST_EMAIL=test@example.com \
+     --env TEST_PASSWORD=password123 \
+     --env USE_WEBSOCKET=false \
+     --env START_RATE=20 \
+     --env PRE_VUS=120 \
+     --env MAX_VUS=400
+   ```
+   `USE_WEBSOCKET=true` exercises the chat WebSocket path (sending a message, streaming the mock response, regenerating an alternate branch). Set `USE_WEBSOCKET=false` to import a small conversation and drive the same branch-swapping flow via pure HTTP, which is useful for isolating HTTP vs. WebSocket bottlenecks. The script aborts automatically once any request fails or the latency thresholds are crossed, and incrementally increases the ramp until the run stops.
+3. **Watch the backend logs and resource usage** during the run to spot failure thresholds or saturation points.
+
 ## API Endpoints
 
 ### Authentication
