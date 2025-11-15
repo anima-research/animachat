@@ -38,17 +38,14 @@
                 No models are configured in the system configuration.
               </v-alert>
 
-              <v-expansion-panels multiple>
-                <v-expansion-panel
-                  v-for="model in models"
-                  :key="model.id"
-                  class="mb-3"
-                >
-                  <v-expansion-panel-title>
-                    <div class="d-flex flex-column">
-                      <span class="text-h6">{{ model.displayName }}</span>
-                      <span class="text-caption text-medium-emphasis">
-                        Provider: {{ model.provider }} • Context: {{ model.contextWindow.toLocaleString() }} tokens
+              <v-expansion-panels v-model="expandedPanels" multiple>
+                <template v-for="(model, index) in orderedModels" :key="model.id">
+                  <v-expansion-panel class="mb-3">
+                    <v-expansion-panel-title>
+                      <div class="d-flex flex-column">
+                        <span class="text-h6">{{ model.displayName }}</span>
+                        <span class="text-caption text-medium-emphasis">
+                          Provider: {{ model.provider }} • Context: {{ model.contextWindow.toLocaleString() }} tokens
                       </span>
                     </div>
                     <v-chip
@@ -119,7 +116,12 @@
                       </tbody>
                     </v-table>
                   </v-expansion-panel-text>
-                </v-expansion-panel>
+                  </v-expansion-panel>
+                  <v-divider
+                    v-if="index === pricedModels.length - 1 && otherModels.length"
+                    class="my-4"
+                  />
+                </template>
               </v-expansion-panels>
             </div>
           </v-card>
@@ -130,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { api } from '@/services/api';
 
 interface ModelPricingCost {
@@ -161,6 +163,19 @@ interface ModelPricingSummary {
 const models = ref<ModelPricingSummary[]>([]);
 const loading = ref(true);
 const error = ref('');
+const expandedPanels = ref<number[]>([]);
+
+const pricedModels = computed(() => models.value.filter(model => model.pricing.length));
+const otherModels = computed(() => models.value.filter(model => !model.pricing.length));
+const orderedModels = computed(() => pricedModels.value.concat(otherModels.value));
+
+watch(
+  models,
+  () => {
+    expandedPanels.value = pricedModels.value.map((_, index) => index);
+  },
+  { immediate: true, deep: true },
+);
 
 function formatTokenPrice(value: number | null): string {
   if (value === null) {
