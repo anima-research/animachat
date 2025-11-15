@@ -6,3 +6,4 @@
 - Keep functions small (under 20 lines) where possible.
 - Keep files small (under 100 lines) where possible.
 - Functional style is better than loops in simple cases.
+- Insert comma after the last list element when multiline
