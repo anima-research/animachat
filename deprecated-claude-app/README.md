@@ -134,6 +134,15 @@ npm run build
 2. Update Bedrock service with model mapping
 3. Models automatically appear in UI
 
+### Admin rights configuration
+
+Since there's no UI yet, just add to JSONL of your user lines akin to these:
+```json lines
+{"timestamp":"2025-11-13T20:21:58.521Z","type":"grant_capability_recorded","data":{"id": "a","userId": "303dade4-7fbf-4978-a004-465206660211","capability": "admin", "action":"granted","time":"2025-11-13T20:21:58.521Z"}}
+{"timestamp":"2025-11-13T20:21:59.521Z","type":"grant_capability_recorded","data":{"id": "b","userId": "303dade4-7fbf-4978-a004-465206660211","capability": "mint", "action":"granted","time":"2025-11-13T20:21:59.521Z"}}
+{"timestamp":"2025-11-13T20:22:00.521Z","type":"grant_capability_recorded","data":{"id": "c","userId": "303dade4-7fbf-4978-a004-465206660211","capability": "send", "action":"granted","time":"2025-11-13T20:22:00.521Z"}}
+```
+
 ## License
 
 This project is for educational and personal use. Ensure compliance with AWS Bedrock terms of service and Anthropic's usage policies.

@@ -69,6 +69,20 @@ function buildConversationHistory(
   return history;
 }
 
+async function userHasSufficientCredits(db: Database, userId: string): Promise<boolean> {
+  const summary = await db.getUserGrantSummary(userId);
+  const credits = Number(summary.totals['credit'] ?? 0);
+  if (credits >= 0) return true;
+  return await db.userHasActiveGrantCapability(userId, 'overspend');
+}
+
+function sendInsufficientCreditsError(ws: AuthenticatedWebSocket): void {
+  ws.send(JSON.stringify({
+    type: 'error',
+    error: 'Insufficient credits. Please add credits before generating more responses.'
+  }));
+}
+
 export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessage, db: Database) {
   // Extract token from query params
   const url = new URL(req.url || '', `http://${req.headers.host}`);
@@ -277,6 +291,11 @@ async function handleChatMessage(
       ws.send(JSON.stringify({ type: 'error', error: 'Invalid responder' }));
       return;
     }
+  }
+
+  if (!(await userHasSufficientCredits(db, conversation.userId))) {
+    sendInsufficientCreditsError(ws);
+    return;
   }
 
   // Create assistant message placeholder with correct parent
@@ -529,7 +548,12 @@ async function handleRegenerate(
       regenerateModel = participant.model;
     }
   }
-  
+
+  if (!(await userHasSufficientCredits(db, conversation.userId))) {
+    sendInsufficientCreditsError(ws);
+    return;
+  }
+
   // Create new branch with correct parent and model
   const updatedMessage = await db.addMessageBranch(
     message.messageId,
@@ -762,7 +786,12 @@ async function handleEdit(
         responderModel = responderParticipant.model;
       }
     }
-    
+
+    if (!(await userHasSufficientCredits(db, conversation.userId))) {
+      sendInsufficientCreditsError(ws);
+      return;
+    }
+
     // Check if there's already an assistant message after this user message
     const nextMessage = editedMessageIndex + 1 < allMessages.length ? allMessages[editedMessageIndex + 1] : null;
     
@@ -1004,6 +1033,11 @@ async function handleContinue(
 
     if (!responder) {
       ws.send(JSON.stringify({ type: 'error', error: 'No assistant participant found' }));
+      return;
+    }
+
+    if (!(await userHasSufficientCredits(db, conversation.userId))) {
+      sendInsufficientCreditsError(ws);
       return;
     }
 

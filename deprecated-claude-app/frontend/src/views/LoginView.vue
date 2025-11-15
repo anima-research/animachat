@@ -169,6 +169,8 @@
           <span class="separator">•</span>
           <a href="#" @click.prevent="$router.push('/about')">philosophy</a>
           <span class="separator">•</span>
+          <a href="#" @click.prevent="$router.push('/models')">model.pricing</a>
+          <span class="separator">•</span>
           <a href="https://discord.gg/anima" target="_blank">discord</a>
         </div>
       </div>

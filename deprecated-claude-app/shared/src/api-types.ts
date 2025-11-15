@@ -155,3 +155,43 @@ export const OpenRouterModelsResponseSchema = z.object({
 });
 
 export type OpenRouterModelsResponse = z.infer<typeof OpenRouterModelsResponseSchema>;
+
+export const ModelPricingCostSchema = z.object({
+  perToken: z.object({
+    input: z.number().nullable(),
+    output: z.number().nullable()
+  }),
+  perMillion: z.object({
+    input: z.number().nullable(),
+    output: z.number().nullable()
+  })
+});
+
+export const ModelPricingTierSchema = z.object({
+  profileId: z.string(),
+  profileName: z.string(),
+  profilePriority: z.number(),
+  providerCost: ModelPricingCostSchema.nullable(),
+  billedCost: ModelPricingCostSchema.nullable()
+});
+
+export const ModelPricingSummarySchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  provider: z.string(),
+  providerModelId: z.string(),
+  deprecated: z.boolean(),
+  contextWindow: z.number(),
+  outputTokenLimit: z.number(),
+  supportsThinking: z.boolean().optional(),
+  pricing: z.array(ModelPricingTierSchema)
+});
+
+export const PublicModelPricingResponseSchema = z.object({
+  models: z.array(ModelPricingSummarySchema)
+});
+
+export type ModelPricingCost = z.infer<typeof ModelPricingCostSchema>;
+export type ModelPricingTier = z.infer<typeof ModelPricingTierSchema>;
+export type ModelPricingSummary = z.infer<typeof ModelPricingSummarySchema>;
+export type PublicModelPricingResponse = z.infer<typeof PublicModelPricingResponseSchema>;

@@ -8,14 +8,15 @@
       <v-card-title>
         Settings
       </v-card-title>
-      
+
       <v-tabs v-model="tab">
         <v-tab value="api-keys">API Keys</v-tab>
+        <v-tab value="grants">Grants</v-tab>
         <v-tab value="custom-models">Custom Models</v-tab>
         <v-tab value="appearance">Appearance</v-tab>
         <v-tab value="about">About</v-tab>
       </v-tabs>
-      
+
       <v-window v-model="tab">
         <!-- API Keys Tab -->
         <v-window-item value="api-keys">
@@ -165,7 +166,17 @@
             </v-btn>
           </v-card-text>
         </v-window-item>
-        
+
+        <!-- Grants Tab -->
+        <v-window-item value="grants">
+          <GrantsTab
+            :summary="grantSummary"
+            :loading="grantsLoading"
+            :error="grantsError"
+            @refresh="loadGrantSummary"
+          />
+        </v-window-item>
+
         <!-- Custom Models Tab -->
         <v-window-item value="custom-models">
           <CustomModelsTab />
@@ -254,7 +265,9 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useTheme } from 'vuetify';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
+import { UserGrantSummary } from '@deprecated-claude/shared';
 import CustomModelsTab from './CustomModelsTab.vue';
+import GrantsTab from './GrantsTab.vue';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -270,6 +283,9 @@ const theme = useTheme();
 const tab = ref('api-keys');
 const apiKeys = ref<any[]>([]);
 const models = computed(() => store.state.models);
+const grantSummary = ref<UserGrantSummary | null>(null);
+const grantsLoading = ref(false);
+const grantsError = ref<string | null>(null);
 
 const newKey = ref({
   name: '',
@@ -344,6 +360,24 @@ async function loadApiKeys() {
   }
 }
 
+async function loadGrantSummary() {
+  if (grantsLoading.value) return;
+
+  grantsLoading.value = true;
+  grantsError.value = null;
+
+  try {
+    const response = await api.get('/auth/grants');
+    grantSummary.value = response.data as UserGrantSummary;
+  } catch (error: any) {
+    console.error('Failed to load grants:', error);
+    grantSummary.value = null;
+    grantsError.value = error.response?.data?.error || 'Failed to load grant information';
+  } finally {
+    grantsLoading.value = false;
+  }
+}
+
 async function addApiKey() {
   try {
     // Build request payload with only necessary credentials
@@ -412,6 +446,13 @@ async function deleteApiKey(id: string) {
 watch(() => props.modelValue, (isOpen) => {
   if (isOpen) {
     loadApiKeys();
+    loadGrantSummary();
+  }
+});
+
+watch(tab, (value) => {
+  if (value === 'grants' && !grantSummary.value && !grantsLoading.value) {
+    loadGrantSummary();
   }
 });
 
