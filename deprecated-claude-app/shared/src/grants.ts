@@ -25,3 +25,9 @@ export interface GrantCapability {
   grantedByUserId: string;
   expiresAt?: string;
 }
+
+export interface UserGrantSummary {
+  totals: Record<string, number>;
+  grantInfos: GrantInfo[];
+  grantCapabilities: GrantCapability[];
+}

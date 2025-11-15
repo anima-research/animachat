@@ -172,6 +172,20 @@ export function authRouter(db: Database): Router {
     }
   });
 
+  router.get('/grants', authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const summary = await db.getUserGrantSummary(req.userId);
+      res.json(summary);
+    } catch (error) {
+      console.error('Get grants error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.delete('/api-keys/:id', authenticateToken, async (req: AuthRequest, res) => {
     try {
       if (!req.userId) {
