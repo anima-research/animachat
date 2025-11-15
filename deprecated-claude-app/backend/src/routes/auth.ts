@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { v4 as uuidv4 } from 'uuid';
 import { Database } from '../database/index.js';
 import { generateToken, authenticateToken, AuthRequest } from '../middleware/auth.js';
 
@@ -14,8 +15,22 @@ const LoginSchema = z.object({
   password: z.string()
 });
 
+const GrantTransferSchema = z.object({
+  email: z.string().email(),
+  amount: z.coerce.number().positive(),
+  reason: z.string().trim().max(200).optional(),
+  currency: z.string().trim().max(50).optional()
+});
+
 export function authRouter(db: Database): Router {
   const router = Router();
+
+  async function userHasAnyCapability(userId: string, capabilities: Array<'send'|'mint'|'admin'|'overspend'>): Promise<boolean> {
+    for (const capability of capabilities) {
+      if (await db.userHasActiveGrantCapability(userId, capability)) return true;
+    }
+    return false;
+  }
 
   // Register
   router.post('/register', async (req, res) => {
@@ -182,6 +197,101 @@ export function authRouter(db: Database): Router {
       res.json(summary);
     } catch (error) {
       console.error('Get grants error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/users/lookup', authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const emailInput = req.query.email;
+      if (typeof emailInput !== 'string') {
+        return res.status(400).json({ error: 'Email is required' });
+      }
+      const parsed = z.string().email().safeParse(emailInput);
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Invalid email' });
+      }
+      const user = await db.getUserByEmail(parsed.data);
+      if (!user) {
+        return res.json({ exists: false });
+      }
+      res.json({ exists: true, user: { id: user.id, email: user.email, name: user.name } });
+    } catch (error) {
+      console.error('Lookup user error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/grants/mint', authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const data = GrantTransferSchema.parse(req.body);
+      if (!await userHasAnyCapability(req.userId, ['mint', 'admin'])) {
+        return res.status(403).json({ error: 'Mint capability required' });
+      }
+
+      const recipient = await db.getUserByEmail(data.email);
+      if (!recipient) {
+        return res.status(404).json({ error: 'Recipient not found' });
+      }
+
+      await db.recordGrantInfo({
+        id: uuidv4(),
+        time: new Date().toISOString(),
+        type: 'mint',
+        amount: data.amount,
+        fromUserId: req.userId,
+        toUserId: recipient.id,
+        reason: data.reason?.trim() || undefined,
+        currency: data.currency?.trim() || 'credit'
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input', details: error.errors });
+      }
+      console.error('Mint grant error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/grants/send', authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const data = GrantTransferSchema.parse(req.body);
+      if (!await userHasAnyCapability(req.userId, ['send', 'admin'])) {
+        return res.status(403).json({ error: 'Send capability required' });
+      }
+
+      const receiver = await db.getUserByEmail(data.email);
+      if (!receiver) {
+        return res.status(404).json({ error: 'Receiver not found' });
+      }
+
+      await db.recordGrantInfo({
+        id: uuidv4(),
+        time: new Date().toISOString(),
+        type: 'send',
+        amount: data.amount,
+        fromUserId: req.userId,
+        toUserId: receiver.id,
+        reason: data.reason?.trim() || undefined,
+        currency: data.currency?.trim() || 'credit'
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input', details: error.errors });
+      }
+      console.error('Send grant error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

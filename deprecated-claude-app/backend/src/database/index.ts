@@ -356,6 +356,34 @@ export class Database {
     };
   }
 
+  private capabilityIsActive(capability: GrantCapability): boolean {
+    if (capability.action !== 'granted') return false;
+    if (!capability.expiresAt) return true;
+    const expiry = new Date(capability.expiresAt).getTime();
+    return Number.isNaN(expiry) ? true : expiry >= Date.now();
+  }
+
+  async userHasActiveGrantCapability(userId: string, capability: GrantCapability['capability']): Promise<boolean> {
+    await this.loadUser(userId);
+    this.ensureGrantContainers(userId);
+
+    const capabilities = this.userGrantCapabilities.get(userId)!;
+    let latestTime = -Infinity;
+    let latestCapability: GrantCapability | null = null;
+
+    for (const record of capabilities) {
+      if (record.capability !== capability) continue;
+      const recordTime = new Date(record.time).getTime();
+      const normalisedTime = Number.isNaN(recordTime) ? 0 : recordTime;
+      if (normalisedTime > latestTime) {
+        latestTime = normalisedTime;
+        latestCapability = record;
+      }
+    }
+
+    return latestCapability ? this.capabilityIsActive(latestCapability) : false;
+  }
+
   private updateGrantTotals(userId: string, grant: GrantInfo): void {
     const totals = this.userGrantTotals.get(userId)!;
     const currency = grant.currency || 'credit';

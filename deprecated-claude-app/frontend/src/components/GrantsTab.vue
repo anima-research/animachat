@@ -10,7 +10,6 @@
         <v-btn variant="text" size="small" @click="emit('refresh')">Retry</v-btn>
       </template>
     </v-alert>
-
     <template v-else>
       <section class="mb-4">
         <h4 class="text-h6 mb-3">Available Balances</h4>
@@ -42,26 +41,28 @@
         </div>
         <p v-else class="text-grey text-body-2 mb-0">No grant capabilities assigned.</p>
       </section>
+
+      <GrantActions
+        v-if="canMint || canSend"
+        :can-mint="canMint"
+        :can-send="canSend"
+        @completed="emit('refresh')"
+      />
     </template>
   </v-card-text>
 </template>
-
 <script setup lang="ts">
 import { computed } from 'vue';
 import { GrantCapability, UserGrantSummary } from '@deprecated-claude/shared';
+import GrantActions from './GrantActions.vue';
 const props = defineProps<{ summary: UserGrantSummary | null; loading: boolean; error: string | null }>();
 const emit = defineEmits<{ refresh: [] }>();
 const totals = computed(() => props.summary
   ? Object.entries(props.summary.totals)
-      .map(([currency, amount]) => ({
-        currency,
-        currencyLabel: currency === 'credit' ? 'Credits' : currency,
-        amount: Number(amount) || 0
-      }))
+      .map(([currency, amount]) => ({ currency, currencyLabel: currency === 'credit' ? 'Credits' : currency, amount: Number(amount) || 0 }))
       .sort((a, b) => a.currency.localeCompare(b.currency))
   : []
 );
-
 const capabilityBadges = computed(() => {
   if (!props.summary) return [] as Array<{ capability: string; label: string; active: boolean; expiresLabel: string | null }>;
   const latest = new Map<string, GrantCapability>();
@@ -77,6 +78,9 @@ const capabilityBadges = computed(() => {
     }))
     .sort((a, b) => a.capability.localeCompare(b.capability));
 });
+const activeCapabilities = computed(() => capabilityBadges.value.filter(cap => cap.active).map(cap => cap.capability));
+const canMint = computed(() => activeCapabilities.value.includes('mint') || activeCapabilities.value.includes('admin'));
+const canSend = computed(() => activeCapabilities.value.includes('send') || activeCapabilities.value.includes('admin'));
 function formatAmount(amount: number): string { return amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function isExpired(expiresAt?: string): boolean {
   if (!expiresAt) return false;
