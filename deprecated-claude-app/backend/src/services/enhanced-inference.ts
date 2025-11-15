@@ -20,7 +20,27 @@ type CostBreakdown = {
   inputCost: number;
   outputCost: number;
   totalCost: number;
+  inputPrice: number;
+  outputPrice: number;
 };
+
+const INPUT_PRICING_PER_MILLION: Record<string, number> = {
+  'claude-3-5-sonnet-20241022': 3.00,
+  'claude-3-5-haiku-20241022': 0.25,
+  'claude-3-opus-20240229': 15.00,
+  'claude-3-sonnet-20240229': 3.00,
+  'claude-3-haiku-20240307': 0.25
+};
+
+const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
+  'claude-3-5-sonnet-20241022': 15.00,
+  'claude-3-5-haiku-20241022': 1.25,
+  'claude-3-opus-20240229': 75.00,
+  'claude-3-sonnet-20240229': 15.00,
+  'claude-3-haiku-20240307': 1.25
+};
+
+const CACHE_DISCOUNT = 0.9;
 
 /**
  * Enhanced inference service that integrates context management
@@ -144,7 +164,7 @@ export class EnhancedInferenceService {
             model: model.id,
             timestamp: new Date().toISOString(),
             responseTime: endTime - startTime,
-            details: this.buildUsageDetails(breakdown, inputTokens, outputTokens, cachedTokens, savings)
+            details: this.buildUsageDetails(breakdown, inputTokens, outputTokens, cachedTokens)
           });
         }
       }
@@ -209,42 +229,22 @@ export class EnhancedInferenceService {
   }
   
   private calculateCostSaved(model: Model, cachedTokens: number): number {
-    // Simplified cost calculation - in practice would use actual pricing
-    const costPer1kTokens = {
-      'claude-3-5-sonnet-20241022': 0.003,
-      'claude-3-5-haiku-20241022': 0.00025,
-      'claude-3-opus-20240229': 0.015,
-    } as Record<string, number>;
-
-    const rate = costPer1kTokens[model.id] || 0.001;
-    // Cached tokens are 90% cheaper with Anthropic
-    return (cachedTokens / 1000) * rate * 0.9;
+    const pricePerToken = this.getInputPricePerToken(model.id);
+    return cachedTokens * pricePerToken * CACHE_DISCOUNT;
   }
 
   private calculateCostBreakdown(model: Model, inputTokens: number, outputTokens: number): CostBreakdown {
-    const inputPricing: Record<string, number> = {
-      'claude-3-5-sonnet-20241022': 3.00,
-      'claude-3-5-haiku-20241022': 0.25,
-      'claude-3-opus-20240229': 15.00,
-      'claude-3-sonnet-20240229': 3.00,
-      'claude-3-haiku-20240307': 0.25
-    };
-
-    const outputPricing: Record<string, number> = {
-      'claude-3-5-sonnet-20241022': 15.00,
-      'claude-3-5-haiku-20241022': 1.25,
-      'claude-3-opus-20240229': 75.00,
-      'claude-3-sonnet-20240229': 15.00,
-      'claude-3-haiku-20240307': 1.25
-    };
-
-    const inputCost = inputTokens * ((inputPricing[model.id] || 3.00) / 1_000_000);
-    const outputCost = outputTokens * ((outputPricing[model.id] || 15.00) / 1_000_000);
+    const inputPrice = this.getInputPricePerToken(model.id);
+    const outputPrice = this.getOutputPricePerToken(model.id);
+    const inputCost = inputTokens * inputPrice;
+    const outputCost = outputTokens * outputPrice;
 
     return {
       inputCost,
       outputCost,
-      totalCost: inputCost + outputCost
+      totalCost: inputCost + outputCost,
+      inputPrice,
+      outputPrice
     };
   }
 
@@ -252,21 +252,21 @@ export class EnhancedInferenceService {
     breakdown: CostBreakdown,
     inputTokens: number,
     outputTokens: number,
-    cachedTokens: number,
-    savings: number
+    cachedTokens: number
   ): GrantUsageDetails {
     const details: GrantUsageDetails = {};
 
     if (inputTokens > 0) {
-      details.input = this.createTokenUsage(breakdown.inputCost, inputTokens);
+      details.input = this.createTokenUsage(breakdown.inputPrice, inputTokens);
     }
 
     if (outputTokens > 0) {
-      details.output = this.createTokenUsage(breakdown.outputCost, outputTokens);
+      details.output = this.createTokenUsage(breakdown.outputPrice, outputTokens);
     }
 
-    if (cachedTokens > 0 || savings > 0) {
-      details.cached_input = this.createTokenUsage(0, cachedTokens, savings > 0 ? -savings : 0);
+    if (cachedTokens > 0) {
+      const cachedPrice = -breakdown.inputPrice * CACHE_DISCOUNT;
+      details.cached_input = this.createTokenUsage(cachedPrice, cachedTokens);
     }
 
     return details;
@@ -276,8 +276,16 @@ export class EnhancedInferenceService {
     return {
       price,
       tokens,
-      credits: credits === undefined ? price : credits
+      credits: credits === undefined ? tokens * price : credits
     };
+  }
+
+  private getInputPricePerToken(modelId: string): number {
+    return (INPUT_PRICING_PER_MILLION[modelId] || 3.00) / 1_000_000;
+  }
+
+  private getOutputPricePerToken(modelId: string): number {
+    return (OUTPUT_PRICING_PER_MILLION[modelId] || 15.00) / 1_000_000;
   }
   
   // Analytics methods
