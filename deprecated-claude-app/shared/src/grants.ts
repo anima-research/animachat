@@ -1,6 +1,20 @@
 /**
  * A record of a grant usage event.
  */
+export interface GrantTokenUsage {
+  price: number;
+  tokens: number;
+  credits: number;
+}
+
+export interface GrantUsageDetails {
+  input?: GrantTokenUsage;
+  output?: GrantTokenUsage;
+  cached_input?: GrantTokenUsage;
+  reasoning_output?: GrantTokenUsage;
+  [tokenType: string]: GrantTokenUsage | undefined;
+}
+
 export interface GrantInfo {
   id: string;
   time: string;
@@ -11,6 +25,7 @@ export interface GrantInfo {
   reason?: string; // human-readable comment about the grant, like 'invite reward', 'purchase', etc.
   causeId?: string; // e.g., transaction ID, invite ID, etc.
   currency?: 'credit'|string; // or a specific model name; credit is implied if absent
+  details?: GrantUsageDetails;
 }
 
 /**

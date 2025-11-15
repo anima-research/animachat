@@ -1,4 +1,4 @@
-import { User, Conversation, Message, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary } from '@deprecated-claude/shared';
+import { User, Conversation, Message, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -22,6 +22,7 @@ export interface MetricsData {
   model: string;
   timestamp: string;
   responseTime: number;
+  details?: GrantUsageDetails;
 }
 
 export class Database {
@@ -344,8 +345,25 @@ export class Database {
       ...grant,
       time: new Date(grant.time).toISOString(),
       amount: Number(grant.amount),
-      currency: grant.currency || 'credit'
+      currency: grant.currency || 'credit',
+      details: this.normaliseGrantDetails(grant.details)
     };
+  }
+
+  private normaliseGrantDetails(details?: GrantUsageDetails): GrantUsageDetails | undefined {
+    if (!details) return undefined;
+
+    const normalized: GrantUsageDetails = {};
+    for (const [tokenType, usage] of Object.entries(details)) {
+      if (!usage) continue;
+      normalized[tokenType] = {
+        price: Number(usage.price) || 0,
+        tokens: Number(usage.tokens) || 0,
+        credits: Number(usage.credits) || 0
+      };
+    }
+
+    return normalized;
   }
 
   private normaliseGrantCapability(capability: GrantCapability): GrantCapability {
@@ -1834,18 +1852,18 @@ export class Database {
     // Store event
     await this.logUserEvent(conversationOwnerUserId, 'metrics_added', { conversationId, metrics });
 
-    if (metrics.cost && metrics.cost > 0) {
-      await this.recordGrantInfo({
-        id: uuidv4(),
-        time: new Date().toISOString(),
-        type: 'burn',
-        amount: metrics.cost,
-        fromUserId: conversationOwnerUserId,
-        causeId: metrics.timestamp,
-        reason: `Model usage (${metrics.model})`,
-        currency: 'credit'
-      });
-    }
+    const burnAmount = Math.max(Number(metrics.cost) || 0, 0);
+    await this.recordGrantInfo({
+      id: uuidv4(),
+      time: new Date().toISOString(),
+      type: 'burn',
+      amount: burnAmount,
+      fromUserId: conversationOwnerUserId,
+      causeId: metrics.timestamp,
+      reason: `Model usage (${metrics.model})`,
+      currency: 'credit',
+      details: metrics.details
+    });
   }
   
   async getConversationMetrics(conversationId: string, conversationOwnerUserId: string): Promise<MetricsData[]> {
