@@ -448,6 +448,26 @@ export class Database {
     this.userGrantCapabilities.get(userId)!.push({ ...normalized });
   }
 
+  async getApplicableGrantCurrencies(modelId?: string, userId?: string): Promise<string[]> {
+    const nonCredit = new Set<string>();
+
+    if (modelId) {
+      const modelLoader = ModelLoader.getInstance();
+      const modelConfig = await modelLoader.getModelById(modelId, userId);
+      const currencies = modelConfig?.currencies || {};
+      for (const [currency, enabled] of Object.entries(currencies)) {
+        if (!enabled) continue;
+        const trimmed = currency.trim();
+        if (!trimmed || trimmed === 'credit') continue;
+        nonCredit.add(trimmed);
+      }
+    }
+
+    const ordered = Array.from(nonCredit).sort((a, b) => a.localeCompare(b));
+    ordered.push('credit');
+    return ordered;
+  }
+
   async recordGrantInfo(grant: GrantInfo): Promise<void> {
     const normalized = this.normaliseGrantInfo(grant);
     const userIds = new Set<string>();
@@ -1853,6 +1873,13 @@ export class Database {
     await this.logUserEvent(conversationOwnerUserId, 'metrics_added', { conversationId, metrics });
 
     const burnAmount = Math.max(Number(metrics.cost) || 0, 0);
+    this.ensureGrantContainers(conversationOwnerUserId);
+    const applicableCurrencies = await this.getApplicableGrantCurrencies(metrics.model, conversationOwnerUserId);
+    const totals = this.userGrantTotals.get(conversationOwnerUserId)!;
+    let burnCurrency = applicableCurrencies.find(currency => Number(totals.get(currency) || 0) > 0);
+    if (!burnCurrency) {
+      burnCurrency = applicableCurrencies[applicableCurrencies.length - 1] || 'credit';
+    }
     await this.recordGrantInfo({
       id: uuidv4(),
       time: new Date().toISOString(),
@@ -1861,7 +1888,7 @@ export class Database {
       fromUserId: conversationOwnerUserId,
       causeId: metrics.timestamp,
       reason: `Model usage (${metrics.model})`,
-      currency: 'credit',
+      currency: burnCurrency,
       details: metrics.details
     });
   }
