@@ -43,6 +43,15 @@ function collectPricing(profiles: any[], model: any) {
     .sort((a: any, b: any) => a.profile.priority - b.profile.priority);
 }
 
+function extractCurrencies(model: any): string[] {
+  if (!model?.currencies) return [];
+  return Object.entries(model.currencies)
+    .filter(([, enabled]) => Boolean(enabled))
+    .map(([currency]) => currency.trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+}
+
 export function publicModelRouter(): Router {
   const router = Router();
   const modelLoader = ModelLoader.getInstance();
@@ -75,6 +84,7 @@ export function publicModelRouter(): Router {
           contextWindow: model.contextWindow,
           outputTokenLimit: model.outputTokenLimit,
           supportsThinking: Boolean(model.supportsThinking),
+          currencies: extractCurrencies(model),
           pricing,
         };
       });

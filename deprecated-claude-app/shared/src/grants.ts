@@ -45,4 +45,5 @@ export interface UserGrantSummary {
   totals: Record<string, number>;
   grantInfos: GrantInfo[];
   grantCapabilities: GrantCapability[];
+  availableCurrencies?: string[];
 }

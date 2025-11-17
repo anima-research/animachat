@@ -28,6 +28,7 @@ export const ModelSchema = z.object({
   contextWindow: z.number(),
   outputTokenLimit: z.number(),
   supportsThinking: z.boolean().optional(), // Whether the model supports extended thinking
+  currencies: z.record(z.boolean()).optional(),
   settings: z.object({
     temperature: z.object({
       min: z.number(),

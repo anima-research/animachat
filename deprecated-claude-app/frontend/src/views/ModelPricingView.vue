@@ -46,8 +46,23 @@
                         <span class="text-h6">{{ model.displayName }}</span>
                         <span class="text-caption text-medium-emphasis">
                           Provider: {{ model.provider }} • Context: {{ model.contextWindow.toLocaleString() }} tokens
-                      </span>
-                    </div>
+                        </span>
+                        <div
+                          v-if="visibleCurrencies(model.currencies).length"
+                          class="currency-chips"
+                        >
+                          <v-chip
+                            v-for="currency in visibleCurrencies(model.currencies)"
+                            :key="currency"
+                            size="x-small"
+                            color="primary"
+                            class="currency-chip"
+                            variant="tonal"
+                          >
+                            {{ currency }}
+                          </v-chip>
+                        </div>
+                      </div>
                     <v-chip
                       v-if="model.deprecated"
                       color="warning"
@@ -158,6 +173,7 @@ interface ModelPricingSummary {
   outputTokenLimit: number;
   supportsThinking: boolean;
   pricing: ModelPricingTier[];
+  currencies: string[];
 }
 
 const models = ref<ModelPricingSummary[]>([]);
@@ -195,6 +211,10 @@ function formatPerMillion(value: number | null): string {
     return '—';
   }
   return `$${value.toFixed(2)}`;
+}
+
+function visibleCurrencies(currencies?: string[]): string[] {
+  return (currencies || []).filter(currency => currency !== 'credit');
 }
 
 async function loadPricing() {
@@ -274,5 +294,17 @@ onMounted(() => {
   display: block;
   font-size: 0.75rem;
   color: rgba(255, 255, 255, 0.6);
+}
+
+.currency-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.currency-chip {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 </style>

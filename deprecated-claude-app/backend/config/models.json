@@ -10,6 +10,10 @@
       "contextWindow": 200000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
+      "currencies": {
+        "haiku": true,
+        "models-2025": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -46,6 +50,10 @@
       "contextWindow": 200000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
+      "currencies": {
+        "sonnets": true,
+        "models-2025": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -82,6 +90,10 @@
       "contextWindow": 200000,
       "outputTokenLimit": 32000,
       "supportsThinking": true,
+      "currencies": {
+        "opus": true,
+        "models-2025": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -118,6 +130,10 @@
       "contextWindow": 200000,
       "outputTokenLimit": 32000,
       "supportsThinking": true,
+      "currencies": {
+        "opus": true,
+        "models-2025": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -154,6 +170,10 @@
       "contextWindow": 200000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
+      "currencies": {
+        "sonnets": true,
+        "models-2025": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -190,6 +210,10 @@
       "contextWindow": 200000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
+      "currencies": {
+        "sonnets": true,
+        "models-2025": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -225,6 +249,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
+      "currencies": {
+        "haiku": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -260,6 +287,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
+      "currencies": {
+        "sonnets": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -295,6 +325,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
+      "currencies": {
+        "sonnets": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -330,6 +363,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 4096,
+      "currencies": {
+        "opus": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -365,6 +401,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
+      "currencies": {
+        "haiku": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -400,6 +439,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
+      "currencies": {
+        "sonnets": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -435,6 +477,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 4096,
+      "currencies": {
+        "sonnets": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -470,6 +515,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 4096,
+      "currencies": {
+        "haiku": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -505,6 +553,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
+      "currencies": {
+        "sonnets": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -534,6 +585,9 @@
       "deprecated": false,
       "contextWindow": 200000,
       "outputTokenLimit": 4096,
+      "currencies": {
+        "opus": true
+      },
       "settings": {
         "temperature": {
           "min": 0,
@@ -563,6 +617,10 @@
       "deprecated": false,
       "contextWindow": 128000,
       "outputTokenLimit": 4096,
+      "currencies": {
+        "openai": true,
+        "models-2025": true
+      },
       "settings": {
         "temperature": {
           "min": 0,

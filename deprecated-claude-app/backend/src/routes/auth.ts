@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { Database } from '../database/index.js';
 import { generateToken, authenticateToken, AuthRequest } from '../middleware/auth.js';
+import { ModelLoader } from '../config/model-loader.js';
 
 const RegisterSchema = z.object({
   email: z.string().email(),
@@ -24,6 +25,7 @@ const GrantTransferSchema = z.object({
 
 export function authRouter(db: Database): Router {
   const router = Router();
+  const modelLoader = ModelLoader.getInstance();
 
   async function userHasAnyCapability(userId: string, capabilities: Array<'send'|'mint'|'admin'|'overspend'>): Promise<boolean> {
     for (const capability of capabilities) {
@@ -187,6 +189,20 @@ export function authRouter(db: Database): Router {
     }
   });
 
+  async function collectAvailableCurrencies(): Promise<string[]> {
+    const models = await modelLoader.loadModels();
+    const currencies = new Set<string>(['credit']);
+    for (const model of models) {
+      if (!model?.currencies) continue;
+      for (const [currency, enabled] of Object.entries(model.currencies)) {
+        if (!enabled) continue;
+        const trimmed = currency.trim();
+        if (trimmed) currencies.add(trimmed);
+      }
+    }
+    return Array.from(currencies).sort((a, b) => a.localeCompare(b));
+  }
+
   router.get('/grants', authenticateToken, async (req: AuthRequest, res) => {
     try {
       if (!req.userId) {
@@ -194,7 +210,11 @@ export function authRouter(db: Database): Router {
       }
 
       const summary = await db.getUserGrantSummary(req.userId);
-      res.json(summary);
+      const availableCurrencies = await collectAvailableCurrencies();
+      res.json({
+        ...summary,
+        availableCurrencies
+      });
     } catch (error) {
       console.error('Get grants error:', error);
       res.status(500).json({ error: 'Internal server error' });

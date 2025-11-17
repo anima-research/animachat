@@ -46,6 +46,7 @@
         v-if="canMint || canSend"
         :can-mint="canMint"
         :can-send="canSend"
+        :currencies="availableCurrencies"
         @completed="emit('refresh')"
       />
     </template>
@@ -63,6 +64,12 @@ const totals = computed(() => props.summary
       .sort((a, b) => a.currency.localeCompare(b.currency))
   : []
 );
+const availableCurrencies = computed(() => {
+  const list = props.summary?.availableCurrencies || [];
+  return Array.from(new Set(['credit', ...list.filter(currency => typeof currency === 'string' && currency.trim())]))
+    .map(currency => currency.trim())
+    .filter(Boolean);
+});
 const capabilityBadges = computed(() => {
   if (!props.summary) return [] as Array<{ capability: string; label: string; active: boolean; expiresLabel: string | null }>;
   const latest = new Map<string, GrantCapability>();
