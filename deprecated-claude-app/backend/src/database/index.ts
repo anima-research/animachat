@@ -789,7 +789,7 @@ export class Database {
       case 'grant_capability_recorded': {
         const { userId, capability } = event.data || {};
         if (userId && capability) {
-          this.applyGrantCapability(userId, event.data);
+          this.applyGrantCapability(userId, capability);
         }
         break;
       }
