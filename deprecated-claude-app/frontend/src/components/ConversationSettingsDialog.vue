@@ -21,7 +21,7 @@
         <v-select
           v-if="settings.format === 'standard'"
           v-model="settings.model"
-          :items="models"
+          :items="activeModels"
           item-title="displayName"
           item-value="id"
           label="Model"
@@ -69,7 +69,7 @@
         <div v-else class="mt-4">
           <ParticipantsSection
             v-model="localParticipants"
-            :models="models"
+            :models="activeModels"
           />
           
           <v-divider class="my-4" />
@@ -437,6 +437,10 @@ const settings = ref<any>({
 });
 
 const localParticipants = ref<Participant[]>([]);
+
+const activeModels = computed(() => {
+  return props.models.filter(m => !m.deprecated);
+});
 
 const selectedModel = computed(() => {
   return props.models.find(m => m.id === settings.value.model);
