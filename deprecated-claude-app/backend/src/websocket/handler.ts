@@ -69,6 +69,23 @@ function buildConversationHistory(
   return history;
 }
 
+async function userHasSufficientCredits(db: Database, userId: string, modelId?: string): Promise<boolean> {
+  const summary = await db.getUserGrantSummary(userId);
+  const currencies = await db.getApplicableGrantCurrencies(modelId, userId);
+  for (const currency of currencies) {
+    const balance = Number(summary.totals[currency] ?? 0);
+    if (balance > 0) return true;
+  }
+  return await db.userHasActiveGrantCapability(userId, 'overspend');
+}
+
+function sendInsufficientCreditsError(ws: AuthenticatedWebSocket): void {
+  ws.send(JSON.stringify({
+    type: 'error',
+    error: 'Insufficient credits. Please add credits before generating more responses.'
+  }));
+}
+
 export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessage, db: Database) {
   // Extract token from query params
   const url = new URL(req.url || '', `http://${req.headers.host}`);
@@ -279,6 +296,13 @@ async function handleChatMessage(
     }
   }
 
+  const inferenceModel = responder.model || conversation.model;
+
+  if (!(await userHasSufficientCredits(db, conversation.userId, inferenceModel))) {
+    sendInsufficientCreditsError(ws);
+    return;
+  }
+
   // Create assistant message placeholder with correct parent
   const userBranch = userMessage.branches[userMessage.branches.length - 1]; // Get the last branch (the one we just added)
   
@@ -353,7 +377,6 @@ async function handleChatMessage(
     console.log(`[WebSocket] Responder:`, JSON.stringify(responder, null, 2));
     console.log(`[WebSocket] Conversation model: "${conversation.model}"`);
     
-    const inferenceModel = responder.model || conversation.model;
     console.log(`[WebSocket] Determined inferenceModel: "${inferenceModel}"`);
     
     const inferenceSystemPrompt = responder.systemPrompt || conversation.systemPrompt;
@@ -529,7 +552,12 @@ async function handleRegenerate(
       regenerateModel = participant.model;
     }
   }
-  
+
+  if (!(await userHasSufficientCredits(db, conversation.userId, regenerateModel))) {
+    sendInsufficientCreditsError(ws);
+    return;
+  }
+
   // Create new branch with correct parent and model
   const updatedMessage = await db.addMessageBranch(
     message.messageId,
@@ -762,7 +790,12 @@ async function handleEdit(
         responderModel = responderParticipant.model;
       }
     }
-    
+
+    if (!(await userHasSufficientCredits(db, conversation.userId, responderModel))) {
+      sendInsufficientCreditsError(ws);
+      return;
+    }
+
     // Check if there's already an assistant message after this user message
     const nextMessage = editedMessageIndex + 1 < allMessages.length ? allMessages[editedMessageIndex + 1] : null;
     
@@ -1007,6 +1040,13 @@ async function handleContinue(
       return;
     }
 
+    const responderModelId = responder.model || conversation.model;
+
+    if (!(await userHasSufficientCredits(db, conversation.userId, responderModelId))) {
+      sendInsufficientCreditsError(ws);
+      return;
+    }
+
     // Get messages and determine parent
     const messages = await db.getConversationMessages(conversationId, conversation.userId);
     
@@ -1029,7 +1069,7 @@ async function handleContinue(
           '', // empty content initially
           'assistant',
           parentBranchId,
-          responder.model || conversation.model,
+          responderModelId,
           responder.id,
           undefined // no attachments
         );
@@ -1041,7 +1081,7 @@ async function handleContinue(
           conversation.userId,
           '', // empty content initially
           'assistant',
-          responder.model || conversation.model,
+          responderModelId,
           parentBranchId,
           responder.id
         );
@@ -1053,7 +1093,7 @@ async function handleContinue(
         conversation.userId,
         '', // empty content initially
         'assistant',
-        responder.model || conversation.model,
+        responderModelId,
         undefined,
         responder.id
       );
@@ -1082,7 +1122,7 @@ async function handleContinue(
       conversationId,
       messageId,
       participantId: responder.id,
-      model: responder.model || conversation.model
+      model: responderModelId
     });
 
     // Build conversation history using the utility function

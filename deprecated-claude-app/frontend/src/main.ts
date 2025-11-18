@@ -21,6 +21,7 @@ import LoginView from './views/LoginView.vue';
 import AboutView from './views/AboutView.vue';
 import SharedView from './views/SharedView.vue';
 import ModelTestView from './views/ModelTestView.vue';
+import ModelPricingView from './views/ModelPricingView.vue';
 
 const vuetify = createVuetify({
   components,
@@ -76,6 +77,11 @@ const router = createRouter({
       name: 'share',
       component: SharedView,
       // No auth required - public route
+    },
+    {
+      path: '/models',
+      name: 'model-pricing',
+      component: ModelPricingView,
     },
     {
       path: '/',
