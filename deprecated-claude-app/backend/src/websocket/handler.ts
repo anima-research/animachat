@@ -70,6 +70,21 @@ function buildConversationHistory(
 }
 
 async function userHasSufficientCredits(db: Database, userId: string, modelId?: string): Promise<boolean> {
+  // Check if the user has their own API key for the model's provider
+  if (modelId) {
+    const modelLoader = ModelLoader.getInstance();
+    const model = await modelLoader.getModelById(modelId, userId);
+    if (model) {
+      // Check if user has their own API key for this provider
+      const userApiKeys = await db.getUserApiKeys(userId);
+      const hasProviderKey = userApiKeys.some(key => key.provider === model.provider);
+      if (hasProviderKey) {
+        console.log(`[Credits] User ${userId} has custom ${model.provider} API key, skipping credit check`);
+        return true;
+      }
+    }
+  }
+
   const summary = await db.getUserGrantSummary(userId);
   const currencies = await db.getApplicableGrantCurrencies(modelId, userId);
   for (const currency of currencies) {
