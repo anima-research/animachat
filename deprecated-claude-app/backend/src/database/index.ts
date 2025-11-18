@@ -932,6 +932,10 @@ export class Database {
     return this.users.get(id) || null;
   }
 
+  async getAllUsers(): Promise<User[]> {
+    return Array.from(this.users.values());
+  }
+
   async getUserGrantSummary(userId: string): Promise<UserGrantSummary> {
     await this.loadUser(userId);
     this.ensureGrantContainers(userId);

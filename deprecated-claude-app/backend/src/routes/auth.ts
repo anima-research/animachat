@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { Database } from '../database/index.js';
 import { generateToken, authenticateToken, AuthRequest } from '../middleware/auth.js';
+import { ConfigLoader } from '../config/loader.js';
 import { ModelLoader } from '../config/model-loader.js';
 
 const RegisterSchema = z.object({
@@ -46,6 +47,24 @@ export function authRouter(db: Database): Router {
 
       const user = await db.createUser(data.email, data.password, data.name);
       const token = generateToken(user.id);
+
+      // Grant initial credits from config
+      const config = await ConfigLoader.getInstance().loadConfig();
+      const initialGrants = (config as any).initialGrants || {};
+      
+      for (const [currency, amount] of Object.entries(initialGrants)) {
+        if (typeof amount === 'number' && amount > 0) {
+          await db.recordGrantInfo({
+            id: uuidv4(),
+            time: new Date().toISOString(),
+            type: 'mint',
+            amount: amount,
+            toUserId: user.id,
+            reason: `Welcome credits: ${currency}`,
+            currency: currency
+          });
+        }
+      }
 
       res.json({
         user: {
