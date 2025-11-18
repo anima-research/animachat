@@ -1865,12 +1865,24 @@ export class Database {
     if (!this.conversationMetrics.has(conversationId)) {
       this.conversationMetrics.set(conversationId, []);
     }
-    
+
     const convMetrics = this.conversationMetrics.get(conversationId)!;
     convMetrics.push(metrics);
 
     // Store event
     await this.logUserEvent(conversationOwnerUserId, 'metrics_added', { conversationId, metrics });
+
+    // Check if user has their own API key for this provider - if so, skip burning credits
+    const modelLoader = ModelLoader.getInstance();
+    const model = await modelLoader.getModelById(metrics.model, conversationOwnerUserId);
+    if (model) {
+      const userApiKeys = await this.getUserApiKeys(conversationOwnerUserId);
+      const hasProviderKey = userApiKeys.some(key => key.provider === model.provider);
+      if (hasProviderKey) {
+        console.log(`[Credits] User ${conversationOwnerUserId} has custom ${model.provider} API key, skipping credit burn`);
+        return;
+      }
+    }
 
     const burnAmount = Math.max(Number(metrics.cost) || 0, 0);
     this.ensureGrantContainers(conversationOwnerUserId);
