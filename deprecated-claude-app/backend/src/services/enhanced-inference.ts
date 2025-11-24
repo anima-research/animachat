@@ -75,7 +75,7 @@ export class EnhancedInferenceService {
   ): Promise<void> {
     // If no conversation provided, fall back to original behavior
     if (!conversation) {
-      return this.inferenceService.streamCompletion(
+      await this.inferenceService.streamCompletion(
         model.id,
         messages,
         systemPrompt,
@@ -87,6 +87,7 @@ export class EnhancedInferenceService {
         undefined,
         undefined
       );
+      return;
     }
     
     // Prepare context using context manager
