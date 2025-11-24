@@ -118,23 +118,20 @@ export type UpdateUserModel = z.infer<typeof UpdateUserModelSchema>;
 // Context management settings
 export const ContextManagementSchema = z.discriminatedUnion('strategy', [
   z.object({
-    strategy: z.literal('append'),
-    cacheInterval: z.number().default(10000) // Move cache marker every 10k tokens
+    strategy: z.literal('append')
+    // No config needed - uses model's max context for arithmetic
   }),
   z.object({
     strategy: z.literal('rolling'),
     maxTokens: z.number(),
-    maxGraceTokens: z.number(),
-    cacheMinTokens: z.number().default(5000), // Min tokens before setting cache marker
-    cacheDepthFromEnd: z.number().default(5) // Messages from end where cache marker is placed
+    maxGraceTokens: z.number()
   })
 ]);
 
 export type ContextManagement = z.infer<typeof ContextManagementSchema>;
 
 export const DEFAULT_CONTEXT_MANAGEMENT: ContextManagement = {
-  strategy: 'append',
-  cacheInterval: 10000
+  strategy: 'append'
 };
 
 // Participant types
@@ -401,7 +398,8 @@ export const ConversationMetricsSchema = z.object({
   perModelMetrics: z.record(z.string(), ModelConversationMetricsSchema).default({}),
   lastCompletion: LastCompletionMetricsSchema.optional(),
   totals: TotalsMetricsSchema.default({}),
-  contextManagement: ContextManagementSchema.optional()
+  contextManagement: ContextManagementSchema.optional(),
+  totalTreeTokens: z.number().optional() // Total size of all branches in conversation tree
 });
 
 export type ConversationMetrics = z.infer<typeof ConversationMetricsSchema>;

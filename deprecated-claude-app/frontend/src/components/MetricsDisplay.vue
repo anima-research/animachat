@@ -45,14 +45,6 @@
             <span>Total Tokens:</span>
             <span>{{ formatNumber(totalTokens) }}</span>
           </div>
-          <div class="detail-row">
-            <span>Cached Tokens:</span>
-            <span>{{ formatNumber(curModelMetrics?.totals?.cachedTokens || 0) }}
-              <span class="cache-percentage" v-if="(curModelMetrics?.totals?.cachedTokens || 0) > 0">
-                ({{ overallCacheEfficiency }}%)
-              </span>
-            </span>
-          </div>
           <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
             <span>Last Input:</span>
             <span>{{ formatNumber(curModelMetrics.lastCompletion.inputTokens) }}</span>
@@ -61,17 +53,13 @@
             <span>Last Output:</span>
             <span>{{ formatNumber(curModelMetrics.lastCompletion.outputTokens) }}</span>
           </div>
+          <div class="detail-row" v-if="curModelMetrics?.lastCompletion && curModelMetrics.lastCompletion.cachedTokens > 0">
+            <span>Cache Length:</span>
+            <span class="cache-highlight">{{ formatNumber(curModelMetrics.lastCompletion.cachedTokens) }}</span>
+          </div>
           <div class="detail-row" v-if="curModelMetrics?.lastCompletion?.thinkingTokens">
             <span>Last Thinking:</span>
             <span class="thinking-tokens">{{ formatNumber(curModelMetrics.lastCompletion.thinkingTokens) }}</span>
-          </div>
-          <div class="detail-row" v-if="curModelMetrics?.lastCompletion">
-            <span>Last Cached:</span>
-            <span>{{ formatNumber(curModelMetrics.lastCompletion.cachedTokens) }} 
-              <span class="cache-percentage" v-if="curModelMetrics.lastCompletion.cachedTokens > 0">
-                ({{ cacheEfficiency }}%)
-              </span>
-            </span>
           </div>
         </div>
         
@@ -104,18 +92,6 @@
           <div class="detail-row" v-if="curContextManagment?.maxGraceTokens">
             <span>Max Grace Tokens:</span>
             <span>{{ formatNumber(curContextManagment.maxGraceTokens) }}</span>
-          </div>
-          <div class="detail-row" v-if="curContextManagment?.cacheMinTokens">
-            <span>Cache Min Tokens:</span>
-            <span>{{ formatNumber(curContextManagment.cacheMinTokens) }}</span>
-          </div>
-          <div class="detail-row" v-if="curContextManagment?.cacheDepthFromEnd">
-            <span>Cache Depth From End:</span>
-            <span>{{ formatNumber(curContextManagment.cacheDepthFromEnd) }}</span>
-          </div>
-          <div class="detail-row" v-if="curContextManagment?.cacheInterval">
-            <span>Cache Interval:</span>
-            <span>{{ formatNumber(curContextManagment.cacheInterval) }}</span>
           </div>
         </div>
       </div>
@@ -256,19 +232,14 @@ const lastCompletionTokens = computed(() => {
 });
 
 const totalTokens = computed(() => {
+  // Show total tree size if available (all branches), otherwise fall back to API usage
+  if (metrics.value?.totalTreeTokens) {
+    return metrics.value.totalTreeTokens;
+  }
   if (!curModelMetrics.value?.totals) return 0;
   return curModelMetrics.value.totals.inputTokens + curModelMetrics.value.totals.outputTokens;
 });
 
-const cacheEfficiency = computed(() => {
-  if (!curModelMetrics.value?.lastCompletion || curModelMetrics.value.lastCompletion.inputTokens === 0) return 0;
-  return Math.round((curModelMetrics.value.lastCompletion.cachedTokens / curModelMetrics.value.lastCompletion.inputTokens) * 100);
-});
-
-const overallCacheEfficiency = computed(() => {
-  if (!curModelMetrics.value?.totals || curModelMetrics.value.totals.inputTokens === 0) return 0;
-  return Math.round((curModelMetrics.value.totals.cachedTokens / curModelMetrics.value.totals.inputTokens) * 100);
-});
 
 // Formatting functions
 const formatNumber = (num: number): string => {

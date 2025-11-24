@@ -6,6 +6,7 @@ import { OpenRouterService } from './openrouter.js';
 import { OpenAICompatibleService } from './openai-compatible.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
+import { Logger } from '../utils/logger.js';
 
 // Internal format type that includes 'messages' mode
 type InternalConversationFormat = ConversationFormat | 'messages';
@@ -103,27 +104,34 @@ export class InferenceService {
     systemPrompt: string | undefined,
     settings: ModelSettings,
     userId: string,
-    onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[]) => Promise<void>,
+    onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     format: ConversationFormat = 'standard',
     participants: Participant[] = [],
     responderId?: string,
     conversation?: Conversation
-  ): Promise<void> {
+  ): Promise<{
+    usage?: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationInputTokens?: number;
+      cacheReadInputTokens?: number;
+    }
+  }> {
     
     // Find the model configuration
-    console.log(`[InferenceService] streamCompletion called with modelId: "${modelId}", type: ${typeof modelId}, userId: ${userId}`);
+    Logger.inference(`[InferenceService] streamCompletion called with modelId: "${modelId}", type: ${typeof modelId}, userId: ${userId}`);
     
     if (!modelId) {
-      console.error(`[InferenceService] ERROR: modelId is ${modelId}!`);
+      Logger.error(`[InferenceService] ERROR: modelId is ${modelId}!`);
       throw new Error(`Model ${modelId} not found`);
     }
     
     const model = await this.modelLoader.getModelById(modelId, userId);
     if (!model) {
-      console.error(`[InferenceService] Model lookup failed for ID: "${modelId}", userId: ${userId}`);
+      Logger.error(`[InferenceService] Model lookup failed for ID: "${modelId}", userId: ${userId}`);
       throw new Error(`Model ${modelId} not found`);
     }
-    console.log(`[InferenceService] Found model: provider=${model.provider}, providerModelId=${model.providerModelId}`)
+    Logger.inference(`[InferenceService] Found model: provider=${model.provider}, providerModelId=${model.providerModelId}`)
     
     // Determine the actual format to use
     let actualFormat: InternalConversationFormat = format;
@@ -178,8 +186,8 @@ export class InferenceService {
     // Track token usage
     let inputTokens = 0;
     let outputTokens = 0;
-    const trackingOnChunk = async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
-      await onChunk(chunk, isComplete, contentBlocks);
+    const trackingOnChunk = async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+      await onChunk(chunk, isComplete, contentBlocks, usage);
       // TODO: Implement accurate token counting
       outputTokens += chunk.length / 4; // Rough estimate
     };
@@ -188,6 +196,8 @@ export class InferenceService {
     const finalOnChunk = actualFormat === 'messages' 
       ? this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId)
       : trackingOnChunk;
+
+    let usageResult: { usage?: any } = {};
 
     if (model.provider === 'anthropic') {
       if (!selectedKey) {
@@ -198,7 +208,7 @@ export class InferenceService {
         selectedKey.credentials.apiKey
       );
       
-      await anthropicService.streamCompletion(
+      usageResult = await anthropicService.streamCompletion(
         model.providerModelId,
         formattedMessages,
         systemPrompt,
@@ -228,7 +238,21 @@ export class InferenceService {
         selectedKey.credentials.apiKey
       );
       
-      await openRouterService.streamCompletion(
+      // Use exact test script reproduction if enabled (for debugging)
+      const useExactTest = process.env.OPENROUTER_EXACT_TEST === 'true';
+      
+      if (useExactTest) {
+        Logger.info('[InferenceService] 🧪 Using EXACT test script reproduction for OpenRouter');
+        usageResult = await openRouterService.streamCompletionExactTest(
+          model.providerModelId,
+          formattedMessages,
+          systemPrompt,
+          settings,
+          finalOnChunk,
+          stopSequences
+        );
+      } else {
+        usageResult = await openRouterService.streamCompletion(
         model.providerModelId,
         formattedMessages,
         systemPrompt,
@@ -236,6 +260,7 @@ export class InferenceService {
         finalOnChunk,
         stopSequences
       );
+      }
     } else if (model.provider === 'openai-compatible') {
       // Check if this is a custom user model with its own endpoint
       const isCustomModel = (model as any).customEndpoint !== undefined;
@@ -270,8 +295,13 @@ export class InferenceService {
       throw new Error(`Unsupported provider: ${model.provider}`);
     }
 
-    // TODO: Get accurate token counts from the service
+    // Use actual usage from provider if available, otherwise estimate
+    if (usageResult.usage) {
+      inputTokens = usageResult.usage.inputTokens;
+      outputTokens = usageResult.usage.outputTokens;
+    } else {
     inputTokens = this.estimateTokens(formattedMessages);
+    }
 
     // Track usage after completion
     if (selectedKey && selectedKey.source === 'config' && selectedKey.profile) {
@@ -284,6 +314,8 @@ export class InferenceService {
         selectedKey.profile
       );
     }
+    
+    return usageResult;
   }
 
   private estimateTokens(messages: Message[]): number {
@@ -622,14 +654,14 @@ export class InferenceService {
   }
   
   private createMessagesModeChunkHandler(
-    originalOnChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[]) => Promise<void>,
+    originalOnChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     participants: Participant[],
     responderId?: string
-  ): (chunk: string, isComplete: boolean, contentBlocks?: any[]) => Promise<void> {
+  ): (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void> {
     let buffer = '';
     let nameStripped = false;
     
-    return async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
+    return async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
       buffer += chunk;
       
       if (!nameStripped) {
@@ -668,9 +700,9 @@ export class InferenceService {
       
       // Handle completion
       if (isComplete && buffer.length > 0) {
-        await originalOnChunk(buffer, true, contentBlocks);
+        await originalOnChunk(buffer, true, contentBlocks, usage);
       } else if (isComplete) {
-        await originalOnChunk('', true, contentBlocks);
+        await originalOnChunk('', true, contentBlocks, usage);
       }
     };
   }

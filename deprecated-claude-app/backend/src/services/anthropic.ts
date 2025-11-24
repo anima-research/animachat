@@ -20,13 +20,20 @@ export class AnthropicService {
     messages: Message[],
     systemPrompt: string | undefined,
     settings: ModelSettings,
-    onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[]) => Promise<void>,
+    onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     stopSequences?: string[]
-  ): Promise<void> {
+  ): Promise<{
+    usage?: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationInputTokens: number;
+      cacheReadInputTokens: number;
+    }
+  }> {
     // Demo mode - simulate streaming response
     if (process.env.DEMO_MODE === 'true') {
       await this.simulateStreamingResponse(messages, onChunk);
-      return;
+      return {}; // No usage metrics in demo mode
     }
 
     let requestId: string | undefined;
@@ -101,7 +108,8 @@ export class AnthropicService {
         messageCount: requestParams.messages.length
       }, null, 2));
       
-      // Log the full prompt being sent to the model
+    // Log the full prompt being sent to the model (only in debug mode)
+    if (process.env.LOG_DEBUG === 'true') {
       console.log('\n========== FULL PROMPT TO ANTHROPIC ==========');
       if (systemContent) {
         console.log('SYSTEM:', systemContent);
@@ -121,6 +129,7 @@ export class AnthropicService {
         }
       }
       console.log('========== END PROMPT ==========\n');
+    }
       
       requestId = `anthropic-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
@@ -242,7 +251,15 @@ export class AnthropicService {
             console.log(`[Anthropic API] Token usage:`, usage);
           }
         } else if (chunk.type === 'message_stop') {
-          await onChunk('', true, contentBlocks);
+          // Pass actual usage metrics to callback
+          const actualUsage = {
+            inputTokens: usage.input_tokens || 0,
+            outputTokens: usage.output_tokens || 0,
+            cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
+            cacheReadInputTokens: cacheMetrics.cacheReadInputTokens
+          };
+          
+          await onChunk('', true, contentBlocks, actualUsage);
           
           // Log complete response summary
           const fullResponse = chunks.join('');
@@ -291,6 +308,16 @@ export class AnthropicService {
           break;
         }
       }
+      
+      // Return actual usage metrics from Anthropic
+      return {
+        usage: {
+          inputTokens: usage.input_tokens || 0,
+          outputTokens: usage.output_tokens || 0,
+          cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
+          cacheReadInputTokens: cacheMetrics.cacheReadInputTokens
+        }
+      };
     } catch (error) {
       console.error('Anthropic streaming error:', error);
       

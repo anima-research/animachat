@@ -334,6 +334,9 @@
                 </v-tooltip>
               </template>
             </v-text-field>
+            
+            <!-- Cache Settings for Rolling Strategy -->
+            <v-divider class="my-3" />
           </div>
         </div>
         
@@ -671,15 +674,12 @@ function save() {
   if (contextStrategy.value === 'append') {
     contextManagement = {
       strategy: 'append',
-      cacheInterval: 10000
     };
   } else if (contextStrategy.value === 'rolling') {
     contextManagement = {
       strategy: 'rolling',
       maxTokens: rollingMaxTokens.value,
       maxGraceTokens: rollingGraceTokens.value,
-      cacheMinTokens: 5000,
-      cacheDepthFromEnd: 5
     };
   }
   

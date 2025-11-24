@@ -1,4 +1,8 @@
 import express from 'express';
+import { clearOpenRouterLog } from './utils/openrouterLogger.js';
+
+// Clean up old OpenRouter request logs on startup
+clearOpenRouterLog();
 import cors from 'cors';
 import { WebSocketServer } from 'ws';
 import { createServer as createHttpServer } from 'http';

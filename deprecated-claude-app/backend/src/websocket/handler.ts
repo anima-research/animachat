@@ -6,6 +6,7 @@ import { verifyToken } from '../middleware/auth.js';
 import { InferenceService } from '../services/inference.js';
 import { EnhancedInferenceService } from '../services/enhanced-inference.js';
 import { ContextManager } from '../services/context-manager.js';
+import { Logger } from '../utils/logger.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import { ModelLoader } from '../config/model-loader.js';
 
@@ -44,7 +45,7 @@ function buildConversationHistory(
   while (currentBranchId && currentBranchId !== 'root') {
     const message = messagesByBranchId.get(currentBranchId);
     if (!message) {
-      console.log('[buildConversationHistory] Could not find message for branch:', currentBranchId);
+      Logger.debug('[buildConversationHistory] Could not find message for branch:', currentBranchId);
       break;
     }
     
@@ -142,12 +143,12 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
   });
 
   ws.on('close', async () => {
-    console.log(`WebSocket closed for user ${ws.userId}`);
+    Logger.websocket(`WebSocket closed for user ${ws.userId}`);
     
     // Clean up any incomplete streaming messages
     // This is handled by the streaming service, but we should log it
     if (ws.userId) {
-      console.log(`User ${ws.userId} disconnected - any in-progress streams will be saved`);
+      Logger.websocket(`User ${ws.userId} disconnected - any in-progress streams will be saved`);
     }
   });
 
@@ -175,9 +176,9 @@ async function handleChatMessage(
   }
 
   // Create user message with specified parent if provided
-  console.log('Creating user message with parentBranchId:', message.parentBranchId);
-  console.log('Received attachments:', message.attachments?.length || 0);
-  console.log('Message object keys:', Object.keys(message));
+  Logger.debug('Creating user message with parentBranchId:', message.parentBranchId);
+  Logger.debug('Received attachments:', message.attachments?.length || 0);
+  Logger.debug('Message object keys:', Object.keys(message));
   
   // Process attachments if provided
   const attachments = message.attachments?.map(att => ({
@@ -188,7 +189,7 @@ async function handleChatMessage(
   }));
   
   if (attachments && attachments.length > 0) {
-    console.log('Processing attachments:', attachments.map(a => ({ fileName: a.fileName, size: a.fileSize })));
+    Logger.debug('Processing attachments:', attachments.map(a => ({ fileName: a.fileName, size: a.fileSize })));
   }
   
   // Check if we should add to an existing message or create a new one
@@ -203,7 +204,7 @@ async function handleChatMessage(
     
     if (messageWithSiblings) {
       // Add as a new branch to the existing message that contains siblings
-      console.log('Adding branch to existing message:', messageWithSiblings.id);
+      Logger.debug('Adding branch to existing message:', messageWithSiblings.id);
       userMessage = await db.addMessageBranch(
         messageWithSiblings.id,
         messageWithSiblings.conversationId,
@@ -217,7 +218,7 @@ async function handleChatMessage(
       );
     } else {
       // No siblings exist yet, create a new message
-      console.log('Creating new message (no siblings found)');
+      Logger.debug('Creating new message (no siblings found)');
       userMessage = await db.createMessage(
         message.conversationId,
         conversation.userId,
@@ -243,8 +244,8 @@ async function handleChatMessage(
     );
   }
   
-  console.log('Created/updated user message:', userMessage.id, 'with branch:', userMessage.branches[userMessage.branches.length - 1]?.id);
-  console.log('User message has attachments?', userMessage.branches[userMessage.branches.length - 1]?.attachments?.length || 0);
+  Logger.debug('Created/updated user message:', userMessage.id, 'with branch:', userMessage.branches[userMessage.branches.length - 1]?.id);
+  Logger.debug('User message has attachments?', userMessage.branches[userMessage.branches.length - 1]?.attachments?.length || 0);
 
   // Send confirmation
   ws.send(JSON.stringify({
@@ -326,7 +327,7 @@ async function handleChatMessage(
   }
   
   const assistantBranch = assistantMessage.branches[assistantMessage.branches.length - 1]; // Get the last branch we added
-  console.log('Created/updated assistant message:', assistantMessage.id, 'with branch:', assistantBranch?.id);
+  Logger.debug('Created/updated assistant message:', assistantMessage.id, 'with branch:', assistantBranch?.id);
 
   // Send assistant message to frontend
   ws.send(JSON.stringify({
@@ -350,11 +351,11 @@ async function handleChatMessage(
   
   // Stream response from appropriate service
   try {
-    console.log(`[WebSocket] Responder:`, JSON.stringify(responder, null, 2));
-    console.log(`[WebSocket] Conversation model: "${conversation.model}"`);
+    Logger.websocket(`[WebSocket] Responder:`, JSON.stringify(responder, null, 2));
+    Logger.websocket(`[WebSocket] Conversation model: "${conversation.model}"`);
     
     const inferenceModel = responder.model || conversation.model;
-    console.log(`[WebSocket] Determined inferenceModel: "${inferenceModel}"`);
+    Logger.websocket(`[WebSocket] Determined inferenceModel: "${inferenceModel}"`);
     
     const inferenceSystemPrompt = responder.systemPrompt || conversation.systemPrompt;
     
@@ -372,9 +373,9 @@ async function handleChatMessage(
         };
     
     // Debug: Log the settings being used
-    console.log('[WebSocket] Conversation settings:', JSON.stringify(conversation.settings, null, 2));
-    console.log('[WebSocket] Responder settings:', JSON.stringify(responder.settings, null, 2));
-    console.log('[WebSocket] Final inference settings:', JSON.stringify(inferenceSettings, null, 2));
+    Logger.websocket('[WebSocket] Conversation settings:', JSON.stringify(conversation.settings, null, 2));
+    Logger.websocket('[WebSocket] Responder settings:', JSON.stringify(responder.settings, null, 2));
+    Logger.websocket('[WebSocket] Final inference settings:', JSON.stringify(inferenceSettings, null, 2));
     
     // Log WebSocket event
     await llmLogger.logWebSocketEvent({
@@ -400,7 +401,7 @@ async function handleChatMessage(
       inferenceSystemPrompt || '',
       inferenceSettings,
       conversation.userId,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
+      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
         // Update message content in memory (mutation is OK during streaming)
         const currentBranch = assistantMessage.branches.find((b: any) => b.id === assistantMessage.activeBranchId);
         if (currentBranch) {
@@ -516,8 +517,8 @@ async function handleRegenerate(
   // This ensures all regenerated branches have the same parent (the user message branch)
   const correctParentBranchId = originalBranch?.parentBranchId || parentUserBranch?.id || 'root';
   
-  console.log('[Regenerate] Message:', message.messageId, 'Branch:', message.branchId);
-  console.log('[Regenerate] Original branch parent:', originalBranch?.parentBranchId);
+  Logger.debug('[Regenerate] Message:', message.messageId, 'Branch:', message.branchId);
+  Logger.debug('[Regenerate] Original branch parent:', originalBranch?.parentBranchId);
   console.log('[Regenerate] Using parent branch:', correctParentBranchId);
   
   // Get the participant's model if in prefill mode
@@ -623,7 +624,7 @@ async function handleRegenerate(
       responderSystemPrompt || '',
       responderSettings,
       conversation.userId,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
+      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
         const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
         if (currentBranch) {
           currentBranch.content += chunk;
@@ -876,7 +877,7 @@ async function handleEdit(
         responderSystemPrompt || '',
         responderSettings,
         conversation.userId,
-        async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
+        async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
           const currentBranch = targetMessage.branches.find(b => b.id === targetBranchId);
           if (currentBranch) {
             currentBranch.content += chunk;
@@ -1121,7 +1122,7 @@ async function handleContinue(
             thinking: conversation.settings?.thinking
           },
       ws.userId!,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
+      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
         assistantBranch.content += chunk;
         
         // Store content blocks if provided

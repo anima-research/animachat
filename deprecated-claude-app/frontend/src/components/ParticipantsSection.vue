@@ -368,6 +368,7 @@
                   </v-tooltip>
                 </template>
               </v-text-field>
+              
             </div>
           </div>
           
@@ -432,15 +433,12 @@ const newParticipant = ref<any>({
 
 const defaultContextOverrideAppend = {
   strategy: 'append',
-  cacheInterval: 10000
 }
 
 const defaultContextOverrideRollingWindow = {
   strategy: 'rolling',
   maxTokens: 50000,
   maxGraceTokens: 10000,
-  cacheMinTokens: 5000,
-  cacheDepthFromEnd: 5
 }
 
 function getDefaultContextOverride(strategy: string) {
