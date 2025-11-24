@@ -19,6 +19,7 @@ import { importRouter } from './routes/import.js';
 import { systemRouter } from './routes/system.js';
 import { createPromptRouter } from './routes/prompt.js';
 import { createShareRouter } from './routes/shares.js';
+import { publicModelRouter } from './routes/public-models.js';
 import { ModelLoader } from './config/model-loader.js';
 import { createBookmarksRouter } from './routes/bookmarks.js';
 import { websocketHandler } from './websocket/handler.js';
@@ -82,6 +83,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Routes
 app.use('/api/auth', authRouter(db));
+app.use('/api/public/models', publicModelRouter());
 app.use('/api/conversations', authenticateToken, conversationRouter(db));
 // Mount custom models BEFORE general models to prevent /:id catching /custom
 app.use('/api/models/custom', authenticateToken, customModelsRouter(db));

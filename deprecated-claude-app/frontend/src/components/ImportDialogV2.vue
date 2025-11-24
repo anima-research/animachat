@@ -254,7 +254,7 @@
 
               <v-select
                 v-model="selectedModel"
-                :items="models"
+                :items="activeModels"
                 item-title="displayName"
                 item-value="id"
                 label="Model"
@@ -413,6 +413,10 @@ const conversationFormatOptions = [
 
 // Computed properties
 const models = computed(() => store.state.models);
+
+const activeModels = computed(() => {
+  return models.value.filter(m => !m.deprecated);
+});
 
 const isTextFormat = computed(() => 
   selectedFormat.value === 'colon_single' || 

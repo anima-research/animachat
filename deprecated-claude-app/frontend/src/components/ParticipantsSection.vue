@@ -83,7 +83,7 @@
               v-if="participant.type === 'assistant'"
               :model-value="participant.model"
               @update:model-value="(value) => updateParticipantModel(participant, value)"
-              :items="models"
+              :items="activeModels"
               item-title="displayName"
               item-value="id"
               density="compact"
@@ -177,7 +177,7 @@
           <v-select
             v-if="newParticipant.type === 'assistant'"
             v-model="newParticipant.model"
-            :items="models"
+            :items="activeModels"
             item-title="displayName"
             item-value="id"
             label="Model"
@@ -422,6 +422,10 @@ const participants = computed({
   set: (value) => emit('update:modelValue', value)
 });
 
+const activeModels = computed(() => {
+  return props.models.filter(m => !m.deprecated);
+});
+
 const showAddDialog = ref(false);
 const showSettingsDialog = ref(false);
 const selectedParticipantId = ref<string | null>(null);
@@ -538,7 +542,7 @@ function addParticipant() {
   newParticipant.value = {
     type: 'assistant',
     name: '',
-    model: props.models[0]?.id || ''
+    model: activeModels.value[0]?.id || props.models[0]?.id || ''
   };
   showAddDialog.value = true;
 }

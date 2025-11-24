@@ -1,4 +1,4 @@
-import { User, Conversation, Message, Participant, ApiKey, Bookmark, UserDefinedModel } from '@deprecated-claude/shared';
+import { User, Conversation, Message, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -22,6 +22,7 @@ export interface MetricsData {
   model: string;
   timestamp: string;
   responseTime: number;
+  details?: GrantUsageDetails;
 }
 
 export class Database {
@@ -45,6 +46,9 @@ export class Database {
   
   private userModels: Map<string, UserDefinedModel> = new Map(); // modelId -> UserDefinedModel
   private userModelsByUser: Map<string, Set<string>> = new Map(); // userId -> modelIds
+  private userGrantInfos: Map<string, GrantInfo[]> = new Map();
+  private userGrantCapabilities: Map<string, GrantCapability[]> = new Map();
+  private userGrantTotals: Map<string, Map<string, number>> = new Map();
 
   private eventStore: EventStore;
   // per user, contains conversation metadata events and participant events
@@ -205,6 +209,9 @@ export class Database {
     });
     this.userConversations.delete(userId);
     this.userLastAccessedTimes.delete(userId);
+    this.userGrantInfos.delete(userId);
+    this.userGrantCapabilities.delete(userId);
+    this.userGrantTotals.delete(userId);
   }
 
   private async createTestUser() {
@@ -317,11 +324,175 @@ export class Database {
       type,
       data: JSON.parse(JSON.stringify(data)) // Deep clone to avoid mutations
     };
-    
+
     await this.userEventStore.appendEvent(userId, event);
   }
-  
-  
+
+  private ensureGrantContainers(userId: string): void {
+    if (!this.userGrantInfos.has(userId)) {
+      this.userGrantInfos.set(userId, []);
+    }
+    if (!this.userGrantCapabilities.has(userId)) {
+      this.userGrantCapabilities.set(userId, []);
+    }
+    if (!this.userGrantTotals.has(userId)) {
+      this.userGrantTotals.set(userId, new Map());
+    }
+  }
+
+  private normaliseGrantInfo(grant: GrantInfo): GrantInfo {
+    return {
+      ...grant,
+      time: new Date(grant.time).toISOString(),
+      amount: Number(grant.amount),
+      currency: grant.currency || 'credit',
+      details: this.normaliseGrantDetails(grant.details)
+    };
+  }
+
+  private normaliseGrantDetails(details?: GrantUsageDetails): GrantUsageDetails | undefined {
+    if (!details) return undefined;
+
+    const normalized: GrantUsageDetails = {};
+    for (const [tokenType, usage] of Object.entries(details)) {
+      if (!usage) continue;
+      normalized[tokenType] = {
+        price: Number(usage.price) || 0,
+        tokens: Number(usage.tokens) || 0,
+        credits: Number(usage.credits) || 0
+      };
+    }
+
+    return normalized;
+  }
+
+  private normaliseGrantCapability(capability: GrantCapability): GrantCapability {
+    return {
+      ...capability,
+      time: new Date(capability.time).toISOString(),
+      expiresAt: capability.expiresAt ? new Date(capability.expiresAt).toISOString() : undefined
+    };
+  }
+
+  private capabilityIsActive(capability: GrantCapability): boolean {
+    if (capability.action !== 'granted') return false;
+    if (!capability.expiresAt) return true;
+    const expiry = new Date(capability.expiresAt).getTime();
+    return Number.isNaN(expiry) ? true : expiry >= Date.now();
+  }
+
+  async userHasActiveGrantCapability(userId: string, capability: GrantCapability['capability']): Promise<boolean> {
+    await this.loadUser(userId);
+    this.ensureGrantContainers(userId);
+
+    const capabilities = this.userGrantCapabilities.get(userId)!;
+    let latestTime = -Infinity;
+    let latestCapability: GrantCapability | null = null;
+
+    for (const record of capabilities) {
+      if (record.capability !== capability) continue;
+      const recordTime = new Date(record.time).getTime();
+      const normalisedTime = Number.isNaN(recordTime) ? 0 : recordTime;
+      if (normalisedTime > latestTime) {
+        latestTime = normalisedTime;
+        latestCapability = record;
+      }
+    }
+
+    return latestCapability ? this.capabilityIsActive(latestCapability) : false;
+  }
+
+  private updateGrantTotals(userId: string, grant: GrantInfo): void {
+    const totals = this.userGrantTotals.get(userId)!;
+    const currency = grant.currency || 'credit';
+    const amount = Number(grant.amount) || 0;
+    let delta = 0;
+
+    if (grant.type === 'mint') {
+      if (grant.toUserId === userId) {
+        delta = amount;
+      }
+    } else if (grant.type === 'burn') {
+      if (grant.fromUserId === userId) {
+        delta = -amount;
+      }
+    } else if (grant.type === 'send') {
+      if (grant.fromUserId === userId && grant.toUserId !== userId) {
+        delta = -amount;
+      } else if (grant.toUserId === userId && grant.fromUserId !== userId) {
+        delta = amount;
+      }
+    } else if (grant.type === 'tally') {
+      if (grant.toUserId === userId || grant.fromUserId === userId) {
+        delta = amount;
+      }
+    }
+
+    if (delta === 0) {
+      return;
+    }
+
+    totals.set(currency, (totals.get(currency) || 0) + delta);
+  }
+
+  private applyGrantInfo(userId: string, grant: GrantInfo): void {
+    this.ensureGrantContainers(userId);
+    const normalized = this.normaliseGrantInfo(grant);
+    this.userGrantInfos.get(userId)!.push({ ...normalized });
+    this.updateGrantTotals(userId, normalized);
+  }
+
+  private applyGrantCapability(userId: string, capability: GrantCapability): void {
+    this.ensureGrantContainers(userId);
+    const normalized = this.normaliseGrantCapability(capability);
+    this.userGrantCapabilities.get(userId)!.push({ ...normalized });
+  }
+
+  async getApplicableGrantCurrencies(modelId?: string, userId?: string): Promise<string[]> {
+    const nonCredit = new Set<string>();
+
+    if (modelId) {
+      const modelLoader = ModelLoader.getInstance();
+      const modelConfig = await modelLoader.getModelById(modelId, userId);
+      const currencies = modelConfig?.currencies || {};
+      for (const [currency, enabled] of Object.entries(currencies)) {
+        if (!enabled) continue;
+        const trimmed = currency.trim();
+        if (!trimmed || trimmed === 'credit') continue;
+        nonCredit.add(trimmed);
+      }
+    }
+
+    const ordered = Array.from(nonCredit).sort((a, b) => a.localeCompare(b));
+    ordered.push('credit');
+    return ordered;
+  }
+
+  async recordGrantInfo(grant: GrantInfo): Promise<void> {
+    const normalized = this.normaliseGrantInfo(grant);
+    const userIds = new Set<string>();
+
+    if (normalized.type === 'send') {
+      if (normalized.fromUserId) userIds.add(normalized.fromUserId);
+      if (normalized.toUserId) userIds.add(normalized.toUserId);
+    } else {
+      if (normalized.fromUserId) userIds.add(normalized.fromUserId);
+      if (normalized.toUserId) userIds.add(normalized.toUserId);
+    }
+
+    for (const userId of userIds) {
+      this.applyGrantInfo(userId, normalized);
+      await this.logUserEvent(userId, 'grant_info_recorded', { userId, grant: normalized });
+    }
+  }
+
+  async recordGrantCapability(capability: GrantCapability): Promise<void> {
+    const normalized = this.normaliseGrantCapability(capability);
+    this.applyGrantCapability(normalized.userId, normalized);
+    await this.logUserEvent(normalized.userId, 'grant_capability_recorded', { userId: normalized.userId, capability: normalized });
+  }
+
+
   private async replayEvent(event: Event): Promise<void> {
     try {
       switch (event.type) {
@@ -606,7 +777,23 @@ export class Database {
         }
         break;
       }
-      
+
+      case 'grant_info_recorded': {
+        const { userId, grant } = event.data || {};
+        if (userId && grant) {
+          this.applyGrantInfo(userId, grant);
+        }
+        break;
+      }
+
+      case 'grant_capability_recorded': {
+        const { userId, capability } = event.data || {};
+        if (userId && capability) {
+          this.applyGrantCapability(userId, capability);
+        }
+        break;
+      }
+
       case 'metrics_added': {
         const { conversationId, metrics } = event.data;
         if (!this.conversationMetrics.has(conversationId)) {
@@ -745,10 +932,34 @@ export class Database {
     return this.users.get(id) || null;
   }
 
+  async getAllUsers(): Promise<User[]> {
+    return Array.from(this.users.values());
+  }
+
+  async getUserGrantSummary(userId: string): Promise<UserGrantSummary> {
+    await this.loadUser(userId);
+    this.ensureGrantContainers(userId);
+
+    const totals = this.userGrantTotals.get(userId)!;
+    const totalsRecord: Record<string, number> = {};
+    for (const [currency, amount] of totals.entries()) {
+      totalsRecord[currency] = Number(amount);
+    }
+
+    const infos = (this.userGrantInfos.get(userId) || []).map(grant => ({ ...grant }));
+    const capabilities = (this.userGrantCapabilities.get(userId) || []).map(capability => ({ ...capability }));
+
+    return {
+      totals: totalsRecord,
+      grantInfos: infos,
+      grantCapabilities: capabilities
+    };
+  }
+
   async validatePassword(email: string, password: string): Promise<boolean> {
     const passwordHash = this.passwordHashes.get(email);
     if (!passwordHash) return false;
-    
+
     return bcrypt.compare(password, passwordHash);
   }
 
@@ -1670,12 +1881,44 @@ export class Database {
     if (!this.conversationMetrics.has(conversationId)) {
       this.conversationMetrics.set(conversationId, []);
     }
-    
+
     const convMetrics = this.conversationMetrics.get(conversationId)!;
     convMetrics.push(metrics);
-    
+
     // Store event
     await this.logUserEvent(conversationOwnerUserId, 'metrics_added', { conversationId, metrics });
+
+    // Check if user has their own API key for this provider - if so, skip burning credits
+    const modelLoader = ModelLoader.getInstance();
+    const model = await modelLoader.getModelById(metrics.model, conversationOwnerUserId);
+    if (model) {
+      const userApiKeys = await this.getUserApiKeys(conversationOwnerUserId);
+      const hasProviderKey = userApiKeys.some(key => key.provider === model.provider);
+      if (hasProviderKey) {
+        console.log(`[Credits] User ${conversationOwnerUserId} has custom ${model.provider} API key, skipping credit burn`);
+        return;
+      }
+    }
+
+    const burnAmount = Math.max(Number(metrics.cost) || 0, 0);
+    this.ensureGrantContainers(conversationOwnerUserId);
+    const applicableCurrencies = await this.getApplicableGrantCurrencies(metrics.model, conversationOwnerUserId);
+    const totals = this.userGrantTotals.get(conversationOwnerUserId)!;
+    let burnCurrency = applicableCurrencies.find(currency => Number(totals.get(currency) || 0) > 0);
+    if (!burnCurrency) {
+      burnCurrency = applicableCurrencies[applicableCurrencies.length - 1] || 'credit';
+    }
+    await this.recordGrantInfo({
+      id: uuidv4(),
+      time: new Date().toISOString(),
+      type: 'burn',
+      amount: burnAmount,
+      fromUserId: conversationOwnerUserId,
+      causeId: metrics.timestamp,
+      reason: `Model usage (${metrics.model})`,
+      currency: burnCurrency,
+      details: metrics.details
+    });
   }
   
   async getConversationMetrics(conversationId: string, conversationOwnerUserId: string): Promise<MetricsData[]> {
