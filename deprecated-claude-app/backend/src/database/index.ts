@@ -1314,7 +1314,10 @@ export class Database {
     // Get conversation messages to determine parent
     const existingMessages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
     
-    console.log(`createMessage called with explicitParentBranchId: ${explicitParentBranchId} (type: ${typeof explicitParentBranchId})`);
+    // Only log in debug mode
+    if (process.env.LOG_DEBUG === 'true') {
+      console.log(`createMessage called with explicitParentBranchId: ${explicitParentBranchId} (type: ${typeof explicitParentBranchId})`);
+    }
     
     // Determine parent branch ID
     let parentBranchId: string;
@@ -1363,9 +1366,12 @@ export class Database {
     
     message.activeBranchId = message.branches[0].id;
     
-    console.log(`Created message with branch parentBranchId: ${message.branches[0].parentBranchId}`);
-    if (message.branches[0].attachments) {
-      console.log(`Message has ${message.branches[0].attachments.length} attachments`);
+    // Only log in debug mode
+    if (process.env.LOG_DEBUG === 'true') {
+      console.log(`Created message with branch parentBranchId: ${message.branches[0].parentBranchId}`);
+      if (message.branches[0].attachments) {
+        console.log(`Message has ${message.branches[0].attachments.length} attachments`);
+      }
     }
     
     // Get current message count for ordering
@@ -1380,7 +1386,10 @@ export class Database {
     this.messages.set(message.id, message);
     convMessages.push(message.id);
     
-    console.log(`Stored message ${message.id} for conversation ${conversationId}. Total messages: ${convMessages.length}`);
+    // Only log in debug mode
+    if (process.env.LOG_DEBUG === 'true') {
+      console.log(`Stored message ${message.id} for conversation ${conversationId}. Total messages: ${convMessages.length}`);
+    }
     
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
     await this.logConversationEvent(conversationId, 'message_created', message);
@@ -1791,7 +1800,10 @@ export class Database {
       .map(id => this.participants.get(id))
       .filter((p): p is Participant => p !== undefined);
     
-    console.log(`[Database] getConversationParticipants for ${conversationId}:`, participants.map(p => ({ id: p.id, name: p.name, model: p.model })));
+    // Only log in debug mode
+    if (process.env.LOG_DEBUG === 'true') {
+      console.log(`[Database] getConversationParticipants for ${conversationId}:`, participants.map(p => ({ id: p.id, name: p.name, model: p.model })));
+    }
 
     return participants;
   }
@@ -1920,6 +1932,7 @@ export class Database {
     perModelMetrics: Map<string, ModelConversationMetrics>;
     lastCompletion?: MetricsData;
     totals: TotalsMetrics;
+    totalTreeTokens?: number; // Total size of ALL branches in conversation tree
   } | null> {
     const metrics = await this.getConversationMetrics(conversationId, conversationOwnerUserId);
     const messages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
@@ -1957,11 +1970,25 @@ export class Database {
       }
     }
     
+    // Calculate total tree size: all content in all branches of all messages
+    let totalTreeTokens = 0;
+    let totalBranches = 0;
+    for (const message of messages) {
+      for (const branch of message.branches) {
+        const branchTokens = Math.ceil(branch.content.length / 4);
+        totalTreeTokens += branchTokens;
+        totalBranches++;
+      }
+    }
+    
+    console.log(`[Database] Conversation tree size: ${messages.length} messages, ${totalBranches} branches, ${totalTreeTokens} tokens`);
+    
     return {
       messageCount: messages.length,
       perModelMetrics: perModelMetrics,
       lastCompletion: metrics[metrics.length-1],
-      totals: totals
+      totals: totals,
+      totalTreeTokens
     }
   }
 

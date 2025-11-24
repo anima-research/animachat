@@ -73,8 +73,10 @@ export class OpenAICompatibleService {
         : `${this.baseUrl}/v1/chat/completions`;
       
       console.log(`[OpenAI-Compatible] Making request to: ${endpoint}`);
+      if (process.env.LOG_DEBUG === 'true') {
       console.log(`[OpenAI-Compatible] Model: ${actualModelId}`);
       console.log(`[OpenAI-Compatible] Request body:`, JSON.stringify(requestBody, null, 2));
+      }
 
       const response = await fetch(endpoint, {
         method: 'POST',

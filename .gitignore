@@ -7,3 +7,12 @@ deprecated-claude-app/shared/dist/**
 deprecated-claude-app/backend/config/config.json
 .DS_Store
 .github/.DS_Store
+conversation-eca82948-11e3-4f43-8abd-52f98c470fb2.json
+
+# Debug and logs
+deprecated-claude-app/backend/logs/openrouter/**
+deprecated-claude-app/backend/logs/llm/**
+.archive/**
+
+# Test files
+prompt_caching/**

@@ -322,7 +322,8 @@ export function conversationRouter(db: Database): Router {
         perModelMetrics: Object.fromEntries(summary.perModelMetrics),
         lastCompletion: summary.lastCompletion,
         totals: summary.totals,
-        contextManagement: conversation.contextManagement
+        contextManagement: conversation.contextManagement,
+        totalTreeTokens: summary.totalTreeTokens
       };
 
       res.json(metrics);

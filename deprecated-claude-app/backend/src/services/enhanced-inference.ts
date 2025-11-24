@@ -2,6 +2,7 @@ import { Message, Conversation, Model, ModelSettings, Participant, GrantUsageDet
 import { ContextManager } from './context-manager.js';
 import { InferenceService } from './inference.js';
 import { ContextWindow } from './context-strategies.js';
+import { Logger } from '../utils/logger.js';
 
 interface CacheMetrics {
   conversationId: string;
@@ -93,13 +94,40 @@ export class EnhancedInferenceService {
       conversation,
       messages,
       undefined, // newMessage is already included in messages
-      participant
+      participant,
+      model.contextWindow // Pass model's max context for cache arithmetic
     );
     
-    // Debug logging
-    console.log(`Enhanced inference: ${window.messages.length} messages in window, ${window.cacheablePrefix.length} cacheable`);
-    if (window.metadata.windowStart > 0) {
-      console.log(`Context window: dropped ${window.metadata.windowStart} messages from beginning`);
+    // Debug logging with visual indicators
+    const hasCaching = window.cacheablePrefix.length > 0;
+    const hasRotation = window.metadata.windowStart > 0;
+    
+    if (hasCaching || hasRotation) {
+      Logger.context(`\n🎯 ============== CONTEXT STATUS ==============`);
+      Logger.context(`📄 Messages: ${window.messages.length} in window (${window.metadata.totalMessages} total)`);
+      
+      if (hasCaching) {
+        Logger.context(`📦 Cacheable: ${window.cacheablePrefix.length} messages marked for caching`);
+        Logger.context(`🆕 Active: ${window.activeWindow.length} messages will be processed fresh`);
+      }
+      
+      if (hasRotation) {
+        Logger.context(`🔄 Rotation: Dropped ${window.metadata.windowStart} old messages`);
+      }
+      
+      Logger.context(`📊 Tokens: ${window.metadata.totalTokens} total`);
+      
+      if (window.cacheMarkers && window.cacheMarkers.length > 0) {
+        Logger.context(`🎯 Cache points: ${window.cacheMarkers.length} markers`);
+        window.cacheMarkers.forEach((m, i) => {
+          Logger.context(`🎯   Point ${i + 1}: Message ${m.messageIndex} (${m.tokenCount} tokens)`);
+        });
+      } else if (window.cacheMarker) {
+        Logger.context(`🎯 Cache point: Message ${window.cacheMarker.messageIndex} (${window.cacheMarker.tokenCount} tokens)`);
+      }
+      Logger.context(`🎯 =========================================\n`);
+    } else {
+      Logger.debug(`[EnhancedInference] Context: ${window.messages.length} messages, ${window.metadata.totalTokens} tokens`);
     }
     
     // Track metrics
@@ -108,15 +136,33 @@ export class EnhancedInferenceService {
     let cachedTokens = 0;
     let outputTokens = 0;
     let cacheHit = false;
+    let expectedCache = false;
     
     // Create an enhanced callback to track token usage
-    const enhancedCallback = async (chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
+    const enhancedCallback = async (chunk: string, isComplete: boolean, contentBlocks?: any[], actualUsage?: any) => {
       // Track output tokens (simplified - in practice would use tokenizer)
       outputTokens += Math.ceil(chunk.length / 4);
       
       await streamCallback(chunk, isComplete, contentBlocks);
       
       if (isComplete) {
+        // Update with actual usage from API if provided
+        if (actualUsage) {
+          // Total input = fresh + cache_creation + cache_read
+          const freshTokens = actualUsage.inputTokens;
+          const cacheCreation = actualUsage.cacheCreationInputTokens || 0;
+          const cacheRead = actualUsage.cacheReadInputTokens || 0;
+          
+          inputTokens = freshTokens + cacheCreation + cacheRead; // TOTAL input
+          outputTokens = actualUsage.outputTokens;
+          // Cache size: creation OR read (whichever is non-zero shows current cache size)
+          cachedTokens = cacheRead > 0 ? cacheRead : cacheCreation;
+          cacheHit = cacheRead > 0;
+          
+          Logger.cache(`[EnhancedInference] ✅ Actual usage: fresh=${freshTokens}, cacheCreate=${cacheCreation}, cacheRead=${cacheRead}, output=${outputTokens}`);
+          Logger.cache(`[EnhancedInference]   Total input=${inputTokens}, cache size=${cachedTokens}`);
+        }
+        
         // Log metrics
         const metric: CacheMetrics = {
           conversationId: conversation.id,
@@ -133,6 +179,10 @@ export class EnhancedInferenceService {
         
         this.metricsLog.push(metric);
         
+        // Note: Cache hit/miss details are logged by the provider service (Anthropic/OpenRouter)
+        // which has access to the actual API response metrics. We just track expected vs actual
+        // in our context manager statistics below.
+        
         // Update context manager statistics
         this.contextManager.updateAfterInference(
           conversation.id, 
@@ -143,12 +193,6 @@ export class EnhancedInferenceService {
           },
           participant?.id
         );
-        
-        // Log cache efficiency
-        if (cachedTokens > 0) {
-          const cacheEfficiency = (cachedTokens / inputTokens) * 100;
-          console.log(`[Enhanced Inference] Cache efficiency: ${cacheEfficiency.toFixed(1)}% (${cachedTokens}/${inputTokens} tokens cached)`);
-        }
         
         // Call metrics callback if provided
         if (onMetrics) {
@@ -173,17 +217,21 @@ export class EnhancedInferenceService {
     // Track approximate input tokens
     inputTokens = window.metadata.totalTokens;
     cachedTokens = this.estimateTokens(window.cacheablePrefix);
-    cacheHit = window.metadata.cacheKey === cacheKey;
+    expectedCache = window.cacheablePrefix.length > 0 && window.metadata.cacheKey === cacheKey;
+    cacheHit = false; // Will be determined from actual response
     
-    // For Anthropic models, we need to add cache control metadata
+    // For Anthropic models (direct or via OpenRouter), we need to add cache control metadata
     let messagesToSend = window.messages;
-    if (model.provider === 'anthropic' && window.cacheablePrefix.length > 0) {
+    if ((model.provider === 'anthropic' || model.provider === 'openrouter') && window.cacheablePrefix.length > 0) {
+      Logger.cache(`[EnhancedInference] Adding cache control for ${model.provider} provider (${model.id})`);
       // Clone messages and add cache control to the last cacheable message
-      messagesToSend = this.addCacheControlToMessages(window);
+      messagesToSend = this.addCacheControlToMessages(window, model);
+    } else {
+      Logger.debug(`[EnhancedInference] No cache control: provider=${model.provider}, cacheablePrefix=${window.cacheablePrefix.length}`);
     }
     
-    // Use the original messages from the window with cache control added if needed
-    return this.inferenceService.streamCompletion(
+    // Call inference (actual usage will be passed through the callback)
+    await this.inferenceService.streamCompletion(
       model.id,
       messagesToSend,
       systemPrompt,
@@ -197,18 +245,32 @@ export class EnhancedInferenceService {
     );
   }
   
-  private addCacheControlToMessages(window: ContextWindow): Message[] {
-    // Clone messages and add cache control metadata to the last cacheable message
-    const cacheBreakpoint = window.cacheablePrefix.length;
+  private addCacheControlToMessages(window: ContextWindow, model?: Model): Message[] {
+    // Use multiple cache markers if available (Anthropic supports 4)
+    const markers = window.cacheMarkers || (window.cacheMarker ? [window.cacheMarker] : []);
+    
+    if (markers.length === 0) {
+      return window.messages; // No caching
+    }
+    
+    // All models get 1-hour cache by default
+    const cacheType = 'ephemeral';
+    
+    // Create a set of message indices that should get cache control
+    const cacheIndices = new Set(markers.map(m => m.messageIndex));
+    
+    Logger.cache(`[EnhancedInference] 📦 Adding cache control to ${cacheIndices.size} messages:`);
+    markers.forEach((m, i) => {
+      Logger.cache(`[EnhancedInference]   Cache point ${i + 1}: message ${m.messageIndex} (${m.tokenCount} tokens)`);
+    });
     
     return window.messages.map((msg, idx) => {
-      if (idx === cacheBreakpoint - 1 && cacheBreakpoint > 0) {
-        // This is the last cacheable message - add cache control to its active branch
+      if (cacheIndices.has(idx)) {
+        // This message should get cache control
         const clonedMsg = JSON.parse(JSON.stringify(msg)); // Deep clone
         const activeBranch = clonedMsg.branches.find((b: any) => b.id === clonedMsg.activeBranchId);
         if (activeBranch) {
-          // Add cache control metadata to the branch
-          activeBranch._cacheControl = { type: 'ephemeral' };
+          activeBranch._cacheControl = { type: cacheType };
         }
         return clonedMsg;
       }

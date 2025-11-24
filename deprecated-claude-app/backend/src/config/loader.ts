@@ -38,7 +38,10 @@ export class ConfigLoader {
       console.log(`Loaded configuration from ${this.configPath}`);
       return this.config;
     } catch (error) {
-      console.warn(`Failed to load config from ${this.configPath}:`, error);
+      // Only warn in debug mode - config.json is optional
+      if (process.env.LOG_DEBUG === 'true') {
+        console.warn(`Failed to load config from ${this.configPath}:`, error);
+      }
       // Return default config
       return this.getDefaultConfig();
     }

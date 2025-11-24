@@ -9,6 +9,7 @@ import {
   StaticContextStrategy,
   AdaptiveContextStrategy 
 } from './context-strategies.js';
+import { Logger } from '../utils/logger.js';
 
 interface ContextState {
   conversationId: string;
@@ -17,9 +18,11 @@ interface ContextState {
   lastWindow?: ContextWindow;
   cacheMarker?: CacheMarker;
   cacheKeys: Map<string, string>; // message ID -> cache key
+  lastCacheTime?: Date; // When cache was last written
   statistics: {
     cacheHits: number;
     cacheMisses: number;
+    cacheExpired: number;
     totalTokensSaved: number;
     rotationCount: number;
   };
@@ -44,12 +47,8 @@ export class ContextManager {
       ...config
     };
     
-    // Initialize with legacy strategies for backward compatibility
-    this.strategies = new Map<string, ContextStrategy>([
-      ['rolling', new LegacyRollingContextStrategy()],
-      ['static', new StaticContextStrategy()],
-      ['adaptive', new AdaptiveContextStrategy()],
-    ]);
+    // Initialize empty - strategies will be created on demand with proper config
+    this.strategies = new Map<string, ContextStrategy>();
     
     this.states = new Map();
   }
@@ -58,7 +57,8 @@ export class ContextManager {
     conversation: Conversation,
     messages: Message[],
     newMessage?: Message,
-    participant?: Participant
+    participant?: Participant,
+    modelMaxContext?: number
   ): Promise<{
     formattedMessages: any[]; // Provider-specific format
     cacheKey?: string;
@@ -69,6 +69,9 @@ export class ContextManager {
                              conversation.contextManagement || 
                              DEFAULT_CONTEXT_MANAGEMENT;
     
+    // Log for debugging
+    Logger.debug('[ContextManager] Using context management:', JSON.stringify(contextManagement));
+    
     // Get or create appropriate strategy
     const strategy = this.getOrCreateStrategy(contextManagement);
     
@@ -77,7 +80,7 @@ export class ContextManager {
     const state = this.getOrCreateState(stateKey, contextManagement.strategy);
     
     // Prepare context window
-    const window = strategy.prepareContext(messages, newMessage, state.cacheMarker);
+    const window = strategy.prepareContext(messages, newMessage, state.cacheMarker, modelMaxContext);
     
     // Update cache marker if changed
     if (window.cacheMarker?.messageId !== state.cacheMarker?.messageId) {
@@ -87,17 +90,35 @@ export class ContextManager {
     // Check if we should rotate
     if (state.lastWindow && strategy.shouldRotate(window)) {
       state.statistics.rotationCount++;
-      console.log(`Context rotation triggered for ${stateKey}`);
+      Logger.context(`Context rotation triggered for ${stateKey}`);
     }
     
     // Generate cache key for the cacheable prefix
     const cacheKey = this.generateCacheKey(window.cacheablePrefix);
     
-    // Check if this is a cache hit
+    // Check if this is a cache hit or expiration
     if (state.lastWindow?.metadata.cacheKey === cacheKey && cacheKey) {
+      // Check if cache might have expired
+      if (state.lastCacheTime) {
+        const now = new Date();
+        const elapsed = (now.getTime() - state.lastCacheTime.getTime()) / 1000 / 60; // minutes
+        const expectedTTL = 60; // All caches are 1-hour now
+        
+        if (elapsed > expectedTTL) {
+          Logger.cache(`⏰ Cache likely expired: ${elapsed.toFixed(1)} minutes since last cache (TTL: ${expectedTTL} min)`);
+          state.statistics.cacheExpired++;
+          state.lastCacheTime = now; // Reset timer
+        } else {
+          state.statistics.cacheHits++;
+        }
+      } else {
       state.statistics.cacheHits++;
+      }
     } else {
       state.statistics.cacheMisses++;
+      if (cacheKey) {
+        state.lastCacheTime = new Date(); // New cache being created
+      }
     }
     
     // Update state
@@ -120,12 +141,24 @@ export class ContextManager {
       cacheHit: boolean;
       tokensUsed: number;
       cachedTokens?: number;
+      cacheCreated?: number;
+      cacheRead?: number;
     },
     participantId?: string
   ): void {
     const stateKey = participantId ? `${conversationId}:${participantId}` : conversationId;
     const state = this.states.get(stateKey);
     if (!state) return;
+    
+    // Track different cache events
+    if (response.cacheRead && response.cacheCreated) {
+      Logger.debug(`[ContextManager] Cache partial hit + rebuild`);
+    } else if (response.cacheCreated && !response.cacheRead) {
+      Logger.debug(`[ContextManager] Cache created/rebuilt`);
+      state.lastCacheTime = new Date();
+    } else if (response.cacheRead && !response.cacheCreated) {
+      Logger.debug(`[ContextManager] Cache full hit`);
+    }
     
     if (response.cachedTokens) {
       state.statistics.totalTokensSaved += response.cachedTokens;
@@ -153,6 +186,12 @@ export class ContextManager {
     // Reset window and cache marker to force recalculation
     state.lastWindow = undefined;
     state.cacheMarker = undefined;
+    
+    // Clear strategy's internal state if it has a reset method
+    if ((strategy as any).resetState) {
+      (strategy as any).resetState();
+      Logger.context(`[ContextManager] Reset strategy state due to config change`);
+    }
   }
   
   private getOrCreateStrategy(contextManagement: ContextManagement): ContextStrategy {
@@ -163,15 +202,16 @@ export class ContextManager {
       
       switch (contextManagement.strategy) {
         case 'append':
-          strategy = new AppendContextStrategy(contextManagement);
+          strategy = new AppendContextStrategy(contextManagement as Extract<ContextManagement, { strategy: 'append' }>);
           break;
         case 'rolling':
-          strategy = new RollingContextStrategy(contextManagement);
+          strategy = new RollingContextStrategy(contextManagement as Extract<ContextManagement, { strategy: 'rolling' }>);
           break;
         default:
           throw new Error(`Unknown context strategy: ${(contextManagement as any).strategy}`);
       }
       
+      Logger.debug(`[ContextManager] Created new ${contextManagement.strategy} strategy with config:`, contextManagement);
       this.strategies.set(key, strategy);
     }
     
@@ -189,6 +229,7 @@ export class ContextManager {
         statistics: {
           cacheHits: 0,
           cacheMisses: 0,
+          cacheExpired: 0,
           totalTokensSaved: 0,
           rotationCount: 0,
         },
