@@ -152,9 +152,10 @@ export class InferenceService {
     if (actualFormat === 'prefill' || actualFormat === 'messages') {
       // Always include these common stop sequences
       const baseStopSequences = ['User:', 'A:', "Claude:"];
-      // Add participant names as stop sequences (excluding empty names for raw continuation)
+      // Add participant names as stop sequences (excluding empty names and the current responder)
+      // The responder must be excluded because the model will prefix its response with its own name
       const participantStopSequences = participants
-        .filter(p => p.name !== '') // Exclude empty names
+        .filter(p => p.name !== '' && p.id !== responderId) // Exclude empty names and responder
         .map(p => `${p.name}:`);
       // Combine and deduplicate
       stopSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
@@ -366,6 +367,13 @@ export class InferenceService {
       // Convert to prefill format with participant names
       const prefillMessages: Message[] = [];
       
+      // Check if any input messages have cache control (set by enhanced-inference)
+      // We need to preserve this on the output messages
+      const hasAnyCacheControl = messages.some(m => {
+        const branch = m.branches.find(b => b.id === m.activeBranchId);
+        return branch && (branch as any)._cacheControl;
+      });
+      
       // Add initial user message if configured
       const prefillSettings = conversation?.prefillUserMessage || { enabled: true, content: '<cmd>cat untitled.log</cmd>' };
       
@@ -468,17 +476,26 @@ export class InferenceService {
       
       
       // Create assistant message with the conversation content
+      const assistantBranch: any = {
+        id: 'prefill-assistant-branch',
+        content: conversationContent,
+        role: 'assistant',
+        createdAt: new Date(),
+        isActive: true,
+        parentBranchId: 'prefill-cmd-branch'
+      };
+      
+      // Preserve cache control if any input messages had it
+      // For prefill format, we cache the entire conversation content
+      if (hasAnyCacheControl) {
+        assistantBranch._cacheControl = { type: 'ephemeral', ttl: '1h' };
+        console.log(`[PREFILL] Preserving cache control on combined assistant message (${conversationContent.length} chars, TTL: 1h)`);
+      }
+      
       const assistantMessage: Message = {
         id: 'prefill-assistant',
         conversationId: messages[0]?.conversationId || '',
-        branches: [{
-          id: 'prefill-assistant-branch',
-          content: conversationContent,
-          role: 'assistant',
-          createdAt: new Date(),
-          isActive: true,
-          parentBranchId: 'prefill-cmd-branch'
-        }],
+        branches: [assistantBranch],
         activeBranchId: 'prefill-assistant-branch',
         order: 1
       };

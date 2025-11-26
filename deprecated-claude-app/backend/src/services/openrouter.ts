@@ -15,7 +15,7 @@ interface ContentBlock {
   image_url?: {
     url: string;
   };
-  cache_control?: { type: 'ephemeral' };
+  cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
 }
 
 interface OpenRouterResponse {
@@ -130,8 +130,13 @@ export class OpenRouterService {
       const completionTokens = usage.completion_tokens || 0;
       const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
       
+      // OpenRouter's prompt_tokens is TOTAL (includes cached)
+      // To match Anthropic semantics, we report fresh = total - cached
+      const freshInputTokens = promptTokens - cachedTokens;
+      
       Logger.cache(`[OpenRouter-EXACT] Usage:`, {
         promptTokens,
+        freshInputTokens,
         completionTokens,
         cachedTokens,
         cost: usage.cost
@@ -144,8 +149,10 @@ export class OpenRouterService {
       }
       
       // Complete the stream
+      // NOTE: inputTokens = fresh only (non-cached), to match Anthropic semantics
+      // enhanced-inference.ts will add cacheRead to get total
       const actualUsage = {
-        inputTokens: promptTokens,
+        inputTokens: freshInputTokens,
         outputTokens: completionTokens,
         cacheCreationInputTokens: 0, // OpenRouter doesn't distinguish
         cacheReadInputTokens: cachedTokens
@@ -278,8 +285,12 @@ export class OpenRouterService {
             const data = line.slice(6);
             if (data === '[DONE]') {
               // Pass usage metrics when completing
+              // OpenRouter's prompt_tokens is TOTAL (includes cached)
+              // Report fresh tokens only, to match Anthropic semantics
+              const freshInputTokens = promptTokens - cacheMetrics.cacheReadInputTokens;
+              
               const actualUsage = {
-                inputTokens: promptTokens,
+                inputTokens: freshInputTokens,
                 outputTokens: completionTokens,
                 cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
                 cacheReadInputTokens: cacheMetrics.cacheReadInputTokens
@@ -295,6 +306,11 @@ export class OpenRouterService {
               if (content) {
                 chunks.push(content);
                 await onChunk(content, false);
+              }
+              
+              // Capture prompt tokens early to calculate fresh tokens later
+              if (parsed.usage?.prompt_tokens) {
+                promptTokens = parsed.usage.prompt_tokens;
               }
 
               // Check if we have usage data (including cache metrics for Anthropic models)
@@ -320,9 +336,13 @@ export class OpenRouterService {
                   cacheMetrics.cacheReadInputTokens = parsed.usage.cache_read_input_tokens;
                 }
                 
+                // OpenRouter's prompt_tokens is TOTAL (includes cached)
+                // Adjust to get fresh tokens only for token usage callback
+                const freshPromptTokens = promptTokens - cacheMetrics.cacheReadInputTokens;
+                
                 if (onTokenUsage) {
                   await onTokenUsage({
-                    promptTokens: parsed.usage.prompt_tokens,
+                    promptTokens: freshPromptTokens, // Report fresh only
                     completionTokens: parsed.usage.completion_tokens,
                     totalTokens: parsed.usage.total_tokens
                   });
@@ -419,9 +439,13 @@ export class OpenRouterService {
       // Return usage metrics (captured from streaming response)
       // Note: OpenRouter may not send usage data, in which case we return empty
       if (promptTokens > 0 || completionTokens > 0) {
+        // OpenRouter's prompt_tokens is TOTAL (includes cached)
+        // Report fresh tokens only, to match Anthropic semantics
+        const freshInputTokens = promptTokens - cacheMetrics.cacheReadInputTokens;
+        
         return {
           usage: {
-            inputTokens: promptTokens,
+            inputTokens: freshInputTokens,
             outputTokens: completionTokens,
             cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
             cacheReadInputTokens: cacheMetrics.cacheReadInputTokens
@@ -602,7 +626,17 @@ export class OpenRouterService {
     
     // Anthropic pricing per 1M tokens via OpenRouter
     // Note: OpenRouter may add a small markup, but cache savings are still ~90%
+    // NOTE: For console logging only. UI uses enhanced-inference.ts pricing (source of truth)
+    // Model pricing per 1M input tokens (updated 2025-11-24)
     const pricingPer1M: Record<string, number> = {
+      // Anthropic via OpenRouter (4.x models)
+      'anthropic/claude-opus-4.5': 5.00,      // New! 3x cheaper
+      'anthropic/claude-opus-4.1': 15.00,
+      'anthropic/claude-opus-4': 15.00,
+      'anthropic/claude-sonnet-4': 3.00,
+      'anthropic/claude-haiku-4': 0.80,
+      
+      // Anthropic via OpenRouter (3.x models)
       'anthropic/claude-3-opus': 15.00,
       'anthropic/claude-3-opus-20240229': 15.00,
       'anthropic/claude-3.5-sonnet': 3.00,

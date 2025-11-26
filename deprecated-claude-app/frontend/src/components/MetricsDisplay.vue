@@ -85,13 +85,17 @@
             <span>Strategy:</span>
             <span>{{ curContextManagment?.strategy || 'append' }}</span>
           </div>
-          <div class="detail-row" v-if="curContextManagment?.maxTokens">
-            <span>Max Tokens:</span>
-            <span>{{ formatNumber(curContextManagment.maxTokens) }}</span>
+          <div class="detail-row" v-if="curContextManagment?.strategy === 'append'">
+            <span>Tokens Before Caching:</span>
+            <span>{{ formatNumber(curContextManagment?.tokensBeforeCaching ?? 10000) }}</span>
           </div>
-          <div class="detail-row" v-if="curContextManagment?.maxGraceTokens">
+          <div class="detail-row" v-if="curContextManagment?.strategy === 'rolling'">
+            <span>Max Tokens:</span>
+            <span>{{ formatNumber(curContextManagment?.maxTokens ?? 0) }}</span>
+          </div>
+          <div class="detail-row" v-if="curContextManagment?.strategy === 'rolling'">
             <span>Max Grace Tokens:</span>
-            <span>{{ formatNumber(curContextManagment.maxGraceTokens) }}</span>
+            <span>{{ formatNumber(curContextManagment?.maxGraceTokens ?? 0) }}</span>
           </div>
         </div>
       </div>
@@ -115,6 +119,9 @@ const metrics = ref<ConversationMetrics | null>(null);
 let hoverTimer: number | null = null;
 const ALL_MODELS_METRICS = "All";
 const selectedModel = ref<string>(ALL_MODELS_METRICS);
+
+// Track processed metrics to prevent double-counting
+const processedMetricsTimestamps = new Set<string>();
 
 const handleMouseEnter = () => {
   if (hoverTimer) clearTimeout(hoverTimer);
@@ -162,6 +169,22 @@ watch(() => store.state.currentConversation?.updatedAt, () => {
 // Listen for metrics updates via WebSocket
 watch(() => store.lastMetricsUpdate, async (update) => {
   if (update && update.conversationId === props.conversationId) {
+    // Create a unique key for this metrics update to prevent double-counting
+    const metricsKey = `${update.metrics.timestamp}-${update.metrics.model}-${update.metrics.inputTokens}-${update.metrics.outputTokens}`;
+    
+    // Skip if we've already processed this exact update
+    if (processedMetricsTimestamps.has(metricsKey)) {
+      console.log('[MetricsDisplay] Skipping duplicate metrics update:', metricsKey);
+      return;
+    }
+    processedMetricsTimestamps.add(metricsKey);
+    
+    // Limit the set size to prevent memory leaks (keep last 100)
+    if (processedMetricsTimestamps.size > 100) {
+      const firstKey = processedMetricsTimestamps.values().next().value;
+      processedMetricsTimestamps.delete(firstKey);
+    }
+    
     // Update last completion metrics
     if (metrics.value) {
       metrics.value.lastCompletion = update.metrics;
