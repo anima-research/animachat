@@ -63,11 +63,11 @@ export class AnthropicService {
         const firstMessage = messages[0];
         const firstBranch = getActiveBranch(firstMessage);
         if (firstBranch && (firstBranch as any)._cacheControl) {
-          // System prompt should also be cached
+          // System prompt should also be cached (1h TTL for OpenRouter compatibility)
           systemContent = [{
             type: 'text',
             text: systemPrompt,
-            cache_control: { type: 'ephemeral' as const }
+            cache_control: { type: 'ephemeral' as const, ttl: '1h' as const }
           }];
         }
       }
@@ -505,13 +505,32 @@ export class AnthropicService {
   }
   
   private calculateCacheSavings(modelId: string, cachedTokens: number): number {
-    // Anthropic pricing per 1M tokens (as of late 2024)
+    // NOTE: For console logging only. UI uses enhanced-inference.ts pricing (source of truth)
+    // Anthropic pricing per 1M input tokens (updated 2025-11-24)
     const pricingPer1M: Record<string, number> = {
-      'claude-3-5-sonnet-20241022': 3.00,  // $3 per 1M input tokens
-      'claude-3-5-haiku-20241022': 0.25,   // $0.25 per 1M input tokens
-      'claude-3-opus-20240229': 15.00,     // $15 per 1M input tokens
-      'claude-3-sonnet-20240229': 3.00,    // $3 per 1M input tokens
-      'claude-3-haiku-20240307': 0.25      // $0.25 per 1M input tokens
+      // Claude 4.x models
+      'claude-opus-4-5-20251101': 5.00,    // New! 3x cheaper
+      'claude-opus-4-1-20250805': 15.00,
+      'claude-opus-4-20250514': 15.00,
+      'claude-sonnet-4-5-20250929': 3.00,
+      'claude-sonnet-4-20250514': 3.00,
+      'claude-haiku-4-5-20251001': 0.80,
+      
+      // Claude 3.x models
+      'claude-3-7-sonnet-20250219': 3.00,
+      'claude-3-5-sonnet-20241022': 3.00,
+      'claude-3-5-sonnet-20240620': 3.00,
+      'claude-3-5-haiku-20241022': 0.80,
+      'claude-3-opus-20240229': 15.00,
+      'claude-3-sonnet-20240229': 3.00,
+      'claude-3-haiku-20240307': 0.25,
+      
+      // Bedrock IDs (if needed)
+      'anthropic.claude-3-5-sonnet-20241022-v2:0': 3.00,
+      'anthropic.claude-3-5-haiku-20241022-v1:0': 0.80,
+      'anthropic.claude-3-opus-20240229-v1:0': 15.00,
+      'anthropic.claude-3-sonnet-20240229-v1:0': 3.00,
+      'anthropic.claude-3-haiku-20240307-v1:0': 0.25
     };
     
     const pricePerToken = (pricingPer1M[modelId] || 3.00) / 1_000_000;

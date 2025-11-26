@@ -271,7 +271,7 @@ export class ContextManager {
       return {
         role: branch.role,
         content: branch.content,
-        cacheControl: branch.role === 'system' ? { type: 'ephemeral' } : undefined,
+        cacheControl: branch.role === 'system' ? { type: 'ephemeral', ttl: '1h' } : undefined,
       };
     }).filter(Boolean);
   }

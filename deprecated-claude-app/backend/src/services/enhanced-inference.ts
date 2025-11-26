@@ -25,17 +25,55 @@ type CostBreakdown = {
   outputPrice: number;
 };
 
+// ============================================================================
+// ⚠️ AUTHORITATIVE PRICING SOURCE - Update here when prices change!
+// ============================================================================
+// This is the single source of truth for Anthropic model pricing
+// Used for: UI metrics, cost calculations, savings display
+// 
+// Note: anthropic.ts and openrouter.ts have their own pricing tables
+// but those are ONLY for console logging. Update those optionally for
+// accurate log messages, but UI always uses THIS table.
+//
+// Update when:
+// - Anthropic changes pricing
+// - New models are released
+// - Provider model IDs change
+// ============================================================================
+
 const INPUT_PRICING_PER_MILLION: Record<string, number> = {
+  // Claude 4.x models (2025)
+  'claude-opus-4-5-20251101': 5.00,    // New 2025-11-24: 3x cheaper than other Opus!
+  'claude-opus-4-1-20250805': 15.00,
+  'claude-opus-4-20250514': 15.00,
+  'claude-sonnet-4-5-20250929': 3.00,
+  'claude-sonnet-4-20250514': 3.00,
+  'claude-haiku-4-5-20251001': 0.80,
+  
+  // Claude 3.x models
+  'claude-3-7-sonnet-20250219': 3.00,
   'claude-3-5-sonnet-20241022': 3.00,
-  'claude-3-5-haiku-20241022': 0.25,
+  'claude-3-5-sonnet-20240620': 3.00,
+  'claude-3-5-haiku-20241022': 0.80,
   'claude-3-opus-20240229': 15.00,
   'claude-3-sonnet-20240229': 3.00,
   'claude-3-haiku-20240307': 0.25
 };
 
 const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
+  // Claude 4.x models (2025)
+  'claude-opus-4-5-20251101': 25.00,   // New 2025-11-24: Also cheaper output
+  'claude-opus-4-1-20250805': 75.00,
+  'claude-opus-4-20250514': 75.00,
+  'claude-sonnet-4-5-20250929': 15.00,
+  'claude-sonnet-4-20250514': 15.00,
+  'claude-haiku-4-5-20251001': 4.00,
+  
+  // Claude 3.x models
+  'claude-3-7-sonnet-20250219': 15.00,
   'claude-3-5-sonnet-20241022': 15.00,
-  'claude-3-5-haiku-20241022': 1.25,
+  'claude-3-5-sonnet-20240620': 15.00,
+  'claude-3-5-haiku-20241022': 4.00,
   'claude-3-opus-20240229': 75.00,
   'claude-3-sonnet-20240229': 15.00,
   'claude-3-haiku-20240307': 1.25
@@ -149,7 +187,11 @@ export class EnhancedInferenceService {
       if (isComplete) {
         // Update with actual usage from API if provided
         if (actualUsage) {
-          // Total input = fresh + cache_creation + cache_read
+          // Provider semantics (both Anthropic and OpenRouter now match):
+          // - inputTokens = fresh (non-cached) tokens only
+          // - cacheCreationInputTokens = tokens written to cache
+          // - cacheReadInputTokens = tokens read from cache
+          // Total prompt = fresh + cache_creation + cache_read
           const freshTokens = actualUsage.inputTokens;
           const cacheCreation = actualUsage.cacheCreationInputTokens || 0;
           const cacheRead = actualUsage.cacheReadInputTokens || 0;
@@ -254,13 +296,13 @@ export class EnhancedInferenceService {
       return window.messages; // No caching
     }
     
-    // All models get 1-hour cache by default
-    const cacheType = 'ephemeral';
+    // All models get 1-hour cache - MUST specify ttl explicitly for OpenRouter!
+    const cacheControl = { type: 'ephemeral' as const, ttl: '1h' as const };
     
     // Create a set of message indices that should get cache control
     const cacheIndices = new Set(markers.map(m => m.messageIndex));
     
-    Logger.cache(`[EnhancedInference] 📦 Adding cache control to ${cacheIndices.size} messages:`);
+    Logger.cache(`[EnhancedInference] 📦 Adding cache control to ${cacheIndices.size} messages (TTL: 1h):`);
     markers.forEach((m, i) => {
       Logger.cache(`[EnhancedInference]   Cache point ${i + 1}: message ${m.messageIndex} (${m.tokenCount} tokens)`);
     });
@@ -271,7 +313,7 @@ export class EnhancedInferenceService {
         const clonedMsg = JSON.parse(JSON.stringify(msg)); // Deep clone
         const activeBranch = clonedMsg.branches.find((b: any) => b.id === clonedMsg.activeBranchId);
         if (activeBranch) {
-          activeBranch._cacheControl = { type: cacheType };
+          activeBranch._cacheControl = cacheControl;
         }
         return clonedMsg;
       }
