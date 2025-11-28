@@ -1,4 +1,4 @@
-import { User, Conversation, Message, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails } from '@deprecated-claude/shared';
+import { User, Conversation, Message, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -49,6 +49,7 @@ export class Database {
   private userGrantInfos: Map<string, GrantInfo[]> = new Map();
   private userGrantCapabilities: Map<string, GrantCapability[]> = new Map();
   private userGrantTotals: Map<string, Map<string, number>> = new Map();
+  private invites: Map<string, Invite> = new Map(); // code -> Invite
 
   private eventStore: EventStore;
   // per user, contains conversation metadata events and participant events
@@ -492,6 +493,82 @@ export class Database {
     await this.logUserEvent(normalized.userId, 'grant_capability_recorded', { userId: normalized.userId, capability: normalized });
   }
 
+  // Invite methods
+  async createInvite(code: string, createdBy: string, amount: number, currency: string, expiresAt?: string): Promise<Invite> {
+    if (this.invites.has(code)) {
+      throw new Error('Invite code already exists');
+    }
+
+    const invite: Invite = {
+      code,
+      createdBy,
+      createdAt: new Date().toISOString(),
+      amount,
+      currency,
+      expiresAt
+    };
+
+    this.invites.set(code, invite);
+    await this.logEvent('invite_created', { invite });
+
+    return invite;
+  }
+
+  getInvite(code: string): Invite | null {
+    return this.invites.get(code) || null;
+  }
+
+  validateInvite(code: string): { valid: boolean; error?: string; invite?: Invite } {
+    const invite = this.invites.get(code);
+
+    if (!invite) {
+      return { valid: false, error: 'Invalid invite code' };
+    }
+
+    if (invite.claimedBy) {
+      return { valid: false, error: 'This invite has already been used' };
+    }
+
+    if (invite.expiresAt && new Date(invite.expiresAt) < new Date()) {
+      return { valid: false, error: 'This invite has expired' };
+    }
+
+    return { valid: true, invite };
+  }
+
+  async claimInvite(code: string, claimedBy: string): Promise<void> {
+    const validation = this.validateInvite(code);
+    if (!validation.valid || !validation.invite) {
+      throw new Error(validation.error || 'Invalid invite');
+    }
+
+    const invite = validation.invite;
+    invite.claimedBy = claimedBy;
+    invite.claimedAt = new Date().toISOString();
+
+    await this.logEvent('invite_claimed', { code, claimedBy, claimedAt: invite.claimedAt });
+
+    // Mint the credits to the user
+    await this.recordGrantInfo({
+      id: uuidv4(),
+      time: new Date().toISOString(),
+      type: 'mint',
+      amount: invite.amount,
+      toUserId: claimedBy,
+      reason: `Invite: ${code}`,
+      causeId: code,
+      currency: invite.currency
+    });
+  }
+
+  listInvitesByCreator(userId: string): Invite[] {
+    return Array.from(this.invites.values()).filter(invite => invite.createdBy === userId);
+  }
+
+  listAllInvites(): Invite[] {
+    return Array.from(this.invites.values());
+  }
+
 
   private async replayEvent(event: Event): Promise<void> {
     try {
@@ -790,6 +867,24 @@ export class Database {
         const { userId, capability } = event.data || {};
         if (userId && capability) {
           this.applyGrantCapability(userId, capability);
+        }
+        break;
+      }
+
+      case 'invite_created': {
+        const { invite } = event.data || {};
+        if (invite && invite.code) {
+          this.invites.set(invite.code, invite);
+        }
+        break;
+      }
+
+      case 'invite_claimed': {
+        const { code, claimedBy, claimedAt } = event.data || {};
+        const invite = this.invites.get(code);
+        if (invite) {
+          invite.claimedBy = claimedBy;
+          invite.claimedAt = claimedAt;
         }
         break;
       }

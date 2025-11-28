@@ -75,6 +75,17 @@
             <div v-if="confirmPasswordError" class="error-msg">{{ confirmPasswordError }}</div>
           </div>
           
+          <div v-if="isRegistering" class="field-group">
+            <label for="inviteCode">invite code <span class="optional">(optional)</span></label>
+            <input
+              id="inviteCode"
+              v-model="inviteCode"
+              type="text"
+              placeholder="enter invite code for credits"
+            />
+            <div v-if="inviteCode" class="hint">credits will be added to your account</div>
+          </div>
+          
           <div v-if="error" class="alert-error">
             <span class="alert-icon">⚠</span>
             <span>{{ error }}</span>
@@ -179,12 +190,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, computed, onMounted } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { useStore } from '@/store';
 import ArcLogo from '@/components/ArcLogo.vue';
 
 const router = useRouter();
+const route = useRoute();
 const store = useStore();
 
 const isRegistering = ref(false);
@@ -196,6 +208,16 @@ const name = ref('');
 const email = ref('');
 const password = ref('');
 const confirmPassword = ref('');
+const inviteCode = ref('');
+
+// Check for invite code in URL and auto-switch to registration mode
+onMounted(() => {
+  const urlInvite = route.query.invite as string;
+  if (urlInvite) {
+    inviteCode.value = urlInvite;
+    isRegistering.value = true;
+  }
+});
 
 // Computed error messages
 const nameError = computed(() => {
@@ -248,7 +270,7 @@ async function submit() {
   
   try {
     if (isRegistering.value) {
-      await store.register(email.value, password.value, name.value);
+      await store.register(email.value, password.value, name.value, inviteCode.value || undefined);
     } else {
       await store.login(email.value, password.value);
     }
@@ -414,6 +436,17 @@ async function submit() {
   font-size: 10px;
   color: #e8735d;
   opacity: 0.8;
+}
+
+.optional {
+  opacity: 0.5;
+  font-weight: 300;
+}
+
+.hint {
+  font-size: 10px;
+  color: #979853;
+  opacity: 0.7;
 }
 
 .alert-error {

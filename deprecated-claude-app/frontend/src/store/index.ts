@@ -142,10 +142,10 @@ export function createStore(): {
       }
     },
     
-    async register(email: string, password: string, name: string) {
+    async register(email: string, password: string, name: string, inviteCode?: string) {
       try {
         state.isLoading = true;
-        const response = await api.post('/auth/register', { email, password, name });
+        const response = await api.post('/auth/register', { email, password, name, inviteCode });
         const { user, token } = response.data;
         
         localStorage.setItem('token', token);
