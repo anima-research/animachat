@@ -513,9 +513,50 @@ async function handleChatMessage(
     );
   } catch (error) {
     console.error('Inference streaming error:', error);
+    
+    // Parse error for user-friendly messages
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    let friendlyError = 'Failed to generate response';
+    let suggestion = '';
+    
+    if (errorMsg.includes('Model') && errorMsg.includes('not found')) {
+      friendlyError = 'Model not found';
+      suggestion = 'The selected model may have been removed or is unavailable.';
+    } else if (errorMsg.includes('No API key')) {
+      friendlyError = 'No API key configured';
+      suggestion = 'Add an API key in Settings → API Keys for this provider.';
+    } else if (errorMsg.includes('Rate limit')) {
+      friendlyError = 'Rate limit exceeded';
+      suggestion = 'Wait a moment and try again, or switch to a different model.';
+    } else if (errorMsg.includes('Insufficient credits')) {
+      friendlyError = 'Insufficient credits';
+      suggestion = 'Add more credits or contact an admin for a top-up.';
+    } else if (errorMsg.includes('404')) {
+      friendlyError = 'Endpoint not found';
+      suggestion = 'Check your custom model configuration - the URL may be incorrect.';
+    } else if (errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('Authentication')) {
+      friendlyError = 'Authentication failed';
+      suggestion = 'Check that your API key is valid and has not expired.';
+    } else if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('fetch failed')) {
+      friendlyError = 'Could not connect to model server';
+      suggestion = 'Make sure the model server is running and reachable.';
+    } else if (errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT')) {
+      friendlyError = 'Request timed out';
+      suggestion = 'The model server took too long to respond. Try again or use a different model.';
+    } else if (errorMsg.includes('500') || errorMsg.includes('Internal')) {
+      friendlyError = 'Model server error';
+      suggestion = 'The model server encountered an error. Try again or check the model ID.';
+    } else if (errorMsg.includes('context') || errorMsg.includes('token')) {
+      friendlyError = errorMsg; // Pass through token/context errors as-is
+    } else if (errorMsg.length < 100) {
+      // Short error messages are usually informative, pass them through
+      friendlyError = errorMsg;
+    }
+    
     ws.send(JSON.stringify({
       type: 'error',
-      error: 'Failed to generate response'
+      error: friendlyError,
+      suggestion: suggestion || undefined
     }));
   }
 }
@@ -715,9 +756,10 @@ async function handleRegenerate(
     );
   } catch (error) {
     console.error('Regeneration error:', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
     ws.send(JSON.stringify({
       type: 'error',
-      error: 'Failed to regenerate response'
+      error: errorMsg.length < 150 ? errorMsg : 'Failed to regenerate response'
     }));
   }
 }
@@ -973,9 +1015,10 @@ async function handleEdit(
       );
     } catch (error) {
       console.error('Error generating response to edited message:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
       ws.send(JSON.stringify({
         type: 'error',
-        error: 'Failed to generate response'
+        error: errorMsg.length < 150 ? errorMsg : 'Failed to generate response'
       }));
     }
   }

@@ -256,20 +256,18 @@
       
       <!-- Generating indicator or error indicator -->
       <div v-if="hasError && currentBranch.role === 'assistant'" class="error-indicator mt-3">
-        <v-chip 
-          size="small" 
-          color="error"
-          variant="tonal"
-          class="error-chip"
-        >
-          <v-icon
-            size="small"
-            class="mr-2"
-          >
-            mdi-alert-circle
-          </v-icon>
-          {{ errorMessage || 'Failed to generate response' }}
-        </v-chip>
+        <div class="error-box">
+          <div class="error-header">
+            <v-icon size="small" color="error" class="mr-2">mdi-alert-circle</v-icon>
+            <span class="error-title">Error</span>
+          </div>
+          <div class="error-message">
+            {{ errorMessage || 'Failed to generate response' }}
+          </div>
+          <div v-if="errorSuggestion" class="error-suggestion">
+            💡 {{ errorSuggestion }}
+          </div>
+        </div>
       </div>
       <div v-else-if="isStreaming && currentBranch.role === 'assistant'" class="generating-indicator mt-3">
         <v-chip 
@@ -346,6 +344,7 @@ const props = defineProps<{
   isStreaming?: boolean;
   hasError?: boolean;
   errorMessage?: string;
+  errorSuggestion?: string;
 }>();
 
 const emit = defineEmits<{
@@ -801,6 +800,47 @@ watch(() => currentBranch.value.id, async () => {
 </script>
 
 <style scoped>
+.error-indicator {
+  max-width: 100%;
+}
+
+.error-box {
+  background: rgba(var(--v-theme-error), 0.1);
+  border: 1px solid rgba(var(--v-theme-error), 0.3);
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 100%;
+}
+
+.error-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.error-title {
+  font-weight: 600;
+  color: rgb(var(--v-theme-error));
+  font-size: 0.875rem;
+}
+
+.error-message {
+  color: rgba(var(--v-theme-on-surface), 0.9);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.error-suggestion {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(var(--v-theme-error), 0.2);
+  color: rgba(var(--v-theme-on-surface), 0.7);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
 .generating-indicator {
   display: flex;
   align-items: center;

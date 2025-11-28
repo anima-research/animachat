@@ -62,7 +62,7 @@
           
           <v-divider class="my-4" />
           
-          <h4 class="text-h6 mb-4">Model Parameters</h4>
+          <h4 class="text-h6 mb-2">Model Parameters</h4>
         </div>
         
         <!-- Multi-participant mode: Show participants section -->
@@ -141,7 +141,7 @@
             :step="100"
             thumb-label
             color="primary"
-            class="mt-4"
+            class="mt-2"
           >
             <template v-slot:label>
               Max Tokens
@@ -157,11 +157,12 @@
           </v-slider>
           
           <!-- Top P (if supported) -->
-          <div v-if="selectedModel.settings.topP" class="mt-4">
+          <div v-if="selectedModel.settings.topP" class="mt-2">
             <v-checkbox
               v-model="topPEnabled"
               label="Enable Top P"
               density="compact"
+              hide-details
             />
             <v-slider
               v-if="topPEnabled"
@@ -187,11 +188,12 @@
           </div>
           
           <!-- Top K (if supported) -->
-          <div v-if="selectedModel.settings.topK" class="mt-4">
+          <div v-if="selectedModel.settings.topK" class="mt-2">
             <v-checkbox
               v-model="topKEnabled"
               label="Enable Top K"
               density="compact"
+              hide-details
             />
             <v-slider
               v-if="topKEnabled"
@@ -217,11 +219,12 @@
           </div>
           
           <!-- Extended Thinking (if supported) -->
-          <div v-if="selectedModel?.supportsThinking" class="mt-4">
+          <div v-if="selectedModel?.supportsThinking" class="mt-2">
             <v-checkbox
               v-model="thinkingEnabled"
               label="Enable Extended Thinking"
               density="compact"
+              hide-details
             >
               <template v-slot:label>
                 Enable Extended Thinking
@@ -265,9 +268,9 @@
         
         <!-- Context Management Settings -->
         <div>
-          <h4 class="text-h6 mb-4">Context Management</h4>
+          <h4 class="text-h6 mb-2">Context Management</h4>
           <p class="text-caption text-grey mb-3">
-            These settings control how conversation history is managed for all participant, but can be overridden by participant-specific settings.
+            These settings control how conversation history is managed for all participants, but can be overridden by participant-specific settings.
           </p>
           
           <v-select
@@ -290,7 +293,7 @@
           </v-select>
           
           <!-- Rolling Strategy Settings -->
-          <div v-if="contextStrategy === 'rolling'" class="ml-4">
+          <div v-if="contextStrategy === 'rolling'">
             <v-text-field
               v-model.number="rollingMaxTokens"
               type="number"
@@ -337,6 +340,31 @@
             
             <!-- Cache Settings for Rolling Strategy -->
             <v-divider class="my-3" />
+          </div>
+          
+          <div v-if="contextStrategy === 'append'">
+            <v-text-field
+              v-model.number="appendTokensBeforeCaching"
+              type="number"
+              label="Tokens Before Caching"
+              variant="outlined"
+              density="compact"
+              :min="1000"
+              :max="50000"
+              :step="1000"
+              class="mb-3"
+            >
+              <template v-slot:append-inner>
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small">
+                      mdi-help-circle-outline
+                    </v-icon>
+                  </template>
+                  Cache window moves in steps of this size. Lower = caching starts sooner (better for shorter conversations). Default: 10,000
+                </v-tooltip>
+              </template>
+            </v-text-field>
           </div>
         </div>
         
@@ -396,6 +424,7 @@ const thinkingBudgetTokens = ref(10000);
 const contextStrategy = ref('append');
 const rollingMaxTokens = ref(50000);
 const rollingGraceTokens = ref(10000);
+const appendTokensBeforeCaching = ref(10000);
 
 const prefillUserMessageEnabled = ref(true);
 const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
@@ -501,11 +530,14 @@ watch(() => props.conversation, async (conversation) => {
       if (conversation.contextManagement.strategy === 'rolling') {
         rollingMaxTokens.value = conversation.contextManagement.maxTokens;
         rollingGraceTokens.value = conversation.contextManagement.maxGraceTokens;
+      } else if (conversation.contextManagement.strategy === 'append') {
+        appendTokensBeforeCaching.value = conversation.contextManagement.tokensBeforeCaching || 10000;
       }
     } else {
       contextStrategy.value = 'append';
       rollingMaxTokens.value = 50000;
       rollingGraceTokens.value = 10000;
+      appendTokensBeforeCaching.value = 10000;
     }
     
     // Load prefill user message settings
@@ -678,6 +710,7 @@ function save() {
   if (contextStrategy.value === 'append') {
     contextManagement = {
       strategy: 'append',
+      tokensBeforeCaching: appendTokensBeforeCaching.value
     };
   } else if (contextStrategy.value === 'rolling') {
     contextManagement = {

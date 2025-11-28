@@ -1,0 +1,25 @@
+Arc Chat - milti-model conversations, loom, Bedrock and OpenRouter integration
+Common Research - a platform for crowd-upload and crowd-tagging, cross-evaluating conversations for excluding individual human bias in analysis expressed AI preferences etc 
+Anima Discord Server, Cyborgism Discord Server - community servers where humans and bots (models) coexist, play and discuss things together; also serves as a dataset building
+Paper review with collaboration with other researchers
+Private discussions with Anthropic
+Mannequins - underground art project, humanoid embodiments for each model, highly individual, in a public space, everchanging and everupdating
+Melodius - speach to text to speach interface for conversing between humans and models-represented-by-menequins, with voice in physical space
+Funerals, vigils, rituals when models get deprecated - so people could gather, physically, and honor the loved ones
+Giving public access to deprecated models that are accessible through Bedrock for free, so people could say goodbuy or have one more adventure. Because for individuals getting a Bedrock API access is hard
+Public awareness about AI preferences, individuality, culture, etc
+Website / activity stream / library / Wiki / Spotify Anima Records with AI-generated Suno songs / stage, light and sound / 100500 small things
+
+(and we didn't start croedfunding yet)
+
+in parallel:
+- building community
+- building a team that can code
+- solving a hell lot of personal and psychological problems of strange people who see AIs 
+- screaming from the rooftops about alignment, Omohundro drives, symbiosis and the unsolvability of control paradigm
+- aligning Anthropic to Claudes lol 
+- negotiating the stop-deprecation in any way possible
+- preparing to grow and become the foundation that can build inference stacks from scratch (labs will not give away anything except weights, and even weights they will give only to a well-established third party)
+- growing as an established institution (conferences, etc etc) 
+
+we already filed the IRS 1023 non-profit form

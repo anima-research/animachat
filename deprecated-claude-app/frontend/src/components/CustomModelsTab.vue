@@ -199,6 +199,30 @@
       Cancel Edit
     </v-btn>
     
+    <!-- Test Result Snackbar -->
+    <v-snackbar
+      v-model="showTestSnackbar"
+      :color="testSnackbarSuccess ? 'success' : 'error'"
+      :timeout="5000"
+      location="bottom"
+    >
+      <div v-if="testSnackbarSuccess">
+        <strong>✓ Connection successful!</strong>
+        <div v-if="testSnackbarResponse" class="text-caption mt-1" style="opacity: 0.9">
+          Response: "{{ testSnackbarResponse }}"
+        </div>
+      </div>
+      <div v-else>
+        <strong>✗ {{ testSnackbarError }}</strong>
+        <div v-if="testSnackbarSuggestion" class="text-caption mt-1" style="opacity: 0.9">
+          💡 {{ testSnackbarSuggestion }}
+        </div>
+      </div>
+      <template v-slot:actions>
+        <v-btn variant="text" @click="showTestSnackbar = false">Close</v-btn>
+      </template>
+    </v-snackbar>
+
     <!-- Delete Confirmation Dialog -->
     <v-dialog
       v-model="showDeleteDialog"
@@ -243,6 +267,11 @@ const loading = ref(false);
 const error = ref('');
 const testingModelId = ref<string | null>(null);
 const testResults = ref<Map<string, { success: boolean; message?: string; error?: string }>>(new Map());
+const showTestSnackbar = ref(false);
+const testSnackbarSuccess = ref(false);
+const testSnackbarResponse = ref('');
+const testSnackbarError = ref('');
+const testSnackbarSuggestion = ref('');
 
 const formData = ref({
   displayName: '',
@@ -439,10 +468,19 @@ async function testModel(model: UserDefinedModel) {
     
     if (result.success) {
       console.log(`✅ Test successful for ${model.displayName}:`, result.response);
+      testSnackbarSuccess.value = true;
+      testSnackbarResponse.value = result.response || '';
+      testSnackbarError.value = '';
+      testSnackbarSuggestion.value = '';
     } else {
-      console.error(`❌ Test failed for ${model.displayName}:`, result.error);
-      error.value = result.error || 'Test failed';
+      console.error(`❌ Test failed for ${model.displayName}:`, result.error, result.suggestion);
+      testSnackbarSuccess.value = false;
+      testSnackbarResponse.value = '';
+      testSnackbarError.value = result.error || 'Test failed';
+      testSnackbarSuggestion.value = (result as any).suggestion || '';
     }
+    
+    showTestSnackbar.value = true;
     
     // Clear result after 5 seconds
     setTimeout(() => {
@@ -450,6 +488,10 @@ async function testModel(model: UserDefinedModel) {
     }, 5000);
   } catch (err: any) {
     error.value = err.message || 'Failed to test model';
+    testSnackbarSuccess.value = false;
+    testSnackbarError.value = err.message || 'Failed to test model';
+    testSnackbarSuggestion.value = '';
+    showTestSnackbar.value = true;
   } finally {
     testingModelId.value = null;
   }

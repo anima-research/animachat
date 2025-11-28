@@ -223,6 +223,8 @@ export function customModelsRouter(db: Database): Router {
         // Make a minimal test request
         try {
           let testResponse = '';
+          let receivedChunks = 0;
+          
           await service.streamCompletion(
             model.providerModelId,
             [{
@@ -233,17 +235,33 @@ export function customModelsRouter(db: Database): Router {
               order: 0
             }],
             undefined,
-            { temperature: 0.7, maxTokens: 50 },
+            { temperature: 0.7, maxTokens: 256 },  // Higher limit - some models need room
             async (chunk: string, isComplete: boolean) => {
               testResponse += chunk;
+              if (chunk) receivedChunks++;
             }
           );
           
-          res.json({ 
-            success: true, 
-            message: 'Connection successful!',
-            response: testResponse.slice(0, 100)
-          });
+          // Verify we actually got a response
+          const trimmedResponse = testResponse.trim();
+          if (!trimmedResponse) {
+            console.warn(`[OpenRouter test] Connection succeeded but response was empty (${receivedChunks} chunks received)`);
+            res.json({ 
+              success: false, 
+              error: 'Connection succeeded but model returned empty response. The model may be unavailable or rate-limited.',
+              details: {
+                chunksReceived: receivedChunks,
+                modelId: model.providerModelId
+              }
+            });
+          } else {
+            console.log(`[OpenRouter test] Success: "${trimmedResponse.slice(0, 50)}..." (${receivedChunks} chunks)`);
+            res.json({ 
+              success: true, 
+              message: 'Connection successful!',
+              response: trimmedResponse.slice(0, 100)
+            });
+          }
         } catch (error: any) {
           console.error('OpenRouter test failed:', error);
           res.json({ 
@@ -270,6 +288,8 @@ export function customModelsRouter(db: Database): Router {
         
         try {
           let testResponse = '';
+          let receivedChunks = 0;
+          
           await service.streamCompletion(
             model.providerModelId,
             [{
@@ -280,22 +300,71 @@ export function customModelsRouter(db: Database): Router {
               order: 0
             }],
             undefined,
-            { temperature: 0.7, maxTokens: 50 },
+            { temperature: 0.7, maxTokens: 256 },  // Higher limit - some models need room
             async (chunk: string, isComplete: boolean) => {
               testResponse += chunk;
+              if (chunk) receivedChunks++;
             }
           );
           
-          res.json({ 
-            success: true, 
-            message: 'Connection successful!',
-            response: testResponse.slice(0, 100)
-          });
+          // Verify we actually got a response
+          const trimmedResponse = testResponse.trim();
+          if (!trimmedResponse) {
+            console.warn(`[OpenAI-compatible test] Connection succeeded but response was empty (${receivedChunks} chunks received)`);
+            res.json({ 
+              success: false, 
+              error: 'Connection succeeded but model returned empty response. Check that the model ID is correct and the model is loaded.',
+              details: {
+                chunksReceived: receivedChunks,
+                endpoint: model.customEndpoint.baseUrl,
+                modelId: model.providerModelId
+              }
+            });
+          } else {
+            console.log(`[OpenAI-compatible test] Success: "${trimmedResponse.slice(0, 50)}..." (${receivedChunks} chunks)`);
+            res.json({ 
+              success: true, 
+              message: 'Connection successful!',
+              response: trimmedResponse.slice(0, 100)
+            });
+          }
         } catch (error: any) {
           console.error('OpenAI-compatible test failed:', error);
+          
+          // Parse error for user-friendly messages
+          const errorMsg = error.message || '';
+          let friendlyError = errorMsg;
+          let suggestion = '';
+          
+          if (errorMsg.includes('404')) {
+            friendlyError = 'Endpoint not found (404)';
+            suggestion = 'Check that the Base URL is correct. For Ollama, use http://localhost:11434. For LM Studio, use http://localhost:1234.';
+          } else if (errorMsg.includes('401') || errorMsg.includes('403')) {
+            friendlyError = 'Authentication failed';
+            suggestion = 'Check that the API key is correct, or leave it empty if not required.';
+          } else if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('fetch failed')) {
+            friendlyError = 'Could not connect to server';
+            suggestion = 'Make sure the server is running and the URL is reachable from the Arc backend.';
+          } else if (errorMsg.includes('ENOTFOUND')) {
+            friendlyError = 'Server address not found';
+            suggestion = 'Check the hostname in your Base URL - it may be misspelled.';
+          } else if (errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT')) {
+            friendlyError = 'Connection timed out';
+            suggestion = 'The server took too long to respond. It may be overloaded or unreachable.';
+          } else if (errorMsg.includes('500')) {
+            friendlyError = 'Server error (500)';
+            suggestion = 'The server encountered an internal error. Check the model ID is correct.';
+          }
+          
           res.json({ 
             success: false, 
-            error: error.message || 'Failed to connect to endpoint' 
+            error: friendlyError,
+            suggestion: suggestion || undefined,
+            details: {
+              endpoint: model.customEndpoint?.baseUrl,
+              modelId: model.providerModelId,
+              rawError: errorMsg.slice(0, 200)  // Include raw error for debugging
+            }
           });
         }
       } else {

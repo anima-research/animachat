@@ -264,11 +264,20 @@ export class EnhancedInferenceService {
     cacheHit = false; // Will be determined from actual response
     
     // For Anthropic models (direct or via OpenRouter), we need to add cache control metadata
+    // SKIP cache control for group chats (prefill format) - caching doesn't work across
+    // different providers/formats, so we'd just pay for creating cache that's never read
+    const isGroupChat = conversation?.format === 'prefill';
+    const shouldAddCacheControl = !isGroupChat && 
+      (model.provider === 'anthropic' || model.provider === 'openrouter') && 
+      window.cacheablePrefix.length > 0;
+    
     let messagesToSend = window.messages;
-    if ((model.provider === 'anthropic' || model.provider === 'openrouter') && window.cacheablePrefix.length > 0) {
+    if (shouldAddCacheControl) {
       Logger.cache(`[EnhancedInference] Adding cache control for ${model.provider} provider (${model.id})`);
       // Clone messages and add cache control to the last cacheable message
       messagesToSend = this.addCacheControlToMessages(window, model);
+    } else if (isGroupChat) {
+      Logger.cache(`[EnhancedInference] ⏭️ Skipping cache control for group chat (caching disabled for prefill format)`);
     } else {
       Logger.debug(`[EnhancedInference] No cache control: provider=${model.provider}, cacheablePrefix=${window.cacheablePrefix.length}`);
     }

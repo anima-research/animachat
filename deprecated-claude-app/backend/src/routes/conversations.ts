@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
 import { AuthRequest } from '../middleware/auth.js';
-import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics } from '@deprecated-claude/shared';
+import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT } from '@deprecated-claude/shared';
 
 export function conversationRouter(db: Database): Router {
   const router = Router();
@@ -276,13 +276,14 @@ export function conversationRouter(db: Database): Router {
 
       // Get cache metrics from the enhanced inference service if available
       // For now, return a placeholder
+      const contextManagement = conversation.contextManagement ?? DEFAULT_CONTEXT_MANAGEMENT;
       const metrics = {
         conversationId: req.params.id,
         cacheHits: 0,
         cacheMisses: 0,
         totalTokensSaved: 0,
         totalCostSaved: 0,
-        contextStrategy: conversation.contextManagement?.strategy || 'append'
+        contextStrategy: contextManagement.strategy
       };
 
       res.json(metrics);
@@ -322,7 +323,7 @@ export function conversationRouter(db: Database): Router {
         perModelMetrics: Object.fromEntries(summary.perModelMetrics),
         lastCompletion: summary.lastCompletion,
         totals: summary.totals,
-        contextManagement: conversation.contextManagement,
+        contextManagement: conversation.contextManagement ?? DEFAULT_CONTEXT_MANAGEMENT,
         totalTreeTokens: summary.totalTreeTokens
       };
 

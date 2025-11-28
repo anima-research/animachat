@@ -69,14 +69,17 @@ export class ContextManager {
                              conversation.contextManagement || 
                              DEFAULT_CONTEXT_MANAGEMENT;
     
-    // Log for debugging
-    Logger.debug('[ContextManager] Using context management:', JSON.stringify(contextManagement));
+    // Compute stateKey BEFORE getting strategy - this ensures each conversation/participant
+    // gets its own strategy instance (important for stateful strategies like rolling window)
+    const stateKey = participant ? `${conversation.id}:${participant.id}` : conversation.id;
     
-    // Get or create appropriate strategy
-    const strategy = this.getOrCreateStrategy(contextManagement);
+    // Log for debugging
+    Logger.debug('[ContextManager] Using context management:', JSON.stringify(contextManagement), 'for', stateKey);
+    
+    // Get or create appropriate strategy - pass stateKey to ensure per-context instances
+    const strategy = this.getOrCreateStrategy(contextManagement, stateKey);
     
     // Get or create state
-    const stateKey = participant ? `${conversation.id}:${participant.id}` : conversation.id;
     const state = this.getOrCreateState(stateKey, contextManagement.strategy);
     
     // Prepare context window
@@ -179,7 +182,7 @@ export class ContextManager {
   
   setContextManagement(conversationId: string, contextManagement: ContextManagement, participantId?: string): void {
     const stateKey = participantId ? `${conversationId}:${participantId}` : conversationId;
-    const strategy = this.getOrCreateStrategy(contextManagement);
+    const strategy = this.getOrCreateStrategy(contextManagement, stateKey);
     
     const state = this.getOrCreateState(stateKey, contextManagement.strategy);
     state.strategy = contextManagement.strategy;
@@ -190,12 +193,16 @@ export class ContextManager {
     // Clear strategy's internal state if it has a reset method
     if ((strategy as any).resetState) {
       (strategy as any).resetState();
-      Logger.context(`[ContextManager] Reset strategy state due to config change`);
+      Logger.context(`[ContextManager] Reset strategy state due to config change for ${stateKey}`);
     }
   }
   
-  private getOrCreateStrategy(contextManagement: ContextManagement): ContextStrategy {
-    const key = JSON.stringify(contextManagement);
+  private getOrCreateStrategy(contextManagement: ContextManagement, stateKey?: string): ContextStrategy {
+    // IMPORTANT: Include stateKey in cache key for stateful strategies like rolling window
+    // This ensures each conversation/participant gets its own strategy instance
+    // Without this, multiple participants sharing the same config would corrupt each other's state
+    const configKey = JSON.stringify(contextManagement);
+    const key = stateKey ? `${configKey}:${stateKey}` : configKey;
     
     if (!this.strategies.has(key)) {
       let strategy: ContextStrategy;
@@ -211,7 +218,7 @@ export class ContextManager {
           throw new Error(`Unknown context strategy: ${(contextManagement as any).strategy}`);
       }
       
-      Logger.debug(`[ContextManager] Created new ${contextManagement.strategy} strategy with config:`, contextManagement);
+      Logger.debug(`[ContextManager] Created new ${contextManagement.strategy} strategy for ${stateKey || 'default'} with config:`, contextManagement);
       this.strategies.set(key, strategy);
     }
     

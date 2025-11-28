@@ -1,0 +1,29 @@
+We are working on prompt caching and metrics
+
+## The incomplete list of observable bugs and suspicious behaviors:
+
+FIXED
+
+### 2. Prompt caching in group chats - CONFIRMED: Architectural limitation
+**Status:** Investigated - see CACHE_ANALYSIS.md for full details
+
+**Root causes:**
+1. Each model has its own cache namespace (Opus 3 cache ≠ Opus 4.5 cache)
+2. Conversation grows each call → cache markers shift → cache key changes
+3. Prefill format consolidates to blob → growing blob = unstable cache key
+
+**Realistic options:**
+- [ ] Option A: Cache only stable prefix (first N tokens), accept fresh recent messages
+- [ ] Option B: Focus caching on 1-on-1 conversations, accept higher group chat costs
+- [V] Option C: Model-specific cache tracking (only expect hits when same model called quickly)
+
+the calls in the group chat are being made without a particular order - it can be
+opus 4.5
+me
+opus 3
+opus 4.5
+opus 3
+opus 4.5
+me
+opus 4.5
+etc
