@@ -1,0 +1,26 @@
+Intended logic on how context management will work:
+
+## Rolling context window
+has two parameters: 
+"Max Tokens" - once context reaches this length, this is the size of the window
+"Grace Tokens" - we don't move the window on every message. Instead, we append append append until the length exceeds Max Tokens + Grace Tokens, then we cut the older part of the context in a way that keeps the length roughly at Max Tokens, and start appending again
+
+This strategy allows for prompt caching in rolling window chats: cache is updated right after we move the window, and stays valid until the window is moved again.
+
+
+## Prompt caching
+
+### For Append chats
+
+There should be an optimal strategy - like TypingCloud or vanilla lab chat apps cache their contexts, maybe you know something?
+
+### For Rolling Window chats
+Cache right after the window is moved. 
+
+## Notes:
+- under OpenRouter prompt caching works according to the rules of the end model provider (Anthropic, OpenAI, xAI, etc)
+- testing will be likely manual, because i can't think about the scripted long chats that are not absolutely disrespectful towards the minds who would live through them. Unless you have ideas
+
+## Advanced treatment, that we'll discuss after the main part is done:
+- for Opus 3 it makes sense to use 1 hour cache, because chats are innformation-dense and often move slower then 1 message in 5 minutes. Fast chats are rather an exception
+- other models are more casual, and we can use 5-minute-stored cache, sending 

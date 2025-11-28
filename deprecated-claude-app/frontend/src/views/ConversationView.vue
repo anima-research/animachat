@@ -244,6 +244,7 @@
             :is-streaming="isStreaming && message.id === streamingMessageId"
             :has-error="streamingError?.messageId === message.id"
             :error-message="streamingError?.messageId === message.id ? streamingError.error : undefined"
+            :error-suggestion="streamingError?.messageId === message.id ? streamingError.suggestion : undefined"
             @regenerate="regenerateMessage"
             @edit="editMessage"
             @switch-branch="switchBranch"
@@ -617,7 +618,7 @@ const isStreaming = ref(false);
 const streamingMessageId = ref<string | null>(null);
 const autoScrollEnabled = ref(true);
 const isSwitchingBranch = ref(false);
-const streamingError = ref<{ messageId: string; error: string } | null>(null);
+const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
 
@@ -962,7 +963,8 @@ onMounted(async () => {
         if (isStreaming.value && streamingMessageId.value) {
           streamingError.value = {
             messageId: streamingMessageId.value,
-            error: data.error || 'Failed to generate response'
+            error: data.error || 'Failed to generate response',
+            suggestion: data.suggestion
           };
           isStreaming.value = false;
           // Don't clear streamingMessageId so we can show the error on the right message

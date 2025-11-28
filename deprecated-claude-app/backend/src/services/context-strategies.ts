@@ -53,6 +53,21 @@ function getMessageTokens(message: Message): number {
   
   let tokens = estimateTokens(branch.content);
   
+  // Include contentBlocks (thinking) in token count
+  // In prefill mode, thinking blocks are prepended to the message content
+  // so we must count them to accurately estimate total tokens sent to the API
+  if (branch.contentBlocks && branch.contentBlocks.length > 0) {
+    for (const block of branch.contentBlocks) {
+      if (block.type === 'thinking' && block.thinking) {
+        // Thinking content + XML tags overhead: <thinking>\n...\n</thinking>\n\n
+        tokens += estimateTokens(block.thinking) + 10; // ~10 tokens for tags
+      } else if (block.type === 'redacted_thinking') {
+        // Redacted thinking: <thinking>[Redacted for safety]</thinking>\n\n
+        tokens += 15; // Fixed overhead for redacted content
+      }
+    }
+  }
+  
   // Include attachments in token count
   if (branch.attachments && branch.attachments.length > 0) {
     for (const attachment of branch.attachments) {
@@ -154,22 +169,30 @@ export class AppendContextStrategy implements ContextStrategy {
     let cacheMarkers: CacheMarker[] | undefined;
     
     if (totalTokens >= PROVIDER_MIN_CACHE_TOKENS) {
-      // For append strategy: calculate step from model's max context
-      // Step = maxContext / (N + 1)
-      // If model context unknown, fall back to cacheInterval config
-      const maxContext = modelMaxContext || 200000; // Default to 200K if not provided
+      // For append strategy: incremental cache advancement
+      // Cache interval = floor(currentTokens / tokensBeforeCaching) * tokensBeforeCaching
+      // Distribute 4 points within that interval
+      const tokensBeforeCaching = this.config.tokensBeforeCaching || 10000; // Fallback for old conversations
+      const currentWindow = Math.floor(totalTokens / tokensBeforeCaching) * tokensBeforeCaching;
       
-      // Ensure we don't set a step that is too small (below min cache size)
-      // If maxContext is small (e.g. output limit), we should clamp step
-      const calculatedStep = Math.floor(maxContext / (NUM_CACHE_POINTS + 1));
-      const cacheStep = Math.max(calculatedStep, PROVIDER_MIN_CACHE_TOKENS);
-      
-      Logger.cache(`\n🧮 ============= CACHE RECALCULATION (APPEND) =============`);
-      Logger.cache(`🧮 Cache strategy: Append (unlimited growth)`);
-      Logger.cache(`🧮 Model max context: ${maxContext} tokens`);
-      Logger.cache(`🧮 Cache points: ${NUM_CACHE_POINTS}`);
-      Logger.cache(`🧮 Cache step size: ${cacheStep} tokens (maxContext / ${NUM_CACHE_POINTS + 1}, clamped to >= ${PROVIDER_MIN_CACHE_TOKENS})`);
-      Logger.cache(`🧮 Current conversation: ${totalTokens} tokens in ${allMessages.length} messages`);
+      // If conversation hasn't reached tokensBeforeCaching yet, don't cache
+      if (currentWindow < tokensBeforeCaching) {
+        Logger.cache(`\n🧮 ============= CACHE RECALCULATION (APPEND) =============`);
+        Logger.cache(`🧮 Conversation too short: ${totalTokens} tokens < ${tokensBeforeCaching} threshold`);
+        Logger.cache(`🧮 No caching until threshold reached`);
+        Logger.cache(`🧮 =========================================================\n`);
+        // Fall through to return without cache markers
+      } else {
+        // Distribute 4 cache points within the window: 0.25, 0.5, 0.75, 1.0
+        const cacheStep = currentWindow / NUM_CACHE_POINTS;
+        
+        Logger.cache(`\n🧮 ============= CACHE RECALCULATION (APPEND) =============`);
+        Logger.cache(`🧮 Cache strategy: Append (unlimited growth)`);
+        Logger.cache(`🧮 Tokens before caching: ${tokensBeforeCaching} (cache threshold)`);
+        Logger.cache(`🧮 Current conversation: ${totalTokens} tokens in ${allMessages.length} messages`);
+        Logger.cache(`🧮 Current cache interval: ${currentWindow} tokens (cache moves every ${tokensBeforeCaching} tokens)`);
+        Logger.cache(`🧮 Cache points: ${NUM_CACHE_POINTS}`);
+        Logger.cache(`🧮 Cache step size: ${cacheStep.toFixed(0)} tokens`);
       
       // Calculate all cache positions: step, 2*step, 3*step, 4*step
       const tempMarkers: CacheMarker[] = [];
@@ -232,17 +255,18 @@ export class AppendContextStrategy implements ContextStrategy {
         }
       }
       
-      if (tempMarkers.length > 0) {
-        cacheMarkers = tempMarkers;
-        cacheMarker = tempMarkers[tempMarkers.length - 1]; // Legacy: last marker
-        
-        const totalCached = cacheMarkers[cacheMarkers.length - 1].messageIndex + 1;
-        const totalFresh = allMessages.length - totalCached;
-        
-        Logger.cache(`🧮 Summary: ${cacheMarkers.length} cache points established`);
-        Logger.cache(`🧮   - ${totalCached} messages cached`);
-        Logger.cache(`🧮   - ${totalFresh} messages fresh`);
-        Logger.cache(`🧮 =========================================================\n`);
+        if (tempMarkers.length > 0) {
+          cacheMarkers = tempMarkers;
+          cacheMarker = tempMarkers[tempMarkers.length - 1]; // Legacy: last marker
+          
+          const totalCached = cacheMarkers[cacheMarkers.length - 1].messageIndex + 1;
+          const totalFresh = allMessages.length - totalCached;
+          
+          Logger.cache(`🧮 Summary: ${cacheMarkers.length} cache points established`);
+          Logger.cache(`🧮   - ${totalCached} messages cached`);
+          Logger.cache(`🧮   - ${totalFresh} messages fresh`);
+          Logger.cache(`🧮 =========================================================\n`);
+        }
       }
     }
     
