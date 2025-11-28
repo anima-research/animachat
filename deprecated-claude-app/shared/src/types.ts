@@ -119,8 +119,8 @@ export type UpdateUserModel = z.infer<typeof UpdateUserModelSchema>;
 // Context management settings
 export const ContextManagementSchema = z.discriminatedUnion('strategy', [
   z.object({
-    strategy: z.literal('append')
-    // No config needed - uses model's max context for arithmetic
+    strategy: z.literal('append'),
+    tokensBeforeCaching: z.number().default(10000) // Token threshold before first cache (moves with conversation)
   }),
   z.object({
     strategy: z.literal('rolling'),
@@ -132,7 +132,8 @@ export const ContextManagementSchema = z.discriminatedUnion('strategy', [
 export type ContextManagement = z.infer<typeof ContextManagementSchema>;
 
 export const DEFAULT_CONTEXT_MANAGEMENT: ContextManagement = {
-  strategy: 'append'
+  strategy: 'append',
+  tokensBeforeCaching: 10000
 };
 
 // Participant types
@@ -404,3 +405,17 @@ export const ConversationMetricsSchema = z.object({
 });
 
 export type ConversationMetrics = z.infer<typeof ConversationMetricsSchema>;
+
+// Invite types - claimable credit grants
+export const InviteSchema = z.object({
+  code: z.string(),
+  createdBy: z.string().uuid(),
+  createdAt: z.string(),
+  amount: z.number().positive(),
+  currency: z.string().default('credit'),
+  expiresAt: z.string().optional(),
+  claimedBy: z.string().uuid().optional(),
+  claimedAt: z.string().optional()
+});
+
+export type Invite = z.infer<typeof InviteSchema>;

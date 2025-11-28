@@ -9,7 +9,8 @@ import { ModelLoader } from '../config/model-loader.js';
 const RegisterSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
-  name: z.string()
+  name: z.string(),
+  inviteCode: z.string().optional()
 });
 
 const LoginSchema = z.object({
@@ -66,13 +67,29 @@ export function authRouter(db: Database): Router {
         }
       }
 
+      // Claim invite if provided
+      let inviteClaimed: { amount: number; currency: string } | null = null;
+      if (data.inviteCode) {
+        const validation = db.validateInvite(data.inviteCode);
+        if (validation.valid && validation.invite) {
+          try {
+            await db.claimInvite(data.inviteCode, user.id);
+            inviteClaimed = { amount: validation.invite.amount, currency: validation.invite.currency };
+          } catch (e) {
+            // Log but don't fail registration if invite claim fails
+            console.error('Failed to claim invite during registration:', e);
+          }
+        }
+      }
+
       res.json({
         user: {
           id: user.id,
           email: user.email,
           name: user.name
         },
-        token
+        token,
+        inviteClaimed
       });
     } catch (error) {
       if (error instanceof z.ZodError) {

@@ -42,6 +42,31 @@
         <p v-else class="text-grey text-body-2 mb-0">No grant capabilities assigned.</p>
       </section>
 
+      <section class="mb-4">
+        <h4 class="text-h6 mb-3">Redeem Code</h4>
+        <div class="d-flex align-center" style="gap: 8px;">
+          <v-text-field
+            v-model="redeemCode"
+            placeholder="Enter invite code"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="max-width: 300px;"
+          />
+          <v-btn
+            color="primary"
+            :disabled="!redeemCode.trim() || redeeming"
+            :loading="redeeming"
+            @click="redeemInvite"
+          >
+            Redeem
+          </v-btn>
+        </div>
+        <v-alert v-if="redeemMessage" :type="redeemMessage.type" variant="tonal" class="mt-3" closable @click:close="redeemMessage = null">
+          {{ redeemMessage.text }}
+        </v-alert>
+      </section>
+
       <GrantActions
         v-if="canMint || canSend"
         :can-mint="canMint"
@@ -53,11 +78,37 @@
   </v-card-text>
 </template>
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { GrantCapability, UserGrantSummary } from '@deprecated-claude/shared';
 import GrantActions from './GrantActions.vue';
+import { api } from '@/services/api.js';
+
 const props = defineProps<{ summary: UserGrantSummary | null; loading: boolean; error: string | null }>();
 const emit = defineEmits<{ refresh: [] }>();
+
+// Redeem invite state
+const redeemCode = ref('');
+const redeeming = ref(false);
+const redeemMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null);
+
+async function redeemInvite() {
+  if (!redeemCode.value.trim() || redeeming.value) return;
+  redeeming.value = true;
+  redeemMessage.value = null;
+  try {
+    const response = await api.post('/invites/claim', { code: redeemCode.value.trim() });
+    const { amount, currency } = response.data;
+    const currencyLabel = currency === 'credit' ? 'credits' : `${currency} credits`;
+    redeemMessage.value = { type: 'success', text: `Received ${amount} ${currencyLabel}!` };
+    redeemCode.value = '';
+    emit('refresh');
+  } catch (error: any) {
+    redeemMessage.value = { type: 'error', text: error?.response?.data?.error || 'Failed to redeem invite' };
+  } finally {
+    redeeming.value = false;
+  }
+}
+
 const totals = computed(() => props.summary
   ? Object.entries(props.summary.totals)
       .map(([currency, amount]) => ({ currency, currencyLabel: currency === 'credit' ? 'Credits' : currency, amount: Number(amount) || 0 }))
