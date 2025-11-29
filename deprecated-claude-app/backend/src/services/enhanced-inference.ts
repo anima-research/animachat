@@ -264,20 +264,50 @@ export class EnhancedInferenceService {
     cacheHit = false; // Will be determined from actual response
     
     // For Anthropic models (direct or via OpenRouter), we need to add cache control metadata
-    // SKIP cache control for group chats (prefill format) - caching doesn't work across
-    // different providers/formats, so we'd just pay for creating cache that's never read
-    const isGroupChat = conversation?.format === 'prefill';
-    const shouldAddCacheControl = !isGroupChat && 
-      (model.provider === 'anthropic' || model.provider === 'openrouter') && 
-      window.cacheablePrefix.length > 0;
+    // 
+    // CACHING APPROACHES BY PROVIDER:
+    // - Anthropic direct with prefill: Use Chapter II approach - insert text breakpoints into prefill blob
+    // - Anthropic direct with standard: Use message-level cache_control
+    // - OpenRouter with prefill: OpenRouter converts to messages mode, use message-level cache_control
+    // - OpenRouter with standard: Use message-level cache_control
+    //
+    const isPrefillFormat = conversation?.format === 'prefill';
+    const isAnthropicDirect = model.provider === 'anthropic' || model.provider === 'bedrock';
+    
+    // For Anthropic direct + prefill: use Chapter II approach (text breakpoints)
+    // For everything else (standard format, or OpenRouter which converts to messages): use message-level cache_control
+    const useTextBreakpoints = isPrefillFormat && isAnthropicDirect;
+    
+    // DEBUG: Log the cache control decision factors
+    console.log(`[EnhancedInference] Cache control decision:`, {
+      conversationFormat: conversation?.format,
+      isPrefillFormat,
+      isAnthropicDirect,
+      useTextBreakpoints,
+      provider: model.provider,
+      cacheablePrefixLength: window.cacheablePrefix.length
+    });
     
     let messagesToSend = window.messages;
-    if (shouldAddCacheControl) {
-      Logger.cache(`[EnhancedInference] Adding cache control for ${model.provider} provider (${model.id})`);
-      // Clone messages and add cache control to the last cacheable message
+    let cacheMarkerIndices: number[] | undefined;
+    
+    if (useTextBreakpoints) {
+      // Chapter II approach for Anthropic prefill: pass cache marker indices to inference
+      // These will be inserted as <|cache_breakpoint|> text markers in the prefill blob
+      const markers = window.cacheMarkers || (window.cacheMarker ? [window.cacheMarker] : []);
+      if (markers.length > 0) {
+        cacheMarkerIndices = markers.map(m => m.messageIndex);
+        Logger.cache(`[EnhancedInference] 📦 Chapter II caching for Anthropic prefill: ${markers.length} breakpoints`);
+        markers.forEach((m, i) => {
+          Logger.cache(`[EnhancedInference]   Breakpoint ${i + 1}: after message ${m.messageIndex} (${m.tokenCount} tokens)`);
+        });
+      } else {
+        Logger.cache(`[EnhancedInference] No cache markers for prefill (messages=${window.messages.length})`);
+      }
+    } else if ((model.provider === 'anthropic' || model.provider === 'openrouter') && window.cacheablePrefix.length > 0) {
+      // Message-level cache_control for standard format or OpenRouter
+      Logger.cache(`[EnhancedInference] Adding message-level cache control for ${model.provider} (${model.id})`);
       messagesToSend = this.addCacheControlToMessages(window, model);
-    } else if (isGroupChat) {
-      Logger.cache(`[EnhancedInference] ⏭️ Skipping cache control for group chat (caching disabled for prefill format)`);
     } else {
       Logger.debug(`[EnhancedInference] No cache control: provider=${model.provider}, cacheablePrefix=${window.cacheablePrefix.length}`);
     }
@@ -293,7 +323,8 @@ export class EnhancedInferenceService {
       conversation?.format || 'standard',
       participants || [],
       participant?.id,
-      conversation
+      conversation,
+      cacheMarkerIndices  // Pass cache marker indices for Chapter II prefill caching
     );
   }
   

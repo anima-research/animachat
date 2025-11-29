@@ -108,7 +108,8 @@ export class InferenceService {
     format: ConversationFormat = 'standard',
     participants: Participant[] = [],
     responderId?: string,
-    conversation?: Conversation
+    conversation?: Conversation,
+    cacheMarkerIndices?: number[]  // Message indices where to insert cache breakpoints (for prefill)
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -145,7 +146,17 @@ export class InferenceService {
     }
     
     // Format messages based on conversation format
-    const formattedMessages = this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider, conversation);
+    // For prefill format with Anthropic direct, pass cache marker indices to insert breakpoints
+    const shouldInsertCacheBreakpoints = actualFormat === 'prefill' && model.provider === 'anthropic';
+    const formattedMessages = this.formatMessagesForConversation(
+      messages, 
+      actualFormat, 
+      participants, 
+      responderId, 
+      model.provider, 
+      conversation,
+      shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined
+    );
 
     // Build stop sequences for prefill/messages formats
     let stopSequences: string[] | undefined;
@@ -356,7 +367,8 @@ export class InferenceService {
     participants: Participant[],
     responderId?: string,
     provider?: string,
-    conversation?: Conversation
+    conversation?: Conversation,
+    cacheMarkerIndices?: number[]  // Message indices where to insert cache breakpoints
   ): Message[] {
     if (format === 'standard') {
       // Standard format - pass through as-is
@@ -367,12 +379,14 @@ export class InferenceService {
       // Convert to prefill format with participant names
       const prefillMessages: Message[] = [];
       
-      // Check if any input messages have cache control (set by enhanced-inference)
-      // We need to preserve this on the output messages
-      const hasAnyCacheControl = messages.some(m => {
-        const branch = m.branches.find(b => b.id === m.activeBranchId);
-        return branch && (branch as any)._cacheControl;
-      });
+      // Convert cache marker indices to a Set for fast lookup
+      const cacheBreakpointIndices = new Set(cacheMarkerIndices || []);
+      const hasCacheMarkers = cacheBreakpointIndices.size > 0;
+      
+      if (hasCacheMarkers) {
+        console.log(`[PREFILL] 📦 Will insert ${cacheBreakpointIndices.size} cache breakpoints at message indices:`, 
+          Array.from(cacheBreakpointIndices).sort((a, b) => a - b));
+      }
       
       // Add initial user message if configured
       const prefillSettings = conversation?.prefillUserMessage || { enabled: true, content: '<cmd>cat untitled.log</cmd>' };
@@ -399,6 +413,7 @@ export class InferenceService {
       let conversationContent = '';
       let lastMessageWasEmptyAssistant = false;
       let lastAssistantName = 'Assistant';
+      let messageIndex = 0;  // Track index for cache breakpoints
       
       for (const message of messages) {
         const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
@@ -417,6 +432,7 @@ export class InferenceService {
         if (activeBranch.role === 'assistant' && activeBranch.content === '') {
           lastMessageWasEmptyAssistant = true;
           lastAssistantName = participantName;
+          messageIndex++;
           continue; // Skip empty assistant messages
         }
         
@@ -451,6 +467,15 @@ export class InferenceService {
           // Use participant name format: "Name: content"
           conversationContent += `${participantName}: ${messageContent}\n\n`;
         }
+        
+        // Insert cache breakpoint marker AFTER this message if it's a cache boundary
+        // Cache breakpoints go after the message at that index (so content before is cached)
+        if (cacheBreakpointIndices.has(messageIndex)) {
+          conversationContent += '<|cache_breakpoint|>';
+          console.log(`[PREFILL] 📍 Inserted cache breakpoint after message ${messageIndex} (${participantName})`);
+        }
+        
+        messageIndex++;
       }
       
       // If the last message was an empty assistant, append that assistant's name
@@ -485,11 +510,11 @@ export class InferenceService {
         parentBranchId: 'prefill-cmd-branch'
       };
       
-      // Preserve cache control if any input messages had it
-      // For prefill format, we cache the entire conversation content
-      if (hasAnyCacheControl) {
-        assistantBranch._cacheControl = { type: 'ephemeral', ttl: '1h' };
-        console.log(`[PREFILL] Preserving cache control on combined assistant message (${conversationContent.length} chars, TTL: 1h)`);
+      // Flag that this content has cache breakpoint markers for Anthropic to process
+      // This uses the Chapter II approach: markers in text, converted to cache_control blocks
+      if (hasCacheMarkers && conversationContent.includes('<|cache_breakpoint|>')) {
+        assistantBranch._hasCacheBreakpoints = true;
+        console.log(`[PREFILL] 📦 Content has ${cacheBreakpointIndices.size} cache breakpoints (${conversationContent.length} chars total)`);
       }
       
       const assistantMessage: Message = {
@@ -567,19 +592,26 @@ export class InferenceService {
           }
         }
         
-        // Create formatted message
+        // Create formatted message, preserving cache control metadata if present
+        const formattedBranch: any = {
+          id: activeBranch.id,
+          content: formattedContent,
+          role: role,
+          createdAt: activeBranch.createdAt,
+          isActive: true,
+          parentBranchId: activeBranch.parentBranchId,
+          participantId: activeBranch.participantId
+        };
+        
+        // Preserve cache control metadata for providers that support it
+        if ((activeBranch as any)._cacheControl) {
+          formattedBranch._cacheControl = (activeBranch as any)._cacheControl;
+        }
+        
         const formattedMessage: Message = {
           id: message.id,
           conversationId: message.conversationId,
-          branches: [{
-            id: activeBranch.id,
-            content: formattedContent,
-            role: role,
-            createdAt: activeBranch.createdAt,
-            isActive: true,
-            parentBranchId: activeBranch.parentBranchId,
-            participantId: activeBranch.participantId
-          }],
+          branches: [formattedBranch],
           activeBranchId: activeBranch.id,
           order: message.order
         };
