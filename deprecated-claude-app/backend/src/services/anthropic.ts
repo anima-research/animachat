@@ -406,7 +406,15 @@ export class AnthropicService {
           });
         } else {
           // Simple text message
-          if ((activeBranch as any)._cacheControl) {
+          // Check for cache breakpoint markers (Chapter II style)
+          if ((activeBranch as any)._hasCacheBreakpoints && messageContent.includes('<|cache_breakpoint|>')) {
+            // Split content at cache breakpoints and create separate text blocks
+            const contentBlocks = this.splitAtCacheBreakpoints(messageContent);
+            formattedMessages.push({
+              role: activeBranch.role as 'user' | 'assistant',
+              content: contentBlocks
+            });
+          } else if ((activeBranch as any)._cacheControl) {
             // Need to convert to content block format to add cache control
             formattedMessages.push({
               role: activeBranch.role as 'user' | 'assistant',
@@ -428,6 +436,47 @@ export class AnthropicService {
     }
 
     return formattedMessages;
+  }
+  
+  /**
+   * Split content at <|cache_breakpoint|> markers and convert to Anthropic text blocks
+   * Each section BEFORE a marker gets cache_control, the last section does not
+   * This implements Chapter II's caching approach
+   */
+  private splitAtCacheBreakpoints(content: string): Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl: '1h' } }> {
+    const CACHE_BREAKPOINT = '<|cache_breakpoint|>';
+    const sections = content.split(CACHE_BREAKPOINT);
+    
+    console.log(`[Anthropic] 📦 Splitting prefill content at ${sections.length - 1} cache breakpoints`);
+    
+    const contentBlocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl: '1h' } }> = [];
+    
+    for (let i = 0; i < sections.length; i++) {
+      const section = sections[i].trim();
+      if (!section) continue; // Skip empty sections
+      
+      const isLastSection = i === sections.length - 1;
+      
+      if (isLastSection) {
+        // Last section (after final marker) - NO cache control
+        contentBlocks.push({
+          type: 'text',
+          text: section
+        });
+        console.log(`[Anthropic] 📦   Block ${i + 1}: ${section.length} chars (NOT cached - fresh content)`);
+      } else {
+        // All sections before the last get cache_control
+        contentBlocks.push({
+          type: 'text',
+          text: section,
+          cache_control: { type: 'ephemeral', ttl: '1h' }
+        });
+        console.log(`[Anthropic] 📦   Block ${i + 1}: ${section.length} chars (CACHED with 1h TTL)`);
+      }
+    }
+    
+    console.log(`[Anthropic] 📦 Created ${contentBlocks.length} content blocks for Anthropic API`);
+    return contentBlocks;
   }
   
   private isImageAttachment(fileName: string): boolean {
