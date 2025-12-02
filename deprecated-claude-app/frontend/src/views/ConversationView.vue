@@ -2,9 +2,13 @@
   <v-layout class="rounded rounded-md">
     <!-- Sidebar -->
     <v-navigation-drawer
+      v-if="!isMobile || mobilePanel === 'sidebar'"
       v-model="drawer"
-      permanent
+      :permanent="!isMobile"
+      :temporary="isMobile"
+      :scrim="isMobile"
       class="sidebar-drawer"
+      :class="{ 'sidebar-drawer--mobile': isMobile }"
     >
       <div class="d-flex flex-column h-100">
         <!-- Fixed header section -->
@@ -59,6 +63,7 @@
               :to="`/conversation/${conversation.id}`"
               class="conversation-list-item"
               :lines="'three'"
+              @click="handleConversationClick(conversation.id)"
             >
               <template v-slot:title>
                 <div class="text-truncate">{{ conversation.title }}</div>
@@ -144,10 +149,21 @@
     </v-navigation-drawer>
 
     <!-- Main Content -->
-    <v-main class="d-flex flex-column" style="height: 100vh;">
+    <v-main
+      v-if="!isMobile || mobilePanel === 'conversation'"
+      class="d-flex flex-column"
+      style="height: 100vh;"
+    >
       <!-- Top Bar -->
       <v-app-bar density="compact">
-        <v-app-bar-nav-icon @click="drawer = !drawer" />
+        <v-app-bar-nav-icon v-if="!isMobile" @click="drawer = !drawer" />
+        <v-btn
+          v-else
+          icon="mdi-menu"
+          variant="text"
+          @click="mobilePanel = 'sidebar'"
+          title="Show conversation list"
+        />
 
         <!-- Breadcrumb navigation with fixed title and scrollable bookmarks -->
         <div v-if="currentConversation" class="d-flex align-center breadcrumb-container">
@@ -509,7 +525,7 @@
 
     <!-- Right sidebar with conversation tree -->
     <v-navigation-drawer
-      v-if="treeDrawer"
+      v-if="treeDrawer && (!isMobile || mobilePanel === 'conversation')"
       location="right"
       :width="400"
       permanent
@@ -577,7 +593,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
@@ -600,10 +616,15 @@ const route = useRoute();
 const router = useRouter();
 const store = useStore();
 
+type MobilePanel = 'sidebar' | 'conversation';
+const MOBILE_BREAKPOINT = 1024;
+
 // DEBUG: Verify new code is loaded
 console.log('🔧 ConversationView loaded - UI bug fixes version - timestamp:', new Date().toISOString());
 
 const drawer = ref(true);
+const isMobile = ref(false);
+const mobilePanel = ref<MobilePanel>('sidebar');
 const treeDrawer = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
@@ -621,6 +642,12 @@ const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
+const updateMobileState = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  isMobile.value = window.innerWidth < MOBILE_BREAKPOINT;
+};
 
 // Branch selection state
 const selectedBranchForParent = ref<{ messageId: string; branchId: string } | null>(null);
@@ -691,6 +718,22 @@ const bookmarksInActivePath = computed(() => {
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
   return responder?.name || 'Assistant';
+});
+
+watch(isMobile, (mobile) => {
+  if (mobile) {
+    mobilePanel.value = route.params.id ? 'conversation' : 'sidebar';
+    drawer.value = mobilePanel.value === 'sidebar';
+  } else {
+    drawer.value = true;
+  }
+});
+
+watch(mobilePanel, (panel) => {
+  if (!isMobile.value) {
+    return;
+  }
+  drawer.value = panel === 'sidebar';
 });
 
 // Allow sending as any participant type (user or assistant)
@@ -806,6 +849,15 @@ watch(conversations, (newConversations) => {
 
 // Load initial data
 onMounted(async () => {
+  if (typeof window !== 'undefined') {
+    updateMobileState();
+    window.addEventListener('resize', updateMobileState);
+    if (isMobile.value) {
+      mobilePanel.value = route.params.id ? 'conversation' : 'sidebar';
+      drawer.value = mobilePanel.value === 'sidebar';
+    }
+  }
+
   await store.loadModels();
   await store.loadSystemConfig();
   await store.loadConversations();
@@ -997,12 +1049,26 @@ onMounted(async () => {
     setTimeout(() => {
       scrollToBottom();
     }, 100);
+
+    if (isMobile.value) {
+      mobilePanel.value = 'conversation';
+      drawer.value = false;
+    }
   }
 
 });
 
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateMobileState);
+  }
+});
+
 // Watch route changes
 watch(() => route.params.id, async (newId) => {
+  if (isMobile.value) {
+    mobilePanel.value = newId ? 'conversation' : 'sidebar';
+  }
   if (newId) {
     // Clear selected branch when switching conversations
     if (selectedBranchForParent.value) {
@@ -1149,6 +1215,10 @@ async function createNewConversation() {
   // Load participants for the new conversation
   await loadParticipants();
   
+  if (isMobile.value) {
+    mobilePanel.value = 'conversation';
+  }
+
   // Automatically open the settings dialog for the new conversation
   // Use nextTick to ensure the route has changed and currentConversation is updated
   await nextTick();
@@ -1439,6 +1509,12 @@ async function exportConversation(id: string) {
     URL.revokeObjectURL(url);
   } catch (error) {
     console.error('Export failed:', error);
+  }
+}
+
+function handleConversationClick(_conversationId: string) {
+  if (isMobile.value) {
+    mobilePanel.value = 'conversation';
   }
 }
 
@@ -2181,7 +2257,8 @@ function formatDate(date: Date | string): string {
 .sidebar-drawer .v-navigation-drawer__content {
   display: flex;
   flex-direction: column;
-  overflow: hidden !important;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sidebar-header {
@@ -2191,7 +2268,7 @@ function formatDate(date: Date | string): string {
 .sidebar-conversations {
   overflow-y: auto;
   overflow-x: hidden;
-  min-height: 0;
+  min-height: 140px;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
 }
@@ -2216,6 +2293,11 @@ function formatDate(date: Date | string): string {
 .sidebar-footer {
   flex-shrink: 0;
   margin-top: auto;
+}
+
+.sidebar-drawer--mobile {
+  width: 100% !important;
+  max-width: 100% !important;
 }
 
 /* Conversation title styling */

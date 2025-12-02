@@ -19,18 +19,6 @@
         />
         
         <v-select
-          v-if="settings.format === 'standard'"
-          v-model="settings.model"
-          :items="activeModels"
-          item-title="displayName"
-          item-value="id"
-          label="Model"
-          variant="outlined"
-          density="compact"
-          class="mt-4"
-        />
-        
-        <v-select
           v-model="settings.format"
           :items="formatOptions"
           item-title="title"
@@ -48,6 +36,18 @@
             </v-list-item>
           </template>
         </v-select>
+        
+        <v-select
+          v-if="settings.format === 'standard'"
+          v-model="settings.model"
+          :items="activeModels"
+          item-title="displayName"
+          item-value="id"
+          label="Model"
+          variant="outlined"
+          density="compact"
+          class="mt-4"
+        />
         
         <div v-if="settings.format === 'standard'">
           <v-textarea
