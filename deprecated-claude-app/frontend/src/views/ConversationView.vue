@@ -648,6 +648,7 @@
         </div>
         
         <v-textarea
+          ref="messageTextarea"
           v-model="messageInput"
           :disabled="isStreaming"
           label="Type your message..."
@@ -657,6 +658,7 @@
           variant="outlined"
           hide-details
           @keydown.enter.exact.prevent="sendMessage"
+          @focus="handleTextareaFocus"
         >
           <template v-slot:append-inner>
             <!-- File attachment button -->
@@ -811,6 +813,7 @@ const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
 const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
 const fileInput = ref<HTMLInputElement>();
+const messageTextarea = ref<any>();
 const updateMobileState = () => {
   if (typeof window === 'undefined') {
     return;
@@ -1736,6 +1739,19 @@ function triggerFileInput(event: Event) {
   setTimeout(() => {
     document.body.removeChild(input);
   }, 100);
+}
+
+function handleTextareaFocus() {
+  // Fix for mobile Safari: scroll textarea into view when keyboard appears
+  if (isMobile.value && messageTextarea.value) {
+    // Small delay to let the keyboard start appearing
+    setTimeout(() => {
+      const el = messageTextarea.value?.$el;
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 300);
+  }
 }
 
 async function handleFileSelect(event: Event) {
