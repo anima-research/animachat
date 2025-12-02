@@ -24,6 +24,14 @@
                   <ArcLogo :size="40" />
                 </div>
               </template>
+              <template v-slot:append v-if="isMobile">
+                <v-btn
+                  icon="mdi-close"
+                  variant="text"
+                  size="small"
+                  @click="closeMobileSidebar"
+                />
+              </template>
             </v-list-item>
           </v-list>
 
@@ -646,7 +654,18 @@ const updateMobileState = () => {
   if (typeof window === 'undefined') {
     return;
   }
+  const wasMobile = isMobile.value;
   isMobile.value = window.innerWidth < MOBILE_BREAKPOINT;
+  
+  // Sync drawer state when transitioning to/from mobile
+  if (isMobile.value && !wasMobile) {
+    // Just became mobile - set panel and drawer state
+    mobilePanel.value = route.params.id ? 'conversation' : 'sidebar';
+    drawer.value = mobilePanel.value === 'sidebar';
+  } else if (!isMobile.value && wasMobile) {
+    // Just became desktop - drawer should always be open
+    drawer.value = true;
+  }
 };
 
 // Branch selection state
@@ -1025,12 +1044,7 @@ onMounted(async () => {
     }
   });
   
-  // Load participants for multi-participant conversations
-  for (const conversation of conversations.value) {
-    if (conversation.format === 'prefill') {
-      loadConversationParticipants(conversation.id);
-    }
-  }
+  // Note: loadConversationParticipants was removed - sidebar now uses embedded summaries
   
   // Show welcome dialog on first visit
   const hideWelcome = localStorage.getItem('hideWelcomeDialog');
@@ -1203,6 +1217,21 @@ function scrollToBottom(smooth: boolean = false) {
   };
   
   attemptScroll();
+}
+
+function closeMobileSidebar() {
+  // Go back to conversation view on mobile
+  // If there's a current conversation, show it; otherwise just hide the sidebar
+  if (route.params.id) {
+    mobilePanel.value = 'conversation';
+  } else {
+    // No conversation selected - could navigate to most recent or just close
+    const recentConversation = conversations.value[0];
+    if (recentConversation) {
+      router.push(`/conversation/${recentConversation.id}`);
+      mobilePanel.value = 'conversation';
+    }
+  }
 }
 
 async function createNewConversation() {
@@ -2298,6 +2327,8 @@ function formatDate(date: Date | string): string {
 .sidebar-drawer--mobile {
   width: 100% !important;
   max-width: 100% !important;
+  /* Force no transform when visible on mobile - fixes Chrome layout bug */
+  transform: translateX(0) !important;
 }
 
 /* Conversation title styling */
