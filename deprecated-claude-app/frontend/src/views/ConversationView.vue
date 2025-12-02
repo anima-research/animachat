@@ -2257,7 +2257,8 @@ function formatDate(date: Date | string): string {
 .sidebar-drawer .v-navigation-drawer__content {
   display: flex;
   flex-direction: column;
-  overflow: hidden !important;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sidebar-header {
@@ -2267,7 +2268,7 @@ function formatDate(date: Date | string): string {
 .sidebar-conversations {
   overflow-y: auto;
   overflow-x: hidden;
-  min-height: 0;
+  min-height: 140px;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
 }
