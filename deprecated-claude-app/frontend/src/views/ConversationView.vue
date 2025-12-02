@@ -295,170 +295,331 @@
           Branching from selected message. New messages will create alternative branches.
         </v-alert>
         
-        <!-- Model Quick Access Bar -->
-        <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
-             class="mb-0 d-flex align-center justify-space-around">
-          <div class="d-flex align-center gap-2 flex-wrap">
-            
-            <!-- Existing participants sorted by last spoken -->
-            <v-chip
-              v-for="participant in participantsByLastSpoken"
-              :key="participant.id"
-              :color="getModelColor(participant.model || '')"
-              size="small"
-              variant="outlined"
-              @click="triggerParticipantResponse(participant)"
-              :disabled="isStreaming"
-              class="clickable-chip"
-              style="margin: 0 2px 0 2px; pointer-events: auto;"
-              :ripple="false"
-              link
-            >
-              <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
-              {{ participant.name === '' 
-                ? `${participant.model} (continue)`
-                : participant.name }}
-              <v-tooltip activator="parent" location="top">
-                {{ participant.name === '' ? `Continue with ${participant.model}` : `Response from ${participant.name}` }}
-              </v-tooltip>
-            </v-chip>
-            
-            <!-- Divider between participants and suggested models -->
-            <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
-                       vertical 
-                       class="mx-1" 
-                       style="height: 20px" />
-            
-            <!-- Suggested models that aren't participants yet -->
-            <template v-for="model in suggestedNonParticipantModels" :key="model?.id">
+        <!-- MOBILE CONTROLS -->
+        <template v-if="isMobile">
+          <!-- Quick access pills - horizontally scrollable -->
+          <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
+               class="mobile-quick-access mb-2">
+            <div class="mobile-pills-scroll">
               <v-chip
-                v-if="model"
-                color="grey"
+                v-for="participant in participantsByLastSpoken"
+                :key="participant.id"
+                :color="getModelColor(participant.model || '')"
                 size="small"
                 variant="outlined"
-                @click="triggerModelResponse(model)"
+                @click="triggerParticipantResponse(participant)"
+                :disabled="isStreaming"
+                class="mobile-pill"
+              >
+                <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
+                {{ participant.name === '' ? (participant.model?.split(' ').pop() || 'Continue') : participant.name }}
+              </v-chip>
+              
+              <template v-for="model in suggestedNonParticipantModels" :key="model?.id">
+                <v-chip
+                  v-if="model"
+                  color="grey"
+                  size="small"
+                  variant="outlined"
+                  @click="triggerModelResponse(model)"
+                  :disabled="isStreaming"
+                  class="mobile-pill"
+                >
+                  <v-icon size="x-small" start>mdi-plus</v-icon>
+                  {{ model.shortName || model.displayName }}
+                </v-chip>
+              </template>
+            </div>
+          </div>
+          
+          <!-- Main control row: Settings + Responder dropdown + Send -->
+          <div class="mobile-main-controls mb-2">
+            <v-btn
+              icon
+              size="small"
+              variant="tonal"
+              color="primary"
+              @click="conversationSettingsDialog = true"
+              class="mobile-settings-btn"
+            >
+              <v-icon>{{ currentConversation?.format !== 'standard' ? 'mdi-account-group' : 'mdi-cog' }}</v-icon>
+            </v-btn>
+            
+            <v-select
+              v-if="currentConversation.format !== 'standard'"
+              v-model="selectedResponder"
+              :items="responderOptions"
+              item-title="name"
+              item-value="id"
+              label="Response from"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="mobile-responder-select"
+            >
+              <template v-slot:selection="{ item }">
+                <div class="d-flex align-center">
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    size="small"
+                    class="mr-1"
+                  />
+                  <span class="text-truncate" :style="item.raw.type === 'user' ? 'color: #bb86fc;' : `color: ${getModelColor(item.raw.model || '')};`">
+                    {{ item.raw.name }}
+                  </span>
+                </div>
+              </template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:prepend>
+                    <v-icon 
+                      :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                      :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    />
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
+            
+            <!-- Standard mode: show model chip -->
+            <v-chip 
+              v-else
+              variant="outlined"
+              :color="getModelColor(currentConversation?.model)"
+              @click="conversationSettingsDialog = true"
+              class="mobile-model-chip"
+            >
+              {{ currentModel?.shortName || currentModel?.displayName || 'Model' }}
+            </v-chip>
+            
+            <v-btn
+              :disabled="isStreaming"
+              :color="continueButtonColor"
+              icon="mdi-send"
+              variant="tonal"
+              size="small"
+              @click="continueGeneration"
+            />
+          </div>
+          
+          <!-- Speaking as (collapsible, shown only when needed) -->
+          <div v-if="currentConversation.format !== 'standard'" class="mobile-speaking-as mb-2">
+            <v-btn
+              variant="text"
+              size="x-small"
+              density="compact"
+              class="text-caption"
+              @click="showMobileSpeakingAs = !showMobileSpeakingAs"
+            >
+              Speaking as: {{ selectedParticipantName }}
+              <v-icon size="x-small" class="ml-1">{{ showMobileSpeakingAs ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+            </v-btn>
+            <v-select
+              v-if="showMobileSpeakingAs"
+              v-model="selectedParticipant"
+              :items="allParticipants"
+              item-title="name"
+              item-value="id"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="mt-1"
+            >
+              <template v-slot:selection="{ item }">
+                <div class="d-flex align-center">
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    size="small"
+                    class="mr-1"
+                  />
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc;' : `color: ${getModelColor(item.raw.model || '')};`">
+                    {{ item.raw.name }}
+                  </span>
+                </div>
+              </template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:prepend>
+                    <v-icon 
+                      :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                      :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    />
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
+          </div>
+        </template>
+        
+        <!-- DESKTOP CONTROLS -->
+        <template v-else>
+          <!-- Model Quick Access Bar -->
+          <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
+               class="mb-0 d-flex align-center justify-space-around">
+            <div class="d-flex align-center gap-2 flex-wrap">
+              
+              <!-- Existing participants sorted by last spoken -->
+              <v-chip
+                v-for="participant in participantsByLastSpoken"
+                :key="participant.id"
+                :color="getModelColor(participant.model || '')"
+                size="small"
+                variant="outlined"
+                @click="triggerParticipantResponse(participant)"
                 :disabled="isStreaming"
                 class="clickable-chip"
                 style="margin: 0 2px 0 2px; pointer-events: auto;"
                 :ripple="false"
                 link
               >
-                <v-icon size="x-small" start>{{ getProviderIcon(model.provider) }}</v-icon>
-                {{ model.shortName || model.displayName }}
+                <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
+                {{ participant.name === '' 
+                  ? `${participant.model} (continue)`
+                  : participant.name }}
                 <v-tooltip activator="parent" location="top">
-                  Add {{ model.displayName }} to conversation
+                  {{ participant.name === '' ? `Continue with ${participant.model}` : `Response from ${participant.name}` }}
                 </v-tooltip>
               </v-chip>
-            </template>
+              
+              <!-- Divider between participants and suggested models -->
+              <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
+                         vertical 
+                         class="mx-1" 
+                         style="height: 20px" />
+              
+              <!-- Suggested models that aren't participants yet -->
+              <template v-for="model in suggestedNonParticipantModels" :key="model?.id">
+                <v-chip
+                  v-if="model"
+                  color="grey"
+                  size="small"
+                  variant="outlined"
+                  @click="triggerModelResponse(model)"
+                  :disabled="isStreaming"
+                  class="clickable-chip"
+                  style="margin: 0 2px 0 2px; pointer-events: auto;"
+                  :ripple="false"
+                  link
+                >
+                  <v-icon size="x-small" start>{{ getProviderIcon(model.provider) }}</v-icon>
+                  {{ model.shortName || model.displayName }}
+                  <v-tooltip activator="parent" location="top">
+                    Add {{ model.displayName }} to conversation
+                  </v-tooltip>
+                </v-chip>
+              </template>
+            </div>
           </div>
-        </div>
-        
-        <div class="mb-2 d-flex gap-2 align-center justify-center">
-          <v-chip 
-            class="mr-2 clickable-chip" 
-            variant="outlined"
-            :color="currentConversation?.format === 'standard' ? getModelColor(currentConversation?.model) : 'info'"
-            @click="conversationSettingsDialog = true"
-          >
-            <v-icon v-if="currentConversation?.format !== 'standard'" class="mr-2">mdi-account-group</v-icon>
-            {{ currentConversation?.format !== 'standard' ? '' : currentModel?.displayName || 'Select Model' }}
-            <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
-            <v-tooltip activator="parent" location="bottom">
-              Click to change model and settings
-            </v-tooltip>
-          </v-chip>
-          <v-select
-            v-if="currentConversation.format !== 'standard'"
-            v-model="selectedResponder"
-            :items="responderOptions"
-            item-title="name"
-            item-value="id"
-            label="Response from"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="flex-grow-1 mr-2"
-          >
-            <template v-slot:selection="{ item }">
-              <div class="d-flex align-center">
-                <v-icon 
-                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
-                  size="small"
-                  class="mr-2"
-                />
-                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
-                  {{ item.raw.name }}
-                </span>
-              </div>
-            </template>
-            <template v-slot:item="{ props, item }">
-              <v-list-item v-bind="props">
-                <template v-slot:prepend>
+          
+          <div class="mb-2 d-flex gap-2 align-center justify-center">
+            <v-chip 
+              class="mr-2 clickable-chip" 
+              variant="outlined"
+              :color="currentConversation?.format === 'standard' ? getModelColor(currentConversation?.model) : 'info'"
+              @click="conversationSettingsDialog = true"
+            >
+              <v-icon v-if="currentConversation?.format !== 'standard'" class="mr-2">mdi-account-group</v-icon>
+              {{ currentConversation?.format !== 'standard' ? '' : currentModel?.displayName || 'Select Model' }}
+              <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
+              <v-tooltip activator="parent" location="bottom">
+                Click to change model and settings
+              </v-tooltip>
+            </v-chip>
+            <v-select
+              v-if="currentConversation.format !== 'standard'"
+              v-model="selectedResponder"
+              :items="responderOptions"
+              item-title="name"
+              item-value="id"
+              label="Response from"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="flex-grow-1 mr-2"
+            >
+              <template v-slot:selection="{ item }">
+                <div class="d-flex align-center">
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
                     :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    size="small"
+                    class="mr-2"
                   />
-                </template>
-                <template v-slot:title>
                   <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
-                </template>
-              </v-list-item>
-            </template>
-          </v-select>
-          <v-btn
-            :disabled="isStreaming"
-            :color="continueButtonColor"
-            icon="mdi-send"
-            variant="text"
-            :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
-            @click="continueGeneration"
-            class="mr-2"
-          />
-          <v-select
-            v-if="currentConversation.format !== 'standard'"
-            v-model="selectedParticipant"
-            :items="allParticipants"
-            item-title="name"
-            item-value="id"
-            label="Speaking as"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="flex-grow-1"
-          >
-            <template v-slot:selection="{ item }">
-              <div class="d-flex align-center">
-                <v-icon 
-                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
-                  size="small"
-                  class="mr-2"
-                />
-                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
-                  {{ item.raw.name }}
-                </span>
-              </div>
-            </template>
-            <template v-slot:item="{ props, item }">
-              <v-list-item v-bind="props">
-                <template v-slot:prepend>
+                </div>
+              </template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:prepend>
+                    <v-icon 
+                      :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                      :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    />
+                  </template>
+                  <template v-slot:title>
+                    <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
+                      {{ item.raw.name }}
+                    </span>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
+            <v-btn
+              :disabled="isStreaming"
+              :color="continueButtonColor"
+              icon="mdi-send"
+              variant="text"
+              :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
+              @click="continueGeneration"
+              class="mr-2"
+            />
+            <v-select
+              v-if="currentConversation.format !== 'standard'"
+              v-model="selectedParticipant"
+              :items="allParticipants"
+              item-title="name"
+              item-value="id"
+              label="Speaking as"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="flex-grow-1"
+            >
+              <template v-slot:selection="{ item }">
+                <div class="d-flex align-center">
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
                     :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    size="small"
+                    class="mr-2"
                   />
-                </template>
-                <template v-slot:title>
                   <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
-                </template>
-              </v-list-item>
-            </template>
-          </v-select>
-        </div>
+                </div>
+              </template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:prepend>
+                    <v-icon 
+                      :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                      :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    />
+                  </template>
+                  <template v-slot:title>
+                    <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
+                      {{ item.raw.name }}
+                    </span>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
+          </div>
+        </template>
         
         <!-- Attachments display -->
         <div v-if="attachments.length > 0" class="mb-2">
@@ -674,6 +835,7 @@ const messagesContainer = ref<HTMLElement>();
 const participants = ref<Participant[]>([]);
 const selectedParticipant = ref<string>('');
 const selectedResponder = ref<string>('');
+const showMobileSpeakingAs = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
 const bookmarks = ref<Bookmark[]>([]);
 const bookmarksScrollRef = ref<HTMLElement>();
@@ -737,6 +899,11 @@ const bookmarksInActivePath = computed(() => {
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
   return responder?.name || 'Assistant';
+});
+
+const selectedParticipantName = computed(() => {
+  const participant = allParticipants.value.find(p => p.id === selectedParticipant.value);
+  return participant?.name || 'User';
 });
 
 watch(isMobile, (mobile) => {
@@ -2329,6 +2496,55 @@ function formatDate(date: Date | string): string {
   max-width: 100% !important;
   /* Force no transform when visible on mobile - fixes Chrome layout bug */
   transform: translateX(0) !important;
+}
+
+/* Mobile controls styles */
+.mobile-quick-access {
+  overflow: hidden;
+  padding: 0 4px;
+}
+
+.mobile-pills-scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.mobile-pills-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-pill {
+  flex-shrink: 0;
+}
+
+.mobile-main-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.mobile-settings-btn {
+  flex-shrink: 0;
+}
+
+.mobile-responder-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-model-chip {
+  flex: 1;
+  justify-content: center;
+}
+
+.mobile-speaking-as {
+  padding: 0 4px;
+  text-align: center;
 }
 
 /* Conversation title styling */
