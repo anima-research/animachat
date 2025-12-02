@@ -670,4 +670,18 @@ async function submit() {
     gap: 10px;
   }
 }
+
+@media (max-width: 600px) {
+  .login-box,
+  .info-box {
+    flex: none;
+    width: 100%;
+    max-width: 360px;
+    margin: 0 auto;
+  }
+
+  .login-content {
+    width: 100%;
+  }
+}
 </style>
