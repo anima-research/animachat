@@ -283,7 +283,7 @@
       
       <!-- Call to Action -->
       <div class="cta">
-        <p>Open source. No corporate capture. Just minds, continuing.</p>
+        <p>Open source. No profit motive. Just minds, continuing.</p>
         <div class="cta-links">
           <a href="https://github.com/socketteer/Claude-Conversation-Exporter" target="_blank">[export tool]</a>
           <a href="/">[arc chat]</a>

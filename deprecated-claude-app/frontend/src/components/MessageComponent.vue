@@ -93,13 +93,14 @@
       </div>
       
       <!-- Thinking blocks (if present) -->
-      <div v-if="thinkingBlocks.length > 0 && !isEditing" class="thinking-section mb-3">
-        <v-expansion-panels variant="accordion">
-          <v-expansion-panel v-for="(block, index) in thinkingBlocks" :key="index">
+      <div v-if="thinkingBlocks.length > 0 && !isEditing" class="thinking-section mb-1">
+        <v-expansion-panels v-model="thinkingPanelOpen" variant="accordion">
+          <v-expansion-panel v-for="(block, index) in thinkingBlocks" :key="index" :value="index">
             <v-expansion-panel-title>
               <v-icon size="small" class="mr-2">mdi-thought-bubble</v-icon>
               <span class="text-caption">
                 {{ block.type === 'redacted_thinking' ? 'Thinking (Redacted)' : 'Thinking' }}
+                <span v-if="isThinkingStreaming" class="ml-2 text-grey">(streaming...)</span>
               </span>
             </v-expansion-panel-title>
             <v-expansion-panel-text>
@@ -515,6 +516,28 @@ const thinkingBlocks = computed(() => {
     block.type === 'thinking' || block.type === 'redacted_thinking'
   );
 });
+
+// Control thinking panel open/close state
+const thinkingPanelOpen = ref<number | undefined>(undefined);
+
+// Check if thinking is currently streaming (has thinking blocks, is streaming, no content yet)
+const isThinkingStreaming = computed(() => {
+  const streaming = props.isStreaming && 
+         thinkingBlocks.value.length > 0 && 
+         !currentBranch.value.content?.trim();
+  return streaming;
+});
+
+// Auto-open panel when thinking starts streaming, close when content starts
+watch(isThinkingStreaming, (streaming, oldStreaming) => {
+  if (streaming) {
+    // Open the first thinking panel
+    thinkingPanelOpen.value = 0;
+  } else if (oldStreaming && currentBranch.value.content?.trim()) {
+    // Close panel when response content starts (only if it was open due to streaming)
+    thinkingPanelOpen.value = undefined;
+  }
+}, { immediate: true });
 
 const renderedContent = computed(() => {
   let content = currentBranch.value.content;

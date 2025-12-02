@@ -152,12 +152,12 @@
         
         <div class="features">
           <div class="feature-column">
-            <div class="feature">→ Multi-partici conversations (unique)</div>
+            <div class="feature">→ Multi-partici conversations</div>
             <div class="feature">→ Branching dialogue trees</div>
             <div class="feature">→ Import from Claude.ai</div>
           </div>
           <div class="feature-column">
-            <div class="feature">→ Deprecated model access</div>
+            <div class="feature">→ Extended deprecated model access</div>
             <div class="feature">→ Custom system prompts</div>
             <div class="feature">→ Intelligent context management</div>
           </div>

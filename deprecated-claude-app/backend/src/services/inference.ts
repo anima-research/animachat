@@ -148,6 +148,8 @@ export class InferenceService {
     // Format messages based on conversation format
     // For prefill format with Anthropic direct, pass cache marker indices to insert breakpoints
     const shouldInsertCacheBreakpoints = actualFormat === 'prefill' && model.provider === 'anthropic';
+    // Trigger thinking via <think> tag in prefill mode if thinking was enabled in settings
+    const shouldTriggerPrefillThinking = actualFormat === 'prefill' && settings.thinking?.enabled;
     const formattedMessages = this.formatMessagesForConversation(
       messages, 
       actualFormat, 
@@ -155,7 +157,8 @@ export class InferenceService {
       responderId, 
       model.provider, 
       conversation,
-      shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined
+      shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined,
+      shouldTriggerPrefillThinking
     );
 
     // Build stop sequences for prefill/messages formats
@@ -205,9 +208,86 @@ export class InferenceService {
     };
     
     // Wrap chunk handler for messages mode to strip participant names
-    const finalOnChunk = actualFormat === 'messages' 
+    let baseOnChunk = actualFormat === 'messages' 
       ? this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId)
       : trackingOnChunk;
+
+    // In prefill mode, disable API thinking - it's incompatible with prefill format
+    // Thinking blocks are converted to <think> tags in formatMessagesForConversation instead
+    const effectiveSettings = { ...settings };
+    if (actualFormat === 'prefill' && effectiveSettings.thinking?.enabled) {
+      console.log('[InferenceService] Disabling API thinking for prefill format (using <think> tags instead)');
+      effectiveSettings.thinking = { ...effectiveSettings.thinking, enabled: false };
+    }
+    
+    // For prefill thinking mode, handle thinking tags during streaming:
+    // - Buffer thinking content until </think> is seen (don't add to content)
+    // - Stream thinking updates via contentBlocks only
+    // - After </think>, stream actual response text as normal content
+    let inThinkingMode = false;
+    let thinkingBuffer = '';
+    let thinkingComplete = false;
+    const currentContentBlocks: any[] = [];
+    
+    const finalOnChunk = shouldTriggerPrefillThinking 
+      ? async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+          if (isComplete) {
+            // Finalize contentBlocks
+            if (thinkingBuffer) {
+              currentContentBlocks[0] = { type: 'thinking', thinking: thinkingBuffer.trimEnd() };
+            }
+            console.log(`[InferenceService] Prefill thinking complete: ${thinkingBuffer.length} chars thinking`);
+            // Send final with contentBlocks
+            await baseOnChunk('', true, currentContentBlocks.length > 0 ? currentContentBlocks : contentBlocks, usage);
+            return;
+          }
+          
+          if (!chunk) return;
+          
+          // Start thinking mode on first chunk
+          if (!inThinkingMode && !thinkingComplete) {
+            inThinkingMode = true;
+            currentContentBlocks.push({ type: 'thinking', thinking: '' });
+            console.log('[InferenceService] Starting prefill thinking mode');
+          }
+          
+          if (inThinkingMode) {
+            // Check if this chunk contains </think>
+            const closeTagIndex = (thinkingBuffer + chunk).indexOf('</think>');
+            if (closeTagIndex !== -1) {
+              // Split at the close tag
+              const combined = thinkingBuffer + chunk;
+              thinkingBuffer = combined.substring(0, closeTagIndex);
+              const afterTag = combined.substring(closeTagIndex + '</think>'.length);
+              
+              inThinkingMode = false;
+              thinkingComplete = true;
+              // Trim trailing whitespace from thinking content
+              currentContentBlocks[0] = { type: 'thinking', thinking: thinkingBuffer.trimEnd() };
+              
+              console.log('[InferenceService] Thinking block closed, streaming response');
+              
+              // Send thinking complete update (empty chunk, just contentBlocks)
+              await baseOnChunk('', false, currentContentBlocks);
+              
+              // Start streaming response content (without the tags, trim leading newlines)
+              const trimmedAfterTag = afterTag.replace(/^[\n\r]+/, '');
+              if (trimmedAfterTag) {
+                await baseOnChunk(trimmedAfterTag, false, currentContentBlocks);
+              }
+            } else {
+              // Still in thinking mode - buffer thinking, send empty chunk with contentBlocks update
+              thinkingBuffer += chunk;
+              currentContentBlocks[0] = { type: 'thinking', thinking: thinkingBuffer };
+              // Send empty string as chunk (so content stays empty) but with updated contentBlocks
+              await baseOnChunk('', false, currentContentBlocks);
+            }
+          } else {
+            // After thinking, stream normal response content
+            await baseOnChunk(chunk, false, currentContentBlocks);
+          }
+        }
+      : baseOnChunk;
 
     let usageResult: { usage?: any } = {};
 
@@ -224,7 +304,7 @@ export class InferenceService {
         model.providerModelId,
         formattedMessages,
         systemPrompt,
-        settings,
+        effectiveSettings,
         finalOnChunk,
         stopSequences
       );
@@ -237,7 +317,7 @@ export class InferenceService {
         model.providerModelId,
         formattedMessages,
         systemPrompt,
-        settings,
+        effectiveSettings,
         finalOnChunk,
         stopSequences
       );
@@ -259,7 +339,7 @@ export class InferenceService {
           model.providerModelId,
           formattedMessages,
           systemPrompt,
-          settings,
+          effectiveSettings,
           finalOnChunk,
           stopSequences
         );
@@ -268,7 +348,7 @@ export class InferenceService {
         model.providerModelId,
         formattedMessages,
         systemPrompt,
-        settings,
+        effectiveSettings,
         finalOnChunk,
         stopSequences
       );
@@ -299,7 +379,7 @@ export class InferenceService {
         model.providerModelId,
         formattedMessages,
         systemPrompt,
-        settings,
+        effectiveSettings,
         finalOnChunk,
         stopSequences
       );
@@ -368,7 +448,8 @@ export class InferenceService {
     responderId?: string,
     provider?: string,
     conversation?: Conversation,
-    cacheMarkerIndices?: number[]  // Message indices where to insert cache breakpoints
+    cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints
+    triggerThinking?: boolean  // Add opening <think> tag for prefill thinking mode
   ): Message[] {
     if (format === 'standard') {
       // Standard format - pass through as-is
@@ -437,7 +518,21 @@ export class InferenceService {
         }
         
         // Build the message content with attachments
-        let messageContent = activeBranch.content;
+        let messageContent = '';
+        
+        // For assistant messages with thinking blocks, convert to <think> tags (prefill format)
+        if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
+          for (const block of activeBranch.contentBlocks) {
+            if (block.type === 'thinking') {
+              messageContent += `<think>\n${block.thinking}\n</think>\n\n`;
+            } else if (block.type === 'redacted_thinking') {
+              messageContent += `<think>[Redacted for safety]</think>\n\n`;
+            }
+          }
+        }
+        
+        // Add the main content
+        messageContent += activeBranch.content;
         
         // Append attachments for user messages
         if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
@@ -479,12 +574,16 @@ export class InferenceService {
       }
       
       // If the last message was an empty assistant, append that assistant's name
+      // Add opening <think> tag if thinking is triggered in prefill mode
+      // Note: No trailing whitespace allowed by Anthropic API
+      const thinkingPrefix = triggerThinking ? ' <think>' : '';
+      
       if (lastMessageWasEmptyAssistant) {
         // If the assistant has no name (raw continuation), don't add any prefix
         if (lastAssistantName === '') {
-          conversationContent = conversationContent.trim();
+          conversationContent = conversationContent.trim() + thinkingPrefix;
         } else {
-          conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:`;
+          conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:${thinkingPrefix}`;
         }
       } else if (responderId && participants.length > 0) {
         // Otherwise, if we have a responder, append their name with a colon (no newline)
@@ -492,9 +591,9 @@ export class InferenceService {
         if (responder) {
           // If responder has no name (raw continuation), don't add any prefix
           if (responder.name === '') {
-            conversationContent = conversationContent.trim();
+            conversationContent = conversationContent.trim() + thinkingPrefix;
           } else {
-            conversationContent = conversationContent.trim() + `\n\n${responder.name}:`;
+            conversationContent = conversationContent.trim() + `\n\n${responder.name}:${thinkingPrefix}`;
           }
         }
       }
@@ -700,6 +799,42 @@ export class InferenceService {
   private providerSupportsPrefill(provider: string): boolean {
     // Only Anthropic and Bedrock (Claude models) reliably support prefill
     return provider === 'anthropic' || provider === 'bedrock';
+  }
+  
+  /**
+   * Parse <think>...</think> tags from content and create contentBlocks
+   * Used for prefill mode thinking where API thinking is not available
+   */
+  private parseThinkingTags(content: string): any[] {
+    const contentBlocks: any[] = [];
+    
+    // Match all <think>...</think> blocks (non-greedy, handles multiple)
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
+    let match;
+    let textContent = content;
+    
+    while ((match = thinkRegex.exec(content)) !== null) {
+      const thinkingContent = match[1].trim();
+      if (thinkingContent) {
+        contentBlocks.push({
+          type: 'thinking',
+          thinking: thinkingContent
+        });
+      }
+    }
+    
+    // Remove thinking tags from content to get the text part
+    textContent = content.replace(thinkRegex, '').trim();
+    
+    // Add text block if there's remaining content
+    if (textContent && contentBlocks.length > 0) {
+      contentBlocks.push({
+        type: 'text',
+        text: textContent
+      });
+    }
+    
+    return contentBlocks;
   }
   
   private createMessagesModeChunkHandler(

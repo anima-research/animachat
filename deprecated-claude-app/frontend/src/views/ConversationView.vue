@@ -671,6 +671,16 @@
               class="mr-1"
             />
             
+            <!-- Thinking/reasoning toggle button -->
+            <v-btn
+              v-if="modelSupportsThinking"
+              :icon="thinkingEnabled ? 'mdi-head-lightbulb' : 'mdi-head-lightbulb-outline'"
+              :color="thinkingEnabled ? 'info' : 'grey'"
+              variant="text"
+              @click.stop="toggleThinking"
+              :title="thinkingEnabled ? 'Disable extended thinking' : 'Enable extended thinking'"
+              class="mr-1"
+            />
             
             <v-btn
               :disabled="!messageInput || isStreaming"
@@ -877,6 +887,40 @@ const currentBranchId = computed(() => {
   return undefined;
 });
 const currentModel = computed(() => store.currentModel);
+
+// Thinking/reasoning toggle
+const thinkingEnabled = computed(() => {
+  return currentConversation.value?.settings?.thinking?.enabled || false;
+});
+
+const thinkingBudgetTokens = computed(() => {
+  return currentConversation.value?.settings?.thinking?.budgetTokens || 10000;
+});
+
+// Check if current model supports thinking (Claude models that support extended thinking)
+const modelSupportsThinking = computed(() => {
+  const modelId = currentConversation.value?.model || '';
+  // Claude 3.5 Sonnet, Claude 3.7 Sonnet, Claude 4.x, and Opus 4.5 support extended thinking
+  return modelId.includes('claude-3-5-sonnet') || 
+         modelId.includes('claude-3-7-sonnet') ||
+         modelId.includes('claude-sonnet-4') ||
+         modelId.includes('claude-opus-4') ||
+         modelId.includes('opus-4');
+});
+
+async function toggleThinking() {
+  if (!currentConversation.value) return;
+  
+  const newEnabled = !thinkingEnabled.value;
+  const newSettings = {
+    ...currentConversation.value.settings,
+    thinking: newEnabled 
+      ? { enabled: true, budgetTokens: thinkingBudgetTokens.value }
+      : undefined
+  };
+  
+  await updateConversationSettings({ settings: newSettings });
+}
 
 // Get bookmarks in the order they appear in the active conversation path
 const bookmarksInActivePath = computed(() => {
@@ -1570,6 +1614,12 @@ async function triggerParticipantResponse(participant: Participant) {
 }
 
 async function regenerateMessage(messageId: string, branchId: string) {
+  // Set streaming state before sending request
+  streamingMessageId.value = messageId;
+  isStreaming.value = true;
+  streamingError.value = null;
+  autoScrollEnabled.value = true;
+  
   await store.regenerateMessage(messageId, branchId);
 }
 

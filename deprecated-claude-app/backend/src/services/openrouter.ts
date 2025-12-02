@@ -522,6 +522,47 @@ export class OpenRouterService {
           }
           
           content = contentBlocks;
+        } else if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0 && provider === 'anthropic') {
+          // Assistant message with thinking blocks - format as content array for Anthropic API
+          // This is required for models like Opus 4.5 to maintain chain of thought
+          const apiContentBlocks: ContentBlock[] = [];
+          
+          for (const block of activeBranch.contentBlocks) {
+            if (block.type === 'thinking') {
+              apiContentBlocks.push({
+                type: 'thinking',
+                thinking: block.thinking,
+                ...(block.signature && { signature: block.signature })
+              } as any);
+            } else if (block.type === 'redacted_thinking') {
+              apiContentBlocks.push({
+                type: 'redacted_thinking',
+                data: block.data
+              } as any);
+            } else if (block.type === 'text') {
+              apiContentBlocks.push({
+                type: 'text',
+                text: block.text
+              });
+            }
+          }
+          
+          // If no text block was in contentBlocks, add the main content
+          const hasTextBlock = apiContentBlocks.some(b => b.type === 'text');
+          if (!hasTextBlock && activeBranch.content.trim()) {
+            apiContentBlocks.push({
+              type: 'text',
+              text: activeBranch.content
+            });
+          }
+          
+          // Add cache control to last block if present
+          if (cacheControl && apiContentBlocks.length > 0) {
+            apiContentBlocks[apiContentBlocks.length - 1].cache_control = cacheControl;
+            console.log(`[OpenRouter] 🎯 Cache control marker added to assistant message with thinking`);
+          }
+          
+          content = apiContentBlocks;
         } else if (cacheControl && provider === 'anthropic') {
           // Need to convert to content block format to add cache control
           content = [{
