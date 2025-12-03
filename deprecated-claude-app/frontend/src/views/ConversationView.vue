@@ -695,7 +695,7 @@
           <v-textarea
             ref="messageTextarea"
             v-model="messageInput"
-            :disabled="isStreaming"
+            :readonly="isStreaming"
             label="Type your message..."
             rows="3"
             auto-grow
