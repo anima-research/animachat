@@ -1528,6 +1528,11 @@ async function sendMessage() {
   console.log('Current visible messages:', messages.value.length);
   console.log('Selected parent branch:', selectedBranchForParent.value);
   
+  // Set streaming state IMMEDIATELY to prevent race conditions
+  // where user sends multiple messages before server responds
+  isStreaming.value = true;
+  streamingError.value = null;
+  
   const attachmentsCopy = [...attachments.value];
   messageInput.value = '';
   attachments.value = [];
@@ -1561,6 +1566,7 @@ async function sendMessage() {
   } catch (error) {
     console.error('Failed to send message:', error);
     messageInput.value = content; // Restore input on error
+    isStreaming.value = false; // Reset streaming state on error
   }
 }
 
@@ -1569,6 +1575,10 @@ async function continueGeneration() {
   
   console.log('ConversationView continueGeneration');
   console.log('Selected parent branch:', selectedBranchForParent.value);
+  
+  // Set streaming state IMMEDIATELY to prevent race conditions
+  isStreaming.value = true;
+  streamingError.value = null;
   
   try {
     let responderId: string | undefined;
@@ -1594,6 +1604,7 @@ async function continueGeneration() {
     }
   } catch (error) {
     console.error('Failed to continue generation:', error);
+    isStreaming.value = false; // Reset on error
   }
 }
 
