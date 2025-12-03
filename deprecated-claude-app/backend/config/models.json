@@ -302,7 +302,7 @@
         "maxTokens": {
           "min": 1,
           "max": 8192,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -340,7 +340,7 @@
         "maxTokens": {
           "min": 1,
           "max": 8192,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -378,7 +378,7 @@
         "maxTokens": {
           "min": 1,
           "max": 8192,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -416,7 +416,7 @@
         "maxTokens": {
           "min": 1,
           "max": 4096,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -454,7 +454,7 @@
         "maxTokens": {
           "min": 1,
           "max": 8192,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -492,7 +492,7 @@
         "maxTokens": {
           "min": 1,
           "max": 8192,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -530,7 +530,7 @@
         "maxTokens": {
           "min": 1,
           "max": 4096,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -568,7 +568,7 @@
         "maxTokens": {
           "min": 1,
           "max": 4096,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -606,7 +606,7 @@
         "maxTokens": {
           "min": 1,
           "max": 8192,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -638,7 +638,7 @@
         "maxTokens": {
           "min": 1,
           "max": 4096,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
@@ -705,13 +705,520 @@
         "maxTokens": {
           "min": 1,
           "max": 4096,
-          "default": 1024
+          "default": 32768
         },
         "topP": {
           "min": 0,
           "max": 1,
           "default": 0.9,
           "step": 0.01
+        }
+      }
+    },
+    {
+      "id": "gemini-2.5-flash-text",
+      "providerModelId": "gemini-2.5-flash-preview-05-20",
+      "displayName": "Gemini 2.5 Flash",
+      "shortName": "Flash 2.5",
+      "provider": "google",
+      "deprecated": false,
+      "contextWindow": 1000000,
+      "outputTokenLimit": 65536,
+      "supportsThinking": true,
+      "capabilities": {
+        "imageInput": true,
+        "pdfInput": true,
+        "audioInput": true,
+        "videoInput": true
+      },
+      "currencies": {
+        "gemini": true,
+        "models-2025": true
+      },
+      "configurableSettings": [
+        {
+          "type": "boolean",
+          "key": "tools.googleSearch",
+          "label": "Google Search Grounding",
+          "description": "Allow model to search for real-time information",
+          "default": false
+        },
+        {
+          "type": "boolean",
+          "key": "autoTruncateContext",
+          "label": "Auto-Truncate Context",
+          "description": "Automatically drop older messages when context exceeds limit (keeps most recent)",
+          "default": true
+        }
+      ],
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 65536,
+          "default": 32768
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.95,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 100,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "gemini-2.5-pro-text",
+      "providerModelId": "gemini-2.5-pro-preview-05-06",
+      "displayName": "Gemini 2.5 Pro",
+      "shortName": "Pro 2.5",
+      "provider": "google",
+      "deprecated": false,
+      "contextWindow": 1000000,
+      "outputTokenLimit": 65536,
+      "supportsThinking": true,
+      "capabilities": {
+        "imageInput": true,
+        "pdfInput": true,
+        "audioInput": true,
+        "videoInput": true
+      },
+      "currencies": {
+        "gemini": true,
+        "gemini-pro": true,
+        "models-2025": true
+      },
+      "configurableSettings": [
+        {
+          "type": "boolean",
+          "key": "tools.googleSearch",
+          "label": "Google Search Grounding",
+          "description": "Allow model to search for real-time information",
+          "default": false
+        },
+        {
+          "type": "boolean",
+          "key": "autoTruncateContext",
+          "label": "Auto-Truncate Context",
+          "description": "Automatically drop older messages when context exceeds limit (keeps most recent)",
+          "default": true
+        }
+      ],
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 65536,
+          "default": 32768
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.95,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 100,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "gemini-2.5-flash-multimodal",
+      "providerModelId": "gemini-2.5-flash-image",
+      "displayName": "Gemini 2.5 Flash (Image)",
+      "shortName": "Flash 2.5 🎨",
+      "provider": "google",
+      "deprecated": false,
+      "contextWindow": 32768,
+      "outputTokenLimit": 65536,
+      "supportsThinking": true,
+      "capabilities": {
+        "imageInput": true,
+        "pdfInput": true,
+        "audioInput": true,
+        "videoInput": true,
+        "imageOutput": true,
+        "autoTruncateContext": true
+      },
+      "currencies": {
+        "gemini": true,
+        "models-2025": true
+      },
+      "configurableSettings": [
+        {
+          "type": "multiselect",
+          "key": "responseModalities",
+          "label": "Output Types",
+          "description": "What types of content should the model return?",
+          "options": [
+            {"value": "TEXT", "label": "Text"},
+            {"value": "IMAGE", "label": "Image"}
+          ],
+          "default": ["TEXT"]
+        },
+        {
+          "type": "select",
+          "key": "imageConfig.aspectRatio",
+          "label": "Image Aspect Ratio",
+          "description": "Aspect ratio for generated images",
+          "options": [
+            {"value": "1:1", "label": "Square (1:1)"},
+            {"value": "16:9", "label": "Landscape (16:9)"},
+            {"value": "9:16", "label": "Portrait (9:16)"},
+            {"value": "4:3", "label": "Standard (4:3)"},
+            {"value": "3:4", "label": "Portrait (3:4)"}
+          ],
+          "default": "1:1",
+          "condition": "responseModalities includes IMAGE"
+        },
+        {
+          "type": "boolean",
+          "key": "tools.googleSearch",
+          "label": "Google Search Grounding",
+          "description": "Allow model to search for real-time information",
+          "default": false
+        },
+        {
+          "type": "boolean",
+          "key": "autoTruncateContext",
+          "label": "Auto-Truncate Context",
+          "description": "Automatically drop older messages when context exceeds limit (keeps most recent)",
+          "default": true
+        }
+      ],
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 65536,
+          "default": 32768
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.95,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 100,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "gemini-2.5-flash-imagegen",
+      "providerModelId": "gemini-2.5-flash-image",
+      "displayName": "Gemini 2.5 Flash (Image Gen)",
+      "shortName": "Flash 2.5 📷",
+      "provider": "google",
+      "deprecated": false,
+      "contextWindow": 32768,
+      "outputTokenLimit": 65536,
+      "capabilities": {
+        "imageInput": true,
+        "pdfInput": true,
+        "audioInput": true,
+        "videoInput": true,
+        "imageOutput": true,
+        "autoTruncateContext": true
+      },
+      "currencies": {
+        "gemini": true,
+        "models-2025": true
+      },
+      "configurableSettings": [
+        {
+          "type": "multiselect",
+          "key": "responseModalities",
+          "label": "Output Types",
+          "description": "What types of content should the model return?",
+          "options": [
+            {"value": "TEXT", "label": "Text"},
+            {"value": "IMAGE", "label": "Image"}
+          ],
+          "default": ["TEXT", "IMAGE"]
+        },
+        {
+          "type": "select",
+          "key": "imageConfig.aspectRatio",
+          "label": "Image Aspect Ratio",
+          "description": "Aspect ratio for generated images",
+          "options": [
+            {"value": "1:1", "label": "Square (1:1)"},
+            {"value": "16:9", "label": "Landscape (16:9)"},
+            {"value": "9:16", "label": "Portrait (9:16)"},
+            {"value": "4:3", "label": "Standard (4:3)"},
+            {"value": "3:4", "label": "Portrait (3:4)"}
+          ],
+          "default": "1:1"
+        },
+        {
+          "type": "boolean",
+          "key": "tools.googleSearch",
+          "label": "Google Search Grounding",
+          "description": "Allow model to search for real-time information",
+          "default": false
+        },
+        {
+          "type": "boolean",
+          "key": "autoTruncateContext",
+          "label": "Auto-Truncate Context",
+          "description": "Automatically drop older messages when context exceeds limit (keeps most recent)",
+          "default": true
+        }
+      ],
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 65536,
+          "default": 32768
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.95,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 100,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "gemini-3-pro-text",
+      "providerModelId": "gemini-3-pro-preview",
+      "displayName": "Gemini 3 Pro Preview",
+      "shortName": "Pro 3",
+      "provider": "google",
+      "deprecated": false,
+      "contextWindow": 1000000,
+      "outputTokenLimit": 65536,
+      "supportsThinking": true,
+      "capabilities": {
+        "imageInput": true,
+        "pdfInput": true,
+        "audioInput": true,
+        "videoInput": true,
+        "imageOutput": true
+      },
+      "currencies": {
+        "gemini": true,
+        "gemini-pro": true,
+        "models-2025": true
+      },
+      "configurableSettings": [
+        {
+          "type": "multiselect",
+          "key": "responseModalities",
+          "label": "Output Types",
+          "description": "What types of content should the model return?",
+          "options": [
+            {"value": "TEXT", "label": "Text"},
+            {"value": "IMAGE", "label": "Image"}
+          ],
+          "default": ["TEXT"]
+        },
+        {
+          "type": "select",
+          "key": "imageConfig.aspectRatio",
+          "label": "Image Aspect Ratio",
+          "description": "Aspect ratio for generated images",
+          "options": [
+            {"value": "1:1", "label": "Square (1:1)"},
+            {"value": "16:9", "label": "Landscape (16:9)"},
+            {"value": "9:16", "label": "Portrait (9:16)"},
+            {"value": "4:3", "label": "Standard (4:3)"},
+            {"value": "3:4", "label": "Portrait (3:4)"}
+          ],
+          "default": "1:1",
+          "condition": "responseModalities includes IMAGE"
+        },
+        {
+          "type": "select",
+          "key": "imageConfig.imageSize",
+          "label": "Image Resolution",
+          "description": "Output image resolution (higher = slower)",
+          "options": [
+            {"value": "1K", "label": "1K"},
+            {"value": "2K", "label": "2K (Default)"},
+            {"value": "4K", "label": "4K (Slower)"}
+          ],
+          "default": "2K",
+          "condition": "responseModalities includes IMAGE"
+        },
+        {
+          "type": "boolean",
+          "key": "tools.googleSearch",
+          "label": "Google Search Grounding",
+          "description": "Allow model to search for real-time information",
+          "default": false
+        },
+        {
+          "type": "boolean",
+          "key": "autoTruncateContext",
+          "label": "Auto-Truncate Context",
+          "description": "Automatically drop older messages when context exceeds limit (keeps most recent)",
+          "default": true
+        }
+      ],
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 65536,
+          "default": 32768
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.95,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 100,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "gemini-3-pro-imagegen",
+      "providerModelId": "gemini-3-pro-image-preview",
+      "displayName": "Gemini 3 Pro (Image Gen 4K)",
+      "shortName": "Pro 3 📷",
+      "provider": "google",
+      "deprecated": false,
+      "contextWindow": 32768,
+      "outputTokenLimit": 65536,
+      "capabilities": {
+        "imageInput": true,
+        "pdfInput": true,
+        "audioInput": true,
+        "videoInput": true,
+        "imageOutput": true,
+        "autoTruncateContext": true
+      },
+      "currencies": {
+        "gemini": true,
+        "gemini-pro": true,
+        "models-2025": true
+      },
+      "configurableSettings": [
+        {
+          "type": "multiselect",
+          "key": "responseModalities",
+          "label": "Output Types",
+          "description": "What types of content should the model return?",
+          "options": [
+            {"value": "TEXT", "label": "Text"},
+            {"value": "IMAGE", "label": "Image"}
+          ],
+          "default": ["TEXT", "IMAGE"]
+        },
+        {
+          "type": "select",
+          "key": "imageConfig.aspectRatio",
+          "label": "Image Aspect Ratio",
+          "description": "Aspect ratio for generated images",
+          "options": [
+            {"value": "1:1", "label": "Square (1:1)"},
+            {"value": "16:9", "label": "Landscape (16:9)"},
+            {"value": "9:16", "label": "Portrait (9:16)"},
+            {"value": "4:3", "label": "Standard (4:3)"},
+            {"value": "3:4", "label": "Portrait (3:4)"}
+          ],
+          "default": "1:1"
+        },
+        {
+          "type": "select",
+          "key": "imageConfig.imageSize",
+          "label": "Image Resolution",
+          "description": "Output image resolution (higher = slower)",
+          "options": [
+            {"value": "1K", "label": "1K"},
+            {"value": "2K", "label": "2K (Default)"},
+            {"value": "4K", "label": "4K (Slower)"}
+          ],
+          "default": "4K"
+        },
+        {
+          "type": "boolean",
+          "key": "tools.googleSearch",
+          "label": "Google Search Grounding",
+          "description": "Allow model to search for real-time information",
+          "default": false
+        },
+        {
+          "type": "boolean",
+          "key": "autoTruncateContext",
+          "label": "Auto-Truncate Context",
+          "description": "Automatically drop older messages when context exceeds limit (keeps most recent)",
+          "default": true
+        }
+      ],
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 65536,
+          "default": 32768
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.95,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 100,
+          "default": 40,
+          "step": 1
         }
       }
     }
