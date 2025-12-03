@@ -234,7 +234,13 @@ async function handleChatMessage(
       msg.branches.some(b => b.parentBranchId === message.parentBranchId)
     );
     
-    if (messageWithSiblings) {
+    // SAFETY CHECK: Verify the found message has at least one branch with matching role
+    // This prevents race conditions from mixing user/assistant branches in the same message
+    const hasSameRoleBranch = messageWithSiblings?.branches.some(b => 
+      b.parentBranchId === message.parentBranchId && b.role === 'user'
+    );
+    
+    if (messageWithSiblings && hasSameRoleBranch) {
       // Add as a new branch to the existing message that contains siblings
       Logger.debug('Adding branch to existing message:', messageWithSiblings.id);
       userMessage = await db.addMessageBranch(
@@ -329,7 +335,13 @@ async function handleChatMessage(
     msg.branches.some(b => b.parentBranchId === userBranch?.id)
   );
   
-  if (messageWithAssistantSiblings) {
+  // SAFETY CHECK: Verify the found message has at least one assistant branch pointing to this parent
+  // This prevents race conditions from mixing user/assistant branches in the same message
+  const hasAssistantBranch = messageWithAssistantSiblings?.branches.some(b => 
+    b.parentBranchId === userBranch?.id && b.role === 'assistant'
+  );
+  
+  if (messageWithAssistantSiblings && hasAssistantBranch) {
     // Add as a new branch to the existing message
     console.log('Adding assistant branch to existing message:', messageWithAssistantSiblings.id);
     assistantMessage = await db.addMessageBranch(
@@ -1117,7 +1129,13 @@ async function handleContinue(
         msg.branches.some(b => b.parentBranchId === parentBranchId)
       );
       
-      if (messageWithSiblings) {
+      // SAFETY CHECK: Verify the found message has at least one assistant branch pointing to this parent
+      // This prevents race conditions from mixing user/assistant branches in the same message
+      const hasAssistantBranch = messageWithSiblings?.branches.some(b => 
+        b.parentBranchId === parentBranchId && b.role === 'assistant'
+      );
+      
+      if (messageWithSiblings && hasAssistantBranch) {
         // Add as a new branch to the existing message
         console.log('Continue: Adding branch to existing message:', messageWithSiblings.id);
         assistantMessage = await db.addMessageBranch(
