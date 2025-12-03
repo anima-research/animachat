@@ -1369,49 +1369,86 @@ export class Database {
     let messages = await this.getConversationMessages(conversationId, originalOwnerUserId);
     
     // If lastMessages is specified, we need to find the active path and trim
-    if (options?.lastMessages && options.lastMessages > 0 && messages.length > options.lastMessages) {
-      // Build the active path by following activeBranchId from last message backwards
-      const activePath: Message[] = [];
-      const messageById = new Map(messages.map(m => [m.id, m]));
+    if (options?.lastMessages && options.lastMessages > 0) {
+      // Build maps for navigation
       const branchToMessage = new Map<string, Message>();
+      const parentBranchToChildMessage = new Map<string, Message>();
       
-      // Build a map of branch id -> message containing that branch
+      // Build navigation maps
       for (const msg of messages) {
         for (const branch of msg.branches) {
           branchToMessage.set(branch.id, msg);
+          if (branch.parentBranchId) {
+            // Map parent branch -> child message that references it
+            parentBranchToChildMessage.set(branch.parentBranchId, msg);
+          }
         }
       }
       
-      // Start from the last message and walk backwards following parent branches
-      let currentMessage = messages[messages.length - 1];
-      while (currentMessage) {
-        activePath.unshift(currentMessage);
-        
-        // Find the active branch of this message
-        const activeBranch = currentMessage.branches.find(b => b.id === currentMessage.activeBranchId);
-        if (!activeBranch || !activeBranch.parentBranchId) {
-          break; // No parent, we've reached the root
-        }
-        
-        // Find the message containing the parent branch
-        const parentMessage = branchToMessage.get(activeBranch.parentBranchId);
-        if (!parentMessage || parentMessage.id === currentMessage.id) {
-          break;
-        }
-        currentMessage = parentMessage;
-      }
+      // Find the root message (first message, or message with no parentBranchId on active branch)
+      const rootMessage = messages.find(msg => {
+        const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+        return activeBranch && !activeBranch.parentBranchId;
+      });
       
-      // Now trim to the last N messages from the active path
-      if (activePath.length > options.lastMessages) {
-        messages = activePath.slice(-options.lastMessages);
-        console.log(`[Duplicate] Trimmed from ${activePath.length} to ${messages.length} messages`);
+      if (!rootMessage) {
+        console.log(`[Duplicate] Could not find root message, skipping trim`);
       } else {
-        messages = activePath;
+        // Walk FORWARD from root to find the leaf of the active path
+        const activePath: Message[] = [];
+        let currentMessage: Message | undefined = rootMessage;
+        
+        while (currentMessage) {
+          activePath.push(currentMessage);
+          
+          // Find the next message whose active branch's parent is the current message's active branch
+          const currentActiveBranchId = currentMessage.activeBranchId;
+          const nextMessage = parentBranchToChildMessage.get(currentActiveBranchId);
+          
+          if (!nextMessage) {
+            break; // No child, we've reached the leaf
+          }
+          
+          // Verify the next message's active branch actually points to our current active branch
+          const nextActiveBranch = nextMessage.branches.find(b => b.id === nextMessage.activeBranchId);
+          if (!nextActiveBranch || nextActiveBranch.parentBranchId !== currentActiveBranchId) {
+            // The child's ACTIVE branch doesn't point to us - this means the active path ends here
+            // But there might be another message that does - check all messages
+            let foundNext = false;
+            for (const msg of messages) {
+              if (activePath.includes(msg)) continue;
+              const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+              if (activeBranch && activeBranch.parentBranchId === currentActiveBranchId) {
+                currentMessage = msg;
+                foundNext = true;
+                break;
+              }
+            }
+            if (!foundNext) {
+              break;
+            }
+          } else {
+            currentMessage = nextMessage;
+          }
+        }
+        
+        console.log(`[Duplicate] Found active path with ${activePath.length} messages`);
+        
+        // Now trim to the last N messages from the active path
+        if (activePath.length > options.lastMessages) {
+          messages = activePath.slice(-options.lastMessages);
+          console.log(`[Duplicate] Trimmed from ${activePath.length} to ${messages.length} messages`);
+        } else {
+          messages = activePath;
+          console.log(`[Duplicate] Active path (${activePath.length}) <= requested (${options.lastMessages}), using full active path`);
+        }
       }
     }
     
     const oldMessageBranchIdToNewMessageBranchId : Map<string, string> = new Map();
     var newMessages : Array<Message> = [];
+    const isTrimmed = options?.lastMessages && options.lastMessages > 0;
+    
     for (const message of messages) {
       const newMessage: Message = {
         ...message,
@@ -1419,8 +1456,14 @@ export class Database {
         conversationId: duplicate.id
       };
       
-      // remap any branches to new ids
-      newMessage.branches = newMessage.branches.map((branch) => {
+      // When trimming, only keep the active branch to create a clean linear chain
+      // Otherwise keep all branches for full duplication
+      const branchesToCopy = isTrimmed 
+        ? message.branches.filter(b => b.id === message.activeBranchId)
+        : message.branches;
+      
+      // remap branches to new ids
+      newMessage.branches = branchesToCopy.map((branch) => {
         const newBranchId: string = uuidv4();
         oldMessageBranchIdToNewMessageBranchId.set(branch.id, newBranchId);
         return {
