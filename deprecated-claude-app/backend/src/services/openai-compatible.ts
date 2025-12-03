@@ -105,7 +105,7 @@ export class OpenAICompatibleService {
       let totalTokens = 0;
 
       let fullContent = '';
-      
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;

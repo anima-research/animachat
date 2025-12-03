@@ -101,11 +101,6 @@
                       @click="renameConversation(conversation)"
                     />
                     <v-list-item
-                      prepend-icon="mdi-content-copy"
-                      title="Duplicate"
-                      @click="duplicateConversation(conversation.id)"
-                    />
-                    <v-list-item
                       prepend-icon="mdi-share-variant"
                       title="Share"
                       @click="shareConversation(conversation)"
@@ -114,6 +109,11 @@
                       prepend-icon="mdi-download"
                       title="Export"
                       @click="exportConversation(conversation.id)"
+                    />
+                    <v-list-item
+                      prepend-icon="mdi-content-copy"
+                      title="Duplicate"
+                      @click="openDuplicateDialog(conversation)"
                     />
                     <v-list-item
                       prepend-icon="mdi-archive"
@@ -763,6 +763,12 @@
       v-model="manageSharesDialog"
     />
     
+    <DuplicateConversationDialog
+      v-model="duplicateDialog"
+      :conversation="duplicateConversationTarget"
+      :message-count="duplicateConversationTarget ? getConversationMessageCount(duplicateConversationTarget.id) : 0"
+      @duplicated="handleDuplicated"
+    />
     
     <WelcomeDialog
       v-model="welcomeDialog"
@@ -787,6 +793,7 @@ import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
 import ShareDialog from '@/components/ShareDialog.vue';
 import ManageSharesDialog from '@/components/ManageSharesDialog.vue';
+import DuplicateConversationDialog from '@/components/DuplicateConversationDialog.vue';
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
@@ -812,6 +819,8 @@ const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
 const shareDialog = ref(false);
 const manageSharesDialog = ref(false);
+const duplicateDialog = ref(false);
+const duplicateConversationTarget = ref<Conversation | null>(null);
 const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
 const rawImportData = ref('');
@@ -1735,11 +1744,6 @@ function shareConversation(conversation: Conversation) {
   shareDialog.value = true;
 }
 
-async function duplicateConversation(id: string) {
-  const duplicate = await store.duplicateConversation(id);
-  router.push(`/conversation/${duplicate.id}`);
-}
-
 async function exportConversation(id: string) {
   try {
     const response = await fetch(`/api/conversations/${id}/export`, {
@@ -1884,6 +1888,27 @@ async function archiveConversation(id: string) {
       router.push('/conversation');
     }
   }
+}
+
+function openDuplicateDialog(conversation: Conversation) {
+  duplicateConversationTarget.value = conversation;
+  duplicateDialog.value = true;
+}
+
+function getConversationMessageCount(conversationId: string): number {
+  // If it's the current conversation, we have the messages
+  if (currentConversation.value?.id === conversationId) {
+    return messages.value.length;
+  }
+  // Otherwise estimate from the conversation object if available
+  return 0; // Will be loaded when dialog opens
+}
+
+async function handleDuplicated(newConversation: Conversation) {
+  // Refresh conversations list
+  await store.loadConversations();
+  // Navigate to the new conversation
+  router.push(`/conversation/${newConversation.id}`);
 }
 
 async function updateConversationSettings(updates: Partial<Conversation>) {

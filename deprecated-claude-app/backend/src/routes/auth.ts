@@ -247,9 +247,13 @@ export function authRouter(db: Database): Router {
 
       const summary = await db.getUserGrantSummary(req.userId);
       const availableCurrencies = await collectAvailableCurrencies();
+      const config = await ConfigLoader.getInstance().loadConfig();
+      const currencyConfig = config.currencies || {};
+      
       res.json({
         ...summary,
-        availableCurrencies
+        availableCurrencies,
+        currencyConfig
       });
     } catch (error) {
       console.error('Get grants error:', error);

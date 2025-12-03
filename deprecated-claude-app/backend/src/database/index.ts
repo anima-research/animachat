@@ -1296,18 +1296,37 @@ export class Database {
     return true;
   }
 
-  async duplicateConversation(conversationId: string, originalOwnerUserId: string, duplicateOwnerUserId: string): Promise<Conversation | null> {
+  async duplicateConversation(
+    conversationId: string, 
+    originalOwnerUserId: string, 
+    duplicateOwnerUserId: string,
+    options?: {
+      title?: string;
+      lastMessages?: number;
+      fromBranchId?: string;
+      includeSystemPrompt?: boolean;
+      includeSettings?: boolean;
+    }
+  ): Promise<Conversation | null> {
     const original = await this.tryLoadAndVerifyConversation(conversationId, originalOwnerUserId);
     if (!original) return null;
     await this.loadUser(duplicateOwnerUserId);
 
+    const opts = {
+      title: options?.title || `${original.title} (Copy)`,
+      includeSystemPrompt: options?.includeSystemPrompt !== false,
+      includeSettings: options?.includeSettings !== false,
+      lastMessages: options?.lastMessages,
+      fromBranchId: options?.fromBranchId,
+    };
+
     // This will log the relevant user events for conversation metadata
     const duplicate = await this.createConversation(
       duplicateOwnerUserId,
-      `${original.title} (Copy)`,
+      opts.title,
       original.model,
-      original.systemPrompt,
-      original.settings,
+      opts.includeSystemPrompt ? original.systemPrompt : undefined,
+      opts.includeSettings ? original.settings : undefined,
       original.format,
       original.contextManagement ? JSON.parse(JSON.stringify(original.contextManagement)) : undefined
     );
@@ -1352,7 +1371,26 @@ export class Database {
     }
 
     // Copy messages
-    const messages = await this.getConversationMessages(conversationId, originalOwnerUserId);
+    let messages = await this.getConversationMessages(conversationId, originalOwnerUserId);
+    
+    // If lastMessages is specified, trim to only the last N messages from the active path
+    if (opts.lastMessages && opts.lastMessages > 0 && messages.length > opts.lastMessages) {
+      // Get only the active path messages (following activeBranchId)
+      // Then take the last N
+      const activePathMessages = messages.filter(m => {
+        const activeBranch = m.branches.find(b => b.id === m.activeBranchId);
+        return activeBranch !== undefined;
+      });
+      
+      // Take the last N messages
+      messages = activePathMessages.slice(-opts.lastMessages);
+      
+      // Reindex the order
+      messages = messages.map((m, index) => ({ ...m, order: index }));
+      
+      console.log(`[Duplicate] Trimmed to last ${opts.lastMessages} messages (from ${activePathMessages.length})`);
+    }
+    
     const oldMessageBranchIdToNewMessageBranchId : Map<string, string> = new Map();
     var newMessages : Array<Message> = [];
     for (const message of messages) {
