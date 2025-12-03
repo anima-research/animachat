@@ -9,7 +9,7 @@ export const UserSchema = z.object({
   apiKeys: z.array(z.object({
     id: z.string().uuid(),
     name: z.string(),
-    provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible']),
+    provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible', 'google']),
     masked: z.string(),
     createdAt: z.date()
   })).optional()
@@ -201,7 +201,7 @@ export const UserDefinedModelSchema = z.object({
   userId: z.string().uuid(),
   displayName: z.string().min(1).max(100),
   shortName: z.string().min(1).max(50),
-  provider: z.enum(['openrouter', 'openai-compatible']),
+  provider: z.enum(['openrouter', 'openai-compatible', 'google']),
   providerModelId: z.string().min(1).max(500),
   contextWindow: z.number().min(1000).max(10000000),
   outputTokenLimit: z.number().min(100).max(1000000),
@@ -222,7 +222,7 @@ export type UserDefinedModel = z.infer<typeof UserDefinedModelSchema>;
 export const CreateUserModelSchema = z.object({
   displayName: z.string().min(1).max(100),
   shortName: z.string().min(1).max(50),
-  provider: z.enum(['openrouter', 'openai-compatible']),
+  provider: z.enum(['openrouter', 'openai-compatible', 'google']),
   providerModelId: z.string().min(1).max(500),
   contextWindow: z.number().min(1000).max(10000000),
   outputTokenLimit: z.number().min(100).max(1000000),
