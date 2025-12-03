@@ -394,12 +394,21 @@
             </v-chip>
             
             <v-btn
-              :disabled="isStreaming"
+              v-if="!isStreaming"
               :color="continueButtonColor"
               icon="mdi-send"
               variant="tonal"
               size="small"
               @click="continueGeneration"
+            />
+            <v-btn
+              v-else
+              color="error"
+              icon="mdi-stop"
+              variant="tonal"
+              size="small"
+              title="Stop generation"
+              @click="abortGeneration"
             />
           </div>
           
@@ -569,12 +578,21 @@
               </template>
             </v-select>
             <v-btn
-              :disabled="isStreaming"
+              v-if="!isStreaming"
               :color="continueButtonColor"
               icon="mdi-send"
               variant="text"
               :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
               @click="continueGeneration"
+              class="mr-2"
+            />
+            <v-btn
+              v-else
+              color="error"
+              icon="mdi-stop"
+              variant="text"
+              title="Stop generation"
+              @click="abortGeneration"
               class="mr-2"
             />
             <v-select
@@ -711,11 +729,20 @@
             />
             
             <v-btn
-              :disabled="!messageInput || isStreaming"
+              v-if="!isStreaming"
+              :disabled="!messageInput"
               color="primary"
               icon="mdi-send"
               variant="text"
               @click="sendMessage"
+            />
+            <v-btn
+              v-else
+              color="error"
+              icon="mdi-stop"
+              variant="text"
+              title="Stop generation"
+              @click="abortGeneration"
             />
           </template>
           </v-textarea>
@@ -1181,16 +1208,28 @@ onMounted(async () => {
       store.state.wsService.on('stream', (data: any) => {
         // Streaming content update
         if (data.messageId === streamingMessageId.value) {
-          // Check if streaming is complete
-          if (data.isComplete) {
+          // Check if streaming is complete or was aborted
+          if (data.isComplete || data.aborted) {
             isStreaming.value = false;
             streamingMessageId.value = null;
+            if (data.aborted) {
+              console.log('Generation was aborted');
+            }
           } else {
             // Still streaming
             if (!isStreaming.value) {
               isStreaming.value = true;
             }
           }
+        }
+      });
+      
+      // Handle generation_aborted event (for cases where messageId might not match)
+      store.state.wsService.on('generation_aborted', (data: any) => {
+        console.log('Generation aborted for conversation:', data.conversationId);
+        if (data.conversationId === currentConversation.value?.id) {
+          isStreaming.value = false;
+          streamingMessageId.value = null;
         }
       });
       
@@ -1683,6 +1722,12 @@ async function regenerateMessage(messageId: string, branchId: string) {
   autoScrollEnabled.value = true;
   
   await store.regenerateMessage(messageId, branchId);
+}
+
+function abortGeneration() {
+  console.log('Aborting generation...');
+  store.abortGeneration();
+  // Note: isStreaming will be reset when we receive the aborted stream event
 }
 
 async function editMessage(messageId: string, branchId: string, content: string) {

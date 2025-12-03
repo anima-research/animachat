@@ -109,7 +109,8 @@ export class EnhancedInferenceService {
     conversation?: Conversation,
     participant?: Participant,
     onMetrics?: (metrics: any) => Promise<void>,
-    participants?: Participant[]
+    participants?: Participant[],
+    abortSignal?: AbortSignal
   ): Promise<void> {
     // If no conversation provided, fall back to original behavior
     if (!conversation) {
@@ -179,6 +180,11 @@ export class EnhancedInferenceService {
     
     // Create an enhanced callback to track token usage
     const enhancedCallback = async (chunk: string, isComplete: boolean, contentBlocks?: any[], actualUsage?: any) => {
+      // Check if generation was aborted
+      if (abortSignal?.aborted) {
+        throw new Error('Generation aborted');
+      }
+      
       // Track output tokens (simplified - in practice would use tokenizer)
       outputTokens += Math.ceil(chunk.length / 4);
       
