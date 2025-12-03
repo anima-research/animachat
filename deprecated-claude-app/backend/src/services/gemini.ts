@@ -128,8 +128,11 @@ export class GeminiService {
         generationConfig.responseModalities = modelSpecific['responseModalities'];
       }
       
-      // Image config (for image generation)
-      if (modelSpecific['imageConfig.aspectRatio'] || modelSpecific['imageConfig.imageSize']) {
+      // Image config (for image generation) - only include if IMAGE is in responseModalities
+      const responseModalities = modelSpecific['responseModalities'] as string[] | undefined;
+      const includesImage = responseModalities?.includes('IMAGE');
+      
+      if (includesImage && (modelSpecific['imageConfig.aspectRatio'] || modelSpecific['imageConfig.imageSize'])) {
         generationConfig.imageConfig = {};
         if (modelSpecific['imageConfig.aspectRatio']) {
           generationConfig.imageConfig.aspectRatio = modelSpecific['imageConfig.aspectRatio'];
@@ -331,7 +334,11 @@ export class GeminiService {
       generationConfig.responseModalities = modelSpecific['responseModalities'];
     }
     
-    if (modelSpecific['imageConfig.aspectRatio'] || modelSpecific['imageConfig.imageSize']) {
+    // Image config - only include if IMAGE is in responseModalities
+    const responseModalities = modelSpecific['responseModalities'] as string[] | undefined;
+    const includesImage = responseModalities?.includes('IMAGE');
+    
+    if (includesImage && (modelSpecific['imageConfig.aspectRatio'] || modelSpecific['imageConfig.imageSize'])) {
       generationConfig.imageConfig = {};
       if (modelSpecific['imageConfig.aspectRatio']) {
         generationConfig.imageConfig.aspectRatio = modelSpecific['imageConfig.aspectRatio'];
