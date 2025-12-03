@@ -1296,24 +1296,38 @@ export class Database {
     return true;
   }
 
-  async duplicateConversation(conversationId: string, originalOwnerUserId: string, duplicateOwnerUserId: string): Promise<Conversation | null> {
+  async duplicateConversation(
+    conversationId: string, 
+    originalOwnerUserId: string, 
+    duplicateOwnerUserId: string,
+    options?: {
+      newTitle?: string;
+      lastMessages?: number;
+      includeSystemPrompt?: boolean;
+      includeSettings?: boolean;
+    }
+  ): Promise<Conversation | null> {
     const original = await this.tryLoadAndVerifyConversation(conversationId, originalOwnerUserId);
     if (!original) return null;
     await this.loadUser(duplicateOwnerUserId);
 
+    // Determine what to include based on options
+    const includeSystemPrompt = options?.includeSystemPrompt !== false; // Default true
+    const includeSettings = options?.includeSettings !== false; // Default true
+
     // This will log the relevant user events for conversation metadata
     const duplicate = await this.createConversation(
       duplicateOwnerUserId,
-      `${original.title} (Copy)`,
+      options?.newTitle || `${original.title} (Copy)`,
       original.model,
-      original.systemPrompt,
-      original.settings,
+      includeSystemPrompt ? original.systemPrompt : undefined,
+      includeSettings ? original.settings : undefined,
       original.format,
-      original.contextManagement ? JSON.parse(JSON.stringify(original.contextManagement)) : undefined
+      includeSettings && original.contextManagement ? JSON.parse(JSON.stringify(original.contextManagement)) : undefined
     );
     
-    // carry over prefill user message
-    if (original.prefillUserMessage) {
+    // carry over prefill user message if including system prompt
+    if (includeSystemPrompt && original.prefillUserMessage) {
       await this.updateConversation(duplicate.id, duplicate.userId, { prefillUserMessage: original.prefillUserMessage });
     }
 
@@ -1340,9 +1354,9 @@ export class Database {
         participant.name,
         participant.type,
         participant.model,
-        participant.systemPrompt,
-        participant.settings ? JSON.parse(JSON.stringify(participant.settings)) : undefined,
-        participant.contextManagement ? JSON.parse(JSON.stringify(participant.contextManagement)) : undefined
+        includeSystemPrompt ? participant.systemPrompt : undefined,
+        includeSettings && participant.settings ? JSON.parse(JSON.stringify(participant.settings)) : undefined,
+        includeSettings && participant.contextManagement ? JSON.parse(JSON.stringify(participant.contextManagement)) : undefined
       );
       // We need to mirror this flag as well, by default they are active
       if (!participant.isActive) {
@@ -1352,7 +1366,50 @@ export class Database {
     }
 
     // Copy messages
-    const messages = await this.getConversationMessages(conversationId, originalOwnerUserId);
+    let messages = await this.getConversationMessages(conversationId, originalOwnerUserId);
+    
+    // If lastMessages is specified, we need to find the active path and trim
+    if (options?.lastMessages && options.lastMessages > 0 && messages.length > options.lastMessages) {
+      // Build the active path by following activeBranchId from last message backwards
+      const activePath: Message[] = [];
+      const messageById = new Map(messages.map(m => [m.id, m]));
+      const branchToMessage = new Map<string, Message>();
+      
+      // Build a map of branch id -> message containing that branch
+      for (const msg of messages) {
+        for (const branch of msg.branches) {
+          branchToMessage.set(branch.id, msg);
+        }
+      }
+      
+      // Start from the last message and walk backwards following parent branches
+      let currentMessage = messages[messages.length - 1];
+      while (currentMessage) {
+        activePath.unshift(currentMessage);
+        
+        // Find the active branch of this message
+        const activeBranch = currentMessage.branches.find(b => b.id === currentMessage.activeBranchId);
+        if (!activeBranch || !activeBranch.parentBranchId) {
+          break; // No parent, we've reached the root
+        }
+        
+        // Find the message containing the parent branch
+        const parentMessage = branchToMessage.get(activeBranch.parentBranchId);
+        if (!parentMessage || parentMessage.id === currentMessage.id) {
+          break;
+        }
+        currentMessage = parentMessage;
+      }
+      
+      // Now trim to the last N messages from the active path
+      if (activePath.length > options.lastMessages) {
+        messages = activePath.slice(-options.lastMessages);
+        console.log(`[Duplicate] Trimmed from ${activePath.length} to ${messages.length} messages`);
+      } else {
+        messages = activePath;
+      }
+    }
+    
     const oldMessageBranchIdToNewMessageBranchId : Map<string, string> = new Map();
     var newMessages : Array<Message> = [];
     for (const message of messages) {
@@ -1383,11 +1440,14 @@ export class Database {
     }
 
     // map the parent branch ids to the new ones
+    // For trimmed conversations, clear parent branch id if parent wasn't copied
     newMessages = newMessages.map(message => ({
       ...message,
       branches: message.branches.map(branch => ({
         ...branch,
-        parentBranchId: branch.parentBranchId ? oldMessageBranchIdToNewMessageBranchId.get(branch.parentBranchId) : undefined
+        parentBranchId: branch.parentBranchId 
+          ? (oldMessageBranchIdToNewMessageBranchId.get(branch.parentBranchId) || undefined)
+          : undefined
       }))
     }));
 

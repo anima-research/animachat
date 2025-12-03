@@ -135,7 +135,15 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const duplicate = await db.duplicateConversation(req.params.id, req.userId, req.userId);
+      // Parse options from request body
+      const options = {
+        newTitle: req.body.newTitle as string | undefined,
+        lastMessages: req.body.lastMessages as number | undefined,
+        includeSystemPrompt: req.body.includeSystemPrompt as boolean | undefined,
+        includeSettings: req.body.includeSettings as boolean | undefined,
+      };
+
+      const duplicate = await db.duplicateConversation(req.params.id, req.userId, req.userId, options);
       
       if (!duplicate) {
         return res.status(404).json({ error: 'Conversation not found or access denied' });
