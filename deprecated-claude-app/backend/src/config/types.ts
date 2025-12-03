@@ -76,17 +76,29 @@ export interface OpenAICompatibleProfile extends ApiKeyProfile {
   };
 }
 
+export interface GoogleProfile extends ApiKeyProfile {
+  provider: 'google';
+  credentials: {
+    apiKey: string;
+    // Optional: for Vertex AI instead of Gemini API
+    projectId?: string;
+    location?: string;
+  };
+}
+
 export type ProviderProfile = 
   | AnthropicProfile 
   | BedrockProfile 
   | OpenRouterProfile 
-  | OpenAICompatibleProfile;
+  | OpenAICompatibleProfile
+  | GoogleProfile;
 
 export interface ProvidersConfig {
   anthropic?: AnthropicProfile[];
   bedrock?: BedrockProfile[];
   openrouter?: OpenRouterProfile[];
   'openai-compatible'?: OpenAICompatibleProfile[];
+  google?: GoogleProfile[];
 }
 
 export interface AppConfig {
@@ -98,6 +110,7 @@ export interface AppConfig {
     bedrock?: string;
     openrouter?: string;
     'openai-compatible'?: string;
+    google?: string;
   };
   
   // Default model for new conversations
@@ -120,4 +133,12 @@ export interface AppConfig {
   
   // Suggested models for group chat quick access
   groupChatSuggestedModels?: string[]; // Model IDs to show in quick access bar
+  
+  // Currency definitions for credit grants
+  currencies?: {
+    [key: string]: {
+      name: string;
+      description: string;
+    };
+  };
 }

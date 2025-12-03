@@ -1,0 +1,516 @@
+import { Message, getActiveBranch, ModelSettings, ContentBlock } from '@deprecated-claude/shared';
+import { Database } from '../database/index.js';
+
+/**
+ * Gemini API Service
+ * Supports Google's Generative AI API for text and image generation
+ * 
+ * Models:
+ * - gemini-2.5-flash: Fast multimodal model
+ * - gemini-2.5-flash-image: Fast image generation
+ * - gemini-3-pro-preview: Advanced model with thinking
+ * - gemini-3-pro-image-preview: Advanced image generation with 4K output
+ */
+
+interface GeminiPart {
+  text?: string;
+  inlineData?: {
+    mimeType: string;
+    data: string; // base64
+  };
+}
+
+interface GeminiContent {
+  role: 'user' | 'model';
+  parts: GeminiPart[];
+}
+
+interface GeminiResponse {
+  candidates: Array<{
+    content: {
+      parts: Array<{
+        text?: string;
+        inlineData?: {
+          mimeType: string;
+          data: string;
+        };
+      }>;
+      role: string;
+    };
+    finishReason?: string;
+    safetyRatings?: Array<{
+      category: string;
+      probability: string;
+    }>;
+  }>;
+  usageMetadata?: {
+    promptTokenCount: number;
+    candidatesTokenCount: number;
+    totalTokenCount: number;
+  };
+}
+
+interface GeminiStreamChunk {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+        inlineData?: {
+          mimeType: string;
+          data: string;
+        };
+      }>;
+    };
+    finishReason?: string;
+  }>;
+  usageMetadata?: {
+    promptTokenCount: number;
+    candidatesTokenCount: number;
+    totalTokenCount: number;
+  };
+}
+
+export class GeminiService {
+  private apiKey: string;
+  private baseUrl: string;
+  private db: Database;
+
+  constructor(db: Database, apiKey?: string) {
+    this.db = db;
+    this.apiKey = apiKey || process.env.GEMINI_API_KEY || '';
+    this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+  }
+
+  async streamCompletion(
+    modelId: string,
+    messages: Message[],
+    systemPrompt: string | undefined,
+    settings: ModelSettings,
+    onChunk: (chunk: string, isComplete: boolean, contentBlocks?: ContentBlock[], usage?: any) => Promise<void>,
+    stopSequences?: string[]
+  ): Promise<{
+    usage?: {
+      inputTokens: number;
+      outputTokens: number;
+    }
+  }> {
+    let requestId: string | undefined;
+    const startTime = Date.now();
+
+    try {
+      // Convert messages to Gemini format
+      const geminiContents = this.formatMessagesForGemini(messages);
+      
+      // Build generation config
+      const generationConfig: any = {
+        temperature: settings.temperature,
+        maxOutputTokens: settings.maxTokens,
+      };
+      
+      // Add top_p and top_k if specified
+      if (settings.topP !== undefined) {
+        generationConfig.topP = settings.topP;
+      }
+      if (settings.topK !== undefined) {
+        generationConfig.topK = settings.topK;
+      }
+      
+      // Add stop sequences if provided (Gemini allows max 5)
+      if (stopSequences && stopSequences.length > 0) {
+        generationConfig.stopSequences = stopSequences.slice(0, 5);
+      }
+      
+      // Handle model-specific settings
+      const modelSpecific = settings.modelSpecific || {};
+      
+      // Response modalities (for image generation models)
+      if (modelSpecific['responseModalities']) {
+        generationConfig.responseModalities = modelSpecific['responseModalities'];
+      }
+      
+      // Image config (for image generation)
+      if (modelSpecific['imageConfig.aspectRatio'] || modelSpecific['imageConfig.imageSize']) {
+        generationConfig.imageConfig = {};
+        if (modelSpecific['imageConfig.aspectRatio']) {
+          generationConfig.imageConfig.aspectRatio = modelSpecific['imageConfig.aspectRatio'];
+        }
+        if (modelSpecific['imageConfig.imageSize']) {
+          generationConfig.imageConfig.imageSize = modelSpecific['imageConfig.imageSize'];
+        }
+      }
+      
+      // Build request body
+      const requestBody: any = {
+        contents: geminiContents,
+        generationConfig,
+      };
+      
+      // Add system instruction if provided
+      if (systemPrompt) {
+        requestBody.systemInstruction = {
+          parts: [{ text: systemPrompt }]
+        };
+      }
+      
+      // Add tools if Google Search is enabled
+      if (modelSpecific['tools.googleSearch']) {
+        requestBody.tools = [{ googleSearch: {} }];
+      }
+      
+      requestId = `gemini-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      console.log(`[Gemini API] Request ${requestId}: Streaming to ${modelId}, ${messages.length} messages`);
+      console.log(`[Gemini API] Generation config:`, JSON.stringify(generationConfig, null, 2));
+      
+      // Make streaming request
+      const url = `${this.baseUrl}/models/${modelId}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[Gemini API] Error ${response.status}:`, errorText);
+        throw new Error(`Gemini API error: ${response.status} ${errorText}`);
+      }
+      
+      if (!response.body) {
+        throw new Error('No response body from Gemini API');
+      }
+      
+      // Process SSE stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullContent = '';
+      const contentBlocks: ContentBlock[] = [];
+      let hasImageOutput = false;
+      let usage: any = undefined;
+      
+      let chunkCount = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          console.log(`[Gemini API] Stream ended after ${chunkCount} chunks`);
+          break;
+        }
+        
+        const decoded = decoder.decode(value, { stream: true });
+        buffer += decoded;
+        chunkCount++;
+        
+        // Log first few chunks to debug
+        if (chunkCount <= 3) {
+          console.log(`[Gemini API] Raw chunk ${chunkCount} (${decoded.length} bytes):`, decoded.substring(0, 200));
+        }
+        
+        // Process complete SSE events
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6);
+            if (jsonStr.trim() === '[DONE]') continue;
+            
+            try {
+              const chunk: GeminiStreamChunk = JSON.parse(jsonStr);
+              
+              // Extract content from chunk
+              if (chunk.candidates && chunk.candidates[0]?.content?.parts) {
+                for (const part of chunk.candidates[0].content.parts) {
+                  if (part.text) {
+                    fullContent += part.text;
+                    await onChunk(part.text, false, contentBlocks.length > 0 ? contentBlocks : undefined);
+                  }
+                  
+                  if (part.inlineData) {
+                    // Image generated by the model
+                    hasImageOutput = true;
+                    contentBlocks.push({
+                      type: 'image',
+                      mimeType: part.inlineData.mimeType,
+                      data: part.inlineData.data,
+                    } as ContentBlock);
+                    console.log(`[Gemini API] Received generated image: ${part.inlineData.mimeType}`);
+                    
+                    // Send update with new content block
+                    await onChunk('', false, contentBlocks);
+                  }
+                }
+              }
+              
+              // Check for finish
+              if (chunk.candidates?.[0]?.finishReason) {
+                console.log(`[Gemini API] Finish reason: ${chunk.candidates[0].finishReason}`);
+                // Log full content length at finish
+                console.log(`[Gemini API] Total content at finish: ${fullContent.length} chars`);
+              }
+              
+              // Log any safety blocks
+              if ((chunk.candidates?.[0] as any)?.safetyRatings) {
+                const blocked = (chunk.candidates![0] as any).safetyRatings.filter((r: any) => r.blocked);
+                if (blocked.length > 0) {
+                  console.log(`[Gemini API] Safety blocked:`, blocked);
+                }
+              }
+              
+              // Extract usage
+              if (chunk.usageMetadata) {
+                usage = {
+                  inputTokens: chunk.usageMetadata.promptTokenCount,
+                  outputTokens: chunk.usageMetadata.candidatesTokenCount,
+                };
+              }
+            } catch (parseError) {
+              console.error('[Gemini API] Failed to parse chunk:', parseError);
+            }
+          }
+        }
+      }
+      
+      // Add text content block if we have text
+      if (fullContent) {
+        // Insert text block at the beginning if we also have images
+        if (hasImageOutput) {
+          contentBlocks.unshift({
+            type: 'text',
+            text: fullContent,
+          } as ContentBlock);
+        }
+      }
+      
+      // Send completion
+      await onChunk('', true, contentBlocks.length > 0 ? contentBlocks : undefined, usage);
+      
+      const duration = Date.now() - startTime;
+      console.log(`[Gemini API] Request ${requestId} completed in ${duration}ms, tokens: ${usage?.inputTokens || 0} in / ${usage?.outputTokens || 0} out`);
+      
+      return { usage };
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const duration = Date.now() - startTime;
+      console.error(`[Gemini API] Request ${requestId} failed after ${duration}ms:`, errorMessage);
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Non-streaming completion (useful for image generation)
+   */
+  async generateContent(
+    modelId: string,
+    messages: Message[],
+    systemPrompt: string | undefined,
+    settings: ModelSettings
+  ): Promise<{
+    content: string;
+    contentBlocks: ContentBlock[];
+    usage?: {
+      inputTokens: number;
+      outputTokens: number;
+    };
+  }> {
+    const geminiContents = this.formatMessagesForGemini(messages);
+    
+    const generationConfig: any = {
+      temperature: settings.temperature,
+      maxOutputTokens: settings.maxTokens,
+    };
+    
+    const modelSpecific = settings.modelSpecific || {};
+    
+    if (modelSpecific['responseModalities']) {
+      generationConfig.responseModalities = modelSpecific['responseModalities'];
+    }
+    
+    if (modelSpecific['imageConfig.aspectRatio'] || modelSpecific['imageConfig.imageSize']) {
+      generationConfig.imageConfig = {};
+      if (modelSpecific['imageConfig.aspectRatio']) {
+        generationConfig.imageConfig.aspectRatio = modelSpecific['imageConfig.aspectRatio'];
+      }
+      if (modelSpecific['imageConfig.imageSize']) {
+        generationConfig.imageConfig.imageSize = modelSpecific['imageConfig.imageSize'];
+      }
+    }
+    
+    const requestBody: any = {
+      contents: geminiContents,
+      generationConfig,
+    };
+    
+    if (systemPrompt) {
+      requestBody.systemInstruction = {
+        parts: [{ text: systemPrompt }]
+      };
+    }
+    
+    if (modelSpecific['tools.googleSearch']) {
+      requestBody.tools = [{ googleSearch: {} }];
+    }
+    
+    const url = `${this.baseUrl}/models/${modelId}:generateContent?key=${this.apiKey}`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gemini API error: ${response.status} ${errorText}`);
+    }
+    
+    const data = await response.json() as GeminiResponse;
+    
+    let content = '';
+    const contentBlocks: ContentBlock[] = [];
+    
+    if (data.candidates && data.candidates[0]?.content?.parts) {
+      for (const part of data.candidates[0].content.parts) {
+        if (part.text) {
+          content += part.text;
+        }
+        if (part.inlineData) {
+          contentBlocks.push({
+            type: 'image',
+            mimeType: part.inlineData.mimeType,
+            data: part.inlineData.data,
+          } as ContentBlock);
+        }
+      }
+    }
+    
+    // Add text block if we have text
+    if (content) {
+      contentBlocks.unshift({
+        type: 'text',
+        text: content,
+      } as ContentBlock);
+    }
+    
+    return {
+      content,
+      contentBlocks,
+      usage: data.usageMetadata ? {
+        inputTokens: data.usageMetadata.promptTokenCount,
+        outputTokens: data.usageMetadata.candidatesTokenCount,
+      } : undefined,
+    };
+  }
+
+  /**
+   * Convert internal message format to Gemini API format
+   */
+  private formatMessagesForGemini(messages: Message[]): GeminiContent[] {
+    const geminiContents: GeminiContent[] = [];
+    
+    for (const message of messages) {
+      const activeBranch = getActiveBranch(message);
+      if (!activeBranch) continue;
+      
+      // Skip system messages - handled separately
+      if (activeBranch.role === 'system') continue;
+      
+      const parts: GeminiPart[] = [];
+      
+      // Add text content
+      if (activeBranch.content) {
+        parts.push({ text: activeBranch.content });
+      }
+      
+      // Handle attachments
+      if (activeBranch.attachments && activeBranch.attachments.length > 0) {
+        for (const attachment of activeBranch.attachments) {
+          const mimeType = this.getMimeType(attachment.fileName, (attachment as any).mimeType);
+          
+          // Gemini supports images, PDFs, audio, and video as inline data
+          if (this.isSupportedMediaType(mimeType)) {
+            parts.push({
+              inlineData: {
+                mimeType,
+                data: attachment.content, // Already base64
+              }
+            });
+          } else {
+            // For unsupported types, append as text
+            parts[0] = {
+              text: (parts[0]?.text || '') + `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`
+            };
+          }
+        }
+      }
+      
+      // Handle existing content blocks (e.g., generated images in history)
+      if (activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
+        for (const block of activeBranch.contentBlocks) {
+          if (block.type === 'image' && 'data' in block) {
+            console.log(`[Gemini] Including generated image from history: ${(block as any).mimeType || 'image/png'}, data length: ${(block as any).data?.length || 0}`);
+            parts.push({
+              inlineData: {
+                mimeType: (block as any).mimeType || 'image/png',
+                data: (block as any).data,
+              }
+            });
+          }
+        }
+      }
+      
+      if (parts.length > 0) {
+        geminiContents.push({
+          role: activeBranch.role === 'assistant' ? 'model' : 'user',
+          parts,
+        });
+      }
+    }
+    
+    return geminiContents;
+  }
+
+  private getMimeType(fileName: string, providedMimeType?: string): string {
+    if (providedMimeType) return providedMimeType;
+    
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    const mimeTypes: Record<string, string> = {
+      // Images
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      // Documents
+      'pdf': 'application/pdf',
+      // Audio
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'flac': 'audio/flac',
+      'ogg': 'audio/ogg',
+      'm4a': 'audio/mp4',
+      'aac': 'audio/aac',
+      // Video
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+      'webm': 'video/webm',
+      'avi': 'video/x-msvideo',
+    };
+    
+    return mimeTypes[extension] || 'application/octet-stream';
+  }
+
+  private isSupportedMediaType(mimeType: string): boolean {
+    // Gemini supports these MIME types natively
+    const supportedPrefixes = ['image/', 'audio/', 'video/', 'application/pdf'];
+    return supportedPrefixes.some(prefix => mimeType.startsWith(prefix));
+  }
+}
+

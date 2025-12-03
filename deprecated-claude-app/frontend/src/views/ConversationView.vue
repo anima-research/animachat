@@ -629,37 +629,65 @@
             closable
             @click:close="removeAttachment(index)"
             class="mr-2 mb-2"
+            :color="getAttachmentChipColor(attachment)"
             :style="attachment.isImage ? 'height: auto; padding: 4px;' : ''"
           >
             <template v-if="attachment.isImage">
               <img 
-                :src="`data:image/${attachment.fileType};base64,${attachment.content}`" 
+                :src="`data:${attachment.mimeType || 'image/' + attachment.fileType};base64,${attachment.content}`" 
                 :alt="attachment.fileName"
                 style="max-height: 60px; max-width: 100px; margin-right: 8px; border-radius: 4px;"
               />
               <span>{{ attachment.fileName }}</span>
             </template>
+            <template v-else-if="attachment.isPdf">
+              <v-icon start color="red-darken-1">mdi-file-pdf-box</v-icon>
+              {{ attachment.fileName }}
+            </template>
+            <template v-else-if="attachment.isAudio">
+              <v-icon start color="purple">mdi-music-box</v-icon>
+              {{ attachment.fileName }}
+            </template>
+            <template v-else-if="attachment.isVideo">
+              <v-icon start color="blue">mdi-video-box</v-icon>
+              {{ attachment.fileName }}
+            </template>
             <template v-else>
-              <v-icon start>mdi-paperclip</v-icon>
+              <v-icon start>mdi-file-document-outline</v-icon>
               {{ attachment.fileName }}
             </template>
             <span class="ml-1 text-caption">({{ formatFileSize(attachment.fileSize) }})</span>
           </v-chip>
         </div>
         
-        <v-textarea
-          ref="messageTextarea"
-          v-model="messageInput"
-          :disabled="isStreaming"
-          label="Type your message..."
-          rows="3"
-          auto-grow
-          max-rows="15"
-          variant="outlined"
-          hide-details
-          @keydown.enter.exact.prevent="sendMessage"
-          @focus="handleTextareaFocus"
+        <!-- Drop zone wrapper for drag-and-drop attachments -->
+        <div 
+          class="input-drop-zone"
+          :class="{ 'drop-zone-active': isDraggingOver }"
+          @dragenter.prevent="handleDragEnter"
+          @dragover.prevent="handleDragOver"
+          @dragleave.prevent="handleDragLeave"
+          @drop.prevent="handleDrop"
         >
+          <div v-if="isDraggingOver" class="drop-zone-overlay">
+            <v-icon size="48" color="primary">mdi-file-upload</v-icon>
+            <span class="text-body-1 mt-2">Drop files here</span>
+          </div>
+          
+          <v-textarea
+            ref="messageTextarea"
+            v-model="messageInput"
+            :disabled="isStreaming"
+            label="Type your message..."
+            rows="3"
+            auto-grow
+            max-rows="15"
+            variant="outlined"
+            hide-details
+            @keydown.enter.exact.prevent="sendMessage"
+            @focus="handleTextareaFocus"
+            @paste="handlePaste"
+          >
           <template v-slot:append-inner>
             <!-- File attachment button -->
             <v-btn
@@ -690,13 +718,14 @@
               @click="sendMessage"
             />
           </template>
-        </v-textarea>
+          </v-textarea>
+        </div>
         
-        <!-- Hidden file input -->
+        <!-- Hidden file input - supports text, images, PDFs, audio, and video -->
         <input
           ref="fileInput"
           type="file"
-          accept=".txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp"
+          accept=".txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp,.jpg,.jpeg,.png,.gif,.webp,.svg,.pdf,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.avi,.mkv,.webm"
           multiple
           style="display: none"
           @change="handleFileSelect"
@@ -830,9 +859,22 @@ const streamingMessageId = ref<string | null>(null);
 const autoScrollEnabled = ref(true);
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
-const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
+const attachments = ref<Array<{
+  fileName: string;
+  fileType: string;
+  mimeType?: string;
+  fileSize: number;
+  content: string;
+  encoding?: 'base64' | 'text';
+  isImage?: boolean;
+  isPdf?: boolean;
+  isAudio?: boolean;
+  isVideo?: boolean;
+}>>([]);
 const fileInput = ref<HTMLInputElement>();
 const messageTextarea = ref<any>();
+const isDraggingOver = ref(false);
+let dragCounter = 0; // Track nested drag events
 const updateMobileState = () => {
   if (typeof window === 'undefined') {
     return;
@@ -1808,6 +1850,55 @@ function handleTextareaFocus() {
   }
 }
 
+// File type classifications for multimodal support
+const FILE_TYPES = {
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'],
+  pdf: ['pdf'],
+  audio: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'webm'],
+  video: ['mp4', 'mov', 'avi', 'mkv', 'webm'],
+  // Text files are anything not in the above categories
+};
+
+// MIME type mappings
+const MIME_TYPES: Record<string, string> = {
+  // Images
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg',
+  'png': 'image/png',
+  'gif': 'image/gif',
+  'webp': 'image/webp',
+  'svg': 'image/svg+xml',
+  // Documents
+  'pdf': 'application/pdf',
+  // Audio
+  'mp3': 'audio/mpeg',
+  'wav': 'audio/wav',
+  'flac': 'audio/flac',
+  'ogg': 'audio/ogg',
+  'm4a': 'audio/mp4',
+  'aac': 'audio/aac',
+  // Video
+  'mp4': 'video/mp4',
+  'mov': 'video/quicktime',
+  'avi': 'video/x-msvideo',
+  'mkv': 'video/x-matroska',
+  'webm': 'video/webm',
+};
+
+function getFileCategory(extension: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' {
+  if (FILE_TYPES.image.includes(extension)) return 'image';
+  if (FILE_TYPES.pdf.includes(extension)) return 'pdf';
+  if (FILE_TYPES.audio.includes(extension)) return 'audio';
+  if (FILE_TYPES.video.includes(extension)) return 'video';
+  return 'text';
+}
+
+function getMimeType(extension: string, file: File): string {
+  // Prefer file.type if available, fall back to our mapping
+  if (file.type) return file.type;
+  return MIME_TYPES[extension] || 'application/octet-stream';
+}
+
 async function handleFileSelect(event: Event) {
   console.log('handleFileSelect called');
   const input = event.target as HTMLInputElement;
@@ -1818,29 +1909,39 @@ async function handleFileSelect(event: Event) {
   
   console.log(`Processing ${input.files.length} files`);
   for (const file of Array.from(input.files)) {
-    console.log(`Reading file: ${file.name} (${file.size} bytes)`);
+    console.log(`Reading file: ${file.name} (${file.size} bytes, type: ${file.type})`);
     
     const fileExtension = file.name.split('.').pop()?.toLowerCase() || '';
-    const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
-    const isImage = imageExtensions.includes(fileExtension);
+    const category = getFileCategory(fileExtension);
+    const mimeType = getMimeType(fileExtension, file);
+    const isBinary = category !== 'text';
     
     let content: string;
-    if (isImage) {
-      // Read image as base64
+    let encoding: 'base64' | 'text' = 'text';
+    
+    if (isBinary) {
+      // Read binary files (images, PDFs, audio, video) as base64
       content = await readFileAsBase64(file);
+      encoding = 'base64';
     } else {
       // Read text files as text
       content = await readFileAsText(file);
+      encoding = 'text';
     }
     
     attachments.value.push({
       fileName: file.name,
       fileType: fileExtension,
+      mimeType,
       fileSize: file.size,
       content,
-      isImage
+      encoding,
+      isImage: category === 'image',
+      isPdf: category === 'pdf',
+      isAudio: category === 'audio',
+      isVideo: category === 'video',
     });
-    console.log(`Added ${isImage ? 'image' : 'text'} attachment: ${file.name}`);
+    console.log(`Added ${category} attachment: ${file.name} (${mimeType})`);
   }
   
   console.log(`Total attachments: ${attachments.value.length}`);
@@ -1879,6 +1980,128 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function getAttachmentChipColor(attachment: any): string | undefined {
+  if (attachment.isPdf) return 'red-lighten-4';
+  if (attachment.isAudio) return 'purple-lighten-4';
+  if (attachment.isVideo) return 'blue-lighten-4';
+  return undefined; // Default chip color
+}
+
+// Drag and drop handlers
+function handleDragEnter(event: DragEvent) {
+  dragCounter++;
+  if (event.dataTransfer?.types.includes('Files')) {
+    isDraggingOver.value = true;
+  }
+}
+
+function handleDragOver(event: DragEvent) {
+  // Required to allow drop
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy';
+  }
+}
+
+function handleDragLeave(event: DragEvent) {
+  dragCounter--;
+  if (dragCounter === 0) {
+    isDraggingOver.value = false;
+  }
+}
+
+async function handleDrop(event: DragEvent) {
+  dragCounter = 0;
+  isDraggingOver.value = false;
+  
+  const files = event.dataTransfer?.files;
+  if (!files || files.length === 0) return;
+  
+  await processFiles(Array.from(files));
+}
+
+// Paste handler for images
+async function handlePaste(event: ClipboardEvent) {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+  
+  const filesToProcess: File[] = [];
+  
+  for (const item of Array.from(items)) {
+    // Check if it's a file (image, etc.)
+    if (item.kind === 'file') {
+      const file = item.getAsFile();
+      if (file) {
+        filesToProcess.push(file);
+      }
+    }
+  }
+  
+  if (filesToProcess.length > 0) {
+    // Prevent the default paste behavior for files
+    event.preventDefault();
+    await processFiles(filesToProcess);
+  }
+  // If no files, let the default text paste happen
+}
+
+// Shared file processing function
+async function processFiles(files: File[]) {
+  console.log(`Processing ${files.length} files from drag/drop or paste`);
+  
+  for (const file of files) {
+    console.log(`Processing file: ${file.name} (${file.size} bytes, type: ${file.type})`);
+    
+    const fileExtension = file.name.split('.').pop()?.toLowerCase() || '';
+    const category = getFileCategory(fileExtension);
+    const mimeType = getMimeType(fileExtension, file);
+    const isBinary = category !== 'text';
+    
+    // Check if file type is supported
+    const supportedExtensions = [
+      ...FILE_TYPES.image,
+      ...FILE_TYPES.pdf,
+      ...FILE_TYPES.audio,
+      ...FILE_TYPES.video,
+      'txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'java', 'cpp', 'c', 'h', 'hpp'
+    ];
+    
+    if (!supportedExtensions.includes(fileExtension) && !file.type.startsWith('image/')) {
+      console.log(`Unsupported file type: ${fileExtension}`);
+      continue;
+    }
+    
+    let content: string;
+    let encoding: 'base64' | 'text' = 'text';
+    
+    // For pasted images without extension, check MIME type
+    const isImageFromMime = file.type.startsWith('image/');
+    
+    if (isBinary || isImageFromMime) {
+      content = await readFileAsBase64(file);
+      encoding = 'base64';
+    } else {
+      content = await readFileAsText(file);
+      encoding = 'text';
+    }
+    
+    attachments.value.push({
+      fileName: file.name || `pasted-image-${Date.now()}.${file.type.split('/')[1] || 'png'}`,
+      fileType: fileExtension || file.type.split('/')[1] || 'png',
+      mimeType: mimeType || file.type,
+      fileSize: file.size,
+      content,
+      encoding,
+      isImage: category === 'image' || isImageFromMime,
+      isPdf: category === 'pdf',
+      isAudio: category === 'audio',
+      isVideo: category === 'video',
+    });
+    console.log(`Added ${category || 'image'} attachment: ${file.name} (${mimeType || file.type})`);
+  }
+  
+  console.log(`Total attachments: ${attachments.value.length}`);
 }
 
 async function archiveConversation(id: string) {
@@ -2698,5 +2921,36 @@ function formatDate(date: Date | string): string {
 .bookmark-item:hover {
   background-color: rgba(255, 255, 255, 0.1);
   opacity: 0.9;
+}
+
+/* Drop zone styles for drag-and-drop attachments */
+.input-drop-zone {
+  position: relative;
+  width: 100%;
+}
+
+/* Visual feedback when dragging over is handled by nested :deep selector below */
+
+.input-drop-zone.drop-zone-active :deep(.v-field) {
+  border-color: rgb(var(--v-theme-primary)) !important;
+  border-width: 2px !important;
+  background-color: rgba(var(--v-theme-primary), 0.05) !important;
+}
+
+.drop-zone-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(var(--v-theme-primary), 0.1);
+  border: 2px dashed rgb(var(--v-theme-primary));
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  pointer-events: none;
 }
 </style>

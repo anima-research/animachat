@@ -1168,22 +1168,18 @@ export class Database {
     await this.logUserEvent(conversation.userId, 'conversation_created', conversation);
     
     // Create default participants
-    // Get user's first name for the human participant
-    const user = await this.getUserById(userId);
-    const userName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || 'User';
-    
     if (format === 'standard' || !format) {
       // Standard format: fixed User and Assistant
-      await this.createParticipant(conversation.id, userId, userName, 'user');
-      await this.createParticipant(conversation.id, userId, 'Assistant', 'assistant', model, systemPrompt, settings);
+      await this.createParticipant(conversation.id, userId, 'H', 'user');
+      await this.createParticipant(conversation.id, userId, 'A', 'assistant', model, systemPrompt, settings);
     } else {
       // Prefill format: starts with default participants but can add more
       // Get model display name for assistant participant
       const modelLoader = ModelLoader.getInstance();
       const modelConfig = await modelLoader.getModelById(model);
-      const assistantName = modelConfig?.displayName || 'Assistant';
+      const assistantName = modelConfig?.displayName || 'A';
       
-      await this.createParticipant(conversation.id, userId, userName, 'user');
+      await this.createParticipant(conversation.id, userId, 'H', 'user');
       await this.createParticipant(conversation.id, userId, assistantName, 'assistant', model, systemPrompt, settings);
     }
 
@@ -1300,37 +1296,18 @@ export class Database {
     return true;
   }
 
-  async duplicateConversation(
-    conversationId: string, 
-    originalOwnerUserId: string, 
-    duplicateOwnerUserId: string,
-    options?: {
-      title?: string;
-      lastMessages?: number;
-      fromBranchId?: string;
-      includeSystemPrompt?: boolean;
-      includeSettings?: boolean;
-    }
-  ): Promise<Conversation | null> {
+  async duplicateConversation(conversationId: string, originalOwnerUserId: string, duplicateOwnerUserId: string): Promise<Conversation | null> {
     const original = await this.tryLoadAndVerifyConversation(conversationId, originalOwnerUserId);
     if (!original) return null;
     await this.loadUser(duplicateOwnerUserId);
 
-    const opts = {
-      title: options?.title || `${original.title} (Copy)`,
-      includeSystemPrompt: options?.includeSystemPrompt !== false,
-      includeSettings: options?.includeSettings !== false,
-      lastMessages: options?.lastMessages,
-      fromBranchId: options?.fromBranchId,
-    };
-
     // This will log the relevant user events for conversation metadata
     const duplicate = await this.createConversation(
       duplicateOwnerUserId,
-      opts.title,
+      `${original.title} (Copy)`,
       original.model,
-      opts.includeSystemPrompt ? original.systemPrompt : undefined,
-      opts.includeSettings ? original.settings : undefined,
+      original.systemPrompt,
+      original.settings,
       original.format,
       original.contextManagement ? JSON.parse(JSON.stringify(original.contextManagement)) : undefined
     );
@@ -1375,26 +1352,7 @@ export class Database {
     }
 
     // Copy messages
-    let messages = await this.getConversationMessages(conversationId, originalOwnerUserId);
-    
-    // If lastMessages is specified, trim to only the last N messages from the active path
-    if (opts.lastMessages && opts.lastMessages > 0 && messages.length > opts.lastMessages) {
-      // Get only the active path messages (following activeBranchId)
-      // Then take the last N
-      const activePathMessages = messages.filter(m => {
-        const activeBranch = m.branches.find(b => b.id === m.activeBranchId);
-        return activeBranch !== undefined;
-      });
-      
-      // Take the last N messages
-      messages = activePathMessages.slice(-opts.lastMessages);
-      
-      // Reindex the order
-      messages = messages.map((m, index) => ({ ...m, order: index }));
-      
-      console.log(`[Duplicate] Trimmed to last ${opts.lastMessages} messages (from ${activePathMessages.length})`);
-    }
-    
+    const messages = await this.getConversationMessages(conversationId, originalOwnerUserId);
     const oldMessageBranchIdToNewMessageBranchId : Map<string, string> = new Map();
     var newMessages : Array<Message> = [];
     for (const message of messages) {
@@ -1494,6 +1452,8 @@ export class Database {
           fileSize: att.fileSize || att.content.length,
           fileType: att.fileType,
           content: att.content,
+          encoding: (att as any).encoding || 'base64' as const,
+          mimeType: (att as any).mimeType,
           createdAt: new Date()
         })) : undefined
       }],
@@ -1572,6 +1532,8 @@ export class Database {
         fileSize: att.fileSize || att.content.length,
         fileType: att.fileType,
         content: att.content,
+        encoding: (att as any).encoding || 'base64' as const,
+        mimeType: (att as any).mimeType,
         createdAt: new Date()
       })) : undefined
     };

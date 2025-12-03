@@ -259,6 +259,16 @@
             :max="200000"
           />
           
+          <!-- Model-Specific Settings -->
+          <ModelSpecificSettings
+            v-if="selectedParticipantConfigurableSettings.length > 0"
+            v-model="selectedParticipantModelSpecific"
+            :settings="selectedParticipantConfigurableSettings"
+            :show-divider="true"
+            :show-header="true"
+            header-text="Model-Specific Settings"
+          />
+          
           <v-divider class="my-4" />
           
           <h4 class="text-subtitle-1 mb-3">Context Management</h4>
@@ -369,10 +379,11 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, PropType } from 'vue';
-import type { Participant, Model } from '@deprecated-claude/shared';
+import type { Participant, Model, ConfigurableSetting } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { get as _get, set as _set, cloneDeep, isEqual } from 'lodash-es';
 import ModelSelector from './ModelSelector.vue';
+import ModelSpecificSettings from './ModelSpecificSettings.vue';
 
 const props = defineProps({
   modelValue: {
@@ -502,6 +513,24 @@ function updateContextOverrideStrategy(strategy: string) {
   // reset to default values for new strategy (this uses the assigned strategy when looking up)
   setParticipantField("contextManagement", getDefaultContextOverride(strategy));
 }
+
+// Model-specific settings for the selected participant
+const selectedParticipantModel = computed(() => {
+  const participant = participants.value.find(p => p.id === selectedParticipantId.value);
+  if (!participant || participant.type !== 'assistant') return null;
+  return props.models.find(m => m.id === participant.model) || null;
+});
+
+const selectedParticipantConfigurableSettings = computed<ConfigurableSetting[]>(() => {
+  return (selectedParticipantModel.value?.configurableSettings as ConfigurableSetting[]) || [];
+});
+
+const selectedParticipantModelSpecific = computed({
+  get: () => getParticipantSettingsField('modelSpecific', {}) as Record<string, unknown>,
+  set: (value: Record<string, unknown>) => {
+    setParticipantSettingsField('modelSpecific', value);
+  },
+});
 
 function getParticipantPlaceholder(participant: any) {
   if (participant.name === '') {

@@ -398,10 +398,11 @@ export class AnthropicService {
           console.log(`Processing ${activeBranch.attachments.length} attachments for user message`);
           for (const attachment of activeBranch.attachments) {
             const isImage = this.isImageAttachment(attachment.fileName);
+            const isPdf = this.isPdfAttachment(attachment.fileName);
+            const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
             
             if (isImage) {
               // Add image as a separate content block for Claude API
-              const mediaType = this.getImageMediaType(attachment.fileName);
               contentParts.push({
                 type: 'image',
                 source: {
@@ -411,6 +412,18 @@ export class AnthropicService {
                 }
               });
               console.log(`Added image attachment: ${attachment.fileName} (${mediaType})`);
+            } else if (isPdf) {
+              // Add PDF as a document content block for Claude API
+              // Claude supports PDFs natively via the document type
+              contentParts.push({
+                type: 'document',
+                source: {
+                  type: 'base64',
+                  media_type: 'application/pdf',
+                  data: attachment.content
+                }
+              });
+              console.log(`Added PDF attachment: ${attachment.fileName}`);
             } else {
               // Append text attachments to the text content
               contentParts[0].text += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
@@ -552,16 +565,54 @@ export class AnthropicService {
     return imageExtensions.includes(extension);
   }
   
-  private getImageMediaType(fileName: string): string {
+  private isPdfAttachment(fileName: string): boolean {
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    return extension === 'pdf';
+  }
+  
+  private isAudioAttachment(fileName: string): boolean {
+    const audioExtensions = ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'webm'];
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    return audioExtensions.includes(extension);
+  }
+  
+  private isVideoAttachment(fileName: string): boolean {
+    const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    return videoExtensions.includes(extension);
+  }
+  
+  private getMediaType(fileName: string, mimeType?: string): string {
+    // Use provided mimeType if available
+    if (mimeType) return mimeType;
+    
     const extension = fileName.split('.').pop()?.toLowerCase() || '';
     const mediaTypes: { [key: string]: string } = {
+      // Images
       'jpg': 'image/jpeg',
       'jpeg': 'image/jpeg',
       'png': 'image/png',
       'gif': 'image/gif',
-      'webp': 'image/webp'
+      'webp': 'image/webp',
+      // Documents
+      'pdf': 'application/pdf',
+      // Audio
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'flac': 'audio/flac',
+      'ogg': 'audio/ogg',
+      'm4a': 'audio/mp4',
+      'aac': 'audio/aac',
+      // Video
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+      'webm': 'video/webm',
     };
-    return mediaTypes[extension] || 'image/jpeg';
+    return mediaTypes[extension] || 'application/octet-stream';
+  }
+  
+  private getImageMediaType(fileName: string): string {
+    return this.getMediaType(fileName);
   }
 
   // Demo mode simulation

@@ -4,6 +4,7 @@ import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
 import { OpenRouterService } from './openrouter.js';
 import { OpenAICompatibleService } from './openai-compatible.js';
+import { GeminiService } from './gemini.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { Logger } from '../utils/logger.js';
@@ -87,7 +88,17 @@ export class InferenceService {
         apiSystemPrompt = undefined; // System prompt is included in messages for OpenRouter
         break;
       default:
-        throw new Error(`Unknown provider: ${model.provider}`);
+        // Handle 'google' and any other providers
+        if ((model.provider as string) === 'google') {
+          // For prompt building, we don't need actual API keys
+          // Gemini format is handled internally by the service
+          apiMessages = formattedMessages.map(m => ({
+            role: m.branches?.[0]?.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.branches?.[0]?.content || '' }]
+          }));
+        } else {
+          throw new Error(`Unknown provider: ${model.provider}`);
+        }
     }
     
     return {
@@ -383,6 +394,57 @@ export class InferenceService {
         finalOnChunk,
         stopSequences
       );
+    } else if ((model.provider as string) === 'google') {
+      if (!selectedKey) {
+        throw new Error('No API key available for Google');
+      }
+      const geminiService = new GeminiService(
+        this.db,
+        selectedKey.credentials.apiKey
+      );
+      
+      // Pass model-specific settings - merge with model defaults
+      const userModelSpecific = (effectiveSettings as any).modelSpecific || {};
+      
+      // Apply defaults from model's configurableSettings if not set by user
+      const modelDefaults: Record<string, any> = {};
+      if ((model as any).configurableSettings) {
+        for (const setting of (model as any).configurableSettings) {
+          if (userModelSpecific[setting.key] === undefined) {
+            modelDefaults[setting.key] = setting.default;
+          }
+        }
+      }
+      
+      const geminiSettings = {
+        ...effectiveSettings,
+        modelSpecific: { ...modelDefaults, ...userModelSpecific },
+      };
+      
+      console.log(`[Gemini] Model-specific settings:`, JSON.stringify(geminiSettings.modelSpecific, null, 2));
+      
+      // Auto-truncate context if enabled (check user setting first, then model capability)
+      let messagesToSend = formattedMessages;
+      // User can override via modelSpecific.autoTruncateContext setting
+      const userAutoTruncate = geminiSettings.modelSpecific?.autoTruncateContext;
+      const modelAutoTruncate = (model as any).capabilities?.autoTruncateContext;
+      // Default to true if user hasn't set it but model capability is true
+      const shouldAutoTruncate = userAutoTruncate !== undefined ? userAutoTruncate : modelAutoTruncate;
+      console.log(`[Gemini] autoTruncateContext: user=${userAutoTruncate}, model=${modelAutoTruncate}, effective=${shouldAutoTruncate}, contextWindow: ${model.contextWindow}`);
+      if (shouldAutoTruncate && model.contextWindow) {
+        console.log(`[Gemini] Truncating context to fit ${model.contextWindow} tokens...`);
+        messagesToSend = this.truncateMessagesToFit(formattedMessages, model.contextWindow, systemPrompt);
+        console.log(`[Gemini] After truncation: ${messagesToSend.length} messages (was ${formattedMessages.length})`);
+      }
+      
+      usageResult = await geminiService.streamCompletion(
+        model.providerModelId,
+        messagesToSend,
+        systemPrompt,
+        geminiSettings,
+        finalOnChunk,
+        stopSequences
+      );
     } else {
       throw new Error(`Unsupported provider: ${model.provider}`);
     }
@@ -417,6 +479,129 @@ export class InferenceService {
       return activeBranch?.content || '';
     }).join(' ');
     return Math.ceil(text.length / 4);
+  }
+
+  /**
+   * Truncate messages to fit within context window, keeping messages from the tail
+   * Uses message boundaries as separators (doesn't split messages)
+   */
+  private truncateMessagesToFit(messages: any[], maxContextTokens: number, systemPrompt?: string): any[] {
+    // Reserve some tokens for system prompt and output
+    const systemPromptTokens = systemPrompt ? Math.ceil(systemPrompt.length / 4) : 0;
+    const outputReserve = 8192; // Reserve some for output
+    const availableTokens = maxContextTokens - systemPromptTokens - outputReserve;
+    
+    console.log(`[Truncate] maxContext=${maxContextTokens}, systemPrompt=${systemPromptTokens}, outputReserve=${outputReserve}, available=${availableTokens}`);
+    
+    if (availableTokens <= 0) {
+      console.log(`[Truncate] Context too tight, returning last message only`);
+      return messages.slice(-1); // Return at least the last message
+    }
+    
+    // Estimate tokens for each message (rough estimate: 4 chars per token)
+    const messageTokens = messages.map((msg, idx) => {
+      let content = '';
+      let hasMedia = false;
+      
+      // Handle our internal Message format (with branches)
+      if (msg.branches && msg.activeBranchId) {
+        const activeBranch = msg.branches.find((b: any) => b.id === msg.activeBranchId);
+        if (activeBranch) {
+          content = activeBranch.content || '';
+          // Check for attachments in the branch
+          if (activeBranch.attachments && activeBranch.attachments.length > 0) {
+            for (const att of activeBranch.attachments) {
+              if (att.isImage || att.mimeType?.startsWith('image/')) {
+                hasMedia = true;
+                content += 'x'.repeat(400000); // ~100k tokens per image
+              } else if (att.isAudio || att.mimeType?.startsWith('audio/')) {
+                hasMedia = true;
+                content += 'x'.repeat(200000); // ~50k tokens for audio
+              } else if (att.isVideo || att.mimeType?.startsWith('video/')) {
+                hasMedia = true;
+                content += 'x'.repeat(400000); // ~100k tokens for video
+              } else if (att.isPdf || att.mimeType === 'application/pdf') {
+                hasMedia = true;
+                content += 'x'.repeat(100000); // ~25k tokens for PDF
+              }
+            }
+          }
+          // Check for contentBlocks with images
+          if (activeBranch.contentBlocks) {
+            for (const block of activeBranch.contentBlocks) {
+              if (block.type === 'image') {
+                hasMedia = true;
+                content += 'x'.repeat(400000);
+              }
+            }
+          }
+        }
+      } else if (typeof msg.content === 'string') {
+        // OpenAI/Anthropic format - simple string content
+        content = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        // OpenAI/Anthropic format - multimodal content array
+        for (const part of msg.content) {
+          if (part.type === 'text') {
+            content += part.text || '';
+          } else if (part.type === 'image_url' || part.type === 'image' || part.inlineData) {
+            hasMedia = true;
+            content += 'x'.repeat(400000); // ~100k tokens per image
+          } else if (part.type === 'audio' || part.type === 'video') {
+            hasMedia = true;
+            content += 'x'.repeat(200000);
+          }
+        }
+      } else if (msg.parts) {
+        // Gemini format
+        for (const part of msg.parts) {
+          if (part.text) {
+            content += part.text;
+          } else if (part.inlineData) {
+            hasMedia = true;
+            content += 'x'.repeat(400000);
+          }
+        }
+      }
+      
+      const tokens = Math.ceil(content.length / 4);
+      if (hasMedia || tokens > 10000) {
+        console.log(`[Truncate] Message ${idx}: ~${tokens} tokens${hasMedia ? ' (has media)' : ''}`);
+      }
+      return tokens;
+    });
+    
+    const totalTokens = messageTokens.reduce((a, b) => a + b, 0);
+    console.log(`[Truncate] Total estimated tokens: ${totalTokens}`);
+    
+    if (totalTokens <= availableTokens) {
+      console.log(`[Truncate] Context fits: ${totalTokens} tokens <= ${availableTokens} available`);
+      return messages;
+    }
+    
+    // Truncate from the head (keep messages from tail)
+    let keptTokens = 0;
+    let startIdx = messages.length;
+    
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (keptTokens + messageTokens[i] > availableTokens) {
+        break;
+      }
+      keptTokens += messageTokens[i];
+      startIdx = i;
+    }
+    
+    // Ensure we keep at least one message
+    if (startIdx >= messages.length) {
+      startIdx = messages.length - 1;
+    }
+    
+    const truncatedMessages = messages.slice(startIdx);
+    const droppedCount = startIdx;
+    
+    console.log(`[Truncate] 🔄 Auto-truncated: dropped ${droppedCount} messages, kept ${truncatedMessages.length} (~${keptTokens} tokens)`);
+    
+    return truncatedMessages;
   }
 
   private async getUserApiKey(userId: string, provider: string): Promise<ApiKey | undefined> {

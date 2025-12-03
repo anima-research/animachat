@@ -310,6 +310,16 @@
               </template>
             </v-slider>
           </div>
+          
+          <!-- Model-Specific Settings (for models with configurableSettings) -->
+          <ModelSpecificSettings
+            v-if="modelConfigurableSettings.length > 0"
+            v-model="modelSpecificValues"
+            :settings="modelConfigurableSettings"
+            :show-divider="true"
+            :show-header="true"
+            header-text="Advanced Model Settings"
+          />
         </div>
         
         <v-divider class="my-4" />
@@ -469,9 +479,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import type { Conversation, Model, Participant } from '@deprecated-claude/shared';
+import type { Conversation, Model, Participant, ConfigurableSetting } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
 import ModelSelector from './ModelSelector.vue';
+import ModelSpecificSettings from './ModelSpecificSettings.vue';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
 
@@ -546,8 +557,24 @@ const settings = ref<any>({
     temperature: 1.0,
     maxTokens: 1024,
     topP: undefined,
-    topK: undefined
+    topK: undefined,
+    modelSpecific: {},
   }
+});
+
+// Model-specific settings computed properties
+const modelConfigurableSettings = computed<ConfigurableSetting[]>(() => {
+  return (selectedModel.value?.configurableSettings as ConfigurableSetting[]) || [];
+});
+
+const modelSpecificValues = computed({
+  get: () => settings.value.settings?.modelSpecific || {},
+  set: (value: Record<string, unknown>) => {
+    settings.value.settings = {
+      ...settings.value.settings,
+      modelSpecific: value,
+    };
+  },
 });
 
 const localParticipants = ref<Participant[]>([]);
@@ -733,11 +760,20 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
 watch(() => settings.value.model, (modelId) => {
   const model = props.models.find(m => m.id === modelId);
   if (model) {
+    // Build default modelSpecific settings from configurableSettings
+    const modelSpecificDefaults: Record<string, unknown> = {};
+    if (model.configurableSettings) {
+      for (const setting of model.configurableSettings as ConfigurableSetting[]) {
+        modelSpecificDefaults[setting.key] = setting.default;
+      }
+    }
+    
     settings.value.settings = {
       temperature: model.settings.temperature.default,
       maxTokens: model.settings.maxTokens.default,
       topP: undefined,
-      topK: undefined
+      topK: undefined,
+      modelSpecific: modelSpecificDefaults,
     };
     
     // Disable topP and topK by default when changing models
@@ -786,12 +822,17 @@ function cancel() {
 }
 
 function save() {
+  // Include modelSpecific settings if they exist and have values
+  const modelSpecific = settings.value.settings?.modelSpecific;
+  const hasModelSpecific = modelSpecific && Object.keys(modelSpecific).length > 0;
+  
   const finalSettings = {
     temperature: settings.value.settings.temperature,
     maxTokens: settings.value.settings.maxTokens,
     ...(topPEnabled.value && settings.value.settings.topP !== undefined && { topP: settings.value.settings.topP }),
     ...(topKEnabled.value && settings.value.settings.topK !== undefined && { topK: settings.value.settings.topK }),
-    ...(thinkingEnabled.value && { thinking: { enabled: true, budgetTokens: thinkingBudgetTokens.value } })
+    ...(thinkingEnabled.value && { thinking: { enabled: true, budgetTokens: thinkingBudgetTokens.value } }),
+    ...(hasModelSpecific && { modelSpecific })
   };
   
   // Debug log
