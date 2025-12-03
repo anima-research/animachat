@@ -79,34 +79,20 @@
             </div>
           </td>
           <td>
-            <v-select
+            <ModelSelector
               v-if="participant.type === 'assistant'"
               :model-value="participant.model"
               @update:model-value="(value) => updateParticipantModel(participant, value)"
-              :items="activeModels"
-              item-title="displayName"
-              item-value="id"
+              :models="activeModels"
               density="compact"
               variant="plain"
               hide-details
-              single-line
+              :show-icon="false"
+              :show-provider-filter="false"
+              label=""
+              placeholder="Select model..."
               class="table-input"
-            >
-              <template v-slot:selection="{ item }">
-                <span :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`">
-                  {{ item.raw.displayName }}
-                </span>
-              </template>
-              <template v-slot:item="{ props, item }">
-                <v-list-item v-bind="props">
-                  <template v-slot:title>
-                    <span :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`">
-                      {{ item.raw.displayName }}
-                    </span>
-                  </template>
-                </v-list-item>
-              </template>
-            </v-select>
+            />
             <span v-else class="text-disabled">—</span>
           </td>
           <td>
@@ -174,32 +160,17 @@
             </template>
           </v-text-field>
           
-          <v-select
+          <ModelSelector
             v-if="newParticipant.type === 'assistant'"
             v-model="newParticipant.model"
-            :items="activeModels"
-            item-title="displayName"
-            item-value="id"
+            :models="activeModels"
             label="Model"
             variant="outlined"
             density="compact"
-            @update:model-value="onModelSelected"
-          >
-            <template v-slot:selection="{ item }">
-              <span :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`">
-                {{ item.raw.displayName }}
-              </span>
-            </template>
-            <template v-slot:item="{ props, item }">
-              <v-list-item v-bind="props">
-                <template v-slot:title>
-                  <span :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`">
-                    {{ item.raw.displayName }}
-                  </span>
-                </template>
-              </v-list-item>
-            </template>
-          </v-select>
+            :show-icon="true"
+            :show-provider-filter="true"
+            @model-selected="onModelSelected"
+          />
         </v-card-text>
         
         <v-card-actions>
@@ -401,6 +372,7 @@ import { ref, computed, watch, PropType } from 'vue';
 import type { Participant, Model } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { get as _get, set as _set, cloneDeep, isEqual } from 'lodash-es';
+import ModelSelector from './ModelSelector.vue';
 
 const props = defineProps({
   modelValue: {
@@ -539,10 +511,13 @@ function getParticipantPlaceholder(participant: any) {
 }
 
 function addParticipant() {
+  const defaultModel = activeModels.value[0] || props.models[0];
+  const defaultModelName = defaultModel?.shortName || defaultModel?.displayName || '';
+  
   newParticipant.value = {
     type: 'assistant',
-    name: '',
-    model: activeModels.value[0]?.id || props.models[0]?.id || ''
+    name: defaultModelName,
+    model: defaultModel?.id || ''
   };
   showAddDialog.value = true;
 }
@@ -635,11 +610,31 @@ function updateParticipantModel(participant: any, newModelId: string) {
     return;
   }
   
+  // Get the new model's display name for auto-fill
+  const newModel = props.models.find(m => m.id === newModelId);
+  const newModelName = newModel?.shortName || newModel?.displayName || '';
+  
+  // Check if we should auto-fill the name:
+  // - Name is empty, OR
+  // - Name matches the old model's name (shortName or displayName)
+  const oldModel = props.models.find(m => m.id === participant.model);
+  const oldModelNames = [
+    oldModel?.shortName,
+    oldModel?.displayName,
+    oldModel?.name
+  ].filter(Boolean);
+  
+  const shouldAutoFillName = 
+    !participant.name || 
+    participant.name === '' ||
+    oldModelNames.includes(participant.name);
+  
   // Create a new array with the updated participant
   const updated = cloneDeep(list);
   updated[idx] = {
     ...updated[idx],
-    model: newModelId
+    model: newModelId,
+    ...(shouldAutoFillName && newModelName ? { name: newModelName } : {})
   };
   
   console.log('  ✅ Emitting updated participants:', updated);
@@ -665,11 +660,26 @@ function updateParticipantName(participant: any, newName: string) {
   emit('update:modelValue', updated);
 }
 
-function onModelSelected(modelId: string) {
-  // If the name is empty or hasn't been customized, set it to the model's shortName
-  if (!newParticipant.value.name || newParticipant.value.name === '') {
-    const model = props.models.find(m => m.id === modelId);
-    if (model) {
+function onModelSelected(model: Model) {
+  // Auto-fill the name with the model's shortName or displayName
+  // This is triggered when a model is selected in the "Add Participant" dialog
+  if (model) {
+    // Check if the current name is empty or matches the previous model's name
+    const currentName = newParticipant.value.name;
+    const previousModelId = newParticipant.value.model;
+    const previousModel = props.models.find(m => m.id === previousModelId);
+    const previousModelNames = [
+      previousModel?.shortName,
+      previousModel?.displayName,
+      previousModel?.name
+    ].filter(Boolean);
+    
+    const shouldAutoFillName = 
+      !currentName || 
+      currentName === '' ||
+      previousModelNames.includes(currentName);
+    
+    if (shouldAutoFillName) {
       newParticipant.value.name = model.shortName || model.displayName;
     }
   }

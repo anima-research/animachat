@@ -1168,18 +1168,22 @@ export class Database {
     await this.logUserEvent(conversation.userId, 'conversation_created', conversation);
     
     // Create default participants
+    // Get user's first name for the human participant
+    const user = await this.getUserById(userId);
+    const userName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || 'User';
+    
     if (format === 'standard' || !format) {
       // Standard format: fixed User and Assistant
-      await this.createParticipant(conversation.id, userId, 'H', 'user');
-      await this.createParticipant(conversation.id, userId, 'A', 'assistant', model, systemPrompt, settings);
+      await this.createParticipant(conversation.id, userId, userName, 'user');
+      await this.createParticipant(conversation.id, userId, 'Assistant', 'assistant', model, systemPrompt, settings);
     } else {
       // Prefill format: starts with default participants but can add more
       // Get model display name for assistant participant
       const modelLoader = ModelLoader.getInstance();
       const modelConfig = await modelLoader.getModelById(model);
-      const assistantName = modelConfig?.displayName || 'A';
+      const assistantName = modelConfig?.displayName || 'Assistant';
       
-      await this.createParticipant(conversation.id, userId, 'H', 'user');
+      await this.createParticipant(conversation.id, userId, userName, 'user');
       await this.createParticipant(conversation.id, userId, assistantName, 'assistant', model, systemPrompt, settings);
     }
 

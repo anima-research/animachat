@@ -37,12 +37,10 @@
           </template>
         </v-select>
         
-        <v-select
+        <ModelSelector
           v-if="settings.format === 'standard'"
           v-model="settings.model"
-          :items="activeModels"
-          item-title="displayName"
-          item-value="id"
+          :models="activeModels"
           label="Model"
           variant="outlined"
           density="compact"
@@ -473,7 +471,20 @@
 import { ref, computed, watch } from 'vue';
 import type { Conversation, Model, Participant } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
+import ModelSelector from './ModelSelector.vue';
 import { api } from '@/services/api';
+import { useStore } from '@/store';
+
+const store = useStore();
+
+// Get user's first name for default participant name
+const userFirstName = computed(() => {
+  const user = store.state.user;
+  if (!user) return 'User';
+  if (user.name) return user.name.split(' ')[0];
+  if (user.email) return user.email.split('@')[0];
+  return 'User';
+});
 
 const props = defineProps<{
   modelValue: boolean;
@@ -658,7 +669,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             id: 'temp-user',
             conversationId: props.conversation.id,
             type: 'user',
-            name: 'User',
+            name: userFirstName.value,
             isActive: true
           },
           {
@@ -674,8 +685,22 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             }
           }
         ];
+      } else {
+        // Update existing participants with generic names ("H", "A", "User", "Assistant")
+        // to use more meaningful names
+        localParticipants.value = localParticipants.value.map(p => {
+          if (p.type === 'user' && (p.name === 'H' || p.name === 'User')) {
+            return { ...p, name: userFirstName.value };
+          }
+          if (p.type === 'assistant' && (p.name === 'A' || p.name === 'Assistant')) {
+            // Get this assistant's model name, or fall back to the conversation model
+            const assistantModel = props.models.find(m => m.id === p.model);
+            const assistantModelName = assistantModel?.shortName || assistantModel?.displayName || modelName;
+            return { ...p, name: assistantModelName };
+          }
+          return p;
+        });
       }
-      // Don't modify existing participants - let them keep their original data
     } catch (error) {
       console.error('Failed to load participants:', error);
       // Create default participants
@@ -684,7 +709,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
           id: 'temp-user',
           conversationId: props.conversation?.id || '',
           type: 'user',
-          name: 'User',
+          name: userFirstName.value,
           isActive: true
         },
         {
