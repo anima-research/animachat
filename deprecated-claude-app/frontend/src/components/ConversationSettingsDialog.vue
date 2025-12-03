@@ -555,7 +555,7 @@ const settings = ref<any>({
   systemPrompt: '',
   settings: {
     temperature: 1.0,
-    maxTokens: 1024,
+    maxTokens: 8192,
     topP: undefined,
     topK: undefined,
     modelSpecific: {},
@@ -708,7 +708,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             isActive: true,
             settings: {
               temperature: 1.0,
-              maxTokens: 1024
+              maxTokens: 8192
             }
           }
         ];
@@ -748,7 +748,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
           isActive: true,
           settings: {
             temperature: 1.0,
-            maxTokens: 1024
+            maxTokens: 8192
           }
         }
       ];

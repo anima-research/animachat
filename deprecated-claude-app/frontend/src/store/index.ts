@@ -201,7 +201,7 @@ export function createStore(): {
           format,
           settings: {
             temperature: 1.0,
-            maxTokens: 1024
+            maxTokens: 8192 // Higher default for models with internal thinking
             // topP and topK are intentionally omitted to use API defaults
           }
         });

@@ -485,7 +485,7 @@ function setParticipantSettingsField(settingsFieldName: string, value: any) {
   var currentSettings = cloneDeep(getParticipantField("settings", {
     // default settings if unspecified
     temperature: 1.0,
-    maxTokens: 1024
+    maxTokens: 8192 // Higher default for models with internal thinking
   }));
   
   _set(currentSettings, settingsFieldName, value);
@@ -565,7 +565,7 @@ function confirmAddParticipant() {
     participant.systemPrompt = '';
     participant.settings = {
       temperature: 1.0,
-      maxTokens: 1024
+      maxTokens: 8192 // Higher default for models with internal thinking
     };
   }
   

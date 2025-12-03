@@ -1675,7 +1675,7 @@ async function triggerModelResponse(model: Model) {
           model: model.id,
           settings: {
             temperature: 1.0,
-            maxTokens: 1024
+            maxTokens: 8192
           }
         })
       });
