@@ -328,7 +328,8 @@ export type Bookmark = z.infer<typeof BookmarkSchema>;
 // Content block types for messages
 export const TextContentBlockSchema = z.object({
   type: z.literal('text'),
-  text: z.string()
+  text: z.string(),
+  thoughtSignature: z.string().optional() // Gemini 3 Pro thought signature for multi-turn
 });
 
 export const ThinkingContentBlockSchema = z.object({

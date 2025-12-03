@@ -18,6 +18,7 @@ interface GeminiPart {
     mimeType: string;
     data: string; // base64
   };
+  thought_signature?: string; // Required for Gemini 3 Pro multi-turn
 }
 
 interface GeminiContent {
@@ -34,6 +35,7 @@ interface GeminiResponse {
           mimeType: string;
           data: string;
         };
+        thought_signature?: string;
       }>;
       role: string;
     };
@@ -59,6 +61,7 @@ interface GeminiStreamChunk {
           mimeType: string;
           data: string;
         };
+        thought_signature?: string;
       }>;
     };
     finishReason?: string;
@@ -196,6 +199,8 @@ export class GeminiService {
       let usage: any = undefined;
       
       let chunkCount = 0;
+      let lastThoughtSignature: string | undefined;
+      
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
@@ -230,6 +235,12 @@ export class GeminiService {
                   if (part.text) {
                     fullContent += part.text;
                     await onChunk(part.text, false, contentBlocks.length > 0 ? contentBlocks : undefined);
+                  }
+                  
+                  // Capture thought_signature from Gemini 3 Pro
+                  if (part.thought_signature) {
+                    lastThoughtSignature = part.thought_signature;
+                    console.log(`[Gemini API] Captured thought_signature: ${part.thought_signature.substring(0, 50)}...`);
                   }
                   
                   if (part.inlineData) {
@@ -277,14 +288,28 @@ export class GeminiService {
         }
       }
       
-      // Add text content block if we have text
+      // Add text content block if we have text (with thought_signature if present)
       if (fullContent) {
+        const textBlock: any = {
+          type: 'text',
+          text: fullContent,
+        };
+        if (lastThoughtSignature) {
+          textBlock.thoughtSignature = lastThoughtSignature;
+          console.log(`[Gemini API] Storing thought_signature in text content block`);
+        }
         // Insert text block at the beginning if we also have images
         if (hasImageOutput) {
-          contentBlocks.unshift({
-            type: 'text',
-            text: fullContent,
-          } as ContentBlock);
+          contentBlocks.unshift(textBlock as ContentBlock);
+        } else {
+          // Add text block for storing thought_signature even without images
+          contentBlocks.push(textBlock as ContentBlock);
+        }
+      } else if (lastThoughtSignature && contentBlocks.length > 0) {
+        // If no text but we have a signature, add it to the first content block if it's text
+        const firstBlock = contentBlocks[0] as any;
+        if (firstBlock && firstBlock.type === 'text') {
+          firstBlock.thoughtSignature = lastThoughtSignature;
         }
       }
       
@@ -431,9 +456,24 @@ export class GeminiService {
       
       const parts: GeminiPart[] = [];
       
-      // Add text content
+      // Check for thought_signature in content blocks (for model responses)
+      let thoughtSignature: string | undefined;
+      if (activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
+        for (const block of activeBranch.contentBlocks) {
+          if (block.type === 'text' && 'thoughtSignature' in block && (block as any).thoughtSignature) {
+            thoughtSignature = (block as any).thoughtSignature;
+            console.log(`[Gemini] Found thought_signature in history for ${activeBranch.role} message`);
+          }
+        }
+      }
+      
+      // Add text content with thought_signature if present
       if (activeBranch.content) {
-        parts.push({ text: activeBranch.content });
+        const textPart: GeminiPart = { text: activeBranch.content };
+        if (thoughtSignature) {
+          textPart.thought_signature = thoughtSignature;
+        }
+        parts.push(textPart);
       }
       
       // Handle attachments
@@ -452,7 +492,8 @@ export class GeminiService {
           } else {
             // For unsupported types, append as text
             parts[0] = {
-              text: (parts[0]?.text || '') + `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`
+              text: (parts[0]?.text || '') + `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`,
+              thought_signature: parts[0]?.thought_signature // Preserve thought_signature
             };
           }
         }
