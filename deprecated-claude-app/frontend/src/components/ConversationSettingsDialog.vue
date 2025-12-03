@@ -97,9 +97,16 @@
             class="mt-2"
           >
             <template v-slot:append-inner>
-              <v-tooltip location="top">
+              <v-tooltip location="top" open-on-click open-on-focus>
                 <template v-slot:activator="{ props }">
-                  <v-icon v-bind="props" size="small">
+                  <v-icon
+                    v-bind="props"
+                    size="small"
+                    class="tooltip-icon"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Initial message help"
+                  >
                     mdi-help-circle-outline
                   </v-icon>
                 </template>
@@ -122,9 +129,16 @@
           >
             <template v-slot:label>
               Temperature
-              <v-tooltip location="top">
+              <v-tooltip location="top" open-on-click open-on-focus>
                 <template v-slot:activator="{ props }">
-                  <v-icon v-bind="props" size="small" class="ml-1">
+                  <v-icon
+                    v-bind="props"
+                    size="small"
+                    class="ml-1 tooltip-icon"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Temperature help"
+                  >
                     mdi-help-circle-outline
                   </v-icon>
                 </template>
@@ -145,9 +159,16 @@
           >
             <template v-slot:label>
               Max Tokens
-              <v-tooltip location="top">
+              <v-tooltip location="top" open-on-click open-on-focus>
                 <template v-slot:activator="{ props }">
-                  <v-icon v-bind="props" size="small" class="ml-1">
+                  <v-icon
+                    v-bind="props"
+                    size="small"
+                    class="ml-1 tooltip-icon"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Max tokens help"
+                  >
                     mdi-help-circle-outline
                   </v-icon>
                 </template>
@@ -175,9 +196,16 @@
             >
               <template v-slot:label>
                 Top P
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small" class="ml-1">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="ml-1 tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Top P help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -206,9 +234,16 @@
             >
               <template v-slot:label>
                 Top K
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small" class="ml-1">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="ml-1 tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Top K help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -220,24 +255,32 @@
           
           <!-- Extended Thinking (if supported) -->
           <div v-if="selectedModel?.supportsThinking" class="mt-2">
-            <v-checkbox
-              v-model="thinkingEnabled"
-              label="Enable Extended Thinking"
-              density="compact"
-              hide-details
-            >
-              <template v-slot:label>
-                Enable Extended Thinking
-                <v-tooltip location="top">
-                  <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small" class="ml-1">
+            <div class="thinking-toggle-row">
+              <v-checkbox
+                v-model="thinkingEnabled"
+                label="Enable Extended Thinking"
+                density="compact"
+                hide-details
+              />
+              <v-tooltip location="top" open-on-click open-on-focus :close-on-content-click="false">
+                <template v-slot:activator="{ props }">
+                  <button
+                    class="tooltip-icon-button"
+                    type="button"
+                    v-bind="props"
+                    aria-label="Extended thinking help"
+                    @click.stop="props.onClick && props.onClick($event)"
+                    @mousedown.stop
+                    @keydown.stop.prevent="props.onKeydown && props.onKeydown($event)"
+                  >
+                    <v-icon size="small" class="tooltip-icon">
                       mdi-help-circle-outline
                     </v-icon>
-                  </template>
-                  Extended thinking allows Claude to show its step-by-step reasoning process before delivering the final answer.
-                </v-tooltip>
-              </template>
-            </v-checkbox>
+                  </button>
+                </template>
+                Extended thinking allows Claude to show its step-by-step reasoning process before delivering the final answer.
+              </v-tooltip>
+            </div>
             
             <v-slider
               v-if="thinkingEnabled"
@@ -251,9 +294,16 @@
             >
               <template v-slot:label>
                 Thinking Budget (tokens)
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small" class="ml-1">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="ml-1 tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Thinking budget help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -305,9 +355,16 @@
               class="mb-3"
             >
               <template v-slot:append-inner>
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Rolling max tokens help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -327,9 +384,16 @@
               class="mb-3"
             >
               <template v-slot:append-inner>
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Grace tokens help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -355,9 +419,16 @@
               class="mb-3"
             >
               <template v-slot:append-inner>
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Append caching help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -750,3 +821,34 @@ function save() {
   emit('update:modelValue', false);
 }
 </script>
+
+<style scoped>
+.tooltip-icon {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thinking-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tooltip-icon-button {
+  background: transparent;
+  border: none;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.tooltip-icon:focus-visible,
+.tooltip-icon-button:focus-visible {
+  outline: 2px solid rgba(var(--v-theme-primary), 0.9);
+  border-radius: 50%;
+}
+</style>
