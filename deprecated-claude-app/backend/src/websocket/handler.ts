@@ -542,6 +542,9 @@ async function handleChatMessage(
         if (isComplete) {
           // Final save and update conversation timestamp
           if (currentBranch) {
+            // Trim leading/trailing whitespace from final content
+            currentBranch.content = currentBranch.content.trim();
+            
             await db.updateMessageContent(
               assistantMessage.id,
               assistantMessage.conversationId,
@@ -800,6 +803,11 @@ async function handleRegenerate(
             // Store content blocks if provided
             if (contentBlocks && contentBlocks.length > 0) {
               currentBranch.contentBlocks = contentBlocks;
+            }
+            
+            // Trim whitespace on completion
+            if (isComplete) {
+              currentBranch.content = currentBranch.content.trim();
             }
             
             // Save partial content periodically to prevent data loss
@@ -1081,6 +1089,11 @@ async function handleEdit(
               currentBranch.contentBlocks = contentBlocks;
             }
             
+            // Trim whitespace on completion
+            if (isComplete) {
+              currentBranch.content = currentBranch.content.trim();
+            }
+            
             // Save partial content periodically
             if (currentBranch.content.length % 500 === 0 || isComplete) {
               await db.updateMessageContent(
@@ -1336,6 +1349,11 @@ async function handleContinue(
             assistantBranch.contentBlocks = contentBlocks;
           }
           
+          // Trim whitespace on completion
+          if (isComplete) {
+            assistantBranch.content = assistantBranch.content.trim();
+          }
+          
           // Save partial content periodically
           if (assistantBranch.content.length % 500 === 0 || isComplete) {
             await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
@@ -1351,7 +1369,7 @@ async function handleContinue(
           }));
 
           if (isComplete) {
-            // Final save
+            // Final save (content already trimmed above)
             await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
             
             // Send updated conversation
