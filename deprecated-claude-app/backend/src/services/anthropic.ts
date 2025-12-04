@@ -72,9 +72,21 @@ export class AnthropicService {
         }
       }
       
+      // Ensure max_tokens > budget_tokens when thinking is enabled
+      let effectiveMaxTokens = settings.maxTokens;
+      if (settings.thinking?.enabled && settings.thinking.budgetTokens) {
+        // max_tokens must be greater than budget_tokens
+        // Add reasonable room for the actual response (at least 4096 tokens)
+        const minMaxTokens = settings.thinking.budgetTokens + 4096;
+        if (effectiveMaxTokens < minMaxTokens) {
+          console.log(`[Anthropic API] Adjusting max_tokens from ${effectiveMaxTokens} to ${minMaxTokens} (budget_tokens: ${settings.thinking.budgetTokens})`);
+          effectiveMaxTokens = minMaxTokens;
+        }
+      }
+      
       requestParams = {
         model: modelId,
-        max_tokens: settings.maxTokens,
+        max_tokens: effectiveMaxTokens,
         temperature: settings.temperature,
         ...(settings.topP !== undefined && { top_p: settings.topP }),
         ...(settings.topK !== undefined && { top_k: settings.topK }),
@@ -259,7 +271,19 @@ export class AnthropicService {
             cacheReadInputTokens: cacheMetrics.cacheReadInputTokens
           };
           
-          await onChunk('', true, contentBlocks, actualUsage);
+          // If no API thinking blocks but response contains <think> tags (prefill mode),
+          // parse them into contentBlocks for proper UI display
+          let finalContentBlocks = contentBlocks;
+          if (contentBlocks.length === 0) {
+            const fullResponse = chunks.join('');
+            const parsedBlocks = this.parseThinkingTags(fullResponse);
+            if (parsedBlocks.length > 0) {
+              finalContentBlocks = parsedBlocks;
+              console.log(`[Anthropic API] Parsed ${parsedBlocks.length} thinking blocks from prefill response`);
+            }
+          }
+          
+          await onChunk('', true, finalContentBlocks, actualUsage);
           
           // Log complete response summary
           const fullResponse = chunks.join('');
@@ -374,10 +398,11 @@ export class AnthropicService {
           console.log(`Processing ${activeBranch.attachments.length} attachments for user message`);
           for (const attachment of activeBranch.attachments) {
             const isImage = this.isImageAttachment(attachment.fileName);
+            const isPdf = this.isPdfAttachment(attachment.fileName);
+            const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
             
             if (isImage) {
               // Add image as a separate content block for Claude API
-              const mediaType = this.getImageMediaType(attachment.fileName);
               contentParts.push({
                 type: 'image',
                 source: {
@@ -387,6 +412,18 @@ export class AnthropicService {
                 }
               });
               console.log(`Added image attachment: ${attachment.fileName} (${mediaType})`);
+            } else if (isPdf) {
+              // Add PDF as a document content block for Claude API
+              // Claude supports PDFs natively via the document type
+              contentParts.push({
+                type: 'document',
+                source: {
+                  type: 'base64',
+                  media_type: 'application/pdf',
+                  data: attachment.content
+                }
+              });
+              console.log(`Added PDF attachment: ${attachment.fileName}`);
             } else {
               // Append text attachments to the text content
               contentParts[0].text += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
@@ -413,6 +450,49 @@ export class AnthropicService {
             formattedMessages.push({
               role: activeBranch.role as 'user' | 'assistant',
               content: contentBlocks
+            });
+          } else if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
+            // Assistant message with thinking blocks - format as content array for API
+            // This is required for models like Opus 4.5 to maintain chain of thought
+            const apiContentBlocks: any[] = [];
+            
+            for (const block of activeBranch.contentBlocks) {
+              if (block.type === 'thinking') {
+                apiContentBlocks.push({
+                  type: 'thinking',
+                  thinking: block.thinking,
+                  ...(block.signature && { signature: block.signature })
+                });
+              } else if (block.type === 'redacted_thinking') {
+                apiContentBlocks.push({
+                  type: 'redacted_thinking',
+                  data: block.data
+                });
+              } else if (block.type === 'text') {
+                apiContentBlocks.push({
+                  type: 'text',
+                  text: block.text
+                });
+              }
+            }
+            
+            // If no text block was in contentBlocks, add the main content
+            const hasTextBlock = apiContentBlocks.some(b => b.type === 'text');
+            if (!hasTextBlock && messageContent.trim()) {
+              apiContentBlocks.push({
+                type: 'text',
+                text: messageContent
+              });
+            }
+            
+            // Add cache control to last block if present
+            if ((activeBranch as any)._cacheControl && apiContentBlocks.length > 0) {
+              apiContentBlocks[apiContentBlocks.length - 1].cache_control = (activeBranch as any)._cacheControl;
+            }
+            
+            formattedMessages.push({
+              role: 'assistant',
+              content: apiContentBlocks
             });
           } else if ((activeBranch as any)._cacheControl) {
             // Need to convert to content block format to add cache control
@@ -485,16 +565,54 @@ export class AnthropicService {
     return imageExtensions.includes(extension);
   }
   
-  private getImageMediaType(fileName: string): string {
+  private isPdfAttachment(fileName: string): boolean {
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    return extension === 'pdf';
+  }
+  
+  private isAudioAttachment(fileName: string): boolean {
+    const audioExtensions = ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'webm'];
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    return audioExtensions.includes(extension);
+  }
+  
+  private isVideoAttachment(fileName: string): boolean {
+    const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    return videoExtensions.includes(extension);
+  }
+  
+  private getMediaType(fileName: string, mimeType?: string): string {
+    // Use provided mimeType if available
+    if (mimeType) return mimeType;
+    
     const extension = fileName.split('.').pop()?.toLowerCase() || '';
     const mediaTypes: { [key: string]: string } = {
+      // Images
       'jpg': 'image/jpeg',
       'jpeg': 'image/jpeg',
       'png': 'image/png',
       'gif': 'image/gif',
-      'webp': 'image/webp'
+      'webp': 'image/webp',
+      // Documents
+      'pdf': 'application/pdf',
+      // Audio
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'flac': 'audio/flac',
+      'ogg': 'audio/ogg',
+      'm4a': 'audio/mp4',
+      'aac': 'audio/aac',
+      // Video
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+      'webm': 'video/webm',
     };
-    return mediaTypes[extension] || 'image/jpeg';
+    return mediaTypes[extension] || 'application/octet-stream';
+  }
+  
+  private getImageMediaType(fileName: string): string {
+    return this.getMediaType(fileName);
   }
 
   // Demo mode simulation
@@ -587,5 +705,41 @@ export class AnthropicService {
     const savings = cachedTokens * pricePerToken * 0.9;
     
     return savings;
+  }
+  
+  /**
+   * Parse <think>...</think> tags from content and create contentBlocks
+   * Used for prefill mode thinking where API thinking is not available
+   */
+  private parseThinkingTags(content: string): any[] {
+    const contentBlocks: any[] = [];
+    
+    // Match all <think>...</think> blocks (non-greedy, handles multiple)
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
+    let match;
+    let textContent = content;
+    
+    while ((match = thinkRegex.exec(content)) !== null) {
+      const thinkingContent = match[1].trim();
+      if (thinkingContent) {
+        contentBlocks.push({
+          type: 'thinking',
+          thinking: thinkingContent
+        });
+      }
+    }
+    
+    // Remove thinking tags from content to get the text part
+    textContent = content.replace(thinkRegex, '').trim();
+    
+    // Add text block if there's remaining content
+    if (textContent && contentBlocks.length > 0) {
+      contentBlocks.push({
+        type: 'text',
+        text: textContent
+      });
+    }
+    
+    return contentBlocks;
   }
 }

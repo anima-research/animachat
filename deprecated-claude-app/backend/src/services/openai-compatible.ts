@@ -25,7 +25,7 @@ export class OpenAICompatibleService {
     messages: Message[],
     systemPrompt: string | undefined,
     settings: ModelSettings,
-    onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
+    onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     stopSequences?: string[],
     onTokenUsage?: (usage: TokenUsage) => Promise<void>
   ): Promise<void> {
@@ -104,6 +104,8 @@ export class OpenAICompatibleService {
       let buffer = '';
       let totalTokens = 0;
 
+      let fullContent = '';
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -116,7 +118,9 @@ export class OpenAICompatibleService {
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             if (data === '[DONE]') {
-              await onChunk('', true);
+              // Parse thinking tags from full content and create contentBlocks
+              const contentBlocks = this.parseThinkingTags(fullContent);
+              await onChunk('', true, contentBlocks.length > 0 ? contentBlocks : undefined);
               break;
             }
 
@@ -126,6 +130,7 @@ export class OpenAICompatibleService {
               
               if (content) {
                 chunks.push(content);
+                fullContent += content;
                 await onChunk(content, false);
               }
 
@@ -174,6 +179,42 @@ export class OpenAICompatibleService {
     }
   }
 
+  /**
+   * Parse <think>...</think> tags from content and create contentBlocks
+   * Used for open source models that output reasoning in this format
+   */
+  private parseThinkingTags(content: string): any[] {
+    const contentBlocks: any[] = [];
+    
+    // Match all <think>...</think> blocks (non-greedy, handles multiple)
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
+    let match;
+    let textContent = content;
+    
+    while ((match = thinkRegex.exec(content)) !== null) {
+      const thinkingContent = match[1].trim();
+      if (thinkingContent) {
+        contentBlocks.push({
+          type: 'thinking',
+          thinking: thinkingContent
+        });
+      }
+    }
+    
+    // Remove thinking tags from content to get the text part
+    textContent = content.replace(thinkRegex, '').trim();
+    
+    // Add text block if there's remaining content
+    if (textContent && contentBlocks.length > 0) {
+      contentBlocks.push({
+        type: 'text',
+        text: textContent
+      });
+    }
+    
+    return contentBlocks;
+  }
+
   formatMessagesForOpenAI(messages: Message[], systemPrompt?: string): OpenAIMessage[] {
     const formatted: OpenAIMessage[] = [];
 
@@ -190,6 +231,25 @@ export class OpenAICompatibleService {
       const activeBranch = getActiveBranch(message);
       if (activeBranch && activeBranch.role !== 'system') {
         let content = activeBranch.content;
+        
+        // For assistant messages with thinking blocks, prepend thinking wrapped in <think> tags
+        // This format is commonly used by open source models (DeepSeek, Qwen, etc.)
+        if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
+          let thinkingContent = '';
+          
+          for (const block of activeBranch.contentBlocks) {
+            if (block.type === 'thinking') {
+              thinkingContent += `<think>\n${block.thinking}\n</think>\n\n`;
+            } else if (block.type === 'redacted_thinking') {
+              thinkingContent += `<think>[Redacted for safety]</think>\n\n`;
+            }
+          }
+          
+          // Prepend thinking to content
+          if (thinkingContent) {
+            content = thinkingContent + content;
+          }
+        }
         
         // Append attachments to user messages
         if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {

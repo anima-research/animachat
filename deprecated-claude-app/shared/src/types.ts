@@ -9,7 +9,7 @@ export const UserSchema = z.object({
   apiKeys: z.array(z.object({
     id: z.string().uuid(),
     name: z.string(),
-    provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible']),
+    provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible', 'google']),
     masked: z.string(),
     createdAt: z.date()
   })).optional()
@@ -17,18 +17,137 @@ export const UserSchema = z.object({
 
 export type User = z.infer<typeof UserSchema>;
 
+// Model capability types for multimodal support
+export const ModelCapabilitiesSchema = z.object({
+  // Input modalities
+  imageInput: z.boolean().default(false),
+  pdfInput: z.boolean().default(false),
+  audioInput: z.boolean().default(false),
+  videoInput: z.boolean().default(false),
+  
+  // Output modalities
+  imageOutput: z.boolean().default(false),
+  audioOutput: z.boolean().default(false),
+  
+  // Limits
+  maxFileSize: z.number().optional(), // in bytes
+  maxImageSize: z.number().optional(), // in pixels (width or height)
+  maxAudioDuration: z.number().optional(), // in seconds
+  maxVideoDuration: z.number().optional(), // in seconds
+  maxPdfPages: z.number().optional(),
+  
+  // Context management
+  autoTruncateContext: z.boolean().default(false), // Auto-truncate to model's contextWindow
+});
+
+export type ModelCapabilities = z.infer<typeof ModelCapabilitiesSchema>;
+
+// Model-specific configurable settings schema
+// These define UI controls that can be rendered dynamically for each model
+
+// Option for select/multiselect controls
+export const SettingOptionSchema = z.object({
+  value: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+});
+
+// Select dropdown setting
+export const SelectSettingSchema = z.object({
+  type: z.literal('select'),
+  key: z.string(), // dot-notation path, e.g., "imageConfig.aspectRatio"
+  label: z.string(),
+  description: z.string().optional(),
+  options: z.array(SettingOptionSchema),
+  default: z.string(),
+  condition: z.string().optional(), // Show only when another setting has a value, e.g., "responseModalities includes IMAGE"
+});
+
+// Boolean toggle setting
+export const BooleanSettingSchema = z.object({
+  type: z.literal('boolean'),
+  key: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  default: z.boolean(),
+  condition: z.string().optional(),
+});
+
+// Number slider/input setting
+export const NumberSettingSchema = z.object({
+  type: z.literal('number'),
+  key: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  min: z.number(),
+  max: z.number(),
+  step: z.number().optional(),
+  default: z.number(),
+  condition: z.string().optional(),
+});
+
+// Multi-select setting (for things like responseModalities)
+export const MultiselectSettingSchema = z.object({
+  type: z.literal('multiselect'),
+  key: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  options: z.array(SettingOptionSchema),
+  default: z.array(z.string()),
+  minSelected: z.number().optional(),
+  maxSelected: z.number().optional(),
+  condition: z.string().optional(),
+});
+
+// Text input setting
+export const TextSettingSchema = z.object({
+  type: z.literal('text'),
+  key: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  placeholder: z.string().optional(),
+  default: z.string().optional(),
+  maxLength: z.number().optional(),
+  condition: z.string().optional(),
+});
+
+// Union of all setting types
+export const ConfigurableSettingSchema = z.discriminatedUnion('type', [
+  SelectSettingSchema,
+  BooleanSettingSchema,
+  NumberSettingSchema,
+  MultiselectSettingSchema,
+  TextSettingSchema,
+]);
+
+export type ConfigurableSetting = z.infer<typeof ConfigurableSettingSchema>;
+export type SelectSetting = z.infer<typeof SelectSettingSchema>;
+export type BooleanSetting = z.infer<typeof BooleanSettingSchema>;
+export type NumberSetting = z.infer<typeof NumberSettingSchema>;
+export type MultiselectSetting = z.infer<typeof MultiselectSettingSchema>;
+export type TextSetting = z.infer<typeof TextSettingSchema>;
+
+// Provider enum - all supported AI providers
+export const ProviderEnum = z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible', 'google']);
+export type Provider = z.infer<typeof ProviderEnum>;
+
 // Model types
 export const ModelSchema = z.object({
   id: z.string(), // Unique identifier for this model configuration
   providerModelId: z.string(), // The actual model ID to send to the provider API
   displayName: z.string(), // User-facing display name
   shortName: z.string(), // Short name for participant display
-  provider: z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible']),
+  provider: ProviderEnum,
   deprecated: z.boolean(),
   contextWindow: z.number(),
   outputTokenLimit: z.number(),
   supportsThinking: z.boolean().optional(), // Whether the model supports extended thinking
+  capabilities: ModelCapabilitiesSchema.optional(), // Multimodal capabilities
   currencies: z.record(z.boolean()).optional(),
+  
+  // Model-specific configurable settings (rendered as dynamic UI)
+  configurableSettings: z.array(ConfigurableSettingSchema).optional(),
+  
   settings: z.object({
     temperature: z.object({
       min: z.number(),
@@ -67,7 +186,11 @@ export const ModelSettingsSchema = z.object({
   thinking: z.object({
     enabled: z.boolean(),
     budgetTokens: z.number().min(1024)
-  }).optional()
+  }).optional(),
+  
+  // Model-specific settings (dynamic based on model's configurableSettings)
+  // Stored as flat key-value pairs, e.g., { "imageConfig.aspectRatio": "16:9" }
+  modelSpecific: z.record(z.unknown()).optional(),
 });
 
 export type ModelSettings = z.infer<typeof ModelSettingsSchema>;
@@ -78,7 +201,7 @@ export const UserDefinedModelSchema = z.object({
   userId: z.string().uuid(),
   displayName: z.string().min(1).max(100),
   shortName: z.string().min(1).max(50),
-  provider: z.enum(['openrouter', 'openai-compatible']),
+  provider: z.enum(['openrouter', 'openai-compatible', 'google']),
   providerModelId: z.string().min(1).max(500),
   contextWindow: z.number().min(1000).max(10000000),
   outputTokenLimit: z.number().min(100).max(1000000),
@@ -99,7 +222,7 @@ export type UserDefinedModel = z.infer<typeof UserDefinedModelSchema>;
 export const CreateUserModelSchema = z.object({
   displayName: z.string().min(1).max(100),
   shortName: z.string().min(1).max(50),
-  provider: z.enum(['openrouter', 'openai-compatible']),
+  provider: z.enum(['openrouter', 'openai-compatible', 'google']),
   providerModelId: z.string().min(1).max(500),
   contextWindow: z.number().min(1000).max(10000000),
   outputTokenLimit: z.number().min(100).max(1000000),
@@ -160,14 +283,32 @@ export const UpdateParticipantSchema = z.object({
   isActive: z.boolean().optional()
 }).transform((o) => ({ ...o, contextManagement: o.contextManagement })); // specifically pass through undefined and null
 
-// Attachment types
+// Attachment types - enhanced for multimodal support
 export const AttachmentSchema = z.object({
   id: z.string().uuid(),
   fileName: z.string(),
   fileSize: z.number(),
-  fileType: z.string(),
+  fileType: z.string(), // File extension (jpg, pdf, mp3, etc.)
+  mimeType: z.string().optional(), // Full MIME type (image/jpeg, application/pdf, etc.)
   content: z.string(), // Base64 or text content
-  createdAt: z.date()
+  encoding: z.enum(['base64', 'text', 'url']).default('text'),
+  createdAt: z.date(),
+  
+  // Media-specific metadata
+  metadata: z.object({
+    // For images
+    width: z.number().optional(),
+    height: z.number().optional(),
+    
+    // For audio/video
+    duration: z.number().optional(), // in seconds
+    
+    // For PDFs
+    pageCount: z.number().optional(),
+    
+    // For extracted/fallback content
+    extractedText: z.string().optional(), // Text extracted from PDF/audio transcription
+  }).optional()
 });
 
 export type Attachment = z.infer<typeof AttachmentSchema>;
@@ -187,7 +328,8 @@ export type Bookmark = z.infer<typeof BookmarkSchema>;
 // Content block types for messages
 export const TextContentBlockSchema = z.object({
   type: z.literal('text'),
-  text: z.string()
+  text: z.string(),
+  thoughtSignature: z.string().optional() // Gemini 3 Pro thought signature for multi-turn
 });
 
 export const ThinkingContentBlockSchema = z.object({
@@ -201,13 +343,38 @@ export const RedactedThinkingContentBlockSchema = z.object({
   data: z.string() // Encrypted thinking data
 });
 
+// Image content block for model-generated images (GPT-4o, Gemini, etc.)
+export const ImageContentBlockSchema = z.object({
+  type: z.literal('image'),
+  mimeType: z.string(), // image/png, image/jpeg, etc.
+  data: z.string(), // Base64 encoded image data
+  revisedPrompt: z.string().optional(), // The prompt as revised by the model (GPT returns this)
+  width: z.number().optional(),
+  height: z.number().optional()
+});
+
+// Audio content block for model-generated audio
+export const AudioContentBlockSchema = z.object({
+  type: z.literal('audio'),
+  mimeType: z.string(), // audio/mp3, audio/wav, etc.
+  data: z.string(), // Base64 encoded audio data
+  duration: z.number().optional(), // Duration in seconds
+  transcript: z.string().optional() // Text transcript of the audio
+});
+
 export const ContentBlockSchema = z.discriminatedUnion('type', [
   TextContentBlockSchema,
   ThinkingContentBlockSchema,
-  RedactedThinkingContentBlockSchema
+  RedactedThinkingContentBlockSchema,
+  ImageContentBlockSchema,
+  AudioContentBlockSchema
 ]);
 
 export type ContentBlock = z.infer<typeof ContentBlockSchema>;
+export type TextContentBlock = z.infer<typeof TextContentBlockSchema>;
+export type ThinkingContentBlock = z.infer<typeof ThinkingContentBlockSchema>;
+export type ImageContentBlock = z.infer<typeof ImageContentBlockSchema>;
+export type AudioContentBlock = z.infer<typeof AudioContentBlockSchema>;
 
 // Message types
 export const MessageBranchSchema = z.object({
@@ -314,6 +481,10 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     messageId: z.string().uuid(),
     parentBranchId: z.string().uuid().optional(),
     responderId: z.string().uuid().optional() // Which assistant should respond
+  }),
+  z.object({
+    type: z.literal('abort'),
+    conversationId: z.string().uuid()
   }),
   z.object({
     type: z.literal('stream'),

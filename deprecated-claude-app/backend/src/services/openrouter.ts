@@ -512,7 +512,85 @@ export class OpenRouterService {
           const contentBlocks: ContentBlock[] = [{ type: 'text', text: activeBranch.content }];
           
           for (const attachment of activeBranch.attachments) {
-            contentBlocks[0].text += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
+            const extension = attachment.fileName.split('.').pop()?.toLowerCase() || '';
+            const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension);
+            const isPdf = extension === 'pdf';
+            
+            if (isImage) {
+              // Add image - use Anthropic format for Claude, file format for others
+              const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
+              
+              if (provider === 'anthropic') {
+                // Anthropic format for Claude models
+                contentBlocks.push({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: mediaType,
+                    data: attachment.content
+                  }
+                } as any);
+              } else {
+                // OpenRouter file format for other models (OpenAI, Gemini, etc.)
+                const fileData = `data:${mediaType};base64,${attachment.content}`;
+                contentBlocks.push({
+                  type: 'file',
+                  file: {
+                    filename: attachment.fileName,
+                    file_data: fileData,
+                  }
+                } as any);
+              }
+              console.log(`[OpenRouter] Added image attachment: ${attachment.fileName} (${mediaType})`);
+            } else if (isPdf) {
+              // OpenRouter PDF processing - uses file type with data URI format
+              // Processing engines (specified via X-PDF-Engine header or defaults):
+              // - "native": Use model's native PDF support (Claude, Gemini) - charged as input tokens
+              // - "pdf-text": Free text extraction for well-structured PDFs
+              // - "mistral-ocr": $2/1000 pages for scanned documents
+              // Default: native if available, otherwise mistral-ocr
+              
+              // Format: data:application/pdf;base64,{base64_data}
+              const fileData = `data:application/pdf;base64,${attachment.content}`;
+              
+              contentBlocks.push({
+                type: 'file',
+                file: {
+                  filename: attachment.fileName,
+                  file_data: fileData,
+                }
+              } as any);
+              console.log(`[OpenRouter] Added PDF attachment: ${attachment.fileName}`);
+            } else if (['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'webm'].includes(extension)) {
+              // Audio files - supported by Gemini, GPT-4o, etc.
+              const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
+              const fileData = `data:${mediaType};base64,${attachment.content}`;
+              
+              contentBlocks.push({
+                type: 'file',
+                file: {
+                  filename: attachment.fileName,
+                  file_data: fileData,
+                }
+              } as any);
+              console.log(`[OpenRouter] Added audio attachment: ${attachment.fileName} (${mediaType})`);
+            } else if (['mp4', 'mov', 'avi', 'mkv'].includes(extension)) {
+              // Video files - supported by Gemini
+              const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
+              const fileData = `data:${mediaType};base64,${attachment.content}`;
+              
+              contentBlocks.push({
+                type: 'file',
+                file: {
+                  filename: attachment.fileName,
+                  file_data: fileData,
+                }
+              } as any);
+              console.log(`[OpenRouter] Added video attachment: ${attachment.fileName} (${mediaType})`);
+            } else {
+              // Append text attachments to the text content
+              contentBlocks[0].text += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
+            }
           }
           
           // Add cache control to the last content block if present
@@ -522,6 +600,47 @@ export class OpenRouterService {
           }
           
           content = contentBlocks;
+        } else if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0 && provider === 'anthropic') {
+          // Assistant message with thinking blocks - format as content array for Anthropic API
+          // This is required for models like Opus 4.5 to maintain chain of thought
+          const apiContentBlocks: ContentBlock[] = [];
+          
+          for (const block of activeBranch.contentBlocks) {
+            if (block.type === 'thinking') {
+              apiContentBlocks.push({
+                type: 'thinking',
+                thinking: block.thinking,
+                ...(block.signature && { signature: block.signature })
+              } as any);
+            } else if (block.type === 'redacted_thinking') {
+              apiContentBlocks.push({
+                type: 'redacted_thinking',
+                data: block.data
+              } as any);
+            } else if (block.type === 'text') {
+              apiContentBlocks.push({
+                type: 'text',
+                text: block.text
+              });
+            }
+          }
+          
+          // If no text block was in contentBlocks, add the main content
+          const hasTextBlock = apiContentBlocks.some(b => b.type === 'text');
+          if (!hasTextBlock && activeBranch.content.trim()) {
+            apiContentBlocks.push({
+              type: 'text',
+              text: activeBranch.content
+            });
+          }
+          
+          // Add cache control to last block if present
+          if (cacheControl && apiContentBlocks.length > 0) {
+            apiContentBlocks[apiContentBlocks.length - 1].cache_control = cacheControl;
+            console.log(`[OpenRouter] 🎯 Cache control marker added to assistant message with thinking`);
+          }
+          
+          content = apiContentBlocks;
         } else if (cacheControl && provider === 'anthropic') {
           // Need to convert to content block format to add cache control
           content = [{
@@ -578,6 +697,37 @@ export class OpenRouterService {
    * Detect the underlying provider from the OpenRouter model ID
    * This helps us determine which cache syntax to use
    */
+  private getMediaType(fileName: string, mimeType?: string): string {
+    // Use provided mimeType if available
+    if (mimeType) return mimeType;
+    
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    const mediaTypes: { [key: string]: string } = {
+      // Images
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      // Documents
+      'pdf': 'application/pdf',
+      // Audio
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'flac': 'audio/flac',
+      'ogg': 'audio/ogg',
+      'm4a': 'audio/mp4',
+      'aac': 'audio/aac',
+      'webm': 'audio/webm',
+      // Video
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+      'avi': 'video/x-msvideo',
+      'mkv': 'video/x-matroska',
+    };
+    return mediaTypes[extension] || 'application/octet-stream';
+  }
+  
   private detectProviderFromModelId(modelId: string): string {
     const lowerId = modelId.toLowerCase();
     

@@ -94,6 +94,18 @@
               class="mt-2"
             />
             
+            <!-- Google (Gemini) API Key -->
+            <v-text-field
+              v-if="newKey.provider === 'google'"
+              v-model="newKey.credentials.apiKey"
+              label="API Key"
+              type="password"
+              variant="outlined"
+              density="compact"
+              class="mt-2"
+              hint="Get your API key from Google AI Studio"
+            />
+            
             <!-- AWS Bedrock Credentials -->
             <template v-if="newKey.provider === 'bedrock'">
               <v-text-field
@@ -305,7 +317,8 @@ const providers = [
   { value: 'anthropic', title: 'Anthropic' },
   { value: 'bedrock', title: 'AWS Bedrock' },
   { value: 'openrouter', title: 'OpenRouter' },
-  { value: 'openai-compatible', title: 'OpenAI Compatible' }
+  { value: 'openai-compatible', title: 'OpenAI Compatible' },
+  { value: 'google', title: 'Google (Gemini)' }
 ];
 const codeThemes = ['github', 'monokai', 'dracula', 'vs-dark'];
 
@@ -313,7 +326,8 @@ const providerChipMeta: Record<string, { label: string; color: string }> = {
   anthropic: { label: 'Anthropic API', color: 'primary' },
   bedrock: { label: 'AWS Bedrock', color: 'secondary' },
   openrouter: { label: 'OpenRouter', color: 'purple' },
-  'openai-compatible': { label: 'OpenAI Compatible', color: 'blue' }
+  'openai-compatible': { label: 'OpenAI Compatible', color: 'blue' },
+  google: { label: 'Google Gemini', color: 'green' }
 };
 
 const darkMode = ref(theme.global.current.value.dark);
@@ -330,6 +344,7 @@ const isValidApiKey = computed(() => {
   switch (newKey.value.provider) {
     case 'anthropic':
     case 'openrouter':
+    case 'google':
       return !!newKey.value.credentials.apiKey;
     case 'bedrock':
       return !!newKey.value.credentials.accessKeyId && 
@@ -390,6 +405,7 @@ async function addApiKey() {
     switch (newKey.value.provider) {
       case 'anthropic':
       case 'openrouter':
+      case 'google':
         payload.credentials = { apiKey: newKey.value.credentials.apiKey };
         break;
       case 'bedrock':

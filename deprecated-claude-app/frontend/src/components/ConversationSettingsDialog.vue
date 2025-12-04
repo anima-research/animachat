@@ -19,18 +19,6 @@
         />
         
         <v-select
-          v-if="settings.format === 'standard'"
-          v-model="settings.model"
-          :items="activeModels"
-          item-title="displayName"
-          item-value="id"
-          label="Model"
-          variant="outlined"
-          density="compact"
-          class="mt-4"
-        />
-        
-        <v-select
           v-model="settings.format"
           :items="formatOptions"
           item-title="title"
@@ -48,6 +36,16 @@
             </v-list-item>
           </template>
         </v-select>
+        
+        <ModelSelector
+          v-if="settings.format === 'standard'"
+          v-model="settings.model"
+          :models="activeModels"
+          label="Model"
+          variant="outlined"
+          density="compact"
+          class="mt-4"
+        />
         
         <div v-if="settings.format === 'standard'">
           <v-textarea
@@ -97,9 +95,16 @@
             class="mt-2"
           >
             <template v-slot:append-inner>
-              <v-tooltip location="top">
+              <v-tooltip location="top" open-on-click open-on-focus>
                 <template v-slot:activator="{ props }">
-                  <v-icon v-bind="props" size="small">
+                  <v-icon
+                    v-bind="props"
+                    size="small"
+                    class="tooltip-icon"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Initial message help"
+                  >
                     mdi-help-circle-outline
                   </v-icon>
                 </template>
@@ -122,9 +127,16 @@
           >
             <template v-slot:label>
               Temperature
-              <v-tooltip location="top">
+              <v-tooltip location="top" open-on-click open-on-focus>
                 <template v-slot:activator="{ props }">
-                  <v-icon v-bind="props" size="small" class="ml-1">
+                  <v-icon
+                    v-bind="props"
+                    size="small"
+                    class="ml-1 tooltip-icon"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Temperature help"
+                  >
                     mdi-help-circle-outline
                   </v-icon>
                 </template>
@@ -145,9 +157,16 @@
           >
             <template v-slot:label>
               Max Tokens
-              <v-tooltip location="top">
+              <v-tooltip location="top" open-on-click open-on-focus>
                 <template v-slot:activator="{ props }">
-                  <v-icon v-bind="props" size="small" class="ml-1">
+                  <v-icon
+                    v-bind="props"
+                    size="small"
+                    class="ml-1 tooltip-icon"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Max tokens help"
+                  >
                     mdi-help-circle-outline
                   </v-icon>
                 </template>
@@ -175,9 +194,16 @@
             >
               <template v-slot:label>
                 Top P
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small" class="ml-1">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="ml-1 tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Top P help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -206,9 +232,16 @@
             >
               <template v-slot:label>
                 Top K
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small" class="ml-1">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="ml-1 tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Top K help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -220,24 +253,32 @@
           
           <!-- Extended Thinking (if supported) -->
           <div v-if="selectedModel?.supportsThinking" class="mt-2">
-            <v-checkbox
-              v-model="thinkingEnabled"
-              label="Enable Extended Thinking"
-              density="compact"
-              hide-details
-            >
-              <template v-slot:label>
-                Enable Extended Thinking
-                <v-tooltip location="top">
-                  <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small" class="ml-1">
+            <div class="thinking-toggle-row">
+              <v-checkbox
+                v-model="thinkingEnabled"
+                label="Enable Extended Thinking"
+                density="compact"
+                hide-details
+              />
+              <v-tooltip location="top" open-on-click open-on-focus :close-on-content-click="false">
+                <template v-slot:activator="{ props }">
+                  <button
+                    class="tooltip-icon-button"
+                    type="button"
+                    v-bind="props"
+                    aria-label="Extended thinking help"
+                    @click.stop="props.onClick && props.onClick($event)"
+                    @mousedown.stop
+                    @keydown.stop.prevent="props.onKeydown && props.onKeydown($event)"
+                  >
+                    <v-icon size="small" class="tooltip-icon">
                       mdi-help-circle-outline
                     </v-icon>
-                  </template>
-                  Extended thinking allows Claude to show its step-by-step reasoning process before delivering the final answer.
-                </v-tooltip>
-              </template>
-            </v-checkbox>
+                  </button>
+                </template>
+                Extended thinking allows Claude to show its step-by-step reasoning process before delivering the final answer.
+              </v-tooltip>
+            </div>
             
             <v-slider
               v-if="thinkingEnabled"
@@ -251,9 +292,16 @@
             >
               <template v-slot:label>
                 Thinking Budget (tokens)
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small" class="ml-1">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="ml-1 tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Thinking budget help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -262,6 +310,16 @@
               </template>
             </v-slider>
           </div>
+          
+          <!-- Model-Specific Settings (for models with configurableSettings) -->
+          <ModelSpecificSettings
+            v-if="modelConfigurableSettings.length > 0"
+            v-model="modelSpecificValues"
+            :settings="modelConfigurableSettings"
+            :show-divider="true"
+            :show-header="true"
+            header-text="Advanced Model Settings"
+          />
         </div>
         
         <v-divider class="my-4" />
@@ -305,9 +363,16 @@
               class="mb-3"
             >
               <template v-slot:append-inner>
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Rolling max tokens help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -327,9 +392,16 @@
               class="mb-3"
             >
               <template v-slot:append-inner>
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Grace tokens help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -355,9 +427,16 @@
               class="mb-3"
             >
               <template v-slot:append-inner>
-                <v-tooltip location="top">
+                <v-tooltip location="top" open-on-click open-on-focus>
                   <template v-slot:activator="{ props }">
-                    <v-icon v-bind="props" size="small">
+                    <v-icon
+                      v-bind="props"
+                      size="small"
+                      class="tooltip-icon"
+                      role="button"
+                      tabindex="0"
+                      aria-label="Append caching help"
+                    >
                       mdi-help-circle-outline
                     </v-icon>
                   </template>
@@ -400,9 +479,23 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import type { Conversation, Model, Participant } from '@deprecated-claude/shared';
+import type { Conversation, Model, Participant, ConfigurableSetting } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
+import ModelSelector from './ModelSelector.vue';
+import ModelSpecificSettings from './ModelSpecificSettings.vue';
 import { api } from '@/services/api';
+import { useStore } from '@/store';
+
+const store = useStore();
+
+// Get user's first name for default participant name
+const userFirstName = computed(() => {
+  const user = store.state.user;
+  if (!user) return 'User';
+  if (user.name) return user.name.split(' ')[0];
+  if (user.email) return user.email.split('@')[0];
+  return 'User';
+});
 
 const props = defineProps<{
   modelValue: boolean;
@@ -462,10 +555,26 @@ const settings = ref<any>({
   systemPrompt: '',
   settings: {
     temperature: 1.0,
-    maxTokens: 1024,
+    maxTokens: 4096, // Safe default for all models
     topP: undefined,
-    topK: undefined
+    topK: undefined,
+    modelSpecific: {},
   }
+});
+
+// Model-specific settings computed properties
+const modelConfigurableSettings = computed<ConfigurableSetting[]>(() => {
+  return (selectedModel.value?.configurableSettings as ConfigurableSetting[]) || [];
+});
+
+const modelSpecificValues = computed({
+  get: () => settings.value.settings?.modelSpecific || {},
+  set: (value: Record<string, unknown>) => {
+    settings.value.settings = {
+      ...settings.value.settings,
+      modelSpecific: value,
+    };
+  },
 });
 
 const localParticipants = ref<Participant[]>([]);
@@ -587,7 +696,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             id: 'temp-user',
             conversationId: props.conversation.id,
             type: 'user',
-            name: 'User',
+            name: userFirstName.value,
             isActive: true
           },
           {
@@ -599,12 +708,26 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             isActive: true,
             settings: {
               temperature: 1.0,
-              maxTokens: 1024
+              maxTokens: 4096
             }
           }
         ];
+      } else {
+        // Update existing participants with generic names ("H", "A", "User", "Assistant")
+        // to use more meaningful names
+        localParticipants.value = localParticipants.value.map(p => {
+          if (p.type === 'user' && (p.name === 'H' || p.name === 'User')) {
+            return { ...p, name: userFirstName.value };
+          }
+          if (p.type === 'assistant' && (p.name === 'A' || p.name === 'Assistant')) {
+            // Get this assistant's model name, or fall back to the conversation model
+            const assistantModel = props.models.find(m => m.id === p.model);
+            const assistantModelName = assistantModel?.shortName || assistantModel?.displayName || modelName;
+            return { ...p, name: assistantModelName };
+          }
+          return p;
+        });
       }
-      // Don't modify existing participants - let them keep their original data
     } catch (error) {
       console.error('Failed to load participants:', error);
       // Create default participants
@@ -613,7 +736,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
           id: 'temp-user',
           conversationId: props.conversation?.id || '',
           type: 'user',
-          name: 'User',
+          name: userFirstName.value,
           isActive: true
         },
         {
@@ -625,7 +748,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
           isActive: true,
           settings: {
             temperature: 1.0,
-            maxTokens: 1024
+            maxTokens: 4096
           }
         }
       ];
@@ -637,11 +760,20 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
 watch(() => settings.value.model, (modelId) => {
   const model = props.models.find(m => m.id === modelId);
   if (model) {
+    // Build default modelSpecific settings from configurableSettings
+    const modelSpecificDefaults: Record<string, unknown> = {};
+    if (model.configurableSettings) {
+      for (const setting of model.configurableSettings as ConfigurableSetting[]) {
+        modelSpecificDefaults[setting.key] = setting.default;
+      }
+    }
+    
     settings.value.settings = {
       temperature: model.settings.temperature.default,
       maxTokens: model.settings.maxTokens.default,
       topP: undefined,
-      topK: undefined
+      topK: undefined,
+      modelSpecific: modelSpecificDefaults,
     };
     
     // Disable topP and topK by default when changing models
@@ -690,12 +822,17 @@ function cancel() {
 }
 
 function save() {
+  // Include modelSpecific settings if they exist and have values
+  const modelSpecific = settings.value.settings?.modelSpecific;
+  const hasModelSpecific = modelSpecific && Object.keys(modelSpecific).length > 0;
+  
   const finalSettings = {
     temperature: settings.value.settings.temperature,
     maxTokens: settings.value.settings.maxTokens,
     ...(topPEnabled.value && settings.value.settings.topP !== undefined && { topP: settings.value.settings.topP }),
     ...(topKEnabled.value && settings.value.settings.topK !== undefined && { topK: settings.value.settings.topK }),
-    ...(thinkingEnabled.value && { thinking: { enabled: true, budgetTokens: thinkingBudgetTokens.value } })
+    ...(thinkingEnabled.value && { thinking: { enabled: true, budgetTokens: thinkingBudgetTokens.value } }),
+    ...(hasModelSpecific && { modelSpecific })
   };
   
   // Debug log
@@ -750,3 +887,34 @@ function save() {
   emit('update:modelValue', false);
 }
 </script>
+
+<style scoped>
+.tooltip-icon {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thinking-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tooltip-icon-button {
+  background: transparent;
+  border: none;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.tooltip-icon:focus-visible,
+.tooltip-icon-button:focus-visible {
+  outline: 2px solid rgba(var(--v-theme-primary), 0.9);
+  border-radius: 50%;
+}
+</style>

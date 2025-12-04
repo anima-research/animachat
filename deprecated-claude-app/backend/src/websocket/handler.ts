@@ -15,6 +15,42 @@ interface AuthenticatedWebSocket extends WebSocket {
   isAlive?: boolean;
 }
 
+// Track active generations for abort support
+// Key: `${userId}:${conversationId}`, Value: AbortController
+const activeGenerations = new Map<string, AbortController>();
+
+function getGenerationKey(userId: string, conversationId: string): string {
+  return `${userId}:${conversationId}`;
+}
+
+function startGeneration(userId: string, conversationId: string): AbortController {
+  const key = getGenerationKey(userId, conversationId);
+  // Abort any existing generation for this conversation
+  const existing = activeGenerations.get(key);
+  if (existing) {
+    existing.abort();
+  }
+  const controller = new AbortController();
+  activeGenerations.set(key, controller);
+  return controller;
+}
+
+function endGeneration(userId: string, conversationId: string): void {
+  const key = getGenerationKey(userId, conversationId);
+  activeGenerations.delete(key);
+}
+
+function abortGeneration(userId: string, conversationId: string): boolean {
+  const key = getGenerationKey(userId, conversationId);
+  const controller = activeGenerations.get(key);
+  if (controller) {
+    controller.abort();
+    activeGenerations.delete(key);
+    return true;
+  }
+  return false;
+}
+
 /**
  * Build conversation history by following the active branch path backwards
  * from a given branch ID to the root.
@@ -162,6 +198,10 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
           await handleContinue(ws, message, db, inferenceService);
           break;
           
+        case 'abort':
+          handleAbort(ws, message);
+          break;
+          
         default:
           ws.send(JSON.stringify({ type: 'error', error: 'Unknown message type' }));
       }
@@ -190,6 +230,22 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
 
   // Send initial connection success
   ws.send(JSON.stringify({ type: 'connected', userId: ws.userId }));
+}
+
+function handleAbort(
+  ws: AuthenticatedWebSocket,
+  message: { type: 'abort'; conversationId: string }
+) {
+  if (!ws.userId) return;
+  
+  const aborted = abortGeneration(ws.userId, message.conversationId);
+  console.log(`[Abort] User ${ws.userId} aborted generation for conversation ${message.conversationId}: ${aborted ? 'success' : 'no active generation'}`);
+  
+  ws.send(JSON.stringify({
+    type: 'generation_aborted',
+    conversationId: message.conversationId,
+    success: aborted
+  }));
 }
 
 async function handleChatMessage(
@@ -432,7 +488,11 @@ async function handleChatMessage(
       throw new Error(`Model ${inferenceModel} not found`);
     }
     
-    await inferenceService.streamCompletion(
+    // Create abort controller for this generation
+    const abortController = startGeneration(conversation.userId, conversation.id);
+    
+    try {
+      await inferenceService.streamCompletion(
       modelConfig,
       messagesForInference,
       inferenceSystemPrompt || '',
@@ -482,6 +542,9 @@ async function handleChatMessage(
         if (isComplete) {
           // Final save and update conversation timestamp
           if (currentBranch) {
+            // Trim leading/trailing whitespace from final content
+            currentBranch.content = currentBranch.content.trim();
+            
             await db.updateMessageContent(
               assistantMessage.id,
               assistantMessage.conversationId,
@@ -509,9 +572,30 @@ async function handleChatMessage(
           metrics
         }));
       },
-      participants
+      participants,
+      abortController.signal
     );
+    } finally {
+      endGeneration(conversation.userId, conversation.id);
+    }
   } catch (error) {
+    // Clean up generation tracking on error
+    endGeneration(conversation.userId, conversation.id);
+    
+    // Check if this was an abort
+    if (error instanceof Error && error.message === 'Generation aborted') {
+      console.log(`[Abort] Generation was aborted for conversation ${message.conversationId}`);
+      ws.send(JSON.stringify({
+        type: 'stream',
+        messageId: assistantMessage.id,
+        branchId: assistantMessage.activeBranchId,
+        content: '',
+        isComplete: true,
+        aborted: true
+      }));
+      return;
+    }
+    
     console.error('Inference streaming error:', error);
     
     // Parse error for user-friendly messages
@@ -701,60 +785,89 @@ async function handleRegenerate(
       throw new Error(`Model ${responderModel} not found`);
     }
     
-    await inferenceService.streamCompletion(
-      modelConfig,
-      historyMessages,
-      responderSystemPrompt || '',
-      responderSettings,
-      conversation.userId,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-        const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
-        if (currentBranch) {
-          currentBranch.content += chunk;
-          
-          // Store content blocks if provided
-          if (contentBlocks && contentBlocks.length > 0) {
-            currentBranch.contentBlocks = contentBlocks;
+    // Create abort controller for this generation
+    const abortController = startGeneration(conversation.userId, conversation.id);
+    
+    try {
+      await inferenceService.streamCompletion(
+        modelConfig,
+        historyMessages,
+        responderSystemPrompt || '',
+        responderSettings,
+        conversation.userId,
+        async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+          const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
+          if (currentBranch) {
+            currentBranch.content += chunk;
+            
+            // Store content blocks if provided
+            if (contentBlocks && contentBlocks.length > 0) {
+              currentBranch.contentBlocks = contentBlocks;
+            }
+            
+            // Trim whitespace on completion
+            if (isComplete) {
+              currentBranch.content = currentBranch.content.trim();
+            }
+            
+            // Save partial content periodically to prevent data loss
+            if (currentBranch.content.length % 500 === 0 || isComplete) {
+              await db.updateMessageContent(
+                updatedMessage.id,
+                updatedMessage.conversationId,
+                conversation.userId,
+                updatedMessage.activeBranchId,
+                currentBranch.content,
+                currentBranch.contentBlocks
+              );
+            }
           }
-          
-          // Save partial content periodically to prevent data loss
-          if (currentBranch.content.length % 500 === 0 || isComplete) {
-            await db.updateMessageContent(
-              updatedMessage.id,
-              updatedMessage.conversationId,
-              conversation.userId,
-              updatedMessage.activeBranchId,
-              currentBranch.content,
-              currentBranch.contentBlocks
-            );
-          }
-        }
 
-        ws.send(JSON.stringify({
-          type: 'stream',
-          messageId: updatedMessage.id,
-          branchId: updatedMessage.activeBranchId,
-          content: chunk,
-          contentBlocks: contentBlocks,
-          isComplete
-        }));
-      },
-      conversation,
-      responderParticipant,
-      async (metrics) => {
-        // Store metrics in database
-        await db.addMetrics(conversation.id, conversation.userId, metrics);
-        
-        // Send metrics update to client
-        ws.send(JSON.stringify({
-          type: 'metrics_update',
-          conversationId: conversation.id,
-          metrics
-        }));
-      },
-      participants
-    );
+          ws.send(JSON.stringify({
+            type: 'stream',
+            messageId: updatedMessage.id,
+            branchId: updatedMessage.activeBranchId,
+            content: chunk,
+            contentBlocks: contentBlocks,
+            isComplete
+          }));
+        },
+        conversation,
+        responderParticipant,
+        async (metrics) => {
+          // Store metrics in database
+          await db.addMetrics(conversation.id, conversation.userId, metrics);
+          
+          // Send metrics update to client
+          ws.send(JSON.stringify({
+            type: 'metrics_update',
+            conversationId: conversation.id,
+            metrics
+          }));
+        },
+        participants,
+        abortController.signal
+      );
+    } finally {
+      endGeneration(conversation.userId, conversation.id);
+    }
   } catch (error) {
+    endGeneration(conversation.userId, conversation.id);
+    
+    // Check if this was an abort
+    if (error instanceof Error && error.message === 'Generation aborted') {
+      console.log(`[Abort] Regeneration was aborted for conversation ${message.conversationId}`);
+      ws.send(JSON.stringify({
+        type: 'stream',
+        messageId: updatedMessage.id,
+        branchId: updatedMessage.activeBranchId,
+        content: '',
+        isComplete: true,
+        aborted: true
+      }));
+      return;
+    }
+    
     console.error('Regeneration error:', error);
     const errorMsg = error instanceof Error ? error.message : String(error);
     ws.send(JSON.stringify({
@@ -974,6 +1087,11 @@ async function handleEdit(
             // Store content blocks if provided
             if (contentBlocks && contentBlocks.length > 0) {
               currentBranch.contentBlocks = contentBlocks;
+            }
+            
+            // Trim whitespace on completion
+            if (isComplete) {
+              currentBranch.content = currentBranch.content.trim();
             }
             
             // Save partial content periodically
@@ -1204,74 +1322,103 @@ async function handleContinue(
       throw new Error(`Model ${modelId} not found`);
     }
     
-    await inferenceService.streamCompletion(
-      modelConfig,
-      messagesWithNewAssistant,
-      responder.systemPrompt || conversation.systemPrompt || '',
-      conversation.format === 'standard'
-        ? conversation.settings || { temperature: 1.0, maxTokens: 1024 }
-        : {
-            temperature: responder.settings?.temperature ?? conversation.settings?.temperature ?? 1.0,
-            maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 1024,
-            topP: responder.settings?.topP ?? conversation.settings?.topP,
-            topK: responder.settings?.topK ?? conversation.settings?.topK,
-            // Always use conversation-level thinking settings
-            thinking: conversation.settings?.thinking
-          },
-      ws.userId!,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-        assistantBranch.content += chunk;
-        
-        // Store content blocks if provided
-        if (contentBlocks && contentBlocks.length > 0) {
-          assistantBranch.contentBlocks = contentBlocks;
-        }
-        
-        // Save partial content periodically
-        if (assistantBranch.content.length % 500 === 0 || isComplete) {
-          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
-        }
-        
-        ws.send(JSON.stringify({
-          type: 'stream',
-          messageId: assistantMessage.id,
-          branchId: assistantBranch.id,
-          content: chunk,
-          contentBlocks: contentBlocks,
-          isComplete
-        }));
-
-        if (isComplete) {
-          // Final save
-          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
+    // Create abort controller for this generation
+    const abortController = startGeneration(conversation.userId, conversationId);
+    
+    try {
+      await inferenceService.streamCompletion(
+        modelConfig,
+        messagesWithNewAssistant,
+        responder.systemPrompt || conversation.systemPrompt || '',
+        conversation.format === 'standard'
+          ? conversation.settings || { temperature: 1.0, maxTokens: 4096 }
+          : {
+              temperature: responder.settings?.temperature ?? conversation.settings?.temperature ?? 1.0,
+              maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 4096,
+              topP: responder.settings?.topP ?? conversation.settings?.topP,
+              topK: responder.settings?.topK ?? conversation.settings?.topK,
+              // Always use conversation-level thinking settings
+              thinking: conversation.settings?.thinking
+            },
+        ws.userId!,
+        async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+          assistantBranch.content += chunk;
           
-          // Send updated conversation
-          const updatedConversation = await db.getConversation(conversationId, conversation.userId);
-          if (updatedConversation) {
-            ws.send(JSON.stringify({
-              type: 'conversation_updated',
-              conversation: updatedConversation
-            }));
+          // Store content blocks if provided
+          if (contentBlocks && contentBlocks.length > 0) {
+            assistantBranch.contentBlocks = contentBlocks;
           }
-        }
-      },
-      conversation,
-      responder,
-      async (metrics) => {
-        // Store metrics in database
-        await db.addMetrics(conversation.id, conversation.userId, metrics);
-        
-        // Send metrics update to client
-        ws.send(JSON.stringify({
-          type: 'metrics_update',
-          conversationId: conversation.id,
-          metrics
-        }));
-      },
-      participants
-    );
+          
+          // Trim whitespace on completion
+          if (isComplete) {
+            assistantBranch.content = assistantBranch.content.trim();
+          }
+          
+          // Save partial content periodically
+          if (assistantBranch.content.length % 500 === 0 || isComplete) {
+            await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
+          }
+          
+          ws.send(JSON.stringify({
+            type: 'stream',
+            messageId: assistantMessage.id,
+            branchId: assistantBranch.id,
+            content: chunk,
+            contentBlocks: contentBlocks,
+            isComplete
+          }));
+
+          if (isComplete) {
+            // Final save (content already trimmed above)
+            await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
+            
+            // Send updated conversation
+            const updatedConversation = await db.getConversation(conversationId, conversation.userId);
+            if (updatedConversation) {
+              ws.send(JSON.stringify({
+                type: 'conversation_updated',
+                conversation: updatedConversation
+              }));
+            }
+          }
+        },
+        conversation,
+        responder,
+        async (metrics) => {
+          // Store metrics in database
+          await db.addMetrics(conversation.id, conversation.userId, metrics);
+          
+          // Send metrics update to client
+          ws.send(JSON.stringify({
+            type: 'metrics_update',
+            conversationId: conversation.id,
+            metrics
+          }));
+        },
+        participants,
+        abortController.signal
+      );
+    } finally {
+      endGeneration(conversation.userId, conversationId);
+    }
 
   } catch (error) {
+    if (ws.userId) {
+      endGeneration(ws.userId, conversationId);
+    }
+    
+    // Check if this was an abort
+    if (error instanceof Error && error.message === 'Generation aborted') {
+      console.log(`[Abort] Continue generation was aborted for conversation ${conversationId}`);
+      // Note: assistantMessage/assistantBranch may not be defined if error happened early
+      ws.send(JSON.stringify({
+        type: 'generation_aborted',
+        conversationId: conversationId,
+        aborted: true
+      }));
+      return;
+    }
+    
     console.error('Continue generation error:', error);
     ws.send(JSON.stringify({ 
       type: 'error', 

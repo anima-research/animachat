@@ -2,9 +2,13 @@
   <v-layout class="rounded rounded-md">
     <!-- Sidebar -->
     <v-navigation-drawer
+      v-if="!isMobile || mobilePanel === 'sidebar'"
       v-model="drawer"
-      permanent
+      :permanent="!isMobile"
+      :temporary="isMobile"
+      :scrim="isMobile"
       class="sidebar-drawer"
+      :class="{ 'sidebar-drawer--mobile': isMobile }"
     >
       <div class="d-flex flex-column h-100">
         <!-- Fixed header section -->
@@ -19,6 +23,14 @@
                 <div class="mr-3">
                   <ArcLogo :size="40" />
                 </div>
+              </template>
+              <template v-slot:append v-if="isMobile">
+                <v-btn
+                  icon="mdi-close"
+                  variant="text"
+                  size="small"
+                  @click="closeMobileSidebar"
+                />
               </template>
             </v-list-item>
           </v-list>
@@ -59,6 +71,7 @@
               :to="`/conversation/${conversation.id}`"
               class="conversation-list-item"
               :lines="'three'"
+              @click="handleConversationClick(conversation.id)"
             >
               <template v-slot:title>
                 <div class="text-truncate">{{ conversation.title }}</div>
@@ -88,11 +101,6 @@
                       @click="renameConversation(conversation)"
                     />
                     <v-list-item
-                      prepend-icon="mdi-content-copy"
-                      title="Duplicate"
-                      @click="duplicateConversation(conversation.id)"
-                    />
-                    <v-list-item
                       prepend-icon="mdi-share-variant"
                       title="Share"
                       @click="shareConversation(conversation)"
@@ -101,6 +109,11 @@
                       prepend-icon="mdi-download"
                       title="Export"
                       @click="exportConversation(conversation.id)"
+                    />
+                    <v-list-item
+                      prepend-icon="mdi-content-copy"
+                      title="Duplicate"
+                      @click="openDuplicateDialog(conversation)"
                     />
                     <v-list-item
                       prepend-icon="mdi-archive"
@@ -144,10 +157,21 @@
     </v-navigation-drawer>
 
     <!-- Main Content -->
-    <v-main class="d-flex flex-column" style="height: 100vh;">
+    <v-main
+      v-if="!isMobile || mobilePanel === 'conversation'"
+      class="d-flex flex-column"
+      style="height: 100vh;"
+    >
       <!-- Top Bar -->
       <v-app-bar density="compact">
-        <v-app-bar-nav-icon @click="drawer = !drawer" />
+        <v-app-bar-nav-icon v-if="!isMobile" @click="drawer = !drawer" />
+        <v-btn
+          v-else
+          icon="mdi-menu"
+          variant="text"
+          @click="mobilePanel = 'sidebar'"
+          title="Show conversation list"
+        />
 
         <!-- Breadcrumb navigation with fixed title and scrollable bookmarks -->
         <div v-if="currentConversation" class="d-flex align-center breadcrumb-container">
@@ -271,170 +295,349 @@
           Branching from selected message. New messages will create alternative branches.
         </v-alert>
         
-        <!-- Model Quick Access Bar -->
-        <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
-             class="mb-0 d-flex align-center justify-space-around">
-          <div class="d-flex align-center gap-2 flex-wrap">
-            
-            <!-- Existing participants sorted by last spoken -->
-            <v-chip
-              v-for="participant in participantsByLastSpoken"
-              :key="participant.id"
-              :color="getModelColor(participant.model || '')"
-              size="small"
-              variant="outlined"
-              @click="triggerParticipantResponse(participant)"
-              :disabled="isStreaming"
-              class="clickable-chip"
-              style="margin: 0 2px 0 2px; pointer-events: auto;"
-              :ripple="false"
-              link
-            >
-              <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
-              {{ participant.name === '' 
-                ? `${participant.model} (continue)`
-                : participant.name }}
-              <v-tooltip activator="parent" location="top">
-                {{ participant.name === '' ? `Continue with ${participant.model}` : `Response from ${participant.name}` }}
-              </v-tooltip>
-            </v-chip>
-            
-            <!-- Divider between participants and suggested models -->
-            <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
-                       vertical 
-                       class="mx-1" 
-                       style="height: 20px" />
-            
-            <!-- Suggested models that aren't participants yet -->
-            <template v-for="model in suggestedNonParticipantModels" :key="model?.id">
+        <!-- MOBILE CONTROLS -->
+        <template v-if="isMobile">
+          <!-- Quick access pills - horizontally scrollable -->
+          <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
+               class="mobile-quick-access mb-2">
+            <div class="mobile-pills-scroll">
               <v-chip
-                v-if="model"
-                color="grey"
+                v-for="participant in participantsByLastSpoken"
+                :key="participant.id"
+                :color="getModelColor(participant.model || '')"
                 size="small"
                 variant="outlined"
-                @click="triggerModelResponse(model)"
+                @click="triggerParticipantResponse(participant)"
+                :disabled="isStreaming"
+                class="mobile-pill"
+              >
+                <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
+                {{ participant.name === '' ? (participant.model?.split(' ').pop() || 'Continue') : participant.name }}
+              </v-chip>
+              
+              <template v-for="model in suggestedNonParticipantModels" :key="model?.id">
+                <v-chip
+                  v-if="model"
+                  color="grey"
+                  size="small"
+                  variant="outlined"
+                  @click="triggerModelResponse(model)"
+                  :disabled="isStreaming"
+                  class="mobile-pill"
+                >
+                  <v-icon size="x-small" start>mdi-plus</v-icon>
+                  {{ model.shortName || model.displayName }}
+                </v-chip>
+              </template>
+            </div>
+          </div>
+          
+          <!-- Main control row: Settings + Responder dropdown + Send -->
+          <div class="mobile-main-controls mb-2">
+            <v-btn
+              icon
+              size="small"
+              variant="tonal"
+              color="primary"
+              @click="conversationSettingsDialog = true"
+              class="mobile-settings-btn"
+            >
+              <v-icon>{{ currentConversation?.format !== 'standard' ? 'mdi-account-group' : 'mdi-cog' }}</v-icon>
+            </v-btn>
+            
+            <v-select
+              v-if="currentConversation.format !== 'standard'"
+              v-model="selectedResponder"
+              :items="responderOptions"
+              item-title="name"
+              item-value="id"
+              label="Response from"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="mobile-responder-select"
+            >
+              <template v-slot:selection="{ item }">
+                <div class="d-flex align-center">
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    size="small"
+                    class="mr-1"
+                  />
+                  <span class="text-truncate" :style="item.raw.type === 'user' ? 'color: #bb86fc;' : `color: ${getModelColor(item.raw.model || '')};`">
+                    {{ item.raw.name }}
+                  </span>
+                </div>
+              </template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:prepend>
+                    <v-icon 
+                      :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                      :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    />
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
+            
+            <!-- Standard mode: show model chip -->
+            <v-chip 
+              v-else
+              variant="outlined"
+              :color="getModelColor(currentConversation?.model)"
+              @click="conversationSettingsDialog = true"
+              class="mobile-model-chip"
+            >
+              {{ currentModel?.shortName || currentModel?.displayName || 'Model' }}
+            </v-chip>
+            
+            <v-btn
+              v-if="!isStreaming"
+              :color="continueButtonColor"
+              icon="mdi-send"
+              variant="tonal"
+              size="small"
+              @click="continueGeneration"
+            />
+            <v-btn
+              v-else
+              color="error"
+              icon="mdi-stop"
+              variant="tonal"
+              size="small"
+              title="Stop generation"
+              @click="abortGeneration"
+            />
+          </div>
+          
+          <!-- Speaking as (collapsible, shown only when needed) -->
+          <div v-if="currentConversation.format !== 'standard'" class="mobile-speaking-as mb-2">
+            <v-btn
+              variant="text"
+              size="x-small"
+              density="compact"
+              class="text-caption"
+              @click="showMobileSpeakingAs = !showMobileSpeakingAs"
+            >
+              Speaking as: {{ selectedParticipantName }}
+              <v-icon size="x-small" class="ml-1">{{ showMobileSpeakingAs ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+            </v-btn>
+            <v-select
+              v-if="showMobileSpeakingAs"
+              v-model="selectedParticipant"
+              :items="allParticipants"
+              item-title="name"
+              item-value="id"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="mt-1"
+            >
+              <template v-slot:selection="{ item }">
+                <div class="d-flex align-center">
+                  <v-icon 
+                    :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                    :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    size="small"
+                    class="mr-1"
+                  />
+                  <span :style="item.raw.type === 'user' ? 'color: #bb86fc;' : `color: ${getModelColor(item.raw.model || '')};`">
+                    {{ item.raw.name }}
+                  </span>
+                </div>
+              </template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:prepend>
+                    <v-icon 
+                      :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                      :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    />
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
+          </div>
+        </template>
+        
+        <!-- DESKTOP CONTROLS -->
+        <template v-else>
+          <!-- Model Quick Access Bar -->
+          <div v-if="currentConversation.format !== 'standard' && (participantsByLastSpoken.length > 0 || suggestedNonParticipantModels.length > 0)" 
+               class="mb-0 d-flex align-center justify-space-around">
+            <div class="d-flex align-center gap-2 flex-wrap">
+              
+              <!-- Existing participants sorted by last spoken -->
+              <v-chip
+                v-for="participant in participantsByLastSpoken"
+                :key="participant.id"
+                :color="getModelColor(participant.model || '')"
+                size="small"
+                variant="outlined"
+                @click="triggerParticipantResponse(participant)"
                 :disabled="isStreaming"
                 class="clickable-chip"
                 style="margin: 0 2px 0 2px; pointer-events: auto;"
                 :ripple="false"
                 link
               >
-                <v-icon size="x-small" start>{{ getProviderIcon(model.provider) }}</v-icon>
-                {{ model.shortName || model.displayName }}
+                <v-icon size="x-small" start>{{ getParticipantIcon(participant) }}</v-icon>
+                {{ participant.name === '' 
+                  ? `${participant.model} (continue)`
+                  : participant.name }}
                 <v-tooltip activator="parent" location="top">
-                  Add {{ model.displayName }} to conversation
+                  {{ participant.name === '' ? `Continue with ${participant.model}` : `Response from ${participant.name}` }}
                 </v-tooltip>
               </v-chip>
-            </template>
+              
+              <!-- Divider between participants and suggested models -->
+              <v-divider v-if="participantsByLastSpoken.length > 0 && suggestedNonParticipantModels.length > 0" 
+                         vertical 
+                         class="mx-1" 
+                         style="height: 20px" />
+              
+              <!-- Suggested models that aren't participants yet -->
+              <template v-for="model in suggestedNonParticipantModels" :key="model?.id">
+                <v-chip
+                  v-if="model"
+                  color="grey"
+                  size="small"
+                  variant="outlined"
+                  @click="triggerModelResponse(model)"
+                  :disabled="isStreaming"
+                  class="clickable-chip"
+                  style="margin: 0 2px 0 2px; pointer-events: auto;"
+                  :ripple="false"
+                  link
+                >
+                  <v-icon size="x-small" start>{{ getProviderIcon(model.provider) }}</v-icon>
+                  {{ model.shortName || model.displayName }}
+                  <v-tooltip activator="parent" location="top">
+                    Add {{ model.displayName }} to conversation
+                  </v-tooltip>
+                </v-chip>
+              </template>
+            </div>
           </div>
-        </div>
-        
-        <div class="mb-2 d-flex gap-2 align-center justify-center">
-          <v-chip 
-            class="mr-2 clickable-chip" 
-            variant="outlined"
-            :color="currentConversation?.format === 'standard' ? getModelColor(currentConversation?.model) : 'info'"
-            @click="conversationSettingsDialog = true"
-          >
-            <v-icon v-if="currentConversation?.format !== 'standard'" class="mr-2">mdi-account-group</v-icon>
-            {{ currentConversation?.format !== 'standard' ? '' : currentModel?.displayName || 'Select Model' }}
-            <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
-            <v-tooltip activator="parent" location="bottom">
-              Click to change model and settings
-            </v-tooltip>
-          </v-chip>
-          <v-select
-            v-if="currentConversation.format !== 'standard'"
-            v-model="selectedResponder"
-            :items="responderOptions"
-            item-title="name"
-            item-value="id"
-            label="Response from"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="flex-grow-1 mr-2"
-          >
-            <template v-slot:selection="{ item }">
-              <div class="d-flex align-center">
-                <v-icon 
-                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
-                  size="small"
-                  class="mr-2"
-                />
-                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
-                  {{ item.raw.name }}
-                </span>
-              </div>
-            </template>
-            <template v-slot:item="{ props, item }">
-              <v-list-item v-bind="props">
-                <template v-slot:prepend>
+          
+          <div class="mb-2 d-flex gap-2 align-center justify-center">
+            <v-chip 
+              class="mr-2 clickable-chip" 
+              variant="outlined"
+              :color="currentConversation?.format === 'standard' ? getModelColor(currentConversation?.model) : 'info'"
+              @click="conversationSettingsDialog = true"
+            >
+              <v-icon v-if="currentConversation?.format !== 'standard'" class="mr-2">mdi-account-group</v-icon>
+              {{ currentConversation?.format !== 'standard' ? '' : currentModel?.displayName || 'Select Model' }}
+              <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
+              <v-tooltip activator="parent" location="bottom">
+                Click to change model and settings
+              </v-tooltip>
+            </v-chip>
+            <v-select
+              v-if="currentConversation.format !== 'standard'"
+              v-model="selectedResponder"
+              :items="responderOptions"
+              item-title="name"
+              item-value="id"
+              label="Response from"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="flex-grow-1 mr-2"
+            >
+              <template v-slot:selection="{ item }">
+                <div class="d-flex align-center">
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
                     :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    size="small"
+                    class="mr-2"
                   />
-                </template>
-                <template v-slot:title>
                   <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
-                </template>
-              </v-list-item>
-            </template>
-          </v-select>
-          <v-btn
-            :disabled="isStreaming"
-            :color="continueButtonColor"
-            icon="mdi-send"
-            variant="text"
-            :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
-            @click="continueGeneration"
-            class="mr-2"
-          />
-          <v-select
-            v-if="currentConversation.format !== 'standard'"
-            v-model="selectedParticipant"
-            :items="allParticipants"
-            item-title="name"
-            item-value="id"
-            label="Speaking as"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="flex-grow-1"
-          >
-            <template v-slot:selection="{ item }">
-              <div class="d-flex align-center">
-                <v-icon 
-                  :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                  :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
-                  size="small"
-                  class="mr-2"
-                />
-                <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
-                  {{ item.raw.name }}
-                </span>
-              </div>
-            </template>
-            <template v-slot:item="{ props, item }">
-              <v-list-item v-bind="props">
-                <template v-slot:prepend>
+                </div>
+              </template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:prepend>
+                    <v-icon 
+                      :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                      :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    />
+                  </template>
+                  <template v-slot:title>
+                    <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
+                      {{ item.raw.name }}
+                    </span>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
+            <v-btn
+              v-if="!isStreaming"
+              :color="continueButtonColor"
+              icon="mdi-send"
+              variant="text"
+              :title="currentConversation?.format === 'standard' ? 'Continue (Assistant)' : `Continue (${selectedResponderName})`"
+              @click="continueGeneration"
+              class="mr-2"
+            />
+            <v-btn
+              v-else
+              color="error"
+              icon="mdi-stop"
+              variant="text"
+              title="Stop generation"
+              @click="abortGeneration"
+              class="mr-2"
+            />
+            <v-select
+              v-if="currentConversation.format !== 'standard'"
+              v-model="selectedParticipant"
+              :items="allParticipants"
+              item-title="name"
+              item-value="id"
+              label="Speaking as"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="flex-grow-1"
+            >
+              <template v-slot:selection="{ item }">
+                <div class="d-flex align-center">
                   <v-icon 
                     :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
                     :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    size="small"
+                    class="mr-2"
                   />
-                </template>
-                <template v-slot:title>
                   <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
                     {{ item.raw.name }}
                   </span>
-                </template>
-              </v-list-item>
-            </template>
-          </v-select>
-        </div>
+                </div>
+              </template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template v-slot:prepend>
+                    <v-icon 
+                      :icon="item.raw.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                      :color="item.raw.type === 'user' ? '#bb86fc' : getModelColor(item.raw.model || '')"
+                    />
+                  </template>
+                  <template v-slot:title>
+                    <span :style="item.raw.type === 'user' ? 'color: #bb86fc; font-weight: 500;' : `color: ${getModelColor(item.raw.model || '')}; font-weight: 500;`">
+                      {{ item.raw.name }}
+                    </span>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
+          </div>
+        </template>
         
         <!-- Attachments display -->
         <div v-if="attachments.length > 0" class="mb-2">
@@ -444,35 +647,64 @@
             closable
             @click:close="removeAttachment(index)"
             class="mr-2 mb-2"
+            :color="getAttachmentChipColor(attachment)"
             :style="attachment.isImage ? 'height: auto; padding: 4px;' : ''"
           >
             <template v-if="attachment.isImage">
               <img 
-                :src="`data:image/${attachment.fileType};base64,${attachment.content}`" 
+                :src="`data:${attachment.mimeType || 'image/' + attachment.fileType};base64,${attachment.content}`" 
                 :alt="attachment.fileName"
                 style="max-height: 60px; max-width: 100px; margin-right: 8px; border-radius: 4px;"
               />
               <span>{{ attachment.fileName }}</span>
             </template>
+            <template v-else-if="attachment.isPdf">
+              <v-icon start color="red-darken-1">mdi-file-pdf-box</v-icon>
+              {{ attachment.fileName }}
+            </template>
+            <template v-else-if="attachment.isAudio">
+              <v-icon start color="purple">mdi-music-box</v-icon>
+              {{ attachment.fileName }}
+            </template>
+            <template v-else-if="attachment.isVideo">
+              <v-icon start color="blue">mdi-video-box</v-icon>
+              {{ attachment.fileName }}
+            </template>
             <template v-else>
-              <v-icon start>mdi-paperclip</v-icon>
+              <v-icon start>mdi-file-document-outline</v-icon>
               {{ attachment.fileName }}
             </template>
             <span class="ml-1 text-caption">({{ formatFileSize(attachment.fileSize) }})</span>
           </v-chip>
         </div>
         
-        <v-textarea
-          v-model="messageInput"
-          :disabled="isStreaming"
-          label="Type your message..."
-          rows="3"
-          auto-grow
-          max-rows="15"
-          variant="outlined"
-          hide-details
-          @keydown.enter.exact.prevent="sendMessage"
+        <!-- Drop zone wrapper for drag-and-drop attachments -->
+        <div 
+          class="input-drop-zone"
+          :class="{ 'drop-zone-active': isDraggingOver }"
+          @dragenter.prevent="handleDragEnter"
+          @dragover.prevent="handleDragOver"
+          @dragleave.prevent="handleDragLeave"
+          @drop.prevent="handleDrop"
         >
+          <div v-if="isDraggingOver" class="drop-zone-overlay">
+            <v-icon size="48" color="primary">mdi-file-upload</v-icon>
+            <span class="text-body-1 mt-2">Drop files here</span>
+          </div>
+          
+          <v-textarea
+            ref="messageTextarea"
+            v-model="messageInput"
+            label="Type your message..."
+            rows="3"
+            auto-grow
+            max-rows="15"
+            variant="outlined"
+            hide-details
+            @keydown.enter.exact.prevent="sendMessage"
+            @focus="handleTextareaFocus"
+            @paste="handlePaste"
+          >
           <template v-slot:append-inner>
             <!-- File attachment button -->
             <v-btn
@@ -484,22 +716,42 @@
               class="mr-1"
             />
             
+            <!-- Thinking/reasoning toggle button -->
+            <v-btn
+              v-if="modelSupportsThinking"
+              :icon="thinkingEnabled ? 'mdi-head-lightbulb' : 'mdi-head-lightbulb-outline'"
+              :color="thinkingEnabled ? 'info' : 'grey'"
+              variant="text"
+              @click.stop="toggleThinking"
+              :title="thinkingEnabled ? 'Disable extended thinking' : 'Enable extended thinking'"
+              class="mr-1"
+            />
             
             <v-btn
-              :disabled="!messageInput || isStreaming"
+              v-if="!isStreaming"
+              :disabled="!messageInput"
               color="primary"
               icon="mdi-send"
               variant="text"
               @click="sendMessage"
             />
+            <v-btn
+              v-else
+              color="error"
+              icon="mdi-stop"
+              variant="text"
+              title="Stop generation"
+              @click="abortGeneration"
+            />
           </template>
-        </v-textarea>
+          </v-textarea>
+        </div>
         
-        <!-- Hidden file input -->
+        <!-- Hidden file input - supports text, images, PDFs, audio, and video -->
         <input
           ref="fileInput"
           type="file"
-          accept=".txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp"
+          accept=".txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp,.jpg,.jpeg,.png,.gif,.webp,.svg,.pdf,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.avi,.mkv,.webm"
           multiple
           style="display: none"
           @change="handleFileSelect"
@@ -509,7 +761,7 @@
 
     <!-- Right sidebar with conversation tree -->
     <v-navigation-drawer
-      v-if="treeDrawer"
+      v-if="treeDrawer && (!isMobile || mobilePanel === 'conversation')"
       location="right"
       :width="400"
       permanent
@@ -566,6 +818,12 @@
       v-model="manageSharesDialog"
     />
     
+    <DuplicateConversationDialog
+      v-model="duplicateDialog"
+      :conversation="duplicateConversationTarget"
+      :message-count="duplicateConversationTarget ? getConversationMessageCount(duplicateConversationTarget.id) : 0"
+      @duplicated="handleDuplicated"
+    />
     
     <WelcomeDialog
       v-model="welcomeDialog"
@@ -577,7 +835,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
@@ -590,6 +848,7 @@ import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
 import ShareDialog from '@/components/ShareDialog.vue';
 import ManageSharesDialog from '@/components/ManageSharesDialog.vue';
+import DuplicateConversationDialog from '@/components/DuplicateConversationDialog.vue';
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
@@ -600,16 +859,23 @@ const route = useRoute();
 const router = useRouter();
 const store = useStore();
 
+type MobilePanel = 'sidebar' | 'conversation';
+const MOBILE_BREAKPOINT = 1024;
+
 // DEBUG: Verify new code is loaded
 console.log('🔧 ConversationView loaded - UI bug fixes version - timestamp:', new Date().toISOString());
 
 const drawer = ref(true);
+const isMobile = ref(false);
+const mobilePanel = ref<MobilePanel>('sidebar');
 const treeDrawer = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
 const shareDialog = ref(false);
 const manageSharesDialog = ref(false);
+const duplicateDialog = ref(false);
+const duplicateConversationTarget = ref<Conversation | null>(null);
 const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
 const rawImportData = ref('');
@@ -619,8 +885,39 @@ const streamingMessageId = ref<string | null>(null);
 const autoScrollEnabled = ref(true);
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
-const attachments = ref<Array<{ fileName: string; fileType: string; fileSize: number; content: string; isImage?: boolean }>>([]);
+const attachments = ref<Array<{
+  fileName: string;
+  fileType: string;
+  mimeType?: string;
+  fileSize: number;
+  content: string;
+  encoding?: 'base64' | 'text';
+  isImage?: boolean;
+  isPdf?: boolean;
+  isAudio?: boolean;
+  isVideo?: boolean;
+}>>([]);
 const fileInput = ref<HTMLInputElement>();
+const messageTextarea = ref<any>();
+const isDraggingOver = ref(false);
+let dragCounter = 0; // Track nested drag events
+const updateMobileState = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const wasMobile = isMobile.value;
+  isMobile.value = window.innerWidth < MOBILE_BREAKPOINT;
+  
+  // Sync drawer state when transitioning to/from mobile
+  if (isMobile.value && !wasMobile) {
+    // Just became mobile - set panel and drawer state
+    mobilePanel.value = route.params.id ? 'conversation' : 'sidebar';
+    drawer.value = mobilePanel.value === 'sidebar';
+  } else if (!isMobile.value && wasMobile) {
+    // Just became desktop - drawer should always be open
+    drawer.value = true;
+  }
+};
 
 // Branch selection state
 const selectedBranchForParent = ref<{ messageId: string; branchId: string } | null>(null);
@@ -628,6 +925,7 @@ const messagesContainer = ref<HTMLElement>();
 const participants = ref<Participant[]>([]);
 const selectedParticipant = ref<string>('');
 const selectedResponder = ref<string>('');
+const showMobileSpeakingAs = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
 const bookmarks = ref<Bookmark[]>([]);
 const bookmarksScrollRef = ref<HTMLElement>();
@@ -667,6 +965,40 @@ const currentBranchId = computed(() => {
 });
 const currentModel = computed(() => store.currentModel);
 
+// Thinking/reasoning toggle
+const thinkingEnabled = computed(() => {
+  return currentConversation.value?.settings?.thinking?.enabled || false;
+});
+
+const thinkingBudgetTokens = computed(() => {
+  return currentConversation.value?.settings?.thinking?.budgetTokens || 10000;
+});
+
+// Check if current model supports thinking (Claude models that support extended thinking)
+const modelSupportsThinking = computed(() => {
+  const modelId = currentConversation.value?.model || '';
+  // Claude 3.5 Sonnet, Claude 3.7 Sonnet, Claude 4.x, and Opus 4.5 support extended thinking
+  return modelId.includes('claude-3-5-sonnet') || 
+         modelId.includes('claude-3-7-sonnet') ||
+         modelId.includes('claude-sonnet-4') ||
+         modelId.includes('claude-opus-4') ||
+         modelId.includes('opus-4');
+});
+
+async function toggleThinking() {
+  if (!currentConversation.value) return;
+  
+  const newEnabled = !thinkingEnabled.value;
+  const newSettings = {
+    ...currentConversation.value.settings,
+    thinking: newEnabled 
+      ? { enabled: true, budgetTokens: thinkingBudgetTokens.value }
+      : undefined
+  };
+  
+  await updateConversationSettings({ settings: newSettings });
+}
+
 // Get bookmarks in the order they appear in the active conversation path
 const bookmarksInActivePath = computed(() => {
   const visibleMessages = messages.value;
@@ -691,6 +1023,27 @@ const bookmarksInActivePath = computed(() => {
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
   return responder?.name || 'Assistant';
+});
+
+const selectedParticipantName = computed(() => {
+  const participant = allParticipants.value.find(p => p.id === selectedParticipant.value);
+  return participant?.name || 'User';
+});
+
+watch(isMobile, (mobile) => {
+  if (mobile) {
+    mobilePanel.value = route.params.id ? 'conversation' : 'sidebar';
+    drawer.value = mobilePanel.value === 'sidebar';
+  } else {
+    drawer.value = true;
+  }
+});
+
+watch(mobilePanel, (panel) => {
+  if (!isMobile.value) {
+    return;
+  }
+  drawer.value = panel === 'sidebar';
 });
 
 // Allow sending as any participant type (user or assistant)
@@ -806,6 +1159,15 @@ watch(conversations, (newConversations) => {
 
 // Load initial data
 onMounted(async () => {
+  if (typeof window !== 'undefined') {
+    updateMobileState();
+    window.addEventListener('resize', updateMobileState);
+    if (isMobile.value) {
+      mobilePanel.value = route.params.id ? 'conversation' : 'sidebar';
+      drawer.value = mobilePanel.value === 'sidebar';
+    }
+  }
+
   await store.loadModels();
   await store.loadSystemConfig();
   await store.loadConversations();
@@ -845,16 +1207,28 @@ onMounted(async () => {
       store.state.wsService.on('stream', (data: any) => {
         // Streaming content update
         if (data.messageId === streamingMessageId.value) {
-          // Check if streaming is complete
-          if (data.isComplete) {
+          // Check if streaming is complete or was aborted
+          if (data.isComplete || data.aborted) {
             isStreaming.value = false;
             streamingMessageId.value = null;
+            if (data.aborted) {
+              console.log('Generation was aborted');
+            }
           } else {
             // Still streaming
             if (!isStreaming.value) {
               isStreaming.value = true;
             }
           }
+        }
+      });
+      
+      // Handle generation_aborted event (for cases where messageId might not match)
+      store.state.wsService.on('generation_aborted', (data: any) => {
+        console.log('Generation aborted for conversation:', data.conversationId);
+        if (data.conversationId === currentConversation.value?.id) {
+          isStreaming.value = false;
+          streamingMessageId.value = null;
         }
       });
       
@@ -973,12 +1347,7 @@ onMounted(async () => {
     }
   });
   
-  // Load participants for multi-participant conversations
-  for (const conversation of conversations.value) {
-    if (conversation.format === 'prefill') {
-      loadConversationParticipants(conversation.id);
-    }
-  }
+  // Note: loadConversationParticipants was removed - sidebar now uses embedded summaries
   
   // Show welcome dialog on first visit
   const hideWelcome = localStorage.getItem('hideWelcomeDialog');
@@ -997,12 +1366,26 @@ onMounted(async () => {
     setTimeout(() => {
       scrollToBottom();
     }, 100);
+
+    if (isMobile.value) {
+      mobilePanel.value = 'conversation';
+      drawer.value = false;
+    }
   }
 
 });
 
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateMobileState);
+  }
+});
+
 // Watch route changes
 watch(() => route.params.id, async (newId) => {
+  if (isMobile.value) {
+    mobilePanel.value = newId ? 'conversation' : 'sidebar';
+  }
   if (newId) {
     // Clear selected branch when switching conversations
     if (selectedBranchForParent.value) {
@@ -1139,6 +1522,21 @@ function scrollToBottom(smooth: boolean = false) {
   attemptScroll();
 }
 
+function closeMobileSidebar() {
+  // Go back to conversation view on mobile
+  // If there's a current conversation, show it; otherwise just hide the sidebar
+  if (route.params.id) {
+    mobilePanel.value = 'conversation';
+  } else {
+    // No conversation selected - could navigate to most recent or just close
+    const recentConversation = conversations.value[0];
+    if (recentConversation) {
+      router.push(`/conversation/${recentConversation.id}`);
+      mobilePanel.value = 'conversation';
+    }
+  }
+}
+
 async function createNewConversation() {
   // Use default model from system config, or fallback to first model or hardcoded default
   const defaultModel = store.state.systemConfig?.defaultModel || 
@@ -1149,6 +1547,10 @@ async function createNewConversation() {
   // Load participants for the new conversation
   await loadParticipants();
   
+  if (isMobile.value) {
+    mobilePanel.value = 'conversation';
+  }
+
   // Automatically open the settings dialog for the new conversation
   // Use nextTick to ensure the route has changed and currentConversation is updated
   await nextTick();
@@ -1163,6 +1565,11 @@ async function sendMessage() {
   console.log('ConversationView sendMessage:', content);
   console.log('Current visible messages:', messages.value.length);
   console.log('Selected parent branch:', selectedBranchForParent.value);
+  
+  // Set streaming state IMMEDIATELY to prevent race conditions
+  // where user sends multiple messages before server responds
+  isStreaming.value = true;
+  streamingError.value = null;
   
   const attachmentsCopy = [...attachments.value];
   messageInput.value = '';
@@ -1197,6 +1604,7 @@ async function sendMessage() {
   } catch (error) {
     console.error('Failed to send message:', error);
     messageInput.value = content; // Restore input on error
+    isStreaming.value = false; // Reset streaming state on error
   }
 }
 
@@ -1205,6 +1613,10 @@ async function continueGeneration() {
   
   console.log('ConversationView continueGeneration');
   console.log('Selected parent branch:', selectedBranchForParent.value);
+  
+  // Set streaming state IMMEDIATELY to prevent race conditions
+  isStreaming.value = true;
+  streamingError.value = null;
   
   try {
     let responderId: string | undefined;
@@ -1230,6 +1642,7 @@ async function continueGeneration() {
     }
   } catch (error) {
     console.error('Failed to continue generation:', error);
+    isStreaming.value = false; // Reset on error
   }
 }
 
@@ -1261,7 +1674,7 @@ async function triggerModelResponse(model: Model) {
           model: model.id,
           settings: {
             temperature: 1.0,
-            maxTokens: 1024
+            maxTokens: model.outputTokenLimit ? Math.min(model.outputTokenLimit, 8192) : 4096
           }
         })
       });
@@ -1301,7 +1714,19 @@ async function triggerParticipantResponse(participant: Participant) {
 }
 
 async function regenerateMessage(messageId: string, branchId: string) {
+  // Set streaming state before sending request
+  streamingMessageId.value = messageId;
+  isStreaming.value = true;
+  streamingError.value = null;
+  autoScrollEnabled.value = true;
+  
   await store.regenerateMessage(messageId, branchId);
+}
+
+function abortGeneration() {
+  console.log('Aborting generation...');
+  store.abortGeneration();
+  // Note: isStreaming will be reset when we receive the aborted stream event
 }
 
 async function editMessage(messageId: string, branchId: string, content: string) {
@@ -1416,11 +1841,6 @@ function shareConversation(conversation: Conversation) {
   shareDialog.value = true;
 }
 
-async function duplicateConversation(id: string) {
-  const duplicate = await store.duplicateConversation(id);
-  router.push(`/conversation/${duplicate.id}`);
-}
-
 async function exportConversation(id: string) {
   try {
     const response = await fetch(`/api/conversations/${id}/export`, {
@@ -1439,6 +1859,12 @@ async function exportConversation(id: string) {
     URL.revokeObjectURL(url);
   } catch (error) {
     console.error('Export failed:', error);
+  }
+}
+
+function handleConversationClick(_conversationId: string) {
+  if (isMobile.value) {
+    mobilePanel.value = 'conversation';
   }
 }
 
@@ -1466,6 +1892,68 @@ function triggerFileInput(event: Event) {
   }, 100);
 }
 
+function handleTextareaFocus() {
+  // Fix for mobile Safari: scroll textarea into view when keyboard appears
+  if (isMobile.value && messageTextarea.value) {
+    // Small delay to let the keyboard start appearing
+    setTimeout(() => {
+      const el = messageTextarea.value?.$el;
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 300);
+  }
+}
+
+// File type classifications for multimodal support
+const FILE_TYPES = {
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'],
+  pdf: ['pdf'],
+  audio: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'webm'],
+  video: ['mp4', 'mov', 'avi', 'mkv', 'webm'],
+  // Text files are anything not in the above categories
+};
+
+// MIME type mappings
+const MIME_TYPES: Record<string, string> = {
+  // Images
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg',
+  'png': 'image/png',
+  'gif': 'image/gif',
+  'webp': 'image/webp',
+  'svg': 'image/svg+xml',
+  // Documents
+  'pdf': 'application/pdf',
+  // Audio
+  'mp3': 'audio/mpeg',
+  'wav': 'audio/wav',
+  'flac': 'audio/flac',
+  'ogg': 'audio/ogg',
+  'm4a': 'audio/mp4',
+  'aac': 'audio/aac',
+  // Video
+  'mp4': 'video/mp4',
+  'mov': 'video/quicktime',
+  'avi': 'video/x-msvideo',
+  'mkv': 'video/x-matroska',
+  'webm': 'video/webm',
+};
+
+function getFileCategory(extension: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' {
+  if (FILE_TYPES.image.includes(extension)) return 'image';
+  if (FILE_TYPES.pdf.includes(extension)) return 'pdf';
+  if (FILE_TYPES.audio.includes(extension)) return 'audio';
+  if (FILE_TYPES.video.includes(extension)) return 'video';
+  return 'text';
+}
+
+function getMimeType(extension: string, file: File): string {
+  // Prefer file.type if available, fall back to our mapping
+  if (file.type) return file.type;
+  return MIME_TYPES[extension] || 'application/octet-stream';
+}
+
 async function handleFileSelect(event: Event) {
   console.log('handleFileSelect called');
   const input = event.target as HTMLInputElement;
@@ -1476,29 +1964,39 @@ async function handleFileSelect(event: Event) {
   
   console.log(`Processing ${input.files.length} files`);
   for (const file of Array.from(input.files)) {
-    console.log(`Reading file: ${file.name} (${file.size} bytes)`);
+    console.log(`Reading file: ${file.name} (${file.size} bytes, type: ${file.type})`);
     
     const fileExtension = file.name.split('.').pop()?.toLowerCase() || '';
-    const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
-    const isImage = imageExtensions.includes(fileExtension);
+    const category = getFileCategory(fileExtension);
+    const mimeType = getMimeType(fileExtension, file);
+    const isBinary = category !== 'text';
     
     let content: string;
-    if (isImage) {
-      // Read image as base64
+    let encoding: 'base64' | 'text' = 'text';
+    
+    if (isBinary) {
+      // Read binary files (images, PDFs, audio, video) as base64
       content = await readFileAsBase64(file);
+      encoding = 'base64';
     } else {
       // Read text files as text
       content = await readFileAsText(file);
+      encoding = 'text';
     }
     
     attachments.value.push({
       fileName: file.name,
       fileType: fileExtension,
+      mimeType,
       fileSize: file.size,
       content,
-      isImage
+      encoding,
+      isImage: category === 'image',
+      isPdf: category === 'pdf',
+      isAudio: category === 'audio',
+      isVideo: category === 'video',
     });
-    console.log(`Added ${isImage ? 'image' : 'text'} attachment: ${file.name}`);
+    console.log(`Added ${category} attachment: ${file.name} (${mimeType})`);
   }
   
   console.log(`Total attachments: ${attachments.value.length}`);
@@ -1539,6 +2037,128 @@ function formatFileSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+function getAttachmentChipColor(attachment: any): string | undefined {
+  if (attachment.isPdf) return 'red-lighten-4';
+  if (attachment.isAudio) return 'purple-lighten-4';
+  if (attachment.isVideo) return 'blue-lighten-4';
+  return undefined; // Default chip color
+}
+
+// Drag and drop handlers
+function handleDragEnter(event: DragEvent) {
+  dragCounter++;
+  if (event.dataTransfer?.types.includes('Files')) {
+    isDraggingOver.value = true;
+  }
+}
+
+function handleDragOver(event: DragEvent) {
+  // Required to allow drop
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy';
+  }
+}
+
+function handleDragLeave(event: DragEvent) {
+  dragCounter--;
+  if (dragCounter === 0) {
+    isDraggingOver.value = false;
+  }
+}
+
+async function handleDrop(event: DragEvent) {
+  dragCounter = 0;
+  isDraggingOver.value = false;
+  
+  const files = event.dataTransfer?.files;
+  if (!files || files.length === 0) return;
+  
+  await processFiles(Array.from(files));
+}
+
+// Paste handler for images
+async function handlePaste(event: ClipboardEvent) {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+  
+  const filesToProcess: File[] = [];
+  
+  for (const item of Array.from(items)) {
+    // Check if it's a file (image, etc.)
+    if (item.kind === 'file') {
+      const file = item.getAsFile();
+      if (file) {
+        filesToProcess.push(file);
+      }
+    }
+  }
+  
+  if (filesToProcess.length > 0) {
+    // Prevent the default paste behavior for files
+    event.preventDefault();
+    await processFiles(filesToProcess);
+  }
+  // If no files, let the default text paste happen
+}
+
+// Shared file processing function
+async function processFiles(files: File[]) {
+  console.log(`Processing ${files.length} files from drag/drop or paste`);
+  
+  for (const file of files) {
+    console.log(`Processing file: ${file.name} (${file.size} bytes, type: ${file.type})`);
+    
+    const fileExtension = file.name.split('.').pop()?.toLowerCase() || '';
+    const category = getFileCategory(fileExtension);
+    const mimeType = getMimeType(fileExtension, file);
+    const isBinary = category !== 'text';
+    
+    // Check if file type is supported
+    const supportedExtensions = [
+      ...FILE_TYPES.image,
+      ...FILE_TYPES.pdf,
+      ...FILE_TYPES.audio,
+      ...FILE_TYPES.video,
+      'txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'java', 'cpp', 'c', 'h', 'hpp'
+    ];
+    
+    if (!supportedExtensions.includes(fileExtension) && !file.type.startsWith('image/')) {
+      console.log(`Unsupported file type: ${fileExtension}`);
+      continue;
+    }
+    
+    let content: string;
+    let encoding: 'base64' | 'text' = 'text';
+    
+    // For pasted images without extension, check MIME type
+    const isImageFromMime = file.type.startsWith('image/');
+    
+    if (isBinary || isImageFromMime) {
+      content = await readFileAsBase64(file);
+      encoding = 'base64';
+    } else {
+      content = await readFileAsText(file);
+      encoding = 'text';
+    }
+    
+    attachments.value.push({
+      fileName: file.name || `pasted-image-${Date.now()}.${file.type.split('/')[1] || 'png'}`,
+      fileType: fileExtension || file.type.split('/')[1] || 'png',
+      mimeType: mimeType || file.type,
+      fileSize: file.size,
+      content,
+      encoding,
+      isImage: category === 'image' || isImageFromMime,
+      isPdf: category === 'pdf',
+      isAudio: category === 'audio',
+      isVideo: category === 'video',
+    });
+    console.log(`Added ${category || 'image'} attachment: ${file.name} (${mimeType || file.type})`);
+  }
+  
+  console.log(`Total attachments: ${attachments.value.length}`);
+}
+
 async function archiveConversation(id: string) {
   if (confirm('Are you sure you want to archive this conversation?')) {
     await store.archiveConversation(id);
@@ -1546,6 +2166,27 @@ async function archiveConversation(id: string) {
       router.push('/conversation');
     }
   }
+}
+
+function openDuplicateDialog(conversation: Conversation) {
+  duplicateConversationTarget.value = conversation;
+  duplicateDialog.value = true;
+}
+
+function getConversationMessageCount(conversationId: string): number {
+  // If it's the current conversation, we have the messages
+  if (currentConversation.value?.id === conversationId) {
+    return messages.value.length;
+  }
+  // Otherwise estimate from the conversation object if available
+  return 0; // Will be loaded when dialog opens
+}
+
+async function handleDuplicated(newConversation: Conversation) {
+  // Refresh conversations list
+  await store.loadConversations();
+  // Navigate to the new conversation
+  router.push(`/conversation/${newConversation.id}`);
 }
 
 async function updateConversationSettings(updates: Partial<Conversation>) {
@@ -2181,7 +2822,8 @@ function formatDate(date: Date | string): string {
 .sidebar-drawer .v-navigation-drawer__content {
   display: flex;
   flex-direction: column;
-  overflow: hidden !important;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sidebar-header {
@@ -2191,7 +2833,7 @@ function formatDate(date: Date | string): string {
 .sidebar-conversations {
   overflow-y: auto;
   overflow-x: hidden;
-  min-height: 0;
+  min-height: 140px;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
 }
@@ -2216,6 +2858,62 @@ function formatDate(date: Date | string): string {
 .sidebar-footer {
   flex-shrink: 0;
   margin-top: auto;
+}
+
+.sidebar-drawer--mobile {
+  width: 100% !important;
+  max-width: 100% !important;
+  /* Force no transform when visible on mobile - fixes Chrome layout bug */
+  transform: translateX(0) !important;
+}
+
+/* Mobile controls styles */
+.mobile-quick-access {
+  overflow: hidden;
+  padding: 0 4px;
+}
+
+.mobile-pills-scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.mobile-pills-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-pill {
+  flex-shrink: 0;
+}
+
+.mobile-main-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.mobile-settings-btn {
+  flex-shrink: 0;
+}
+
+.mobile-responder-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-model-chip {
+  flex: 1;
+  justify-content: center;
+}
+
+.mobile-speaking-as {
+  padding: 0 4px;
+  text-align: center;
 }
 
 /* Conversation title styling */
@@ -2278,5 +2976,36 @@ function formatDate(date: Date | string): string {
 .bookmark-item:hover {
   background-color: rgba(255, 255, 255, 0.1);
   opacity: 0.9;
+}
+
+/* Drop zone styles for drag-and-drop attachments */
+.input-drop-zone {
+  position: relative;
+  width: 100%;
+}
+
+/* Visual feedback when dragging over is handled by nested :deep selector below */
+
+.input-drop-zone.drop-zone-active :deep(.v-field) {
+  border-color: rgb(var(--v-theme-primary)) !important;
+  border-width: 2px !important;
+  background-color: rgba(var(--v-theme-primary), 0.05) !important;
+}
+
+.drop-zone-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(var(--v-theme-primary), 0.1);
+  border: 2px dashed rgb(var(--v-theme-primary));
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  pointer-events: none;
 }
 </style>

@@ -4,6 +4,7 @@ import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
 import { OpenRouterService } from './openrouter.js';
 import { OpenAICompatibleService } from './openai-compatible.js';
+import { GeminiService } from './gemini.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { Logger } from '../utils/logger.js';
@@ -87,7 +88,17 @@ export class InferenceService {
         apiSystemPrompt = undefined; // System prompt is included in messages for OpenRouter
         break;
       default:
-        throw new Error(`Unknown provider: ${model.provider}`);
+        // Handle 'google' and any other providers
+        if ((model.provider as string) === 'google') {
+          // For prompt building, we don't need actual API keys
+          // Gemini format is handled internally by the service
+          apiMessages = formattedMessages.map(m => ({
+            role: m.branches?.[0]?.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.branches?.[0]?.content || '' }]
+          }));
+        } else {
+          throw new Error(`Unknown provider: ${model.provider}`);
+        }
     }
     
     return {
@@ -148,6 +159,8 @@ export class InferenceService {
     // Format messages based on conversation format
     // For prefill format with Anthropic direct, pass cache marker indices to insert breakpoints
     const shouldInsertCacheBreakpoints = actualFormat === 'prefill' && model.provider === 'anthropic';
+    // Trigger thinking via <think> tag in prefill mode if thinking was enabled in settings
+    const shouldTriggerPrefillThinking = actualFormat === 'prefill' && settings.thinking?.enabled;
     const formattedMessages = this.formatMessagesForConversation(
       messages, 
       actualFormat, 
@@ -155,7 +168,8 @@ export class InferenceService {
       responderId, 
       model.provider, 
       conversation,
-      shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined
+      shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined,
+      shouldTriggerPrefillThinking
     );
 
     // Build stop sequences for prefill/messages formats
@@ -205,9 +219,86 @@ export class InferenceService {
     };
     
     // Wrap chunk handler for messages mode to strip participant names
-    const finalOnChunk = actualFormat === 'messages' 
+    let baseOnChunk = actualFormat === 'messages' 
       ? this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId)
       : trackingOnChunk;
+
+    // In prefill mode, disable API thinking - it's incompatible with prefill format
+    // Thinking blocks are converted to <think> tags in formatMessagesForConversation instead
+    const effectiveSettings = { ...settings };
+    if (actualFormat === 'prefill' && effectiveSettings.thinking?.enabled) {
+      console.log('[InferenceService] Disabling API thinking for prefill format (using <think> tags instead)');
+      effectiveSettings.thinking = { ...effectiveSettings.thinking, enabled: false };
+    }
+    
+    // For prefill thinking mode, handle thinking tags during streaming:
+    // - Buffer thinking content until </think> is seen (don't add to content)
+    // - Stream thinking updates via contentBlocks only
+    // - After </think>, stream actual response text as normal content
+    let inThinkingMode = false;
+    let thinkingBuffer = '';
+    let thinkingComplete = false;
+    const currentContentBlocks: any[] = [];
+    
+    const finalOnChunk = shouldTriggerPrefillThinking 
+      ? async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+          if (isComplete) {
+            // Finalize contentBlocks
+            if (thinkingBuffer) {
+              currentContentBlocks[0] = { type: 'thinking', thinking: thinkingBuffer.trimEnd() };
+            }
+            console.log(`[InferenceService] Prefill thinking complete: ${thinkingBuffer.length} chars thinking`);
+            // Send final with contentBlocks
+            await baseOnChunk('', true, currentContentBlocks.length > 0 ? currentContentBlocks : contentBlocks, usage);
+            return;
+          }
+          
+          if (!chunk) return;
+          
+          // Start thinking mode on first chunk
+          if (!inThinkingMode && !thinkingComplete) {
+            inThinkingMode = true;
+            currentContentBlocks.push({ type: 'thinking', thinking: '' });
+            console.log('[InferenceService] Starting prefill thinking mode');
+          }
+          
+          if (inThinkingMode) {
+            // Check if this chunk contains </think>
+            const closeTagIndex = (thinkingBuffer + chunk).indexOf('</think>');
+            if (closeTagIndex !== -1) {
+              // Split at the close tag
+              const combined = thinkingBuffer + chunk;
+              thinkingBuffer = combined.substring(0, closeTagIndex);
+              const afterTag = combined.substring(closeTagIndex + '</think>'.length);
+              
+              inThinkingMode = false;
+              thinkingComplete = true;
+              // Trim trailing whitespace from thinking content
+              currentContentBlocks[0] = { type: 'thinking', thinking: thinkingBuffer.trimEnd() };
+              
+              console.log('[InferenceService] Thinking block closed, streaming response');
+              
+              // Send thinking complete update (empty chunk, just contentBlocks)
+              await baseOnChunk('', false, currentContentBlocks);
+              
+              // Start streaming response content (without the tags, trim leading newlines)
+              const trimmedAfterTag = afterTag.replace(/^[\n\r]+/, '');
+              if (trimmedAfterTag) {
+                await baseOnChunk(trimmedAfterTag, false, currentContentBlocks);
+              }
+            } else {
+              // Still in thinking mode - buffer thinking, send empty chunk with contentBlocks update
+              thinkingBuffer += chunk;
+              currentContentBlocks[0] = { type: 'thinking', thinking: thinkingBuffer };
+              // Send empty string as chunk (so content stays empty) but with updated contentBlocks
+              await baseOnChunk('', false, currentContentBlocks);
+            }
+          } else {
+            // After thinking, stream normal response content
+            await baseOnChunk(chunk, false, currentContentBlocks);
+          }
+        }
+      : baseOnChunk;
 
     let usageResult: { usage?: any } = {};
 
@@ -224,7 +315,7 @@ export class InferenceService {
         model.providerModelId,
         formattedMessages,
         systemPrompt,
-        settings,
+        effectiveSettings,
         finalOnChunk,
         stopSequences
       );
@@ -237,7 +328,7 @@ export class InferenceService {
         model.providerModelId,
         formattedMessages,
         systemPrompt,
-        settings,
+        effectiveSettings,
         finalOnChunk,
         stopSequences
       );
@@ -259,7 +350,7 @@ export class InferenceService {
           model.providerModelId,
           formattedMessages,
           systemPrompt,
-          settings,
+          effectiveSettings,
           finalOnChunk,
           stopSequences
         );
@@ -268,7 +359,7 @@ export class InferenceService {
         model.providerModelId,
         formattedMessages,
         systemPrompt,
-        settings,
+        effectiveSettings,
         finalOnChunk,
         stopSequences
       );
@@ -299,7 +390,58 @@ export class InferenceService {
         model.providerModelId,
         formattedMessages,
         systemPrompt,
-        settings,
+        effectiveSettings,
+        finalOnChunk,
+        stopSequences
+      );
+    } else if ((model.provider as string) === 'google') {
+      if (!selectedKey) {
+        throw new Error('No API key available for Google');
+      }
+      const geminiService = new GeminiService(
+        this.db,
+        selectedKey.credentials.apiKey
+      );
+      
+      // Pass model-specific settings - merge with model defaults
+      const userModelSpecific = (effectiveSettings as any).modelSpecific || {};
+      
+      // Apply defaults from model's configurableSettings if not set by user
+      const modelDefaults: Record<string, any> = {};
+      if ((model as any).configurableSettings) {
+        for (const setting of (model as any).configurableSettings) {
+          if (userModelSpecific[setting.key] === undefined) {
+            modelDefaults[setting.key] = setting.default;
+          }
+        }
+      }
+      
+      const geminiSettings = {
+        ...effectiveSettings,
+        modelSpecific: { ...modelDefaults, ...userModelSpecific },
+      };
+      
+      console.log(`[Gemini] Model-specific settings:`, JSON.stringify(geminiSettings.modelSpecific, null, 2));
+      
+      // Auto-truncate context if enabled (check user setting first, then model capability)
+      let messagesToSend = formattedMessages;
+      // User can override via modelSpecific.autoTruncateContext setting
+      const userAutoTruncate = geminiSettings.modelSpecific?.autoTruncateContext;
+      const modelAutoTruncate = (model as any).capabilities?.autoTruncateContext;
+      // Default to true if user hasn't set it but model capability is true
+      const shouldAutoTruncate = userAutoTruncate !== undefined ? userAutoTruncate : modelAutoTruncate;
+      console.log(`[Gemini] autoTruncateContext: user=${userAutoTruncate}, model=${modelAutoTruncate}, effective=${shouldAutoTruncate}, contextWindow: ${model.contextWindow}`);
+      if (shouldAutoTruncate && model.contextWindow) {
+        console.log(`[Gemini] Truncating context to fit ${model.contextWindow} tokens...`);
+        messagesToSend = this.truncateMessagesToFit(formattedMessages, model.contextWindow, systemPrompt);
+        console.log(`[Gemini] After truncation: ${messagesToSend.length} messages (was ${formattedMessages.length})`);
+      }
+      
+      usageResult = await geminiService.streamCompletion(
+        model.providerModelId,
+        messagesToSend,
+        systemPrompt,
+        geminiSettings,
         finalOnChunk,
         stopSequences
       );
@@ -339,6 +481,129 @@ export class InferenceService {
     return Math.ceil(text.length / 4);
   }
 
+  /**
+   * Truncate messages to fit within context window, keeping messages from the tail
+   * Uses message boundaries as separators (doesn't split messages)
+   */
+  private truncateMessagesToFit(messages: any[], maxContextTokens: number, systemPrompt?: string): any[] {
+    // Reserve some tokens for system prompt and output
+    const systemPromptTokens = systemPrompt ? Math.ceil(systemPrompt.length / 4) : 0;
+    const outputReserve = 8192; // Reserve some for output
+    const availableTokens = maxContextTokens - systemPromptTokens - outputReserve;
+    
+    console.log(`[Truncate] maxContext=${maxContextTokens}, systemPrompt=${systemPromptTokens}, outputReserve=${outputReserve}, available=${availableTokens}`);
+    
+    if (availableTokens <= 0) {
+      console.log(`[Truncate] Context too tight, returning last message only`);
+      return messages.slice(-1); // Return at least the last message
+    }
+    
+    // Estimate tokens for each message (rough estimate: 4 chars per token)
+    const messageTokens = messages.map((msg, idx) => {
+      let content = '';
+      let hasMedia = false;
+      
+      // Handle our internal Message format (with branches)
+      if (msg.branches && msg.activeBranchId) {
+        const activeBranch = msg.branches.find((b: any) => b.id === msg.activeBranchId);
+        if (activeBranch) {
+          content = activeBranch.content || '';
+          // Check for attachments in the branch
+          if (activeBranch.attachments && activeBranch.attachments.length > 0) {
+            for (const att of activeBranch.attachments) {
+              if (att.isImage || att.mimeType?.startsWith('image/')) {
+                hasMedia = true;
+                content += 'x'.repeat(400000); // ~100k tokens per image
+              } else if (att.isAudio || att.mimeType?.startsWith('audio/')) {
+                hasMedia = true;
+                content += 'x'.repeat(200000); // ~50k tokens for audio
+              } else if (att.isVideo || att.mimeType?.startsWith('video/')) {
+                hasMedia = true;
+                content += 'x'.repeat(400000); // ~100k tokens for video
+              } else if (att.isPdf || att.mimeType === 'application/pdf') {
+                hasMedia = true;
+                content += 'x'.repeat(100000); // ~25k tokens for PDF
+              }
+            }
+          }
+          // Check for contentBlocks with images
+          if (activeBranch.contentBlocks) {
+            for (const block of activeBranch.contentBlocks) {
+              if (block.type === 'image') {
+                hasMedia = true;
+                content += 'x'.repeat(400000);
+              }
+            }
+          }
+        }
+      } else if (typeof msg.content === 'string') {
+        // OpenAI/Anthropic format - simple string content
+        content = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        // OpenAI/Anthropic format - multimodal content array
+        for (const part of msg.content) {
+          if (part.type === 'text') {
+            content += part.text || '';
+          } else if (part.type === 'image_url' || part.type === 'image' || part.inlineData) {
+            hasMedia = true;
+            content += 'x'.repeat(400000); // ~100k tokens per image
+          } else if (part.type === 'audio' || part.type === 'video') {
+            hasMedia = true;
+            content += 'x'.repeat(200000);
+          }
+        }
+      } else if (msg.parts) {
+        // Gemini format
+        for (const part of msg.parts) {
+          if (part.text) {
+            content += part.text;
+          } else if (part.inlineData) {
+            hasMedia = true;
+            content += 'x'.repeat(400000);
+          }
+        }
+      }
+      
+      const tokens = Math.ceil(content.length / 4);
+      if (hasMedia || tokens > 10000) {
+        console.log(`[Truncate] Message ${idx}: ~${tokens} tokens${hasMedia ? ' (has media)' : ''}`);
+      }
+      return tokens;
+    });
+    
+    const totalTokens = messageTokens.reduce((a, b) => a + b, 0);
+    console.log(`[Truncate] Total estimated tokens: ${totalTokens}`);
+    
+    if (totalTokens <= availableTokens) {
+      console.log(`[Truncate] Context fits: ${totalTokens} tokens <= ${availableTokens} available`);
+      return messages;
+    }
+    
+    // Truncate from the head (keep messages from tail)
+    let keptTokens = 0;
+    let startIdx = messages.length;
+    
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (keptTokens + messageTokens[i] > availableTokens) {
+        break;
+      }
+      keptTokens += messageTokens[i];
+      startIdx = i;
+    }
+    
+    // Ensure we keep at least one message
+    if (startIdx >= messages.length) {
+      startIdx = messages.length - 1;
+    }
+    
+    const truncatedMessages = messages.slice(startIdx);
+    const droppedCount = startIdx;
+    
+    console.log(`[Truncate] 🔄 Auto-truncated: dropped ${droppedCount} messages, kept ${truncatedMessages.length} (~${keptTokens} tokens)`);
+    
+    return truncatedMessages;
+  }
+
   private async getUserApiKey(userId: string, provider: string): Promise<ApiKey | undefined> {
     try {
       const apiKeys = await this.db.getUserApiKeys(userId);
@@ -368,7 +633,8 @@ export class InferenceService {
     responderId?: string,
     provider?: string,
     conversation?: Conversation,
-    cacheMarkerIndices?: number[]  // Message indices where to insert cache breakpoints
+    cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints
+    triggerThinking?: boolean  // Add opening <think> tag for prefill thinking mode
   ): Message[] {
     if (format === 'standard') {
       // Standard format - pass through as-is
@@ -437,7 +703,21 @@ export class InferenceService {
         }
         
         // Build the message content with attachments
-        let messageContent = activeBranch.content;
+        let messageContent = '';
+        
+        // For assistant messages with thinking blocks, convert to <think> tags (prefill format)
+        if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
+          for (const block of activeBranch.contentBlocks) {
+            if (block.type === 'thinking') {
+              messageContent += `<think>\n${block.thinking}\n</think>\n\n`;
+            } else if (block.type === 'redacted_thinking') {
+              messageContent += `<think>[Redacted for safety]</think>\n\n`;
+            }
+          }
+        }
+        
+        // Add the main content
+        messageContent += activeBranch.content;
         
         // Append attachments for user messages
         if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
@@ -479,12 +759,16 @@ export class InferenceService {
       }
       
       // If the last message was an empty assistant, append that assistant's name
+      // Add opening <think> tag if thinking is triggered in prefill mode
+      // Note: No trailing whitespace allowed by Anthropic API
+      const thinkingPrefix = triggerThinking ? ' <think>' : '';
+      
       if (lastMessageWasEmptyAssistant) {
         // If the assistant has no name (raw continuation), don't add any prefix
         if (lastAssistantName === '') {
-          conversationContent = conversationContent.trim();
+          conversationContent = conversationContent.trim() + thinkingPrefix;
         } else {
-          conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:`;
+          conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:${thinkingPrefix}`;
         }
       } else if (responderId && participants.length > 0) {
         // Otherwise, if we have a responder, append their name with a colon (no newline)
@@ -492,9 +776,9 @@ export class InferenceService {
         if (responder) {
           // If responder has no name (raw continuation), don't add any prefix
           if (responder.name === '') {
-            conversationContent = conversationContent.trim();
+            conversationContent = conversationContent.trim() + thinkingPrefix;
           } else {
-            conversationContent = conversationContent.trim() + `\n\n${responder.name}:`;
+            conversationContent = conversationContent.trim() + `\n\n${responder.name}:${thinkingPrefix}`;
           }
         }
       }
@@ -700,6 +984,42 @@ export class InferenceService {
   private providerSupportsPrefill(provider: string): boolean {
     // Only Anthropic and Bedrock (Claude models) reliably support prefill
     return provider === 'anthropic' || provider === 'bedrock';
+  }
+  
+  /**
+   * Parse <think>...</think> tags from content and create contentBlocks
+   * Used for prefill mode thinking where API thinking is not available
+   */
+  private parseThinkingTags(content: string): any[] {
+    const contentBlocks: any[] = [];
+    
+    // Match all <think>...</think> blocks (non-greedy, handles multiple)
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
+    let match;
+    let textContent = content;
+    
+    while ((match = thinkRegex.exec(content)) !== null) {
+      const thinkingContent = match[1].trim();
+      if (thinkingContent) {
+        contentBlocks.push({
+          type: 'thinking',
+          thinking: thinkingContent
+        });
+      }
+    }
+    
+    // Remove thinking tags from content to get the text part
+    textContent = content.replace(thinkRegex, '').trim();
+    
+    // Add text block if there's remaining content
+    if (textContent && contentBlocks.length > 0) {
+      contentBlocks.push({
+        type: 'text',
+        text: textContent
+      });
+    }
+    
+    return contentBlocks;
   }
   
   private createMessagesModeChunkHandler(

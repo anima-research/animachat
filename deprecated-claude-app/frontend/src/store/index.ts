@@ -49,6 +49,7 @@ export interface Store {
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string): Promise<void>;
   continueGeneration(responderId?: string, explicitParentBranchId?: string): Promise<void>;
   regenerateMessage(messageId: string, branchId: string): Promise<void>;
+  abortGeneration(): void;
   editMessage(messageId: string, branchId: string, content: string, responderId?: string): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
@@ -293,7 +294,7 @@ export function createStore(): {
           format,
           settings: {
             temperature: 1.0,
-            maxTokens: 1024
+            maxTokens: 4096 // Safe default for all models
             // topP and topK are intentionally omitted to use API defaults
           }
         });
@@ -483,6 +484,15 @@ export function createStore(): {
       if (conv) {
         conv.updatedAt = new Date();
       }
+    },
+    
+    abortGeneration() {
+      if (!state.currentConversation || !state.wsService) return;
+      
+      state.wsService.sendMessage({
+        type: 'abort',
+        conversationId: state.currentConversation.id
+      });
     },
     
     async editMessage(messageId: string, branchId: string, content: string, responderId?: string) {
@@ -898,6 +908,11 @@ export function createStore(): {
             invalidateSortCache();
           }
         }
+      });
+      
+      state.wsService.on('generation_aborted', (data: any) => {
+        console.log('Store handling generation_aborted:', data);
+        // The ConversationView will handle resetting isStreaming via the stream event with aborted flag
       });
       
       state.wsService.connect();
