@@ -1674,7 +1674,7 @@ async function triggerModelResponse(model: Model) {
           model: model.id,
           settings: {
             temperature: 1.0,
-            maxTokens: 8192
+            maxTokens: model.outputTokenLimit ? Math.min(model.outputTokenLimit, 8192) : 4096
           }
         })
       });

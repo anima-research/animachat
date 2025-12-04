@@ -1318,10 +1318,10 @@ async function handleContinue(
         messagesWithNewAssistant,
         responder.systemPrompt || conversation.systemPrompt || '',
         conversation.format === 'standard'
-          ? conversation.settings || { temperature: 1.0, maxTokens: 8192 }
+          ? conversation.settings || { temperature: 1.0, maxTokens: 4096 }
           : {
               temperature: responder.settings?.temperature ?? conversation.settings?.temperature ?? 1.0,
-              maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 8192,
+              maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 4096,
               topP: responder.settings?.topP ?? conversation.settings?.topP,
               topK: responder.settings?.topK ?? conversation.settings?.topK,
               // Always use conversation-level thinking settings

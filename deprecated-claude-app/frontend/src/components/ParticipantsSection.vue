@@ -485,7 +485,7 @@ function setParticipantSettingsField(settingsFieldName: string, value: any) {
   var currentSettings = cloneDeep(getParticipantField("settings", {
     // default settings if unspecified
     temperature: 1.0,
-    maxTokens: 8192 // Higher default for models with internal thinking
+    maxTokens: 4096 // Safe default for all models (some like Opus 3 cap at 4096)
   }));
   
   _set(currentSettings, settingsFieldName, value);
@@ -563,9 +563,14 @@ function confirmAddParticipant() {
   if (newParticipant.value.type === 'assistant') {
     participant.model = newParticipant.value.model;
     participant.systemPrompt = '';
+    // Use model's outputTokenLimit if available, otherwise safe default
+    const selectedModel = activeModels.value.find(m => m.id === newParticipant.value.model);
+    const maxTokensDefault = selectedModel?.outputTokenLimit 
+      ? Math.min(selectedModel.outputTokenLimit, 8192) // Cap at 8192 for thinking models
+      : 4096; // Safe fallback
     participant.settings = {
       temperature: 1.0,
-      maxTokens: 8192 // Higher default for models with internal thinking
+      maxTokens: maxTokensDefault
     };
   }
   
