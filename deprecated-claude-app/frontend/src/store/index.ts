@@ -69,6 +69,99 @@ export interface Store {
 
 const storeKey: InjectionKey<Store> = Symbol('store');
 
+/**
+ * Cache for sorted messages to avoid repeated topological sorts.
+ * Invalidated when messages array changes.
+ */
+let sortedMessagesCache: {
+  sourceArray: Message[] | null;
+  sourceLength: number;
+  sourceVersion: number;
+  sorted: Message[];
+} = {
+  sourceArray: null,
+  sourceLength: 0,
+  sourceVersion: 0,
+  sorted: []
+};
+
+// Version counter - increment this when messages change to invalidate cache
+let messagesVersion = 0;
+
+/**
+ * Invalidate the sorted messages cache.
+ * Call this when messages are added, removed, or modified.
+ */
+function invalidateSortCache(): void {
+  messagesVersion++;
+}
+
+/**
+ * Topologically sort messages so parents come before children.
+ * Uses caching to avoid repeated sorts when messages haven't changed.
+ */
+function sortMessagesByTreeOrder(messages: Message[]): Message[] {
+  if (messages.length === 0) return [];
+  
+  // Check if cache is valid
+  if (sortedMessagesCache.sourceArray === messages && 
+      sortedMessagesCache.sourceLength === messages.length &&
+      sortedMessagesCache.sourceVersion === messagesVersion) {
+    return sortedMessagesCache.sorted;
+  }
+  
+  // Build a map of branch ID -> message index
+  const branchToMsgIndex = new Map<string, number>();
+  for (let i = 0; i < messages.length; i++) {
+    for (const branch of messages[i].branches) {
+      branchToMsgIndex.set(branch.id, i);
+    }
+  }
+  
+  // Topological sort
+  const sortedIndices: number[] = [];
+  const visited = new Set<number>();
+  const visiting = new Set<number>();
+  
+  function visit(msgIndex: number): void {
+    if (visited.has(msgIndex)) return;
+    if (visiting.has(msgIndex)) return; // Cycle detected, skip
+    
+    visiting.add(msgIndex);
+    const msg = messages[msgIndex];
+    
+    // Visit all parents first
+    for (const branch of msg.branches) {
+      if (branch.parentBranchId && branch.parentBranchId !== 'root') {
+        const parentMsgIndex = branchToMsgIndex.get(branch.parentBranchId);
+        if (parentMsgIndex !== undefined && parentMsgIndex !== msgIndex) {
+          visit(parentMsgIndex);
+        }
+      }
+    }
+    
+    visiting.delete(msgIndex);
+    visited.add(msgIndex);
+    sortedIndices.push(msgIndex);
+  }
+  
+  // Visit all messages
+  for (let i = 0; i < messages.length; i++) {
+    visit(i);
+  }
+  
+  // Cache the result
+  const sorted = sortedIndices.map(i => messages[i]);
+  sortedMessagesCache = {
+    sourceArray: messages,
+    sourceLength: messages.length,
+    sourceVersion: messagesVersion,
+    sorted
+  };
+  
+  return sorted;
+}
+
 export function createStore(): {
   install(app: App): void;
 } {
@@ -209,6 +302,7 @@ export function createStore(): {
         state.conversations.unshift(conversation);
         state.currentConversation = conversation;
         state.allMessages = [];
+        invalidateSortCache();
         
         return conversation;
       } catch (error) {
@@ -253,6 +347,7 @@ export function createStore(): {
         if (state.currentConversation?.id === id) {
           state.currentConversation = null;
           state.allMessages = [];
+          invalidateSortCache();
         }
       } catch (error) {
         console.error('Failed to archive conversation:', error);
@@ -278,6 +373,7 @@ export function createStore(): {
       try {
         const response = await api.get(`/conversations/${conversationId}/messages`);
         state.allMessages = response.data;
+        invalidateSortCache();
         console.log(`Loaded ${state.allMessages.length} messages for conversation ${conversationId}`);
         
         // Log if this is multi-participant
@@ -413,15 +509,13 @@ export function createStore(): {
       console.log('Params:', { messageId, branchId });
       console.log('All messages count:', state.allMessages.length);
       
-      const messageIndex = state.allMessages.findIndex(m => m.id === messageId);
-      if (messageIndex === -1) {
+      const message = state.allMessages.find(m => m.id === messageId);
+      if (!message) {
         console.error('switchBranch: Message not found:', messageId);
         console.log('Available message IDs:', state.allMessages.map(m => m.id));
         return;
       }
       
-      const message = state.allMessages[messageIndex];
-      console.log('Found message at index:', messageIndex);
       console.log('Message branches:', message.branches.map(b => ({ id: b.id, parentBranchId: b.parentBranchId })));
       
       // Skip if already on this branch
@@ -448,12 +542,14 @@ export function createStore(): {
         });
       }
       
-      // Update all subsequent messages to follow the new path
-      const branchPath: string[] = [];
+      // Sort messages by tree order to handle out-of-order children
+      const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
+      const sortedMessageIndex = sortedMessages.findIndex(m => m.id === messageId);
       
-      // Build path up to and including the switched message
-      for (let i = 0; i <= messageIndex; i++) {
-        const msg = state.allMessages[i];
+      // Build path up to and including the switched message (in tree order)
+      const branchPath: string[] = [];
+      for (let i = 0; i <= sortedMessageIndex; i++) {
+        const msg = sortedMessages[i];
         const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
         if (activeBranch) {
           branchPath.push(activeBranch.id);
@@ -462,15 +558,15 @@ export function createStore(): {
       
       console.log('Branch path after switch:', [...branchPath]);
       
-      // Update subsequent messages to follow the correct path
-      for (let i = messageIndex + 1; i < state.allMessages.length; i++) {
-        const msg = state.allMessages[i];
+      // Update subsequent messages (in tree order) to follow the correct path
+      for (let i = sortedMessageIndex + 1; i < sortedMessages.length; i++) {
+        const msg = sortedMessages[i];
         
         // Find which branch of this message continues from our path
         for (const branch of msg.branches) {
           if (branch.parentBranchId && branchPath.includes(branch.parentBranchId)) {
             if (msg.activeBranchId !== branch.id) {
-              console.log(`Updating message ${i} activeBranchId from ${msg.activeBranchId} to ${branch.id}`);
+              console.log(`Updating message activeBranchId from ${msg.activeBranchId} to ${branch.id}`);
               msg.activeBranchId = branch.id;
               
               // Also persist this change to backend (non-blocking)
@@ -511,25 +607,15 @@ export function createStore(): {
 
     // Helper method to get visible messages based on current branch selections
     getVisibleMessages(): Message[] {
-      // console.log('getVisibleMessages called, allMessages:', state.allMessages.length);
-      // if (state.allMessages.length > 0) {
-      //   console.log('All messages:', state.allMessages.map(m => ({
-      //     id: m.id,
-      //     activeBranchId: m.activeBranchId,
-      //     branches: m.branches.map(b => ({
-      //       id: b.id,
-      //       parent: b.parentBranchId,
-      //       role: b.role,
-      //       isActive: b.id === m.activeBranchId,
-      //       content: b.content.substring(0, 20) + '...'
-      //     }))
-      //   })));
-      // }
+      // Sort messages by tree order to ensure parents come before children
+      // This handles cases where order numbers don't reflect tree structure
+      const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
+      
       const visibleMessages: Message[] = [];
       const branchPath: string[] = []; // Track the current conversation path (branch IDs)
       
-      for (let i = 0; i < state.allMessages.length; i++) {
-        const message = state.allMessages[i];
+      for (let i = 0; i < sortedMessages.length; i++) {
+        const message = sortedMessages[i];
         const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
         
         // console.log(`Message ${i}:`, message.id, 'activeBranchId:', message.activeBranchId, 
@@ -564,38 +650,43 @@ export function createStore(): {
           // console.log('Message continues from branch at index', parentIndex, 'added branch:', activeBranch.id, 'branchPath now:', [...branchPath]);
         } else {
           // The active branch doesn't continue from our path
-          // Look for any branch in this message that does
-          let found = false;
+          // Look for branches that do, preferring: 1) stored activeBranchId, 2) chronologically newest
           
-          // console.log('Looking for branch that continues from path:', [...branchPath]);
-          for (const branch of message.branches) {
-            // console.log('  Checking branch:', branch.id, 'parent:', branch.parentBranchId, 'in path?', branchPath.includes(branch.parentBranchId));
-            if (branch.parentBranchId && branchPath.includes(branch.parentBranchId)) {
-              // Found a branch that continues from our path
-              // Note: We should NOT modify message.activeBranchId in a computed property
-              // Instead, we'll create a deep copy including branches
-              const messageCopy = { 
-                ...message, 
-                activeBranchId: branch.id,
-                branches: [...message.branches] // Copy the branches array too
-              };
-              visibleMessages.push(messageCopy);
-              
-              const parentIndex = branchPath.indexOf(branch.parentBranchId);
-              branchPath.length = parentIndex + 1;
-              branchPath.push(branch.id);
-              
-              found = true;
-              // console.log('Found branch', branch.id, 'that continues from path, branchPath now:', [...branchPath]);
-              break;
-            }
-          }
+          // Find all branches that continue from our path
+          const validBranches = message.branches.filter(branch => 
+            branch.parentBranchId && branchPath.includes(branch.parentBranchId)
+          );
           
-          if (!found) {
-            // console.log('No branch in message continues from current path - skipping this message');
-            // Don't break! There might be messages later that do connect to our path
+          if (validBranches.length === 0) {
+            // No branch continues from current path - skip this message
             continue;
           }
+          
+          // Pick the best branch:
+          // 1. Prefer the stored activeBranchId if it's valid
+          // 2. Otherwise pick the chronologically newest (by createdAt)
+          let selectedBranch = validBranches.find(b => b.id === message.activeBranchId);
+          
+          if (!selectedBranch) {
+            // Sort by createdAt descending (newest first) and pick the first
+            selectedBranch = [...validBranches].sort((a, b) => {
+              const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+              const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+              return timeB - timeA; // Newest first
+            })[0];
+          }
+          
+          // Create a deep copy with the selected branch as active
+          const messageCopy = { 
+            ...message, 
+            activeBranchId: selectedBranch.id,
+            branches: [...message.branches]
+          };
+          visibleMessages.push(messageCopy);
+          
+          const parentIndex = branchPath.indexOf(selectedBranch.parentBranchId!);
+          branchPath.length = parentIndex + 1;
+          branchPath.push(selectedBranch.id);
         }
       }
       
@@ -743,6 +834,7 @@ export function createStore(): {
           // Add new message
           state.allMessages.push(data.message);
         }
+        invalidateSortCache();
       });
       
       state.wsService.on('stream', (data: any) => {
@@ -773,6 +865,7 @@ export function createStore(): {
         const index = state.allMessages.findIndex(m => m.id === data.message.id);
         if (index !== -1) {
           state.allMessages[index] = data.message;
+          invalidateSortCache();
           console.log('Updated message at index', index, 'new activeBranchId:', data.message.activeBranchId);
         }
       });
@@ -784,6 +877,7 @@ export function createStore(): {
         // If multiple messages were deleted (cascade delete)
         if (deletedMessages && deletedMessages.length > 0) {
           state.allMessages = state.allMessages.filter(m => !deletedMessages.includes(m.id));
+          invalidateSortCache();
         } else {
           // Single branch deletion
           const index = state.allMessages.findIndex(m => m.id === messageId);
@@ -801,6 +895,7 @@ export function createStore(): {
               // Remove the entire message
               state.allMessages.splice(index, 1);
             }
+            invalidateSortCache();
           }
         }
       });

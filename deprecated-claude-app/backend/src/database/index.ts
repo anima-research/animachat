@@ -1816,21 +1816,73 @@ export class Database {
     return descendants;
   }
 
+  /**
+   * Topologically sort messages so parents come before children.
+   * This ensures correct processing when order numbers don't reflect tree structure.
+   */
+  private sortMessagesByTreeOrder(messages: Message[]): Message[] {
+    if (messages.length === 0) return [];
+    
+    // Build a map of branch ID -> message index
+    const branchToMsgIndex = new Map<string, number>();
+    for (let i = 0; i < messages.length; i++) {
+      for (const branch of messages[i].branches) {
+        branchToMsgIndex.set(branch.id, i);
+      }
+    }
+    
+    // Topological sort
+    const sortedIndices: number[] = [];
+    const visited = new Set<number>();
+    const visiting = new Set<number>();
+    
+    const visit = (msgIndex: number): void => {
+      if (visited.has(msgIndex)) return;
+      if (visiting.has(msgIndex)) return; // Cycle detected, skip
+      
+      visiting.add(msgIndex);
+      const msg = messages[msgIndex];
+      
+      // Visit all parents first
+      for (const branch of msg.branches) {
+        if (branch.parentBranchId && branch.parentBranchId !== 'root') {
+          const parentMsgIndex = branchToMsgIndex.get(branch.parentBranchId);
+          if (parentMsgIndex !== undefined && parentMsgIndex !== msgIndex) {
+            visit(parentMsgIndex);
+          }
+        }
+      }
+      
+      visiting.delete(msgIndex);
+      visited.add(msgIndex);
+      sortedIndices.push(msgIndex);
+    };
+    
+    // Visit all messages
+    for (let i = 0; i < messages.length; i++) {
+      visit(i);
+    }
+    
+    // Return messages in sorted order
+    return sortedIndices.map(i => messages[i]);
+  }
+
   async getConversationMessages(conversationId: string, conversationOwnerUserId: string): Promise<Message[]> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
     const messageIds = this.conversationMessages.get(conversationId) || [];
     const messages = messageIds
       .map(id => this.messages.get(id))
-      .filter((msg): msg is Message => msg !== undefined)
-      .sort((a, b) => a.order - b.order);
+      .filter((msg): msg is Message => msg !== undefined);
     
     // Only log if there's a potential issue
     if (messageIds.length !== messages.length) {
       console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found`);
     }
     
-    return messages;
+    // Sort by tree order (parents before children) instead of order field
+    // This handles cases where order numbers don't reflect tree structure
+    return this.sortMessagesByTreeOrder(messages);
   }
 
   async getMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<Message | null> {

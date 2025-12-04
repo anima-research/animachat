@@ -351,10 +351,14 @@ export class ImportParser {
     const exportedMessages = data.messages || [];
     const participants = data.participants || [];
     
+    // Sort messages by tree order (parents before children) instead of array order
+    // This ensures the preview shows messages in correct conversation order
+    const sortedMessages = this.sortMessagesByTreeOrder(exportedMessages);
+    
     const messages: ParsedMessage[] = [];
     
     // Process messages - they already have the branch structure
-    for (const msg of exportedMessages) {
+    for (const msg of sortedMessages) {
       // Get the active branch content
       const activeBranch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
       
@@ -499,5 +503,56 @@ export class ImportParser {
     
     // Default to user
     return 'user';
+  }
+
+  /**
+   * Topologically sort messages so parents come before children.
+   * This ensures correct ordering when the 'order' field doesn't reflect tree structure.
+   */
+  private sortMessagesByTreeOrder(messages: any[]): any[] {
+    if (messages.length === 0) return [];
+    
+    // Build a map of branch ID -> message index
+    const branchToMsgIndex = new Map<string, number>();
+    for (let i = 0; i < messages.length; i++) {
+      for (const branch of (messages[i].branches || [])) {
+        branchToMsgIndex.set(branch.id, i);
+      }
+    }
+    
+    // Topological sort
+    const sortedIndices: number[] = [];
+    const visited = new Set<number>();
+    const visiting = new Set<number>();
+    
+    const visit = (msgIndex: number): void => {
+      if (visited.has(msgIndex)) return;
+      if (visiting.has(msgIndex)) return; // Cycle detected, skip
+      
+      visiting.add(msgIndex);
+      const msg = messages[msgIndex];
+      
+      // Visit all parents first
+      for (const branch of (msg.branches || [])) {
+        if (branch.parentBranchId && branch.parentBranchId !== 'root') {
+          const parentMsgIndex = branchToMsgIndex.get(branch.parentBranchId);
+          if (parentMsgIndex !== undefined && parentMsgIndex !== msgIndex) {
+            visit(parentMsgIndex);
+          }
+        }
+      }
+      
+      visiting.delete(msgIndex);
+      visited.add(msgIndex);
+      sortedIndices.push(msgIndex);
+    };
+    
+    // Visit all messages
+    for (let i = 0; i < messages.length; i++) {
+      visit(i);
+    }
+    
+    // Return messages in sorted order
+    return sortedIndices.map(i => messages[i]);
   }
 }
