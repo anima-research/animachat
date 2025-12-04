@@ -174,8 +174,57 @@ export function importRouter(db: Database): Router {
         console.log('Arc Chat import - participants map:', Array.from(participantMap.entries()));
         console.log(`Arc Chat import - processing ${exportedMessages.length} messages`);
         
-        // Process messages in order to maintain parent-child relationships
-        for (let msgIndex = 0; msgIndex < exportedMessages.length; msgIndex++) {
+        // Build a map of branch ID -> message index for dependency resolution
+        const branchToMsgIndex = new Map<string, number>();
+        for (let i = 0; i < exportedMessages.length; i++) {
+          const msg = exportedMessages[i];
+          for (const branch of (msg.branches || [])) {
+            branchToMsgIndex.set(branch.id, i);
+          }
+        }
+        
+        // Topologically sort messages so parents are processed before children
+        // This ensures branchIdMapping has parent IDs before children need them
+        const sortedIndices: number[] = [];
+        const visited = new Set<number>();
+        const visiting = new Set<number>(); // For cycle detection
+        
+        function visit(msgIndex: number): void {
+          if (visited.has(msgIndex)) return;
+          if (visiting.has(msgIndex)) {
+            console.warn(`Cycle detected at message index ${msgIndex}, breaking cycle`);
+            return;
+          }
+          
+          visiting.add(msgIndex);
+          const msg = exportedMessages[msgIndex];
+          
+          // Visit all parents first
+          for (const branch of (msg.branches || [])) {
+            if (branch.parentBranchId && branch.parentBranchId !== 'root') {
+              const parentMsgIndex = branchToMsgIndex.get(branch.parentBranchId);
+              if (parentMsgIndex !== undefined && parentMsgIndex !== msgIndex) {
+                visit(parentMsgIndex);
+              }
+            }
+          }
+          
+          visiting.delete(msgIndex);
+          visited.add(msgIndex);
+          sortedIndices.push(msgIndex);
+        }
+        
+        // Visit all messages
+        for (let i = 0; i < exportedMessages.length; i++) {
+          visit(i);
+        }
+        
+        console.log(`Arc Chat import - sorted ${sortedIndices.length} messages (original order vs tree order)`);
+        console.log(`First 5 original indices: ${[0,1,2,3,4].map(i => exportedMessages[i]?.order || 'N/A').join(', ')}`);
+        console.log(`First 5 sorted indices: ${sortedIndices.slice(0,5).map(i => exportedMessages[i]?.order || 'N/A').join(', ')}`);
+        
+        // Process messages in topologically sorted order
+        for (const msgIndex of sortedIndices) {
           const exportedMsg = exportedMessages[msgIndex];
           
           // Create message with all branches
