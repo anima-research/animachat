@@ -146,6 +146,11 @@
           </div>
         </template>
 
+        <template #item.lastActive="{ item }">
+          <span v-if="item.lastActive" class="text-caption">{{ formatRelativeTime(item.lastActive) }}</span>
+          <span v-else class="text-caption text-grey">Never</span>
+        </template>
+
         <template #item.createdAt="{ item }">
           <span class="text-caption">{{ formatDate(item.createdAt) }}</span>
         </template>
@@ -324,6 +329,7 @@ interface UserWithStats {
   email: string;
   name: string;
   createdAt: string;
+  lastActive?: string;
   conversationCount: number;
   capabilities: string[];
   balances: Record<string, number>;
@@ -358,7 +364,8 @@ const tableHeaders = [
   { title: 'User', key: 'email', sortable: true },
   { title: 'Capabilities', key: 'capabilities', sortable: false },
   { title: 'Balances', key: 'balances', sortable: false },
-  { title: 'Conversations', key: 'conversationCount', sortable: true },
+  { title: 'Convos', key: 'conversationCount', sortable: true },
+  { title: 'Last Active', key: 'lastActive', sortable: true },
   { title: 'Joined', key: 'createdAt', sortable: true },
   { title: '', key: 'actions', sortable: false, width: 50 },
 ];
@@ -401,6 +408,23 @@ function formatDate(dateStr: string): string {
     day: 'numeric', 
     year: 'numeric' 
   });
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+  
+  return formatDate(dateStr);
 }
 
 async function fetchUsers() {

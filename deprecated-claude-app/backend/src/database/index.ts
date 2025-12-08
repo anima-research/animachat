@@ -1082,6 +1082,7 @@ export class Database {
     email: string;
     name: string;
     createdAt: Date;
+    lastActive?: string;
     conversationCount: number;
     capabilities: string[];
     balances: Record<string, number>;
@@ -1102,11 +1103,24 @@ export class Database {
         balances[currency] = Number(amount);
       }
 
+      // Find last activity from conversations
+      let lastActive: string | undefined;
+      for (const convId of conversationIds) {
+        const conv = this.conversations.get(convId);
+        if (conv?.updatedAt) {
+          const updated = typeof conv.updatedAt === 'string' ? conv.updatedAt : conv.updatedAt.toISOString();
+          if (!lastActive || updated > lastActive) {
+            lastActive = updated;
+          }
+        }
+      }
+
       results.push({
         id: user.id,
         email: user.email,
         name: user.name,
         createdAt: user.createdAt,
+        lastActive,
         conversationCount: conversationIds.size,
         capabilities,
         balances
