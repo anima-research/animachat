@@ -11,7 +11,6 @@
       "outputTokenLimit": 32000,
       "supportsThinking": true,
       "currencies": {
-        "opus": true,
         "models-2025": true
       },
       "settings": {
@@ -52,7 +51,8 @@
       "supportsThinking": true,
       "currencies": {
         "haiku": true,
-        "models-2025": true
+        "models-2025": true,
+        "credit": true
       },
       "settings": {
         "temperature": {
@@ -131,7 +131,6 @@
       "outputTokenLimit": 32000,
       "supportsThinking": true,
       "currencies": {
-        "opus": true,
         "models-2025": true
       },
       "settings": {
@@ -171,7 +170,6 @@
       "outputTokenLimit": 32000,
       "supportsThinking": true,
       "currencies": {
-        "opus": true,
         "models-2025": true
       },
       "settings": {
@@ -659,7 +657,6 @@
       "outputTokenLimit": 32000,
       "supportsThinking": true,
       "currencies": {
-        "opus": true,
         "models-2025": true
       },
       "settings": {

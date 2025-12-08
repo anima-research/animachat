@@ -70,6 +70,8 @@ export class ModelLoader {
       contextWindow: um.contextWindow,
       outputTokenLimit: um.outputTokenLimit,
       supportsThinking: um.supportsThinking,
+      // User-defined models always accept general credits
+      currencies: { credit: true },
       settings: {
         temperature: {
           min: 0,
