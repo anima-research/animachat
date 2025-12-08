@@ -42,41 +42,83 @@ type CostBreakdown = {
 // ============================================================================
 
 const INPUT_PRICING_PER_MILLION: Record<string, number> = {
-  // Claude 4.x models (2025)
-  'claude-opus-4-5-20251101': 5.00,    // New 2025-11-24: 3x cheaper than other Opus!
+  // Claude 4.x models (2025) - by providerModelId
+  'claude-opus-4-5-20251101': 5.00,
   'claude-opus-4-1-20250805': 15.00,
   'claude-opus-4-20250514': 15.00,
   'claude-sonnet-4-5-20250929': 3.00,
   'claude-sonnet-4-20250514': 3.00,
   'claude-haiku-4-5-20251001': 0.80,
   
-  // Claude 3.x models
+  // Claude 3.x models - by providerModelId
   'claude-3-7-sonnet-20250219': 3.00,
   'claude-3-5-sonnet-20241022': 3.00,
   'claude-3-5-sonnet-20240620': 3.00,
   'claude-3-5-haiku-20241022': 0.80,
   'claude-3-opus-20240229': 15.00,
   'claude-3-sonnet-20240229': 3.00,
-  'claude-3-haiku-20240307': 0.25
+  'claude-3-haiku-20240307': 0.25,
+  
+  // Shorthand model IDs (for backwards compatibility / fallback)
+  'claude-opus-4.5': 5.00,
+  'claude-opus-4.1': 15.00,
+  'claude-opus-4': 15.00,
+  'claude-sonnet-4.5': 3.00,
+  'claude-sonnet-4': 3.00,
+  'claude-haiku-4.5': 0.80,
+  'claude-3.7-sonnet': 3.00,
+  'claude-3.5-sonnet': 3.00,
+  'claude-3.5-haiku': 0.80,
+  'claude-3-opus': 15.00,
+  'claude-3-sonnet': 3.00,
+  'claude-3-haiku': 0.25,
+  
+  // Bedrock model IDs
+  'claude-3-opus-bedrock': 15.00,
+  'claude-3-sonnet-bedrock': 3.00,
+  'claude-3-haiku-bedrock': 0.25,
+  'claude-3.5-sonnet-bedrock': 3.00,
+  'claude-3.5-haiku-bedrock': 0.80,
 };
 
 const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
-  // Claude 4.x models (2025)
-  'claude-opus-4-5-20251101': 25.00,   // New 2025-11-24: Also cheaper output
+  // Claude 4.x models (2025) - by providerModelId
+  'claude-opus-4-5-20251101': 25.00,
   'claude-opus-4-1-20250805': 75.00,
   'claude-opus-4-20250514': 75.00,
   'claude-sonnet-4-5-20250929': 15.00,
   'claude-sonnet-4-20250514': 15.00,
   'claude-haiku-4-5-20251001': 4.00,
   
-  // Claude 3.x models
+  // Claude 3.x models - by providerModelId
   'claude-3-7-sonnet-20250219': 15.00,
   'claude-3-5-sonnet-20241022': 15.00,
   'claude-3-5-sonnet-20240620': 15.00,
   'claude-3-5-haiku-20241022': 4.00,
   'claude-3-opus-20240229': 75.00,
   'claude-3-sonnet-20240229': 15.00,
-  'claude-3-haiku-20240307': 1.25
+  'claude-3-haiku-20240307': 1.25,
+  
+  // Shorthand model IDs (for backwards compatibility / fallback)
+  'claude-opus-4.5': 25.00,
+  'claude-opus-4.1': 75.00,
+  'claude-opus-4': 75.00,
+  'claude-sonnet-4.5': 15.00,
+  'claude-sonnet-4': 15.00,
+  'claude-haiku-4.5': 4.00,
+  'claude-3.7-sonnet': 15.00,
+  'claude-3.5-sonnet': 15.00,
+  'claude-3.5-haiku': 4.00,
+  'claude-3-opus': 75.00,
+  'claude-3-sonnet': 15.00,
+  'claude-3-haiku': 1.25,
+  
+  // Bedrock model IDs
+  'claude-3-opus-bedrock': 75.00,
+  'claude-3-sonnet-bedrock': 15.00,
+  'claude-3-haiku-bedrock': 1.25,
+  'claude-3.5-sonnet-bedrock': 15.00,
+  'claude-3.5-haiku-bedrock': 4.00,
 };
 
 const CACHE_DISCOUNT = 0.9;
@@ -380,13 +422,13 @@ export class EnhancedInferenceService {
   }
   
   private calculateCostSaved(model: Model, cachedTokens: number): number {
-    const pricePerToken = this.getInputPricePerToken(model.id);
+    const pricePerToken = this.getInputPricePerToken(model.id, model.providerModelId);
     return cachedTokens * pricePerToken * CACHE_DISCOUNT;
   }
 
   private calculateCostBreakdown(model: Model, inputTokens: number, outputTokens: number): CostBreakdown {
-    const inputPrice = this.getInputPricePerToken(model.id);
-    const outputPrice = this.getOutputPricePerToken(model.id);
+    const inputPrice = this.getInputPricePerToken(model.id, model.providerModelId);
+    const outputPrice = this.getOutputPricePerToken(model.id, model.providerModelId);
     const inputCost = inputTokens * inputPrice;
     const outputCost = outputTokens * outputPrice;
 
@@ -431,12 +473,30 @@ export class EnhancedInferenceService {
     };
   }
 
-  private getInputPricePerToken(modelId: string): number {
-    return (INPUT_PRICING_PER_MILLION[modelId] || 3.00) / 1_000_000;
+  private getInputPricePerToken(modelId: string, providerModelId?: string): number {
+    // Try providerModelId first (more specific), then modelId
+    const price = INPUT_PRICING_PER_MILLION[providerModelId || ''] 
+      ?? INPUT_PRICING_PER_MILLION[modelId];
+    
+    if (price === undefined) {
+      console.error(`⚠️ PRICING ERROR: No input price found for model "${modelId}" (provider: "${providerModelId}"). Using $0 - THIS NEEDS TO BE FIXED!`);
+      return 0; // Return 0 so it's obvious something is wrong
+    }
+    
+    return price / 1_000_000;
   }
 
-  private getOutputPricePerToken(modelId: string): number {
-    return (OUTPUT_PRICING_PER_MILLION[modelId] || 15.00) / 1_000_000;
+  private getOutputPricePerToken(modelId: string, providerModelId?: string): number {
+    // Try providerModelId first (more specific), then modelId
+    const price = OUTPUT_PRICING_PER_MILLION[providerModelId || ''] 
+      ?? OUTPUT_PRICING_PER_MILLION[modelId];
+    
+    if (price === undefined) {
+      console.error(`⚠️ PRICING ERROR: No output price found for model "${modelId}" (provider: "${providerModelId}"). Using $0 - THIS NEEDS TO BE FIXED!`);
+      return 0; // Return 0 so it's obvious something is wrong
+    }
+    
+    return price / 1_000_000;
   }
   
   // Analytics methods
