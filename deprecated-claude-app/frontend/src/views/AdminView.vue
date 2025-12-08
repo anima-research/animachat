@@ -66,6 +66,9 @@
       </v-card-text>
     </v-card>
 
+    <!-- Config Editor -->
+    <ConfigEditor class="mb-6" />
+
     <!-- Error Alert -->
     <v-alert v-if="error" type="error" variant="tonal" class="mb-4" closable @click:close="error = null">
       {{ error }}
@@ -320,6 +323,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { api } from '@/services/api';
 import UsageChart from '@/components/UsageChart.vue';
+import ConfigEditor from '@/components/ConfigEditor.vue';
 
 // Get API base URL from the api instance
 const apiBaseUrl = (api.defaults.baseURL || '/api').replace(/\/$/, '');

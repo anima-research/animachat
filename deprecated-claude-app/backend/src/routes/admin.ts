@@ -1,8 +1,11 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import { readFile, writeFile } from 'fs/promises';
 import { Database } from '../database/index.js';
 import { authenticateToken, AuthRequest } from '../middleware/auth.js';
+import { ConfigLoader } from '../config/loader.js';
+import { ModelLoader } from '../config/model-loader.js';
 
 // Admin-only middleware - checks for admin capability
 function requireAdmin(db: Database) {
@@ -234,6 +237,134 @@ export function adminRouter(db: Database): Router {
     } catch (error) {
       console.error('Error fetching model usage:', error);
       res.status(500).json({ error: 'Failed to fetch model usage stats' });
+    }
+  });
+
+  // ============================================================================
+  // Config Management Routes
+  // ============================================================================
+
+  const configPath = process.env.CONFIG_PATH || 
+    (process.env.NODE_ENV === 'production' 
+      ? '/etc/claude-app/config.json'
+      : './config/config.json');
+
+  // GET /admin/config - Get editable config (sanitized - no API keys)
+  router.get('/config', async (req: AuthRequest, res) => {
+    try {
+      const configData = await readFile(configPath, 'utf-8');
+      const config = JSON.parse(configData);
+      
+      // Return only the editable parts, sanitize API keys
+      const sanitizedProviders: Record<string, any[]> = {};
+      for (const [provider, profiles] of Object.entries(config.providers || {})) {
+        sanitizedProviders[provider] = (profiles as any[]).map(profile => ({
+          id: profile.id,
+          name: profile.name,
+          description: profile.description,
+          priority: profile.priority,
+          modelCosts: profile.modelCosts || [],
+          allowedModels: profile.allowedModels,
+          // Don't include credentials!
+        }));
+      }
+
+      res.json({
+        providers: sanitizedProviders,
+        defaultModel: config.defaultModel,
+        groupChatSuggestedModels: config.groupChatSuggestedModels || [],
+        initialGrants: config.initialGrants || {},
+        currencies: config.currencies || {}
+      });
+    } catch (error) {
+      console.error('Error reading config:', error);
+      res.status(500).json({ error: 'Failed to read config' });
+    }
+  });
+
+  // GET /admin/models - Get all available models for reference
+  router.get('/models', async (req: AuthRequest, res) => {
+    try {
+      const modelLoader = ModelLoader.getInstance();
+      const models = await modelLoader.loadModels();
+      res.json({ models: models.map(m => ({
+        id: m.id,
+        providerModelId: m.providerModelId,
+        displayName: m.displayName,
+        provider: m.provider
+      }))});
+    } catch (error) {
+      console.error('Error fetching models:', error);
+      res.status(500).json({ error: 'Failed to fetch models' });
+    }
+  });
+
+  // PATCH /admin/config - Update specific config fields
+  router.patch('/config', async (req: AuthRequest, res) => {
+    try {
+      const { 
+        defaultModel, 
+        groupChatSuggestedModels, 
+        initialGrants,
+        providerModelCosts // { providerId: profileId, modelCosts: [...] }
+      } = req.body;
+
+      // Read current config
+      const configData = await readFile(configPath, 'utf-8');
+      const config = JSON.parse(configData);
+
+      // Update fields if provided
+      if (defaultModel !== undefined) {
+        config.defaultModel = defaultModel;
+      }
+
+      if (groupChatSuggestedModels !== undefined) {
+        config.groupChatSuggestedModels = groupChatSuggestedModels;
+      }
+
+      if (initialGrants !== undefined) {
+        config.initialGrants = initialGrants;
+      }
+
+      // Update model costs for a specific provider profile
+      if (providerModelCosts) {
+        const { provider, profileId, modelCosts } = providerModelCosts;
+        const profiles = config.providers[provider];
+        if (profiles) {
+          const profile = profiles.find((p: any) => p.id === profileId);
+          if (profile) {
+            profile.modelCosts = modelCosts;
+          }
+        }
+      }
+
+      // Write back to file
+      await writeFile(configPath, JSON.stringify(config, null, 2));
+
+      // Reload config in memory
+      const configLoader = ConfigLoader.getInstance();
+      await configLoader.reloadConfig();
+
+      res.json({ success: true, message: 'Config updated and reloaded' });
+    } catch (error) {
+      console.error('Error updating config:', error);
+      res.status(500).json({ error: 'Failed to update config' });
+    }
+  });
+
+  // POST /admin/config/reload - Reload config from disk without changes
+  router.post('/config/reload', async (req: AuthRequest, res) => {
+    try {
+      const configLoader = ConfigLoader.getInstance();
+      await configLoader.reloadConfig();
+      
+      const modelLoader = ModelLoader.getInstance();
+      await modelLoader.reloadModels();
+
+      res.json({ success: true, message: 'Config and models reloaded from disk' });
+    } catch (error) {
+      console.error('Error reloading config:', error);
+      res.status(500).json({ error: 'Failed to reload config' });
     }
   });
 
