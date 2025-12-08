@@ -55,6 +55,17 @@
       </v-col>
     </v-row>
 
+    <!-- System Usage Chart -->
+    <v-card class="mb-6">
+      <v-card-text>
+        <UsageChart 
+          title="System-wide Token Usage" 
+          :fetch-url="apiBaseUrl + '/admin/usage/system'"
+          :show-model-breakdown="true"
+        />
+      </v-card-text>
+    </v-card>
+
     <!-- Error Alert -->
     <v-alert v-if="error" type="error" variant="tonal" class="mb-4" closable @click:close="error = null">
       {{ error }}
@@ -269,6 +280,15 @@
               <div class="text-body-1">{{ formatDate(selectedUser.createdAt) }}</div>
             </v-col>
           </v-row>
+
+          <v-divider class="my-4" />
+
+          <!-- User Usage Chart -->
+          <UsageChart 
+            title="Token Usage" 
+            :fetch-url="apiBaseUrl + '/admin/usage/user/' + selectedUser.id"
+            :show-model-breakdown="true"
+          />
         </v-card-text>
 
         <v-divider />
@@ -294,6 +314,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { api } from '@/services/api';
+import UsageChart from '@/components/UsageChart.vue';
+
+// Get API base URL from the api instance
+const apiBaseUrl = (api.defaults.baseURL || '/api').replace(/\/$/, '');
 
 interface UserWithStats {
   id: string;

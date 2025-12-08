@@ -25,6 +25,36 @@ export interface MetricsData {
   details?: GrantUsageDetails;
 }
 
+// Usage analytics types
+export interface UsageDataPoint {
+  date: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  cost: number;
+  requests: number;
+}
+
+export interface UsageStats {
+  daily: UsageDataPoint[];
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    totalTokens: number;
+    cost: number;
+    requests: number;
+  };
+  byModel: Record<string, {
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    cost: number;
+    requests: number;
+  }>;
+}
+
 export class Database {
   private users: Map<string, User> = new Map();
   private usersByEmail: Map<string, string> = new Map(); // email -> userId
@@ -1162,6 +1192,134 @@ export class Database {
       totalConversations,
       activeUsersLast7Days
     };
+  }
+
+  async getUserUsageStats(userId: string, days: number = 30): Promise<UsageStats> {
+    await this.loadUser(userId);
+    this.ensureGrantContainers(userId);
+    
+    const grants = this.userGrantInfos.get(userId) || [];
+    return this.aggregateUsageFromGrants(grants, days);
+  }
+
+  async getSystemUsageStats(days: number = 30): Promise<UsageStats> {
+    // Aggregate across all users
+    const allGrants: GrantInfo[] = [];
+    
+    for (const user of this.users.values()) {
+      await this.loadUser(user.id);
+      this.ensureGrantContainers(user.id);
+      const userGrants = this.userGrantInfos.get(user.id) || [];
+      allGrants.push(...userGrants);
+    }
+    
+    return this.aggregateUsageFromGrants(allGrants, days);
+  }
+
+  async getModelUsageStats(modelId: string, days: number = 30): Promise<UsageStats> {
+    // Aggregate across all users, filtering by model
+    const allGrants: GrantInfo[] = [];
+    
+    for (const user of this.users.values()) {
+      await this.loadUser(user.id);
+      this.ensureGrantContainers(user.id);
+      const userGrants = this.userGrantInfos.get(user.id) || [];
+      // Filter for grants that mention this model in the reason
+      const modelGrants = userGrants.filter(g => 
+        g.type === 'burn' && g.reason?.includes(modelId)
+      );
+      allGrants.push(...modelGrants);
+    }
+    
+    return this.aggregateUsageFromGrants(allGrants, days, false); // Don't filter by model again
+  }
+
+  private aggregateUsageFromGrants(grants: GrantInfo[], days: number, filterByBurn: boolean = true): UsageStats {
+    const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const cutoffStr = cutoffDate.toISOString();
+    
+    // Filter to burn grants within the time range
+    const burnGrants = grants.filter(g => 
+      (!filterByBurn || g.type === 'burn') && 
+      g.time >= cutoffStr &&
+      g.details
+    );
+    
+    // Group by date
+    const dailyMap = new Map<string, UsageDataPoint>();
+    const modelMap = new Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cost: number; requests: number }>();
+    
+    const totals = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      totalTokens: 0,
+      cost: 0,
+      requests: 0
+    };
+    
+    for (const grant of burnGrants) {
+      const date = grant.time.split('T')[0]; // YYYY-MM-DD
+      const details = grant.details!;
+      
+      const inputTokens = details.input?.tokens || 0;
+      const outputTokens = details.output?.tokens || 0;
+      const cachedTokens = details.cached_input?.tokens || 0;
+      const cost = grant.amount;
+      
+      // Update daily
+      if (!dailyMap.has(date)) {
+        dailyMap.set(date, {
+          date,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          totalTokens: 0,
+          cost: 0,
+          requests: 0
+        });
+      }
+      const dayData = dailyMap.get(date)!;
+      dayData.inputTokens += inputTokens;
+      dayData.outputTokens += outputTokens;
+      dayData.cachedTokens += cachedTokens;
+      dayData.totalTokens += inputTokens + outputTokens;
+      dayData.cost += cost;
+      dayData.requests += 1;
+      
+      // Update totals
+      totals.inputTokens += inputTokens;
+      totals.outputTokens += outputTokens;
+      totals.cachedTokens += cachedTokens;
+      totals.totalTokens += inputTokens + outputTokens;
+      totals.cost += cost;
+      totals.requests += 1;
+      
+      // Extract model from reason (e.g., "Model usage (claude-3-opus)")
+      const modelMatch = grant.reason?.match(/\(([^)]+)\)/);
+      const model = modelMatch ? modelMatch[1] : 'unknown';
+      
+      if (!modelMap.has(model)) {
+        modelMap.set(model, { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cost: 0, requests: 0 });
+      }
+      const modelData = modelMap.get(model)!;
+      modelData.inputTokens += inputTokens;
+      modelData.outputTokens += outputTokens;
+      modelData.cachedTokens += cachedTokens;
+      modelData.cost += cost;
+      modelData.requests += 1;
+    }
+    
+    // Sort daily data by date
+    const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    
+    // Convert model map to object
+    const byModel: Record<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cost: number; requests: number }> = {};
+    for (const [model, data] of modelMap.entries()) {
+      byModel[model] = data;
+    }
+    
+    return { daily, totals, byModel };
   }
 
   async getUserGrantSummary(userId: string): Promise<UserGrantSummary> {

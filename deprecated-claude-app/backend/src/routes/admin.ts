@@ -193,6 +193,50 @@ export function adminRouter(db: Database): Router {
     }
   });
 
+  // GET /admin/usage/user/:id - Get token usage stats for a specific user
+  router.get('/usage/user/:id', async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const days = parseInt(req.query.days as string) || 30;
+      
+      const user = await db.getUserById(id);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const usage = await db.getUserUsageStats(id, days);
+      res.json(usage);
+    } catch (error) {
+      console.error('Error fetching user usage:', error);
+      res.status(500).json({ error: 'Failed to fetch user usage stats' });
+    }
+  });
+
+  // GET /admin/usage/system - Get system-wide token usage stats
+  router.get('/usage/system', async (req: AuthRequest, res) => {
+    try {
+      const days = parseInt(req.query.days as string) || 30;
+      const usage = await db.getSystemUsageStats(days);
+      res.json(usage);
+    } catch (error) {
+      console.error('Error fetching system usage:', error);
+      res.status(500).json({ error: 'Failed to fetch system usage stats' });
+    }
+  });
+
+  // GET /admin/usage/model/:modelId - Get usage stats for a specific model
+  router.get('/usage/model/:modelId', async (req: AuthRequest, res) => {
+    try {
+      const { modelId } = req.params;
+      const days = parseInt(req.query.days as string) || 30;
+      const usage = await db.getModelUsageStats(modelId, days);
+      res.json(usage);
+    } catch (error) {
+      console.error('Error fetching model usage:', error);
+      res.status(500).json({ error: 'Failed to fetch model usage stats' });
+    }
+  });
+
   return router;
 }
 
