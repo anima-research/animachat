@@ -888,6 +888,15 @@ watch(() => currentBranch.value.id, async () => {
 </script>
 
 <style scoped>
+/* Mobile: full-width messages */
+@media (max-width: 768px) {
+  .v-card {
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+}
+
 .error-indicator {
   max-width: 100%;
 }

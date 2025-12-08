@@ -2750,6 +2750,20 @@ function formatDate(date: Date | string): string {
   position: relative;
 }
 
+/* Mobile: reduce padding and make messages full-width */
+@media (max-width: 768px) {
+  .messages-container {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+  
+  .messages-container :deep(.v-card) {
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+}
+
 /* Force scrollbar to always show on macOS/webkit */
 .messages-container::-webkit-scrollbar {
   -webkit-appearance: none;
