@@ -54,10 +54,12 @@
               :key="model" 
               class="model-row d-flex align-center justify-space-between py-1"
             >
-              <span class="text-body-2">{{ model }}</span>
-              <div class="d-flex align-center" style="gap: 16px;">
-                <span class="text-caption text-grey">{{ formatNumber(data.totalTokens) }} tokens</span>
+              <span class="text-body-2 model-name">{{ model }}</span>
+              <div class="d-flex align-center model-stats">
+                <span class="text-caption text-grey">{{ formatNumber(data.totalTokens) }} tok</span>
+                <span class="text-caption text-grey">({{ formatNumber(data.cachedTokens) }} cached)</span>
                 <span class="text-caption">{{ data.requests }} req</span>
+                <span class="text-caption text-warning font-weight-medium">${{ formatCost(data.cost) }}</span>
               </div>
             </div>
           </div>
@@ -110,10 +112,12 @@
             :key="model" 
             class="model-row d-flex align-center justify-space-between py-1"
           >
-            <span class="text-body-2">{{ model }}</span>
-            <div class="d-flex align-center" style="gap: 16px;">
-              <span class="text-caption text-grey">{{ formatNumber(data.totalTokens) }} tokens</span>
+            <span class="text-body-2 model-name">{{ model }}</span>
+            <div class="d-flex align-center model-stats">
+              <span class="text-caption text-grey">{{ formatNumber(data.totalTokens) }} tok</span>
+              <span class="text-caption text-grey">({{ formatNumber(data.cachedTokens) }} cached)</span>
               <span class="text-caption">{{ data.requests }} req</span>
+              <span class="text-caption text-warning font-weight-medium">${{ formatCost(data.cost) }}</span>
             </div>
           </div>
         </div>
@@ -554,16 +558,35 @@ defineExpose({
   background: rgba(0, 0, 0, 0.2);
   border-radius: 6px;
   padding: 8px 12px;
-  max-height: 200px;
+  max-height: 250px;
   overflow-y: auto;
 }
 
 .model-row {
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  flex-wrap: wrap;
 }
 
 .model-row:last-child {
   border-bottom: none;
+}
+
+.model-name {
+  flex: 1;
+  min-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-stats {
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.model-stats > span {
+  white-space: nowrap;
 }
 
 :deep(.axis-x .domain),
