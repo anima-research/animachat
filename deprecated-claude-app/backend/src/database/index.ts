@@ -1031,6 +1031,139 @@ export class Database {
     return Array.from(this.users.values());
   }
 
+  // Admin methods for user management
+  async getAllUsersWithStats(): Promise<Array<{
+    id: string;
+    email: string;
+    name: string;
+    createdAt: Date;
+    conversationCount: number;
+    capabilities: string[];
+    balances: Record<string, number>;
+  }>> {
+    const users = Array.from(this.users.values());
+    const results = [];
+
+    for (const user of users) {
+      await this.loadUser(user.id);
+      this.ensureGrantContainers(user.id);
+
+      const conversationIds = this.userConversations.get(user.id) || new Set();
+      const capabilities = this.getActiveCapabilities(user.id);
+      const totals = this.userGrantTotals.get(user.id) || new Map();
+      
+      const balances: Record<string, number> = {};
+      for (const [currency, amount] of totals.entries()) {
+        balances[currency] = Number(amount);
+      }
+
+      results.push({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        createdAt: user.createdAt,
+        conversationCount: conversationIds.size,
+        capabilities,
+        balances
+      });
+    }
+
+    return results;
+  }
+
+  async getUserStats(userId: string): Promise<{
+    conversationCount: number;
+    messageCount: number;
+    lastActive?: string;
+  }> {
+    await this.loadUser(userId);
+    
+    const conversationIds = this.userConversations.get(userId) || new Set();
+    let messageCount = 0;
+    let lastActive: string | undefined;
+
+    for (const convId of conversationIds) {
+      const messageIds = this.conversationMessages.get(convId) || [];
+      messageCount += messageIds.length;
+      
+      // Check conversation for last activity
+      const conv = this.conversations.get(convId);
+      if (conv?.updatedAt) {
+        const updated = typeof conv.updatedAt === 'string' ? conv.updatedAt : conv.updatedAt.toISOString();
+        if (!lastActive || updated > lastActive) {
+          lastActive = updated;
+        }
+      }
+    }
+
+    return {
+      conversationCount: conversationIds.size,
+      messageCount,
+      lastActive
+    };
+  }
+
+  private getActiveCapabilities(userId: string): string[] {
+    const capabilities = this.userGrantCapabilities.get(userId) || [];
+    const latest = new Map<string, { action: string; time: string }>();
+
+    for (const cap of capabilities) {
+      const existing = latest.get(cap.capability);
+      if (!existing || cap.time > existing.time) {
+        latest.set(cap.capability, { action: cap.action, time: cap.time });
+      }
+    }
+
+    const active: string[] = [];
+    for (const [capability, { action }] of latest.entries()) {
+      if (action === 'granted') {
+        active.push(capability);
+      }
+    }
+    return active;
+  }
+
+  async invalidateUserCache(userId: string): Promise<void> {
+    // Unload the user and force reload from disk
+    this.unloadUser(userId);
+    await this.loadUser(userId);
+  }
+
+  async getSystemStats(): Promise<{
+    totalUsers: number;
+    totalConversations: number;
+    activeUsersLast7Days: number;
+  }> {
+    const users = Array.from(this.users.values());
+    let totalConversations = 0;
+    let activeUsersLast7Days = 0;
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    for (const user of users) {
+      await this.loadUser(user.id);
+      const conversationIds = this.userConversations.get(user.id) || new Set();
+      totalConversations += conversationIds.size;
+
+      // Check if user was active in last 7 days
+      for (const convId of conversationIds) {
+        const conv = this.conversations.get(convId);
+        if (conv?.updatedAt) {
+          const updated = typeof conv.updatedAt === 'string' ? conv.updatedAt : conv.updatedAt.toISOString();
+          if (updated > sevenDaysAgo) {
+            activeUsersLast7Days++;
+            break;
+          }
+        }
+      }
+    }
+
+    return {
+      totalUsers: users.length,
+      totalConversations,
+      activeUsersLast7Days
+    };
+  }
+
   async getUserGrantSummary(userId: string): Promise<UserGrantSummary> {
     await this.loadUser(userId);
     this.ensureGrantContainers(userId);

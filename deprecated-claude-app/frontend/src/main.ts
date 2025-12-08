@@ -22,6 +22,7 @@ import AboutView from './views/AboutView.vue';
 import SharedView from './views/SharedView.vue';
 import ModelTestView from './views/ModelTestView.vue';
 import ModelPricingView from './views/ModelPricingView.vue';
+import AdminView from './views/AdminView.vue';
 
 const vuetify = createVuetify({
   components,
@@ -82,6 +83,12 @@ const router = createRouter({
       path: '/models',
       name: 'model-pricing',
       component: ModelPricingView,
+    },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: AdminView,
+      meta: { requiresAuth: true },
     },
     {
       path: '/',

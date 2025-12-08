@@ -147,6 +147,12 @@
               @click="settingsDialog = true"
             />
             <v-list-item
+              v-if="isAdmin"
+              prepend-icon="mdi-shield-crown"
+              title="Admin"
+              @click="$router.push('/admin')"
+            />
+            <v-list-item
               prepend-icon="mdi-logout"
               title="Logout"
               @click="logout"
@@ -944,6 +950,19 @@ const conversations = computed(() => {
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
+
+// Check if current user has admin capability
+const isAdmin = computed(() => {
+  const summary = store.state.grantSummary;
+  if (!summary?.grantCapabilities) return false;
+  
+  // Find the latest admin capability record
+  const adminRecords = summary.grantCapabilities.filter((c: any) => c.capability === 'admin');
+  if (adminRecords.length === 0) return false;
+  
+  const latest = adminRecords.reduce((a: any, b: any) => (a.time > b.time ? a : b));
+  return latest.action === 'granted';
+});
 
 // For tree view - identify current position
 const currentMessageId = computed(() => {

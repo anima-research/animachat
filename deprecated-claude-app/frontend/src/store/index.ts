@@ -1,5 +1,5 @@
 import { reactive, inject, InjectionKey, App } from 'vue';
-import type { User, Conversation, Message, Model, OpenRouterModel, UserDefinedModel, CreateUserModel, UpdateUserModel } from '@deprecated-claude/shared';
+import type { User, Conversation, Message, Model, OpenRouterModel, UserDefinedModel, CreateUserModel, UpdateUserModel, UserGrantSummary } from '@deprecated-claude/shared';
 import { api } from '../services/api';
 import { WebSocketService } from '../services/websocket';
 
@@ -15,6 +15,7 @@ interface StoreState {
   error: string | null;
   wsService: WebSocketService | null;
   lastMetricsUpdate: { conversationId: string; metrics: any } | null;
+  grantSummary: UserGrantSummary | null;
   systemConfig: {
     features?: any;
     groupChatSuggestedModels?: string[];
@@ -178,6 +179,7 @@ export function createStore(): {
     error: null,
     wsService: null,
     lastMetricsUpdate: null,
+    grantSummary: null,
     systemConfig: null
   });
 
@@ -211,6 +213,15 @@ export function createStore(): {
       try {
         const response = await api.get('/auth/me');
         state.user = response.data;
+        
+        // Also load grant summary for capability checks
+        try {
+          const grantsResponse = await api.get('/auth/grants');
+          state.grantSummary = grantsResponse.data;
+        } catch (grantsError) {
+          console.error('Failed to load grants:', grantsError);
+          // Don't fail user load if grants fail
+        }
       } catch (error) {
         console.error('Failed to load user:', error);
         throw error;

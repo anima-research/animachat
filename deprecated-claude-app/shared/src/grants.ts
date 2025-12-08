@@ -36,7 +36,7 @@ export interface GrantCapability {
   time: string;
   userId: string;
   action: 'granted'|'revoked';
-  capability: 'send'|'mint'|'admin'|'overspend';
+  capability: 'send'|'mint'|'admin'|'overspend'|'researcher';
   grantedByUserId: string;
   expiresAt?: string;
 }
