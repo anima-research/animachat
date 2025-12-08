@@ -211,12 +211,12 @@
               <v-table density="compact" class="model-costs-table">
                 <thead>
                   <tr>
-                    <th>Model ID</th>
-                    <th>Input $/M</th>
-                    <th>Output $/M</th>
-                    <th>Billed In $/M</th>
-                    <th>Billed Out $/M</th>
-                    <th></th>
+                    <th style="min-width: 320px;">Model ID</th>
+                    <th style="width: 70px;">In $/M</th>
+                    <th style="width: 70px;">Out $/M</th>
+                    <th style="width: 70px;">Bill In</th>
+                    <th style="width: 70px;">Bill Out</th>
+                    <th style="width: 40px;"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -238,7 +238,7 @@
                         density="compact"
                         variant="plain"
                         hide-details
-                        style="width: 80px;"
+                        class="cost-field"
                       />
                     </td>
                     <td>
@@ -249,7 +249,7 @@
                         density="compact"
                         variant="plain"
                         hide-details
-                        style="width: 80px;"
+                        class="cost-field"
                       />
                     </td>
                     <td>
@@ -260,7 +260,7 @@
                         density="compact"
                         variant="plain"
                         hide-details
-                        style="width: 80px;"
+                        class="cost-field"
                       />
                     </td>
                     <td>
@@ -271,14 +271,14 @@
                         density="compact"
                         variant="plain"
                         hide-details
-                        style="width: 80px;"
+                        class="cost-field"
                       />
                     </td>
                     <td>
                       <v-btn 
                         icon="mdi-delete" 
                         variant="text" 
-                        size="small"
+                        size="x-small"
                         color="error"
                         @click="removeModelCost(provider, profile.id, idx)"
                       />
@@ -577,19 +577,38 @@ onMounted(() => {
 }
 
 .model-costs-table th {
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   text-transform: uppercase;
   opacity: 0.7;
+  white-space: nowrap;
 }
 
 .model-id-field {
   font-family: monospace;
-  font-size: 0.85rem;
+  font-size: 0.75rem;
+  min-width: 300px;
+}
+
+.model-id-field :deep(.v-field__input) {
+  font-size: 0.75rem;
+}
+
+.cost-field {
+  width: 65px;
+}
+
+.cost-field :deep(.v-field__input) {
+  font-size: 0.75rem;
+  padding: 2px 4px;
 }
 
 .model-costs-table :deep(.v-field__input) {
-  min-height: 32px;
-  padding: 4px 8px;
+  min-height: 28px;
+  padding: 2px 6px;
+}
+
+.model-costs-table td {
+  padding: 2px 4px !important;
 }
 </style>
 
