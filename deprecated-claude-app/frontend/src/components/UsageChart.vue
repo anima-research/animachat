@@ -153,6 +153,39 @@ function formatCost(cost: number): string {
   return cost.toFixed(2);
 }
 
+function fillMissingDays(data: UsageDataPoint[], days: number): UsageDataPoint[] {
+  if (data.length === 0) return [];
+  
+  const filledData: UsageDataPoint[] = [];
+  const dataMap = new Map(data.map(d => [d.date, d]));
+  
+  // Generate all dates in range
+  const endDate = new Date();
+  endDate.setHours(0, 0, 0, 0);
+  const startDate = new Date(endDate.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+  
+  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().split('T')[0];
+    const existing = dataMap.get(dateStr);
+    
+    if (existing) {
+      filledData.push(existing);
+    } else {
+      filledData.push({
+        date: dateStr,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        totalTokens: 0,
+        cost: 0,
+        requests: 0
+      });
+    }
+  }
+  
+  return filledData;
+}
+
 async function fetchData() {
   loading.value = true;
   try {
@@ -169,8 +202,13 @@ async function fetchData() {
     }
     
     usageData.value = await response.json();
+    // Wait for DOM to update, then render
     await nextTick();
-    renderChart();
+    // Additional delay to ensure container has layout
+    setTimeout(() => {
+      setupResizeObserver();
+      renderChart();
+    }, 50);
   } catch (error) {
     console.error('Error fetching usage data:', error);
     usageData.value = null;
@@ -180,13 +218,28 @@ async function fetchData() {
 }
 
 function renderChart() {
-  if (!chartContainer.value || !usageData.value?.daily.length) return;
+  if (!chartContainer.value) return;
   
   // Clear previous chart
   d3.select(chartContainer.value).selectAll('*').remove();
   
-  const data = usageData.value.daily;
   const containerWidth = chartContainer.value.clientWidth;
+  if (containerWidth <= 0) return;
+  
+  // Fill in missing days for continuous chart
+  const rawData = usageData.value?.daily || [];
+  const data = fillMissingDays(rawData, parseInt(selectedRange.value));
+  
+  if (data.length === 0) {
+    // Show empty state
+    d3.select(chartContainer.value)
+      .append('div')
+      .style('text-align', 'center')
+      .style('padding', '60px 20px')
+      .style('color', '#666')
+      .text('No usage data for this period');
+    return;
+  }
   
   const margin = { top: 20, right: 30, bottom: 40, left: 60 };
   const width = containerWidth - margin.left - margin.right;
@@ -211,7 +264,7 @@ function renderChart() {
     .domain(d3.extent(chartData, d => d.dateObj) as [Date, Date])
     .range([0, width]);
   
-  const maxTokens = d3.max(chartData, d => d.inputTokens + d.outputTokens) || 0;
+  const maxTokens = d3.max(chartData, d => d.inputTokens + d.outputTokens) || 1;
   const y = d3.scaleLinear()
     .domain([0, maxTokens * 1.1])
     .range([height, 0]);
@@ -332,18 +385,32 @@ watch(selectedRange, () => {
   fetchData();
 });
 
+// Watch for chart container becoming available
+watch(chartContainer, (newContainer) => {
+  if (newContainer && usageData.value) {
+    setupResizeObserver();
+    // Small delay to ensure container has layout dimensions
+    setTimeout(() => renderChart(), 50);
+  }
+});
+
 // Handle resize
 let resizeObserver: ResizeObserver | null = null;
 
-onMounted(() => {
-  fetchData();
-  
+function setupResizeObserver() {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+  }
   if (chartContainer.value) {
     resizeObserver = new ResizeObserver(() => {
       renderChart();
     });
     resizeObserver.observe(chartContainer.value);
   }
+}
+
+onMounted(() => {
+  fetchData();
 });
 
 onUnmounted(() => {
