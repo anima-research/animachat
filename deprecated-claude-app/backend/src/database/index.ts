@@ -695,6 +695,22 @@ export class Database {
         break;
       }
       
+      case 'api_key_deleted': {
+        const { apiKeyId, userId } = event.data;
+        this.apiKeys.delete(apiKeyId);
+        
+        // Also remove from user's apiKeys array
+        const user = this.users.get(userId);
+        if (user && user.apiKeys) {
+          const updatedUser = {
+            ...user,
+            apiKeys: user.apiKeys.filter((k: any) => k.id !== apiKeyId)
+          };
+          this.users.set(userId, updatedUser);
+        }
+        break;
+      }
+      
       case 'conversation_created': {
         const conversation = {
           ...event.data,
@@ -1551,6 +1567,17 @@ export class Database {
   }
   
   async deleteApiKey(keyId: string): Promise<boolean> {
+    const apiKey = this.apiKeys.get(keyId);
+    if (!apiKey) {
+      return false;
+    }
+    
+    // Log deletion event for persistence
+    await this.logEvent('api_key_deleted', { 
+      apiKeyId: keyId,
+      userId: apiKey.userId 
+    });
+    
     return this.apiKeys.delete(keyId);
   }
 
