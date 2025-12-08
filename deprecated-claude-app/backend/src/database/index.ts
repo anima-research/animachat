@@ -36,16 +36,19 @@ export interface UsageDataPoint {
   requests: number;
 }
 
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  cost: number;
+  requests: number;
+}
+
 export interface UsageStats {
+  // Credit-based usage (from burn records)
   daily: UsageDataPoint[];
-  totals: {
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens: number;
-    totalTokens: number;
-    cost: number;
-    requests: number;
-  };
+  totals: UsageTotals;
   byModel: Record<string, {
     inputTokens: number;
     outputTokens: number;
@@ -53,6 +56,18 @@ export interface UsageStats {
     cost: number;
     requests: number;
   }>;
+  // Total usage including personal API keys (from metrics)
+  allUsage?: {
+    daily: UsageDataPoint[];
+    totals: UsageTotals;
+    byModel: Record<string, {
+      inputTokens: number;
+      outputTokens: number;
+      cachedTokens: number;
+      cost: number;
+      requests: number;
+    }>;
+  };
 }
 
 export class Database {
@@ -1198,8 +1213,17 @@ export class Database {
     await this.loadUser(userId);
     this.ensureGrantContainers(userId);
     
+    // Get credit-based usage from burn records
     const grants = this.userGrantInfos.get(userId) || [];
-    return this.aggregateUsageFromGrants(grants, days);
+    const creditUsage = this.aggregateUsageFromGrants(grants, days);
+    
+    // Get ALL usage from conversation metrics (includes personal API key usage)
+    const allUsage = await this.aggregateUsageFromMetrics(userId, days);
+    
+    return {
+      ...creditUsage,
+      allUsage
+    };
   }
 
   async getSystemUsageStats(days: number = 30): Promise<UsageStats> {
@@ -1308,6 +1332,100 @@ export class Database {
       modelData.cachedTokens += cachedTokens;
       modelData.cost += cost;
       modelData.requests += 1;
+    }
+    
+    // Sort daily data by date
+    const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    
+    // Convert model map to object
+    const byModel: Record<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cost: number; requests: number }> = {};
+    for (const [model, data] of modelMap.entries()) {
+      byModel[model] = data;
+    }
+    
+    return { daily, totals, byModel };
+  }
+
+  private async aggregateUsageFromMetrics(userId: string, days: number): Promise<{
+    daily: UsageDataPoint[];
+    totals: UsageTotals;
+    byModel: Record<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cost: number; requests: number }>;
+  }> {
+    const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const cutoffStr = cutoffDate.toISOString();
+    
+    // Group by date
+    const dailyMap = new Map<string, UsageDataPoint>();
+    const modelMap = new Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cost: number; requests: number }>();
+    
+    const totals: UsageTotals = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      totalTokens: 0,
+      cost: 0,
+      requests: 0
+    };
+    
+    // Get all user's conversations and their metrics
+    const conversationIds = this.userConversations.get(userId) || new Set();
+    
+    for (const convId of conversationIds) {
+      // Make sure conversation is loaded
+      await this.loadConversation(convId, userId);
+      
+      const metrics = this.conversationMetrics.get(convId) || [];
+      
+      for (const m of metrics) {
+        // Filter by date
+        if (m.timestamp < cutoffStr) continue;
+        
+        const date = m.timestamp.split('T')[0];
+        const inputTokens = m.inputTokens || 0;
+        const outputTokens = m.outputTokens || 0;
+        const cachedTokens = m.cachedTokens || 0;
+        const cost = m.cost || 0;
+        
+        // Update daily
+        if (!dailyMap.has(date)) {
+          dailyMap.set(date, {
+            date,
+            inputTokens: 0,
+            outputTokens: 0,
+            cachedTokens: 0,
+            totalTokens: 0,
+            cost: 0,
+            requests: 0
+          });
+        }
+        const dayData = dailyMap.get(date)!;
+        dayData.inputTokens += inputTokens;
+        dayData.outputTokens += outputTokens;
+        dayData.cachedTokens += cachedTokens;
+        dayData.totalTokens += inputTokens + outputTokens;
+        dayData.cost += cost;
+        dayData.requests += 1;
+        
+        // Update totals
+        totals.inputTokens += inputTokens;
+        totals.outputTokens += outputTokens;
+        totals.cachedTokens += cachedTokens;
+        totals.totalTokens += inputTokens + outputTokens;
+        totals.cost += cost;
+        totals.requests += 1;
+        
+        // Update by model
+        const model = m.model || 'unknown';
+        if (!modelMap.has(model)) {
+          modelMap.set(model, { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cost: 0, requests: 0 });
+        }
+        const modelData = modelMap.get(model)!;
+        modelData.inputTokens += inputTokens;
+        modelData.outputTokens += outputTokens;
+        modelData.cachedTokens += cachedTokens;
+        modelData.cost += cost;
+        modelData.requests += 1;
+      }
     }
     
     // Sort daily data by date

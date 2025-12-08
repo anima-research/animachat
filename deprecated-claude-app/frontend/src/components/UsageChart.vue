@@ -17,7 +17,60 @@
     </div>
     
     <template v-else-if="usageData">
-      <!-- Summary Stats -->
+      <!-- All Usage Stats (Personal API Keys) - Show first if available and different from credits -->
+      <template v-if="usageData.allUsage && usageData.allUsage.totals.requests > 0">
+        <div class="text-caption text-grey mb-2 d-flex align-center">
+          <v-icon size="x-small" class="mr-1">mdi-api</v-icon>
+          All API Usage (includes personal keys)
+        </div>
+        <div class="stats-row d-flex flex-wrap mb-3" style="gap: 12px;">
+          <div class="stat-card">
+            <div class="stat-value">{{ formatNumber(usageData.allUsage.totals.totalTokens) }}</div>
+            <div class="stat-label">Total Tokens</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value text-primary">{{ formatNumber(usageData.allUsage.totals.inputTokens) }}</div>
+            <div class="stat-label">Input</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value text-secondary">{{ formatNumber(usageData.allUsage.totals.outputTokens) }}</div>
+            <div class="stat-label">Output</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ usageData.allUsage.totals.requests }}</div>
+            <div class="stat-label">Requests</div>
+          </div>
+        </div>
+        
+        <!-- Chart for all usage -->
+        <div ref="chartContainer" class="chart-svg-container mb-4"></div>
+        
+        <!-- Model breakdown for all usage -->
+        <div v-if="showModelBreakdown && Object.keys(usageData.allUsage.byModel).length > 0" class="mb-4">
+          <div class="text-caption text-grey mb-2">By Model (All Usage)</div>
+          <div class="model-breakdown">
+            <div 
+              v-for="(data, model) in sortedAllModels" 
+              :key="model" 
+              class="model-row d-flex align-center justify-space-between py-1"
+            >
+              <span class="text-body-2">{{ model }}</span>
+              <div class="d-flex align-center" style="gap: 16px;">
+                <span class="text-caption text-grey">{{ formatNumber(data.totalTokens) }} tokens</span>
+                <span class="text-caption">{{ data.requests }} req</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <v-divider class="my-4" />
+      </template>
+      
+      <!-- Credit Usage Stats -->
+      <div class="text-caption text-grey mb-2 d-flex align-center">
+        <v-icon size="x-small" class="mr-1">mdi-currency-usd</v-icon>
+        Credit Usage (platform credits)
+      </div>
       <div class="stats-row d-flex flex-wrap mb-4" style="gap: 12px;">
         <div class="stat-card">
           <div class="stat-value">{{ formatNumber(usageData.totals.totalTokens) }}</div>
@@ -45,12 +98,12 @@
         </div>
       </div>
       
-      <!-- Chart -->
-      <div ref="chartContainer" class="chart-svg-container"></div>
+      <!-- Chart for credit usage (only if no allUsage shown above) -->
+      <div v-if="!usageData.allUsage || usageData.allUsage.totals.requests === 0" ref="chartContainer" class="chart-svg-container"></div>
       
-      <!-- Model breakdown -->
+      <!-- Model breakdown for credits -->
       <div v-if="showModelBreakdown && Object.keys(usageData.byModel).length > 0" class="mt-4">
-        <div class="text-caption text-grey mb-2">By Model</div>
+        <div class="text-caption text-grey mb-2">By Model (Credits)</div>
         <div class="model-breakdown">
           <div 
             v-for="(data, model) in sortedModels" 
@@ -88,16 +141,18 @@ interface UsageDataPoint {
   requests: number;
 }
 
+interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  cost: number;
+  requests: number;
+}
+
 interface UsageStats {
   daily: UsageDataPoint[];
-  totals: {
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens: number;
-    totalTokens: number;
-    cost: number;
-    requests: number;
-  };
+  totals: UsageTotals;
   byModel: Record<string, {
     inputTokens: number;
     outputTokens: number;
@@ -105,6 +160,18 @@ interface UsageStats {
     cost: number;
     requests: number;
   }>;
+  // Total usage including personal API keys
+  allUsage?: {
+    daily: UsageDataPoint[];
+    totals: UsageTotals;
+    byModel: Record<string, {
+      inputTokens: number;
+      outputTokens: number;
+      cachedTokens: number;
+      cost: number;
+      requests: number;
+    }>;
+  };
 }
 
 const props = withDefaults(defineProps<{
@@ -125,6 +192,24 @@ const sortedModels = computed(() => {
   if (!usageData.value?.byModel) return {};
   
   const entries = Object.entries(usageData.value.byModel)
+    .map(([model, data]) => ({
+      model,
+      ...data,
+      totalTokens: data.inputTokens + data.outputTokens
+    }))
+    .sort((a, b) => b.totalTokens - a.totalTokens);
+  
+  const result: Record<string, typeof entries[0]> = {};
+  for (const entry of entries) {
+    result[entry.model] = entry;
+  }
+  return result;
+});
+
+const sortedAllModels = computed(() => {
+  if (!usageData.value?.allUsage?.byModel) return {};
+  
+  const entries = Object.entries(usageData.value.allUsage.byModel)
     .map(([model, data]) => ({
       model,
       ...data,
@@ -223,11 +308,16 @@ function renderChart() {
   // Clear previous chart
   d3.select(chartContainer.value).selectAll('*').remove();
   
+  // Use allUsage data if available, otherwise fall back to credit usage
+  const sourceData = usageData.value?.allUsage?.daily?.length 
+    ? usageData.value.allUsage 
+    : usageData.value;
+  
   const containerWidth = chartContainer.value.clientWidth;
   if (containerWidth <= 0) return;
   
   // Fill in missing days for continuous chart
-  const rawData = usageData.value?.daily || [];
+  const rawData = sourceData?.daily || [];
   const data = fillMissingDays(rawData, parseInt(selectedRange.value));
   
   if (data.length === 0) {
