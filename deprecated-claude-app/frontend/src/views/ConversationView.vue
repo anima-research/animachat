@@ -2945,8 +2945,7 @@ function formatDate(date: Date | string): string {
 }
 
 .mobile-speaking-as {
-  padding: 0 4px;
-  text-align: center;
+  display: none; /* Hidden on mobile to save space */
 }
 
 /* Conversation title styling */
