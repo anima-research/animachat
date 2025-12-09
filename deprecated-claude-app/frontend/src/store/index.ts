@@ -36,7 +36,7 @@ export interface Store {
   // Actions
   loadUser(): Promise<void>;
   login(email: string, password: string): Promise<void>;
-  register(email: string, password: string, name: string): Promise<void>;
+  register(email: string, password: string, name: string, inviteCode?: string): Promise<{ requiresVerification?: boolean } | void>;
   logout(): void;
   
   loadConversations(): Promise<void>;
@@ -251,13 +251,20 @@ export function createStore(): {
       try {
         state.isLoading = true;
         const response = await api.post('/auth/register', { email, password, name, inviteCode });
-        const { user, token } = response.data;
+        const { user, token, requiresVerification } = response.data;
+        
+        // If email verification is required, return early without logging in
+        if (requiresVerification) {
+          return { requiresVerification: true };
+        }
         
         localStorage.setItem('token', token);
         state.user = user;
         
         // Connect WebSocket after registration
         this.connectWebSocket();
+        
+        return {};
       } catch (error: any) {
         state.error = error.response?.data?.error || 'Registration failed';
         throw error;

@@ -6,6 +6,8 @@ export const UserSchema = z.object({
   email: z.string().email(),
   name: z.string(),
   createdAt: z.date(),
+  emailVerified: z.boolean().optional(), // Whether email has been verified
+  emailVerifiedAt: z.date().optional(), // When email was verified
   apiKeys: z.array(z.object({
     id: z.string().uuid(),
     name: z.string(),

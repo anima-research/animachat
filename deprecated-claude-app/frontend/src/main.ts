@@ -23,6 +23,8 @@ import SharedView from './views/SharedView.vue';
 import ModelTestView from './views/ModelTestView.vue';
 import ModelPricingView from './views/ModelPricingView.vue';
 import AdminView from './views/AdminView.vue';
+import VerifyEmailView from './views/VerifyEmailView.vue';
+import ResetPasswordView from './views/ResetPasswordView.vue';
 
 const vuetify = createVuetify({
   components,
@@ -61,6 +63,16 @@ const router = createRouter({
       path: '/login',
       name: 'login',
       component: LoginView,
+    },
+    {
+      path: '/verify-email',
+      name: 'verify-email',
+      component: VerifyEmailView,
+    },
+    {
+      path: '/reset-password',
+      name: 'reset-password',
+      component: ResetPasswordView,
     },
     {
       path: '/about',

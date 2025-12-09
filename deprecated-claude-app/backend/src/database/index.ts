@@ -81,6 +81,8 @@ export class Database {
   private userConversations: Map<string, Set<string>> = new Map(); // userId -> conversationIds
   private conversationMessages: Map<string, string[]> = new Map(); // conversationId -> messageIds (ordered)
   private passwordHashes: Map<string, string> = new Map(); // email -> passwordHash
+  private emailVerificationTokens: Map<string, { userId: string; expiresAt: Date }> = new Map(); // token -> { userId, expiresAt }
+  private passwordResetTokens: Map<string, { userId: string; expiresAt: Date }> = new Map(); // token -> { userId, expiresAt }
   private participants: Map<string, Participant> = new Map(); // participantId -> Participant
   private conversationParticipants: Map<string, string[]> = new Map(); // conversationId -> participantIds
   private conversationMetrics: Map<string, MetricsData[]> = new Map(); // conversationId -> metrics
@@ -1059,7 +1061,7 @@ export class Database {
   }
 
   // User methods
-  async createUser(email: string, password: string, name: string): Promise<User> {
+  async createUser(email: string, password: string, name: string, emailVerified: boolean = false): Promise<User> {
     if (this.usersByEmail.has(email)) {
       throw new Error('User already exists');
     }
@@ -1070,6 +1072,8 @@ export class Database {
       email,
       name,
       createdAt: new Date(),
+      emailVerified,
+      emailVerifiedAt: emailVerified ? new Date() : undefined,
       apiKeys: []
     };
 
@@ -1085,6 +1089,95 @@ export class Database {
     this.logEvent('user_created', { user, passwordHash: hashedPassword });
 
     return user;
+  }
+  
+  // Email verification methods
+  async createEmailVerificationToken(userId: string): Promise<string> {
+    const token = uuidv4();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    
+    this.emailVerificationTokens.set(token, { userId, expiresAt });
+    await this.logEvent('email_verification_token_created', { token, userId, expiresAt: expiresAt.toISOString() });
+    
+    return token;
+  }
+  
+  async verifyEmail(token: string): Promise<User | null> {
+    const tokenData = this.emailVerificationTokens.get(token);
+    if (!tokenData) {
+      return null;
+    }
+    
+    if (new Date() > tokenData.expiresAt) {
+      this.emailVerificationTokens.delete(token);
+      return null;
+    }
+    
+    const user = this.users.get(tokenData.userId);
+    if (!user) {
+      return null;
+    }
+    
+    // Update user
+    user.emailVerified = true;
+    user.emailVerifiedAt = new Date();
+    this.users.set(user.id, user);
+    
+    // Delete token
+    this.emailVerificationTokens.delete(token);
+    
+    await this.logEvent('email_verified', { userId: user.id, verifiedAt: user.emailVerifiedAt.toISOString() });
+    
+    return user;
+  }
+  
+  // Password reset methods  
+  async createPasswordResetToken(userId: string): Promise<string> {
+    const token = uuidv4();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    
+    this.passwordResetTokens.set(token, { userId, expiresAt });
+    await this.logEvent('password_reset_token_created', { token, userId, expiresAt: expiresAt.toISOString() });
+    
+    return token;
+  }
+  
+  async resetPassword(token: string, newPassword: string): Promise<User | null> {
+    const tokenData = this.passwordResetTokens.get(token);
+    if (!tokenData) {
+      return null;
+    }
+    
+    if (new Date() > tokenData.expiresAt) {
+      this.passwordResetTokens.delete(token);
+      return null;
+    }
+    
+    const user = this.users.get(tokenData.userId);
+    if (!user) {
+      return null;
+    }
+    
+    // Update password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    this.passwordHashes.set(user.email, hashedPassword);
+    
+    // Delete token
+    this.passwordResetTokens.delete(token);
+    
+    await this.logEvent('password_reset', { userId: user.id });
+    
+    return user;
+  }
+  
+  getPasswordResetTokenData(token: string): { userId: string; expiresAt: Date } | null {
+    const data = this.passwordResetTokens.get(token);
+    if (!data) return null;
+    if (new Date() > data.expiresAt) {
+      this.passwordResetTokens.delete(token);
+      return null;
+    }
+    return data;
   }
 
   async getUserByEmail(email: string): Promise<User | null> {

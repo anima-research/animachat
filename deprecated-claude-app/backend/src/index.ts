@@ -123,7 +123,7 @@ async function startServer() {
     modelLoader.setDatabase(db);
     console.log('ModelLoader initialized with database');
     
-    const listenPort = USE_HTTPS ? HTTPS_PORT : PORT;
+    const listenPort = Number(USE_HTTPS ? HTTPS_PORT : PORT);
     const protocol = USE_HTTPS ? 'HTTPS' : 'HTTP';
     
     const HOST = process.env.HOST || '0.0.0.0';

@@ -461,6 +461,12 @@ async function handleChatMessage(
     console.log('[Chat] Message is hidden from AI, skipping AI generation');
     return;
   }
+  
+  // Get sampling branches count (default 1)
+  const samplingBranchCount = (message as any).samplingBranches || 1;
+  if (samplingBranchCount > 1) {
+    console.log(`[Chat] Sampling ${samplingBranchCount} response branches in parallel`);
+  }
 
   // Get participants for the conversation
   const participants = await db.getConversationParticipants(message.conversationId, conversation.userId);
@@ -640,93 +646,160 @@ async function handleChatMessage(
     roomManager.startAiRequest(message.conversationId, ws.userId!, assistantMessage.id);
     
     try {
-    await inferenceService.streamCompletion(
-      modelConfig,
-      messagesForInference,
-      inferenceSystemPrompt || '',
-      inferenceSettings,
-      conversation.userId,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-        // Update message content in memory (mutation is OK during streaming)
-        const currentBranch = assistantMessage.branches.find((b: any) => b.id === assistantMessage.activeBranchId);
-        if (currentBranch) {
-          currentBranch.content += chunk;
+    // Prepare all branches for parallel sampling
+    const branchesToGenerate: Array<{ branchId: string; branchContent: string }> = [
+      { branchId: assistantMessage.activeBranchId, branchContent: '' }
+    ];
+    
+    // Create additional branches if sampling multiple responses
+    if (samplingBranchCount > 1) {
+      for (let i = 1; i < samplingBranchCount; i++) {
+        // Add a new branch to the same assistant message
+        const newBranchMessage = await db.addMessageBranch(
+          assistantMessage.id,
+          assistantMessage.conversationId,
+          conversation.userId,
+          '', // empty content
+          'assistant',
+          userBranch?.id, // same parent as first branch
+          responder.model || conversation.model,
+          responder.id,
+          undefined // no attachments
+        );
+        
+        if (newBranchMessage) {
+          const newBranch = newBranchMessage.branches[newBranchMessage.branches.length - 1];
+          branchesToGenerate.push({ branchId: newBranch.id, branchContent: '' });
           
-          // Store content blocks if provided
-          if (contentBlocks && contentBlocks.length > 0) {
-            currentBranch.contentBlocks = contentBlocks;
-          }
+          // Update our local assistantMessage with the new branch
+          assistantMessage.branches.push(newBranch);
           
-          // Save partial content every 500 characters to prevent data loss on interruption
-          if (currentBranch.content.length % 500 === 0 || isComplete) {
-            await db.updateMessageContent(
-              assistantMessage.id,
-              assistantMessage.conversationId,
-              conversation.userId,
-              assistantMessage.activeBranchId,
-              currentBranch.content,
-              currentBranch.contentBlocks
-            );
-          }
+          // Send branch created notification
+          ws.send(JSON.stringify({
+            type: 'message_edited',
+            message: assistantMessage
+          }));
+          
+          // Broadcast to other users
+          roomManager.broadcastToRoom(message.conversationId, {
+            type: 'message_edited',
+            message: assistantMessage,
+            fromUserId: ws.userId
+          }, ws);
         }
-
-        // Send stream update
-        const streamData = {
-          type: 'stream',
-          messageId: assistantMessage.id,
-          branchId: assistantMessage.activeBranchId,
-          content: chunk,
-          contentBlocks: contentBlocks,
-          isComplete
-        };
-        
-        // Log content blocks being sent
-        if (contentBlocks && contentBlocks.length > 0 && !chunk) {
-          console.log('[WebSocket] Sending content blocks:', contentBlocks.length, 'types:', contentBlocks.map(b => b.type));
-        }
-        
-        // Send to original requester
-        ws.send(JSON.stringify(streamData));
-        
-        // Broadcast to all other users in the room
-        roomManager.broadcastToRoom(message.conversationId, streamData, ws);
-
-        if (isComplete) {
-          // Final save and update conversation timestamp
+      }
+      
+      console.log(`[Chat] Created ${branchesToGenerate.length} branches for parallel sampling`);
+    }
+    
+    // Helper function to run inference for a single branch
+    const runBranchInference = async (branchId: string, branchIndex: number) => {
+      let branchContent = '';
+      
+      await inferenceService.streamCompletion(
+        modelConfig,
+        messagesForInference,
+        inferenceSystemPrompt || '',
+        inferenceSettings,
+        conversation.userId,
+        async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+          // Update branch content
+          branchContent += chunk;
+          
+          // Find the branch in our message
+          const currentBranch = assistantMessage.branches.find((b: any) => b.id === branchId);
           if (currentBranch) {
-            // Trim leading/trailing whitespace from final content
-            currentBranch.content = currentBranch.content.trim();
+            currentBranch.content = branchContent;
             
-            await db.updateMessageContent(
-              assistantMessage.id,
-              assistantMessage.conversationId,
-              conversation.userId,
-              assistantMessage.activeBranchId,
-              currentBranch.content,
-              currentBranch.contentBlocks
-            );
+            // Store content blocks if provided
+            if (contentBlocks && contentBlocks.length > 0) {
+              currentBranch.contentBlocks = contentBlocks;
+            }
+            
+            // Save partial content every 500 characters to prevent data loss on interruption
+            if (branchContent.length % 500 === 0 || isComplete) {
+              await db.updateMessageContent(
+                assistantMessage.id,
+                assistantMessage.conversationId,
+                conversation.userId,
+                branchId,
+                branchContent,
+                currentBranch.contentBlocks
+              );
+            }
+          }
+
+          // Send stream update
+          const streamData = {
+            type: 'stream',
+            messageId: assistantMessage.id,
+            branchId: branchId,
+            content: chunk,
+            contentBlocks: contentBlocks,
+            isComplete,
+            branchIndex: branchIndex // Let client know which branch this is for
+          };
+          
+          // Log content blocks being sent
+          if (contentBlocks && contentBlocks.length > 0 && !chunk) {
+            console.log(`[WebSocket] Branch ${branchIndex}: Sending content blocks:`, contentBlocks.length, 'types:', contentBlocks.map(b => b.type));
           }
           
-          // Update conversation timestamp
-          await db.updateConversation(conversation.id, conversation.userId, { updatedAt: new Date() });
-        }
-      },
-      conversation,
-      responder,
-      async (metrics) => {
-        // Store metrics in database
-        await db.addMetrics(conversation.id, conversation.userId, metrics);
-        
-        // Send metrics update to client
-        ws.send(JSON.stringify({
-          type: 'metrics_update',
-          conversationId: conversation.id,
-          metrics
-        }));
-      },
-      participants,
-      abortController.signal
+          // Send to original requester
+          ws.send(JSON.stringify(streamData));
+          
+          // Broadcast to all other users in the room
+          roomManager.broadcastToRoom(message.conversationId, streamData, ws);
+
+          if (isComplete) {
+            // Final save
+            const finalBranch = assistantMessage.branches.find((b: any) => b.id === branchId);
+            if (finalBranch) {
+              // Trim leading/trailing whitespace from final content
+              finalBranch.content = branchContent.trim();
+              
+              await db.updateMessageContent(
+                assistantMessage.id,
+                assistantMessage.conversationId,
+                conversation.userId,
+                branchId,
+                finalBranch.content,
+                finalBranch.contentBlocks
+              );
+            }
+          }
+        },
+        conversation,
+        responder,
+        async (metrics) => {
+          // Store metrics in database (only for first branch to avoid duplicate counting)
+          if (branchIndex === 0) {
+            await db.addMetrics(conversation.id, conversation.userId, metrics);
+            
+            // Send metrics update to client
+            ws.send(JSON.stringify({
+              type: 'metrics_update',
+              conversationId: conversation.id,
+              metrics,
+              branchIndex
+            }));
+          }
+        },
+        participants,
+        abortController.signal
+      );
+    };
+    
+    // Run all branches in parallel
+    await Promise.all(
+      branchesToGenerate.map((branch, index) => 
+        runBranchInference(branch.branchId, index)
+      )
     );
+    
+    // Update conversation timestamp after all branches complete
+    await db.updateConversation(conversation.id, conversation.userId, { updatedAt: new Date() });
+    
     } finally {
       endGeneration(conversation.userId, conversation.id);
       roomManager.endAiRequest(message.conversationId);
@@ -1387,6 +1460,11 @@ async function handleContinue(
   if (!ws.userId) return;
 
   const { conversationId, messageId, parentBranchId, responderId } = message;
+  const samplingBranchCount = (message as any).samplingBranches || 1;
+  
+  if (samplingBranchCount > 1) {
+    console.log(`[Continue] Sampling ${samplingBranchCount} response branches in parallel`);
+  }
   
   try {
     // Verify conversation access
@@ -1544,83 +1622,120 @@ async function handleContinue(
     // Track AI request in room manager
     roomManager.startAiRequest(conversationId, ws.userId!, assistantMessage.id);
     
-    try {
-    await inferenceService.streamCompletion(
-      modelConfig,
-      messagesWithNewAssistant,
-      responder.systemPrompt || conversation.systemPrompt || '',
-      conversation.format === 'standard'
-          ? conversation.settings || { temperature: 1.0, maxTokens: 4096 }
-        : {
-            temperature: responder.settings?.temperature ?? conversation.settings?.temperature ?? 1.0,
-              maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 4096,
-            topP: responder.settings?.topP ?? conversation.settings?.topP,
-            topK: responder.settings?.topK ?? conversation.settings?.topK,
-            // Always use conversation-level thinking settings
-            thinking: conversation.settings?.thinking
-          },
-      ws.userId!,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-        assistantBranch.content += chunk;
-        
-        // Store content blocks if provided
-        if (contentBlocks && contentBlocks.length > 0) {
-          assistantBranch.contentBlocks = contentBlocks;
-        }
-          
-          // Trim whitespace on completion
-          if (isComplete) {
-            assistantBranch.content = assistantBranch.content.trim();
-          }
-        
-        // Save partial content periodically
-        if (assistantBranch.content.length % 500 === 0 || isComplete) {
-          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
-        }
-        
-        const streamData = {
-          type: 'stream',
-          messageId: assistantMessage.id,
-          branchId: assistantBranch.id,
-          content: chunk,
-          contentBlocks: contentBlocks,
-          isComplete
+    // Inference settings
+    const inferenceSettings = conversation.format === 'standard'
+      ? conversation.settings || { temperature: 1.0, maxTokens: 4096 }
+      : {
+          temperature: responder.settings?.temperature ?? conversation.settings?.temperature ?? 1.0,
+          maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 4096,
+          topP: responder.settings?.topP ?? conversation.settings?.topP,
+          topK: responder.settings?.topK ?? conversation.settings?.topK,
+          thinking: conversation.settings?.thinking
         };
-        ws.send(JSON.stringify(streamData));
+    
+    try {
+    // Prepare all branches for parallel sampling
+    const branchesToGenerate: Array<{ branchId: string; branchContent: string }> = [
+      { branchId: assistantBranch.id, branchContent: '' }
+    ];
+    
+    // Create additional branches if sampling multiple responses
+    if (samplingBranchCount > 1) {
+      for (let i = 1; i < samplingBranchCount; i++) {
+        const newBranchMessage = await db.addMessageBranch(
+          assistantMessage.id,
+          assistantMessage.conversationId,
+          conversation.userId,
+          '',
+          'assistant',
+          parentBranchId,
+          responder.model || conversation.model,
+          responder.id,
+          undefined
+        );
         
-        // Broadcast to other users
-        roomManager.broadcastToRoom(conversationId, streamData, ws);
-
-        if (isComplete) {
-            // Final save (content already trimmed above)
-          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
+        if (newBranchMessage) {
+          const newBranch = newBranchMessage.branches[newBranchMessage.branches.length - 1];
+          branchesToGenerate.push({ branchId: newBranch.id, branchContent: '' });
+          assistantMessage.branches.push(newBranch);
           
-          // Send updated conversation
-          const updatedConversation = await db.getConversation(conversationId, conversation.userId);
-          if (updatedConversation) {
-            ws.send(JSON.stringify({
-              type: 'conversation_updated',
-              conversation: updatedConversation
-            }));
-          }
+          ws.send(JSON.stringify({ type: 'message_edited', message: assistantMessage }));
+          roomManager.broadcastToRoom(conversationId, { type: 'message_edited', message: assistantMessage, fromUserId: ws.userId }, ws);
         }
-      },
-      conversation,
-      responder,
-      async (metrics) => {
-        // Store metrics in database
-        await db.addMetrics(conversation.id, conversation.userId, metrics);
-        
-        // Send metrics update to client
-        ws.send(JSON.stringify({
-          type: 'metrics_update',
-          conversationId: conversation.id,
-          metrics
-        }));
-      },
+      }
+      console.log(`[Continue] Created ${branchesToGenerate.length} branches for parallel sampling`);
+    }
+    
+    // Helper function to run inference for a single branch
+    const runBranchInference = async (branchId: string, branchIndex: number) => {
+      let branchContent = '';
+      
+      await inferenceService.streamCompletion(
+        modelConfig,
+        messagesWithNewAssistant,
+        responder.systemPrompt || conversation.systemPrompt || '',
+        inferenceSettings,
+        ws.userId!,
+        async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+          branchContent += chunk;
+          
+          const currentBranch = assistantMessage.branches.find((b: any) => b.id === branchId);
+          if (currentBranch) {
+            currentBranch.content = branchContent;
+            if (contentBlocks && contentBlocks.length > 0) {
+              currentBranch.contentBlocks = contentBlocks;
+            }
+            if (isComplete) {
+              currentBranch.content = branchContent.trim();
+            }
+            if (branchContent.length % 500 === 0 || isComplete) {
+              await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, branchId, currentBranch.content, currentBranch.contentBlocks);
+            }
+          }
+          
+          const streamData = {
+            type: 'stream',
+            messageId: assistantMessage.id,
+            branchId: branchId,
+            content: chunk,
+            contentBlocks: contentBlocks,
+            isComplete,
+            branchIndex
+          };
+          ws.send(JSON.stringify(streamData));
+          roomManager.broadcastToRoom(conversationId, streamData, ws);
+
+          if (isComplete) {
+            const finalBranch = assistantMessage.branches.find((b: any) => b.id === branchId);
+            if (finalBranch) {
+              await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, branchId, finalBranch.content, finalBranch.contentBlocks);
+            }
+          }
+        },
+        conversation,
+        responder,
+        async (metrics) => {
+          if (branchIndex === 0) {
+            await db.addMetrics(conversation.id, conversation.userId, metrics);
+            ws.send(JSON.stringify({ type: 'metrics_update', conversationId: conversation.id, metrics, branchIndex }));
+          }
+        },
         participants,
         abortController.signal
+      );
+    };
+    
+    // Run all branches in parallel
+    await Promise.all(
+      branchesToGenerate.map((branch, index) => runBranchInference(branch.branchId, index))
     );
+    
+    // Send updated conversation after all complete
+    const updatedConversation = await db.getConversation(conversationId, conversation.userId);
+    if (updatedConversation) {
+      ws.send(JSON.stringify({ type: 'conversation_updated', conversation: updatedConversation }));
+    }
+    
     } finally {
       endGeneration(conversation.userId, conversationId);
       roomManager.endAiRequest(conversationId);

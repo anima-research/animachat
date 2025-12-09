@@ -92,6 +92,24 @@
             <button type="button" class="alert-close" @click="error = ''">&times;</button>
           </div>
           
+          <div v-if="requiresVerification" class="verification-notice">
+            <span class="notice-icon">✉</span>
+            <span>Please verify your email address. Check your inbox for a verification link.</span>
+            <button type="button" class="link-button" @click="resendVerification">resend</button>
+          </div>
+          
+          <div v-if="!isRegistering" class="forgot-password">
+            <button type="button" class="link-button" @click="showForgotPassword = true">forgot.password?</button>
+          </div>
+          
+          <div v-if="showForgotPassword && !isRegistering" class="forgot-password-form">
+            <p class="forgot-hint">Enter your email and we'll send you a reset link</p>
+            <button type="button" class="btn-secondary" @click="sendResetEmail" :disabled="forgotLoading">
+              {{ forgotLoading ? 'sending...' : 'send.reset.link' }}
+            </button>
+            <p v-if="forgotMessage" class="forgot-message" :class="{ success: forgotSuccess }">{{ forgotMessage }}</p>
+          </div>
+          
           <div class="form-actions">
             <button
               type="button"
@@ -203,6 +221,14 @@ const isRegistering = ref(false);
 const loading = ref(false);
 const error = ref('');
 const showPassword = ref(false);
+const requiresVerification = ref(false);
+const verificationEmail = ref('');
+
+// Forgot password state
+const showForgotPassword = ref(false);
+const forgotLoading = ref(false);
+const forgotMessage = ref('');
+const forgotSuccess = ref(false);
 
 const name = ref('');
 const email = ref('');
@@ -267,19 +293,78 @@ async function submit() {
   
   loading.value = true;
   error.value = '';
+  requiresVerification.value = false;
   
   try {
     if (isRegistering.value) {
-      await store.register(email.value, password.value, name.value, inviteCode.value || undefined);
+      const response = await store.register(email.value, password.value, name.value, inviteCode.value || undefined);
+      
+      // Check if verification is required
+      if (response?.requiresVerification) {
+        verificationEmail.value = email.value;
+        router.push({ path: '/verify-email', query: { email: email.value } });
+        return;
+      }
     } else {
       await store.login(email.value, password.value);
     }
     
     router.push('/conversation');
   } catch (err: any) {
-    error.value = err.response?.data?.error || 'connection.failed';
+    // Check if it's a verification required error
+    if (err.response?.data?.requiresVerification) {
+      requiresVerification.value = true;
+      verificationEmail.value = err.response.data.email || email.value;
+      error.value = '';
+    } else {
+      error.value = err.response?.data?.error || 'connection.failed';
+    }
   } finally {
     loading.value = false;
+  }
+}
+
+async function resendVerification() {
+  if (!verificationEmail.value && !email.value) return;
+  
+  try {
+    await fetch('/api/auth/resend-verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: verificationEmail.value || email.value })
+    });
+    error.value = '';
+    requiresVerification.value = false;
+    router.push({ path: '/verify-email', query: { email: verificationEmail.value || email.value } });
+  } catch (err) {
+    console.error('Failed to resend verification:', err);
+  }
+}
+
+async function sendResetEmail() {
+  if (!email.value || !/.+@.+\..+/.test(email.value)) {
+    forgotMessage.value = 'Please enter a valid email address';
+    forgotSuccess.value = false;
+    return;
+  }
+  
+  forgotLoading.value = true;
+  forgotMessage.value = '';
+  
+  try {
+    await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.value })
+    });
+    
+    forgotSuccess.value = true;
+    forgotMessage.value = 'Reset link sent! Check your email.';
+  } catch (err) {
+    forgotSuccess.value = false;
+    forgotMessage.value = 'Failed to send reset email';
+  } finally {
+    forgotLoading.value = false;
   }
 }
 </script>
@@ -479,6 +564,65 @@ async function submit() {
 
 .alert-close:hover {
   opacity: 1;
+}
+
+.verification-notice {
+  background: rgba(151, 152, 83, 0.1);
+  border: 1px solid rgba(151, 152, 83, 0.3);
+  padding: 12px 15px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.notice-icon {
+  color: #979853;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #8b7aa6;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  opacity: 0.8;
+  padding: 0;
+}
+
+.link-button:hover {
+  opacity: 1;
+}
+
+.forgot-password {
+  text-align: right;
+  margin-top: -10px;
+}
+
+.forgot-password-form {
+  background: rgba(8, 8, 12, 0.5);
+  padding: 15px;
+  border: 1px solid rgba(255,255,255,0.1);
+  text-align: center;
+}
+
+.forgot-hint {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-bottom: 15px;
+}
+
+.forgot-message {
+  font-size: 11px;
+  margin-top: 10px;
+  color: #e8735d;
+}
+
+.forgot-message.success {
+  color: #979853;
 }
 
 .form-actions {

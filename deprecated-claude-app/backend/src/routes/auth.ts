@@ -5,6 +5,7 @@ import { Database } from '../database/index.js';
 import { generateToken, authenticateToken, AuthRequest } from '../middleware/auth.js';
 import { ConfigLoader } from '../config/loader.js';
 import { ModelLoader } from '../config/model-loader.js';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email.js';
 
 const RegisterSchema = z.object({
   email: z.string().email(),
@@ -16,6 +17,19 @@ const RegisterSchema = z.object({
 const LoginSchema = z.object({
   email: z.string().email(),
   password: z.string()
+});
+
+const ForgotPasswordSchema = z.object({
+  email: z.string().email()
+});
+
+const ResetPasswordSchema = z.object({
+  token: z.string().uuid(),
+  password: z.string().min(8)
+});
+
+const ResendVerificationSchema = z.object({
+  email: z.string().email()
 });
 
 const GrantTransferSchema = z.object({
@@ -36,7 +50,7 @@ export function authRouter(db: Database): Router {
     return false;
   }
 
-  // Register
+  // Register - now requires email verification
   router.post('/register', async (req, res) => {
     try {
       const data = RegisterSchema.parse(req.body);
@@ -46,11 +60,14 @@ export function authRouter(db: Database): Router {
         return res.status(400).json({ error: 'User already exists' });
       }
 
-      const user = await db.createUser(data.email, data.password, data.name);
-      const token = generateToken(user.id);
+      // Check if email verification is required
+      const config = await ConfigLoader.getInstance().loadConfig();
+      const requireEmailVerification = (config as any).requireEmailVerification !== false && !!process.env.RESEND_API_KEY;
+      
+      // Create user with emailVerified based on config
+      const user = await db.createUser(data.email, data.password, data.name, !requireEmailVerification);
 
       // Grant initial credits from config
-      const config = await ConfigLoader.getInstance().loadConfig();
       const initialGrants = (config as any).initialGrants || {};
       
       for (const [currency, amount] of Object.entries(initialGrants)) {
@@ -82,11 +99,35 @@ export function authRouter(db: Database): Router {
         }
       }
 
+      // If email verification is required, send verification email
+      if (requireEmailVerification) {
+        const verificationToken = await db.createEmailVerificationToken(user.id);
+        const emailSent = await sendVerificationEmail(data.email, verificationToken, data.name);
+        
+        if (!emailSent) {
+          console.error('Failed to send verification email, but user was created');
+        }
+        
+        return res.json({
+          user: {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            emailVerified: false
+          },
+          requiresVerification: true,
+          message: 'Please check your email to verify your account'
+        });
+      }
+
+      // No verification required - return token for immediate login
+      const token = generateToken(user.id);
       res.json({
         user: {
           id: user.id,
           email: user.email,
-          name: user.name
+          name: user.name,
+          emailVerified: true
         },
         token,
         inviteClaimed
@@ -96,6 +137,68 @@ export function authRouter(db: Database): Router {
         return res.status(400).json({ error: 'Invalid input', details: error.errors });
       }
       console.error('Registration error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  
+  // Verify email
+  router.post('/verify-email', async (req, res) => {
+    try {
+      const { token } = req.body;
+      
+      if (!token || typeof token !== 'string') {
+        return res.status(400).json({ error: 'Verification token is required' });
+      }
+      
+      const user = await db.verifyEmail(token);
+      
+      if (!user) {
+        return res.status(400).json({ error: 'Invalid or expired verification token' });
+      }
+      
+      // Generate auth token for immediate login
+      const authToken = generateToken(user.id);
+      
+      res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          emailVerified: true
+        },
+        token: authToken,
+        message: 'Email verified successfully'
+      });
+    } catch (error) {
+      console.error('Email verification error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  
+  // Resend verification email
+  router.post('/resend-verification', async (req, res) => {
+    try {
+      const data = ResendVerificationSchema.parse(req.body);
+      
+      const user = await db.getUserByEmail(data.email);
+      if (!user) {
+        // Don't reveal if user exists or not
+        return res.json({ message: 'If an account exists with this email, a verification link has been sent' });
+      }
+      
+      if (user.emailVerified) {
+        return res.status(400).json({ error: 'Email is already verified' });
+      }
+      
+      const verificationToken = await db.createEmailVerificationToken(user.id);
+      await sendVerificationEmail(data.email, verificationToken, user.name);
+      
+      res.json({ message: 'If an account exists with this email, a verification link has been sent' });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input', details: error.errors });
+      }
+      console.error('Resend verification error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -115,13 +218,26 @@ export function authRouter(db: Database): Router {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
+      // Check if email verification is required
+      const config = await ConfigLoader.getInstance().loadConfig();
+      const requireEmailVerification = (config as any).requireEmailVerification !== false && !!process.env.RESEND_API_KEY;
+      
+      if (requireEmailVerification && !user.emailVerified) {
+        return res.status(403).json({ 
+          error: 'Email not verified',
+          requiresVerification: true,
+          email: user.email
+        });
+      }
+
       const token = generateToken(user.id);
 
       res.json({
         user: {
           id: user.id,
           email: user.email,
-          name: user.name
+          name: user.name,
+          emailVerified: user.emailVerified
         },
         token
       });
@@ -130,6 +246,67 @@ export function authRouter(db: Database): Router {
         return res.status(400).json({ error: 'Invalid input', details: error.errors });
       }
       console.error('Login error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  
+  // Forgot password - request reset email
+  router.post('/forgot-password', async (req, res) => {
+    try {
+      const data = ForgotPasswordSchema.parse(req.body);
+      
+      const user = await db.getUserByEmail(data.email);
+      
+      // Always return success to not reveal if email exists
+      if (user) {
+        const resetToken = await db.createPasswordResetToken(user.id);
+        await sendPasswordResetEmail(data.email, resetToken, user.name);
+      }
+      
+      res.json({ message: 'If an account exists with this email, a password reset link has been sent' });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input', details: error.errors });
+      }
+      console.error('Forgot password error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  
+  // Reset password with token
+  router.post('/reset-password', async (req, res) => {
+    try {
+      const data = ResetPasswordSchema.parse(req.body);
+      
+      const user = await db.resetPassword(data.token, data.password);
+      
+      if (!user) {
+        return res.status(400).json({ error: 'Invalid or expired reset token' });
+      }
+      
+      res.json({ message: 'Password reset successfully' });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input', details: error.errors });
+      }
+      console.error('Reset password error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  
+  // Validate reset token (to check before showing reset form)
+  router.get('/reset-password/:token', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const tokenData = db.getPasswordResetTokenData(token);
+      
+      if (!tokenData) {
+        return res.status(400).json({ valid: false, error: 'Invalid or expired reset token' });
+      }
+      
+      res.json({ valid: true });
+    } catch (error) {
+      console.error('Validate reset token error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

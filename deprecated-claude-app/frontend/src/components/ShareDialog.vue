@@ -147,7 +147,7 @@ import type { Conversation, Message } from '@deprecated-claude/shared';
 const props = defineProps<{
   modelValue: boolean;
   conversation: Conversation | null;
-  currentBranchId: string | null;
+  currentBranchId?: string | null;
 }>();
 
 const emit = defineEmits<{
