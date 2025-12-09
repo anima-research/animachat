@@ -1,0 +1,161 @@
+<template>
+  <v-dialog
+    :model-value="modelValue"
+    @update:model-value="$emit('update:modelValue', $event)"
+    max-width="400"
+  >
+    <v-card>
+      <v-card-title>Add Participant</v-card-title>
+      
+      <v-card-text>
+        <v-radio-group
+          v-model="newParticipant.type"
+          inline
+          hide-details
+          class="mb-4"
+        >
+          <v-radio label="User" value="user" />
+          <v-radio label="Assistant" value="assistant" />
+        </v-radio-group>
+        
+        <v-text-field
+          v-model="newParticipant.name"
+          label="Name"
+          :placeholder="newParticipant.name === '' ? '(continue)' : ''"
+          variant="outlined"
+          density="compact"
+          class="mb-4"
+          @input="onNameInput"
+        >
+          <template v-slot:append-inner v-if="newParticipant.name === ''">
+            <v-tooltip location="top">
+              <template v-slot:activator="{ props }">
+                <v-icon
+                  v-bind="props"
+                  icon="mdi-information-outline"
+                  size="small"
+                  color="info"
+                />
+              </template>
+              Empty name creates a continuation participant - no formatting will be added
+            </v-tooltip>
+          </template>
+        </v-text-field>
+        
+        <ModelSelector
+          v-if="newParticipant.type === 'assistant'"
+          v-model="newParticipant.model"
+          :models="models"
+          label="Model"
+          variant="outlined"
+          density="compact"
+          :show-icon="true"
+          :show-provider-filter="true"
+        />
+      </v-card-text>
+      
+      <v-card-actions>
+        <v-spacer />
+        <v-btn
+          variant="text"
+          @click="cancel"
+        >
+          Cancel
+        </v-btn>
+        <v-btn
+          color="primary"
+          variant="elevated"
+          :disabled="!isValid"
+          @click="confirm"
+        >
+          Add
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue';
+import type { Model } from '@deprecated-claude/shared';
+import ModelSelector from '@/components/ModelSelector.vue';
+
+const props = defineProps<{
+  modelValue: boolean;
+  models: Model[];
+  conversationId: string;
+}>();
+
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean];
+  'add': [participant: { name: string; type: 'user' | 'assistant'; model?: string }];
+}>();
+
+const newParticipant = ref({
+  name: '',
+  type: 'assistant' as 'user' | 'assistant',
+  model: ''
+});
+
+// Track if the user has manually edited the name
+const nameManuallyEdited = ref(false);
+const lastAutoName = ref('');
+
+const isValid = computed(() => {
+  if (newParticipant.value.type === 'assistant') {
+    return newParticipant.value.model !== '';
+  }
+  return true;
+});
+
+// Reset form when dialog opens
+watch(() => props.modelValue, (open) => {
+  if (open) {
+    newParticipant.value = {
+      name: '',
+      type: 'assistant',
+      model: ''
+    };
+    nameManuallyEdited.value = false;
+    lastAutoName.value = '';
+  }
+});
+
+// Auto-populate name when model is selected
+watch(() => newParticipant.value.model, (modelId) => {
+  if (modelId && newParticipant.value.type === 'assistant') {
+    const model = props.models.find(m => m.id === modelId);
+    if (model) {
+      // Use shortName if available, otherwise extract from displayName
+      const suggestedName = model.shortName || model.displayName?.split(':').pop()?.trim() || '';
+      // Only update if name hasn't been manually edited, or if it still matches the last auto-name
+      if (!nameManuallyEdited.value || newParticipant.value.name === lastAutoName.value) {
+        newParticipant.value.name = suggestedName;
+        lastAutoName.value = suggestedName;
+        nameManuallyEdited.value = false;
+      }
+    }
+  }
+});
+
+// Track manual name edits
+function onNameInput() {
+  if (newParticipant.value.name !== lastAutoName.value) {
+    nameManuallyEdited.value = true;
+  }
+}
+
+function cancel() {
+  emit('update:modelValue', false);
+}
+
+function confirm() {
+  emit('add', {
+    name: newParticipant.value.name,
+    type: newParticipant.value.type,
+    model: newParticipant.value.type === 'assistant' ? newParticipant.value.model : undefined
+  });
+  emit('update:modelValue', false);
+}
+</script>
+

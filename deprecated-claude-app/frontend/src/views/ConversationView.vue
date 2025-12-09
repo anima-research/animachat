@@ -366,7 +366,7 @@
             class="mb-2"
             @select-responder="(p) => selectedResponder = p.id"
             @quick-send="triggerParticipantResponse"
-            @add-model="conversationSettingsDialog = true"
+            @add-model="addParticipantDialog = true"
             @add-suggested-model="triggerModelResponse"
             @quick-send-model="triggerModelResponse"
           />
@@ -395,7 +395,7 @@
             :disabled="isStreaming"
             @select-responder="(p) => selectedResponder = p.id"
             @quick-send="triggerParticipantResponse"
-            @add-model="conversationSettingsDialog = true"
+            @add-model="addParticipantDialog = true"
             @add-suggested-model="triggerModelResponse"
             @quick-send-model="triggerModelResponse"
           />
@@ -710,6 +710,13 @@
       @open-import="importDialog = true"
       @new-conversation="createNewConversation"
     />
+    
+    <AddParticipantDialog
+      v-model="addParticipantDialog"
+      :models="store.state.models"
+      :conversation-id="currentConversation?.id || ''"
+      @add="handleAddParticipant"
+    />
   </v-layout>
 </template>
 
@@ -734,6 +741,7 @@ import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
 import MetricsDisplay from '@/components/MetricsDisplay.vue';
 import ModelPillBar from '@/components/ModelPillBar.vue';
+import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
 import { getModelColor } from '@/utils/modelColors';
 
 const route = useRoute();
@@ -760,6 +768,7 @@ const duplicateDialog = ref(false);
 const duplicateConversationTarget = ref<Conversation | null>(null);
 const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
+const addParticipantDialog = ref(false);
 const rawImportData = ref('');
 const messageInput = ref('');
 const isStreaming = ref(false);
@@ -2535,6 +2544,31 @@ async function loadParticipants() {
     }
   } catch (error) {
     console.error('Failed to load participants:', error);
+  }
+}
+
+async function handleAddParticipant(participant: { name: string; type: 'user' | 'assistant'; model?: string }) {
+  if (!currentConversation.value) return;
+  
+  try {
+    const response = await api.post('/participants', {
+      conversationId: currentConversation.value.id,
+      name: participant.name,
+      type: participant.type,
+      model: participant.model
+    });
+    
+    // Add to local list
+    participants.value.push(response.data);
+    
+    // If it's an assistant, set it as the selected responder
+    if (participant.type === 'assistant') {
+      selectedResponder.value = response.data.id;
+    }
+    
+    console.log('[handleAddParticipant] Added participant:', response.data);
+  } catch (error) {
+    console.error('Failed to add participant:', error);
   }
 }
 
