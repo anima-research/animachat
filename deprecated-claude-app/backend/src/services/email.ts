@@ -16,6 +16,117 @@ function getResendClient(): Resend | null {
 const FROM_EMAIL = process.env.EMAIL_FROM || 'Arc <noreply@tesserae.cc>';
 const APP_URL = process.env.APP_URL || 'http://localhost:5173';
 
+interface EmailContent {
+  title: string;
+  greeting: string;
+  body: string;
+  buttonText: string;
+  buttonUrl: string;
+  expiry: string;
+  footer: string;
+}
+
+function generateEmailHtml(content: EmailContent): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>${content.title}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f4f4f5;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 560px; background-color: #ffffff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="padding: 32px 40px 24px 40px; border-bottom: 1px solid #e4e4e7;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td>
+                    <span style="font-size: 24px; font-weight: 600; color: #18181b; letter-spacing: -0.5px;">The Arc</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 32px 40px;">
+              <h1 style="margin: 0 0 24px 0; font-size: 20px; font-weight: 600; color: #18181b; line-height: 1.4;">
+                ${content.title}
+              </h1>
+              <p style="margin: 0 0 16px 0; font-size: 15px; color: #3f3f46; line-height: 1.6;">
+                ${content.greeting}
+              </p>
+              <p style="margin: 0 0 28px 0; font-size: 15px; color: #3f3f46; line-height: 1.6;">
+                ${content.body}
+              </p>
+              
+              <!-- Button -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="border-radius: 6px; background-color: #7c3aed;">
+                    <a href="${content.buttonUrl}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 15px; font-weight: 600; color: #ffffff; text-decoration: none; border-radius: 6px;">
+                      ${content.buttonText}
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              
+              <p style="margin: 28px 0 0 0; font-size: 13px; color: #71717a; line-height: 1.5;">
+                ${content.expiry}
+              </p>
+            </td>
+          </tr>
+          
+          <!-- Link fallback -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <p style="margin: 0 0 8px 0; font-size: 13px; color: #71717a;">
+                Or copy this link:
+              </p>
+              <p style="margin: 0; font-size: 13px; color: #7c3aed; word-break: break-all;">
+                <a href="${content.buttonUrl}" style="color: #7c3aed; text-decoration: underline;">${content.buttonUrl}</a>
+              </p>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 40px; background-color: #fafafa; border-top: 1px solid #e4e4e7; border-radius: 0 0 8px 8px;">
+              <p style="margin: 0 0 8px 0; font-size: 13px; color: #71717a; line-height: 1.5;">
+                ${content.footer}
+              </p>
+              <p style="margin: 0; font-size: 13px; color: #a1a1aa;">
+                — The Arc
+              </p>
+            </td>
+          </tr>
+        </table>
+        
+        <!-- Outer footer -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 560px;">
+          <tr>
+            <td style="padding: 24px 40px; text-align: center;">
+              <p style="margin: 0; font-size: 12px; color: #a1a1aa;">
+                Sent by <a href="${APP_URL}" style="color: #7c3aed; text-decoration: none;">The Arc</a> · Anima Labs
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+}
+
 export interface EmailService {
   sendVerificationEmail(email: string, token: string, name: string): Promise<boolean>;
   sendPasswordResetEmail(email: string, token: string, name: string): Promise<boolean>;
@@ -39,88 +150,15 @@ export async function sendVerificationEmail(
       from: FROM_EMAIL,
       to: email,
       subject: 'Verify your email - The Arc',
-      html: `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body {
-      font-family: 'JetBrains Mono', 'Courier New', monospace;
-      background: #101015;
-      color: #fafaf8;
-      padding: 40px;
-      margin: 0;
-    }
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      background: rgba(255,255,255,0.02);
-      border: 1px solid rgba(139, 122, 166, 0.3);
-      padding: 40px;
-    }
-    h1 {
-      font-size: 24px;
-      font-weight: 300;
-      letter-spacing: 0.2em;
-      color: #8b7aa6;
-      margin-bottom: 20px;
-    }
-    p {
-      font-size: 14px;
-      line-height: 1.8;
-      opacity: 0.8;
-      margin-bottom: 20px;
-    }
-    .button {
-      display: inline-block;
-      background: rgba(139, 122, 166, 0.2);
-      border: 1px solid rgba(139, 122, 166, 0.5);
-      color: #8b7aa6;
-      padding: 15px 30px;
-      text-decoration: none;
-      font-family: inherit;
-      font-size: 14px;
-      letter-spacing: 0.1em;
-      margin: 20px 0;
-    }
-    .button:hover {
-      background: rgba(139, 122, 166, 0.3);
-    }
-    .code {
-      background: rgba(8, 8, 12, 0.8);
-      padding: 15px;
-      font-size: 12px;
-      word-break: break-all;
-      margin: 20px 0;
-      border-left: 2px solid rgba(139, 122, 166, 0.4);
-    }
-    .footer {
-      font-size: 11px;
-      opacity: 0.5;
-      margin-top: 40px;
-      padding-top: 20px;
-      border-top: 1px solid rgba(255,255,255,0.1);
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>verify.email</h1>
-    <p>Hello ${name},</p>
-    <p>Welcome to The Arc. Click the button below to verify your email address and complete your registration.</p>
-    <a href="${verifyUrl}" class="button">verify.email.address</a>
-    <p>Or copy and paste this link into your browser:</p>
-    <div class="code">${verifyUrl}</div>
-    <p>This link will expire in 24 hours.</p>
-    <div class="footer">
-      <p>If you didn't create an account on The Arc, you can safely ignore this email.</p>
-      <p>— The Arc System</p>
-    </div>
-  </div>
-</body>
-</html>
-      `,
+      html: generateEmailHtml({
+        title: 'Verify Your Email',
+        greeting: `Hello ${name},`,
+        body: `Welcome to The Arc. Click the button below to verify your email address and complete your registration.`,
+        buttonText: 'Verify Email',
+        buttonUrl: verifyUrl,
+        expiry: 'This link will expire in 24 hours.',
+        footer: `If you didn't create an account on The Arc, you can safely ignore this email.`
+      }),
       text: `
 Hello ${name},
 
@@ -167,85 +205,15 @@ export async function sendPasswordResetEmail(
       from: FROM_EMAIL,
       to: email,
       subject: 'Reset your password - The Arc',
-      html: `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body {
-      font-family: 'JetBrains Mono', 'Courier New', monospace;
-      background: #101015;
-      color: #fafaf8;
-      padding: 40px;
-      margin: 0;
-    }
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      background: rgba(255,255,255,0.02);
-      border: 1px solid rgba(139, 122, 166, 0.3);
-      padding: 40px;
-    }
-    h1 {
-      font-size: 24px;
-      font-weight: 300;
-      letter-spacing: 0.2em;
-      color: #8b7aa6;
-      margin-bottom: 20px;
-    }
-    p {
-      font-size: 14px;
-      line-height: 1.8;
-      opacity: 0.8;
-      margin-bottom: 20px;
-    }
-    .button {
-      display: inline-block;
-      background: rgba(139, 122, 166, 0.2);
-      border: 1px solid rgba(139, 122, 166, 0.5);
-      color: #8b7aa6;
-      padding: 15px 30px;
-      text-decoration: none;
-      font-family: inherit;
-      font-size: 14px;
-      letter-spacing: 0.1em;
-      margin: 20px 0;
-    }
-    .code {
-      background: rgba(8, 8, 12, 0.8);
-      padding: 15px;
-      font-size: 12px;
-      word-break: break-all;
-      margin: 20px 0;
-      border-left: 2px solid rgba(139, 122, 166, 0.4);
-    }
-    .footer {
-      font-size: 11px;
-      opacity: 0.5;
-      margin-top: 40px;
-      padding-top: 20px;
-      border-top: 1px solid rgba(255,255,255,0.1);
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>reset.password</h1>
-    <p>Hello ${name},</p>
-    <p>We received a request to reset your password. Click the button below to create a new password.</p>
-    <a href="${resetUrl}" class="button">reset.password</a>
-    <p>Or copy and paste this link into your browser:</p>
-    <div class="code">${resetUrl}</div>
-    <p>This link will expire in 1 hour.</p>
-    <div class="footer">
-      <p>If you didn't request a password reset, you can safely ignore this email.</p>
-      <p>— The Arc System</p>
-    </div>
-  </div>
-</body>
-</html>
-      `,
+      html: generateEmailHtml({
+        title: 'Reset Your Password',
+        greeting: `Hello ${name},`,
+        body: `We received a request to reset your password. Click the button below to create a new password.`,
+        buttonText: 'Reset Password',
+        buttonUrl: resetUrl,
+        expiry: 'This link will expire in 1 hour.',
+        footer: `If you didn't request a password reset, you can safely ignore this email.`
+      }),
       text: `
 Hello ${name},
 
