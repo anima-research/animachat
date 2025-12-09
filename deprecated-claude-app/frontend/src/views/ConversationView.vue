@@ -1433,7 +1433,7 @@ watch(messages, () => {
   }
 }, { deep: true });
 
-// Set up scroll sync for breadcrumb navigation
+// Set up scroll sync for breadcrumb navigation and auto-scroll detection
 let scrollTimeout: number;
 watch(messagesContainer, (container) => {
   if (container) {
@@ -1442,6 +1442,19 @@ watch(messagesContainer, (container) => {
 
     if (element && element.addEventListener) {
       const handleScroll = () => {
+        // Check if user has scrolled away from bottom - disable auto-scroll if so
+        if (isStreaming.value) {
+          const scrollBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+          // If more than 100px from bottom, user has scrolled up - disable auto-scroll
+          if (scrollBottom > 100) {
+            autoScrollEnabled.value = false;
+          }
+          // If user scrolls back to bottom (within 50px), re-enable
+          else if (scrollBottom < 50) {
+            autoScrollEnabled.value = true;
+          }
+        }
+        
         // Debounce the sync to avoid too many calls
         clearTimeout(scrollTimeout);
         scrollTimeout = window.setTimeout(() => {
