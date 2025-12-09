@@ -59,16 +59,14 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
+      // getConversation now handles both ownership and collaboration access
       const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
-      if (conversation.userId !== req.userId) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
-
+      // Note: Access control is handled in getConversation - no need for additional userId check
       res.json(conversation);
     } catch (error) {
       console.error('Get conversation error:', error);
@@ -163,16 +161,14 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
+      // getConversation handles both ownership and collaboration access
       const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
-      if (conversation.userId !== req.userId) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
-
+      // Note: Access control is handled in getConversation
       const messages = await db.getConversationMessages(req.params.id, conversation.userId);
       res.json(messages);
     } catch (error) {

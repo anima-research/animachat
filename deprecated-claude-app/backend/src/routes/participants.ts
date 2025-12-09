@@ -29,9 +29,9 @@ export function participantRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      // Verify conversation ownership
+      // Verify conversation access (ownership or collaboration)
       const conversation = await db.getConversation(req.params.conversationId, req.userId);
-      if (!conversation || conversation.userId !== req.userId) {
+      if (!conversation) {
         return res.status(403).json({ error: 'Access denied' });
       }
 

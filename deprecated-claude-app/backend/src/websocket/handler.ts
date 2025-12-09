@@ -215,7 +215,7 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
           break;
         
         case 'typing':
-          handleTyping(ws, message);
+          handleTyping(ws, message, db);
           break;
           
         default:
@@ -299,17 +299,23 @@ function handleLeaveRoom(
   }));
 }
 
-function handleTyping(
+async function handleTyping(
   ws: AuthenticatedWebSocket,
-  message: { type: 'typing'; conversationId: string; isTyping: boolean }
+  message: { type: 'typing'; conversationId: string; isTyping: boolean },
+  db: Database
 ) {
   if (!ws.userId) return;
+  
+  // Get user info for display
+  const user = await db.getUserById(ws.userId);
+  const userDisplayName = user?.email?.split('@')[0] || 'Someone'; // Use username part of email
   
   // Broadcast typing status to others in the room
   roomManager.broadcastToRoom(message.conversationId, {
     type: 'user_typing',
     conversationId: message.conversationId,
     userId: ws.userId,
+    userName: userDisplayName,
     isTyping: message.isTyping
   }, ws); // Exclude sender
 }
@@ -322,10 +328,17 @@ async function handleChatMessage(
 ) {
   if (!ws.userId) return;
 
-  // Verify conversation ownership
+  // Verify conversation access and chat permission
   const conversation = await db.getConversation(message.conversationId, ws.userId);
-  if (!conversation || conversation.userId !== ws.userId) {
+  if (!conversation) {
     ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
+    return;
+  }
+  
+  // Check if user can chat (owner or collaborator/editor)
+  const canChat = await db.canUserChatInConversation(message.conversationId, ws.userId);
+  if (!canChat) {
+    ws.send(JSON.stringify({ type: 'error', error: 'You do not have permission to send messages in this conversation' }));
     return;
   }
 
@@ -1281,10 +1294,17 @@ async function handleDelete(
   try {
     const { conversationId, messageId, branchId } = message;
     
-    // Get the message to verify ownership
+    // Get the conversation to verify access
     const conversation = await db.getConversation(conversationId, ws.userId!);
-    if (!conversation || conversation.userId !== ws.userId) {
+    if (!conversation) {
       ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
+      return;
+    }
+    
+    // Check if user can delete (owner or editor)
+    const canDelete = await db.canUserDeleteInConversation(conversationId, ws.userId!);
+    if (!canDelete) {
+      ws.send(JSON.stringify({ type: 'error', error: 'You do not have permission to delete messages in this conversation' }));
       return;
     }
     
@@ -1324,10 +1344,17 @@ async function handleContinue(
   const { conversationId, messageId, parentBranchId, responderId } = message;
   
   try {
-    // Verify conversation ownership
+    // Verify conversation access
     const conversation = await db.getConversation(conversationId, ws.userId);
-    if (!conversation || conversation.userId !== ws.userId) {
+    if (!conversation) {
       ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
+      return;
+    }
+    
+    // Check if user can chat (owner or collaborator/editor)
+    const canChat = await db.canUserChatInConversation(conversationId, ws.userId);
+    if (!canChat) {
+      ws.send(JSON.stringify({ type: 'error', error: 'You do not have permission to continue generation in this conversation' }));
       return;
     }
 

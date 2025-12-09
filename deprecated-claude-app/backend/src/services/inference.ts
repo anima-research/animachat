@@ -97,7 +97,7 @@ export class InferenceService {
             parts: [{ text: m.branches?.[0]?.content || '' }]
           }));
         } else {
-          throw new Error(`Unknown provider: ${model.provider}`);
+        throw new Error(`Unknown provider: ${model.provider}`);
         }
     }
     

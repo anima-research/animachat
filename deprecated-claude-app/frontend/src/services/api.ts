@@ -27,7 +27,9 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 || error.response?.status === 403) {
+    // Only logout on 401 (unauthorized/token expired)
+    // 403 means "forbidden" - user is authenticated but doesn't have permission for this resource
+    if (error.response?.status === 401) {
       // Token expired or invalid
       localStorage.removeItem('token');
       window.location.href = '/login';

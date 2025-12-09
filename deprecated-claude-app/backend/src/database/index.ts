@@ -10,6 +10,8 @@ import { EventStore, Event } from './persistence.js';
 import { BulkEventStore } from './bulk-event-store.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { SharesStore, SharedConversation } from './shares.js';
+import { CollaborationStore } from './collaboration.js';
+import { SharePermission, ConversationShare, canChat, canDelete } from '@deprecated-claude/shared';
 import { encryption } from '../utils/encryption.js';
 
 // Metrics interface for tracking token usage
@@ -102,6 +104,7 @@ export class Database {
   // per conversation, contains message and branch events
   private conversationEventStore: BulkEventStore; // per conversation event store
   private sharesStore: SharesStore;
+  private collaborationStore: CollaborationStore;
   private initialized: boolean = false;
 
   constructor() {
@@ -110,6 +113,7 @@ export class Database {
     this.conversationEventStore = new BulkEventStore("./data/conversations");
 
     this.sharesStore = new SharesStore();
+    this.collaborationStore = new CollaborationStore();
   }
   
   async init(): Promise<void> {
@@ -966,6 +970,13 @@ export class Database {
       case 'share_viewed':
         this.sharesStore.replayEvent(event);
         break;
+      
+      // Collaboration (user-to-user sharing) events
+      case 'collaboration_share_created':
+      case 'collaboration_share_updated':
+      case 'collaboration_share_revoked':
+        this.collaborationStore.replayEvent(event);
+        break;
 
       // Bookmark events
       case 'bookmark_created': {
@@ -1636,15 +1647,56 @@ export class Database {
     return conversation;
   }
 
-  private async tryLoadAndVerifyConversation(conversationId: string, conversationOwnerUserId: string) : Promise<Conversation | null> {
-    await this.loadUser(conversationOwnerUserId); // load user if not already loaded, which contains conversation metadata
-    const conversation = this.conversations.get(conversationId);
-    if (!conversation) return null;
-    if (conversation.userId !== conversationOwnerUserId) {
-      console.warn(`Conversation owner mismatch for conversation ${conversationId}: Actual conversation.userId is ${conversation.userId} but given conversationOwnerUserId ${conversationOwnerUserId}`);
-      return null;
+  private async tryLoadAndVerifyConversation(conversationId: string, requestingUserId: string) : Promise<Conversation | null> {
+    // First, try to load the requesting user's data
+    await this.loadUser(requestingUserId);
+    
+    // Check if user owns the conversation
+    let conversation = this.conversations.get(conversationId);
+    if (conversation && conversation.userId === requestingUserId) {
+      return conversation;
     }
-    return conversation;
+    
+    // If not owned, check if user has collaboration access
+    const permission = this.collaborationStore.getUserPermission(conversationId, requestingUserId);
+    if (permission) {
+      // User has shared access - load the conversation owner's data to get the conversation
+      // We need to find who owns this conversation
+      if (!conversation) {
+        // Conversation not loaded yet - we need to find the owner
+        // This is a bit tricky since we need to load the owner's data
+        // For now, iterate through shares to find owner
+        const shares = this.collaborationStore.getSharesForUser(requestingUserId);
+        const share = shares.find(s => s.conversationId === conversationId);
+        if (share) {
+          // Load the owner's data
+          const ownerConversation = this.conversations.get(conversationId);
+          if (!ownerConversation) {
+            // Try to load via scanning all loaded users' conversations
+            // This is a limitation - we'll need to load the actual owner
+            // For now, scan loaded conversations
+            for (const [userId, convIds] of this.userConversations.entries()) {
+              if (convIds.has(conversationId)) {
+                await this.loadUser(userId);
+                break;
+              }
+            }
+          }
+          conversation = this.conversations.get(conversationId);
+        }
+      }
+      
+      if (conversation) {
+        console.log(`[Database] User ${requestingUserId} accessing shared conversation ${conversationId} with permission: ${permission}`);
+        return conversation;
+      }
+    }
+    
+    // No access
+    if (conversation) {
+      console.warn(`Conversation access denied for ${conversationId}: User ${requestingUserId} is not owner and has no share`);
+    }
+    return null;
   }
 
   async getConversation(conversationId: string, conversationOwnerUserId: string): Promise<Conversation | null> {
@@ -2753,6 +2805,163 @@ export class Database {
     }
     
     return deleted;
+  }
+
+  // ==========================================
+  // Collaboration (User-to-User Sharing) Methods
+  // ==========================================
+
+  /**
+   * Share a conversation with another user
+   */
+  async createCollaborationShare(
+    conversationId: string,
+    sharedWithEmail: string,
+    sharedByUserId: string,
+    permission: SharePermission
+  ): Promise<ConversationShare | null> {
+    // Find the user by email
+    const targetUser = await this.getUserByEmail(sharedWithEmail);
+    if (!targetUser) {
+      console.log(`[Collaboration] User not found with email: ${sharedWithEmail}`);
+      return null;
+    }
+    
+    // Check if already shared with this user
+    if (this.collaborationStore.hasExistingShare(conversationId, targetUser.id)) {
+      console.log(`[Collaboration] Already shared with user: ${targetUser.id}`);
+      return null;
+    }
+    
+    // Verify the conversation exists and sharer has access
+    const conversation = await this.getConversation(conversationId, sharedByUserId);
+    if (!conversation) {
+      console.log(`[Collaboration] Conversation not found or no access: ${conversationId}`);
+      return null;
+    }
+    
+    // Create the share
+    const { share, eventData } = this.collaborationStore.createShare(
+      conversationId,
+      targetUser.id,
+      sharedWithEmail,
+      sharedByUserId,
+      permission
+    );
+    
+    // Persist the event
+    await this.eventStore.appendEvent({
+      timestamp: new Date(),
+      ...eventData
+    });
+    
+    console.log(`[Collaboration] Shared conversation ${conversationId} with ${sharedWithEmail} (${permission})`);
+    return share;
+  }
+
+  /**
+   * Update collaboration share permission
+   */
+  async updateCollaborationShare(
+    shareId: string,
+    permission: SharePermission,
+    updatedByUserId: string
+  ): Promise<ConversationShare | null> {
+    const { share, eventData } = this.collaborationStore.updateSharePermission(
+      shareId,
+      permission,
+      updatedByUserId
+    );
+    
+    if (share && eventData) {
+      await this.eventStore.appendEvent({
+        timestamp: new Date(),
+        ...eventData
+      });
+      console.log(`[Collaboration] Updated share ${shareId} to ${permission}`);
+    }
+    
+    return share;
+  }
+
+  /**
+   * Revoke a collaboration share
+   */
+  async revokeCollaborationShare(
+    shareId: string,
+    revokedByUserId: string
+  ): Promise<boolean> {
+    const { success, eventData } = this.collaborationStore.revokeShare(shareId, revokedByUserId);
+    
+    if (success && eventData) {
+      await this.eventStore.appendEvent({
+        timestamp: new Date(),
+        ...eventData
+      });
+      console.log(`[Collaboration] Revoked share ${shareId}`);
+    }
+    
+    return success;
+  }
+
+  /**
+   * Get all shares for a conversation (who has access)
+   */
+  getCollaborationSharesForConversation(conversationId: string): ConversationShare[] {
+    return this.collaborationStore.getSharesForConversation(conversationId);
+  }
+
+  /**
+   * Get all conversations shared with a user
+   */
+  getConversationsSharedWithUser(userId: string): ConversationShare[] {
+    return this.collaborationStore.getSharesForUser(userId);
+  }
+
+  /**
+   * Get user's permission level for a conversation (null if no access)
+   */
+  getUserCollaborationPermission(conversationId: string, userId: string): SharePermission | null {
+    return this.collaborationStore.getUserPermission(conversationId, userId);
+  }
+
+  /**
+   * Check if user can access conversation (owner or has share)
+   */
+  async canUserAccessConversation(conversationId: string, userId: string): Promise<{ canAccess: boolean; isOwner: boolean; permission: SharePermission | null }> {
+    // First check if owner
+    const conversation = this.conversations.get(conversationId);
+    if (conversation && conversation.userId === userId) {
+      return { canAccess: true, isOwner: true, permission: 'editor' }; // Owner has full access
+    }
+    
+    // Check collaboration shares
+    const permission = this.collaborationStore.getUserPermission(conversationId, userId);
+    return { 
+      canAccess: permission !== null, 
+      isOwner: false, 
+      permission 
+    };
+  }
+
+  /**
+   * Check if user can chat in conversation
+   */
+  async canUserChatInConversation(conversationId: string, userId: string): Promise<boolean> {
+    const { canAccess, isOwner, permission } = await this.canUserAccessConversation(conversationId, userId);
+    if (!canAccess) return false;
+    if (isOwner) return true;
+    return permission !== null && canChat(permission);
+  }
+
+  /**
+   * Check if user can delete messages in conversation
+   */
+  async canUserDeleteInConversation(conversationId: string, userId: string): Promise<boolean> {
+    const { canAccess, isOwner, permission } = await this.canUserAccessConversation(conversationId, userId);
+    if (!canAccess) return false;
+    if (isOwner) return true;
+    return permission !== null && canDelete(permission);
   }
 
   // Bookmark methods

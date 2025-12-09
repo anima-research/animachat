@@ -52,8 +52,16 @@
             
             <v-list-item
               prepend-icon="mdi-share-variant"
-              title="Manage Shares"
+              title="Manage Public Links"
               @click="manageSharesDialog = true"
+            />
+            
+            <v-list-item
+              prepend-icon="mdi-account-multiple-plus"
+              title="Share with Users"
+              subtitle="Collaborate in real-time"
+              @click="collaborationDialog = true"
+              :disabled="!currentConversation"
             />
           </v-list>
 
@@ -122,6 +130,36 @@
                     />
                   </v-list>
                 </v-menu>
+              </template>
+            </v-list-item>
+          </v-list>
+          
+          <!-- Shared with me section -->
+          <v-list v-if="sharedConversations.length > 0" density="compact" nav class="mt-2">
+            <v-list-subheader>Shared with me</v-list-subheader>
+            
+            <v-list-item
+              v-for="share in sharedConversations"
+              :key="share.id"
+              :to="`/conversation/${share.conversationId}`"
+              class="conversation-list-item"
+              :lines="'three'"
+            >
+              <template v-slot:title>
+                <div class="d-flex align-center">
+                  <div class="text-truncate flex-grow-1">{{ share.conversation?.title || 'Untitled' }}</div>
+                  <v-chip size="x-small" :color="getPermissionColor(share.permission)" class="ml-1">
+                    {{ share.permission }}
+                  </v-chip>
+                </div>
+              </template>
+              <template v-slot:subtitle>
+                <div>
+                  <div class="text-caption">from {{ share.sharedBy?.name || share.sharedBy?.email }}</div>
+                  <div class="text-caption text-medium-emphasis" v-if="share.conversation?.updatedAt">
+                    {{ formatDate(share.conversation.updatedAt) }}
+                  </div>
+                </div>
               </template>
             </v-list-item>
           </v-list>
@@ -253,18 +291,6 @@
           <v-tooltip activator="parent" location="bottom">
             {{ roomUsers.length }} users viewing this conversation
           </v-tooltip>
-        </v-chip>
-        
-        <!-- Typing indicator -->
-        <v-chip
-          v-if="typingUsers.size > 0"
-          size="x-small"
-          color="info"
-          variant="tonal"
-          class="mr-2"
-        >
-          <v-icon size="small" class="mr-1">mdi-pencil</v-icon>
-          typing...
         </v-chip>
         
         <v-btn
@@ -752,8 +778,8 @@
           <v-textarea
             ref="messageTextarea"
             v-model="messageInput"
-            label="Type your message..."
-            rows="3"
+            :label="typingIndicatorLabel"
+            rows="1"
             auto-grow
             max-rows="15"
             variant="outlined"
@@ -761,6 +787,7 @@
             @keydown.enter.exact.prevent="sendMessage"
             @focus="handleTextareaFocus"
             @paste="handlePaste"
+            @input="handleTypingInput"
           >
           <template v-slot:append-inner>
             <!-- File attachment button -->
@@ -871,6 +898,11 @@
       :current-branch-id="currentBranchId"
     />
     
+    <CollaborationShareDialog
+      v-model="collaborationDialog"
+      :conversation="currentConversation"
+    />
+    
     <ManageSharesDialog
       v-model="manageSharesDialog"
     />
@@ -904,6 +936,7 @@ import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
 import ShareDialog from '@/components/ShareDialog.vue';
+import CollaborationShareDialog from '@/components/CollaborationShareDialog.vue';
 import ManageSharesDialog from '@/components/ManageSharesDialog.vue';
 import DuplicateConversationDialog from '@/components/DuplicateConversationDialog.vue';
 import ArcLogo from '@/components/ArcLogo.vue';
@@ -930,6 +963,7 @@ const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
 const shareDialog = ref(false);
+const collaborationDialog = ref(false);
 const manageSharesDialog = ref(false);
 const duplicateDialog = ref(false);
 const duplicateConversationTarget = ref<Conversation | null>(null);
@@ -945,9 +979,24 @@ const streamingError = ref<{ messageId: string; error: string; suggestion?: stri
 
 // Multi-user room state
 const roomUsers = ref<Array<{ userId: string; joinedAt: Date }>>([]);
-const typingUsers = ref<Set<string>>(new Set());
+const typingUsers = ref<Map<string, string>>(new Map()); // Map of userId -> email/name
 const activeAiRequest = ref<{ userId: string; messageId: string } | null>(null);
 const isAiRequestQueued = ref(false); // True if our request was queued because AI is already generating
+
+// Computed label for the input field - shows who is typing
+const typingIndicatorLabel = computed(() => {
+  if (typingUsers.value.size === 0) {
+    return 'Type your message...';
+  }
+  const names = Array.from(typingUsers.value.values());
+  if (names.length === 1) {
+    return `${names[0]} is typing...`;
+  } else if (names.length === 2) {
+    return `${names[0]} and ${names[1]} are typing...`;
+  } else {
+    return `${names[0]} and ${names.length - 1} others are typing...`;
+  }
+});
 
 const attachments = ref<Array<{
   fileName: string;
@@ -1005,6 +1054,36 @@ const conversations = computed(() => {
     return dateB - dateA; // Most recent first
   });
 });
+
+// Shared conversations (from other users)
+interface SharedConversationEntry {
+  id: string;
+  conversationId: string;
+  permission: 'viewer' | 'collaborator' | 'editor';
+  sharedBy: { id: string; email: string; name: string } | null;
+  conversation: { id: string; title: string; model: string; format: string; updatedAt: string } | null;
+  createdAt: string;
+}
+const sharedConversations = ref<SharedConversationEntry[]>([]);
+
+async function loadSharedConversations() {
+  try {
+    const response = await api.get('/collaboration/shared-with-me');
+    sharedConversations.value = response.data.shares || [];
+  } catch (error) {
+    console.error('Failed to load shared conversations:', error);
+  }
+}
+
+function getPermissionColor(permission: string): string {
+  switch (permission) {
+    case 'viewer': return 'grey';
+    case 'collaborator': return 'blue';
+    case 'editor': return 'green';
+    default: return 'grey';
+  }
+}
+
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
@@ -1248,6 +1327,7 @@ onMounted(async () => {
   await store.loadModels();
   await store.loadSystemConfig();
   await store.loadConversations();
+  await loadSharedConversations();
   
   // Set local systemConfig from store
   if (store.state.systemConfig) {
@@ -1443,7 +1523,7 @@ onMounted(async () => {
       store.state.wsService.on('user_typing', (data: any) => {
         if (data.conversationId === currentConversation.value?.id) {
           if (data.isTyping) {
-            typingUsers.value.add(data.userId);
+            typingUsers.value.set(data.userId, data.userName || 'Someone');
           } else {
             typingUsers.value.delete(data.userId);
           }
@@ -1536,7 +1616,7 @@ watch(() => route.params.id, async (newId, oldId) => {
   if (oldId && store.state.wsService) {
     store.state.wsService.leaveRoom(oldId as string);
     roomUsers.value = [];
-    typingUsers.value = new Set();
+    typingUsers.value = new Map();
     activeAiRequest.value = null;
   }
   
@@ -1734,6 +1814,9 @@ async function sendMessage() {
   // const content = messageInput.value.trim();
   const content = messageInput.value;
   if (!content || isStreaming.value) return;
+  
+  // Stop typing notification immediately when sending
+  stopTypingNotification();
   
   console.log('ConversationView sendMessage:', content);
   console.log('Current visible messages:', messages.value.length);
@@ -2075,6 +2158,46 @@ function handleTextareaFocus() {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }, 300);
+  }
+}
+
+// Typing notification state
+let typingTimeout: ReturnType<typeof setTimeout> | null = null;
+let isTypingNotificationSent = false;
+
+function handleTypingInput() {
+  const conversationId = route.params.id as string;
+  if (!conversationId || !store.state.wsService) return;
+  
+  // Send typing: true if we haven't already
+  if (!isTypingNotificationSent) {
+    store.state.wsService.sendTyping(conversationId, true);
+    isTypingNotificationSent = true;
+  }
+  
+  // Clear any existing timeout
+  if (typingTimeout) {
+    clearTimeout(typingTimeout);
+  }
+  
+  // Set a timeout to send typing: false after 2 seconds of inactivity
+  typingTimeout = setTimeout(() => {
+    if (isTypingNotificationSent) {
+      store.state.wsService?.sendTyping(conversationId, false);
+      isTypingNotificationSent = false;
+    }
+  }, 2000);
+}
+
+function stopTypingNotification() {
+  const conversationId = route.params.id as string;
+  if (typingTimeout) {
+    clearTimeout(typingTimeout);
+    typingTimeout = null;
+  }
+  if (isTypingNotificationSent && conversationId && store.state.wsService) {
+    store.state.wsService.sendTyping(conversationId, false);
+    isTypingNotificationSent = false;
   }
 }
 

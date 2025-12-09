@@ -589,7 +589,7 @@ export class OpenRouterService {
               console.log(`[OpenRouter] Added video attachment: ${attachment.fileName} (${mediaType})`);
             } else {
               // Append text attachments to the text content
-              contentBlocks[0].text += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
+            contentBlocks[0].text += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
             }
           }
           
