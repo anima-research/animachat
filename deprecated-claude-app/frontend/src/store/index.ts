@@ -8,6 +8,7 @@ interface StoreState {
   conversations: Conversation[];
   currentConversation: Conversation | null;
   allMessages: Message[]; // Store all messages
+  messagesVersion: number; // Increments when messages change, for reactivity
   models: Model[];
   openRouterModels: OpenRouterModel[];
   customModels: UserDefinedModel[];
@@ -49,7 +50,7 @@ export interface Store {
   loadMessages(conversationId: string): Promise<void>;
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number): Promise<void>;
   continueGeneration(responderId?: string, explicitParentBranchId?: string, samplingBranches?: number): Promise<void>;
-  regenerateMessage(messageId: string, branchId: string): Promise<void>;
+  regenerateMessage(messageId: string, branchId: string, parentBranchId?: string): Promise<void>;
   abortGeneration(): void;
   editMessage(messageId: string, branchId: string, content: string, responderId?: string): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
@@ -172,6 +173,7 @@ export function createStore(): {
     conversations: [],
     currentConversation: null,
     allMessages: [], // Store all messages
+    messagesVersion: 0, // For reactivity - increment when messages change
     models: [],
     openRouterModels: [],
     customModels: [],
@@ -197,6 +199,9 @@ export function createStore(): {
     },
 
     get messages() {
+      // Read messagesVersion to create reactive dependency
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+      state.messagesVersion;
       return this.getVisibleMessages();
     },
     
@@ -321,6 +326,7 @@ export function createStore(): {
         state.conversations.unshift(conversation);
         state.currentConversation = conversation;
         state.allMessages = [];
+        state.messagesVersion++;
         invalidateSortCache();
         
         return conversation;
@@ -366,6 +372,7 @@ export function createStore(): {
         if (state.currentConversation?.id === id) {
           state.currentConversation = null;
           state.allMessages = [];
+          state.messagesVersion++;
           invalidateSortCache();
         }
       } catch (error) {
@@ -392,6 +399,7 @@ export function createStore(): {
       try {
         const response = await api.get(`/conversations/${conversationId}/messages`);
         state.allMessages = response.data;
+        state.messagesVersion++;
         invalidateSortCache();
         console.log(`Loaded ${state.allMessages.length} messages for conversation ${conversationId}`);
         
@@ -490,14 +498,15 @@ export function createStore(): {
       }
     },
     
-    async regenerateMessage(messageId: string, branchId: string) {
+    async regenerateMessage(messageId: string, branchId: string, parentBranchId?: string) {
       if (!state.currentConversation || !state.wsService) return;
       
       state.wsService.sendMessage({
         type: 'regenerate',
         conversationId: state.currentConversation.id,
         messageId,
-        branchId
+        branchId,
+        parentBranchId // Current visible parent, for correct branch parenting after switches
       });
       
       // Update the conversation's updatedAt timestamp locally for immediate sorting
@@ -708,21 +717,27 @@ export function createStore(): {
           }
           
           // Create a deep copy with the selected branch as active
-          const messageCopy = { 
-            ...message, 
+              const messageCopy = { 
+                ...message, 
             activeBranchId: selectedBranch.id,
             branches: [...message.branches]
-          };
-          visibleMessages.push(messageCopy);
-          
+              };
+              visibleMessages.push(messageCopy);
+              
           const parentIndex = branchPath.indexOf(selectedBranch.parentBranchId!);
-          branchPath.length = parentIndex + 1;
+              branchPath.length = parentIndex + 1;
           branchPath.push(selectedBranch.id);
         }
       }
       
-      // console.log('Returning', visibleMessages.length, 'visible messages from', state.allMessages.length, 'total');
-      return visibleMessages;
+       console.log('=== GET_VISIBLE_MESSAGES RESULT ===');
+        console.log('Total:', state.allMessages.length, '-> Visible:', visibleMessages.length);
+        console.log('Branch path:', branchPath.map(b => b.slice(0, 8)));
+        if (visibleMessages.length > 0) {
+          const last = visibleMessages[visibleMessages.length - 1];
+          console.log('Last visible:', last.id.slice(0, 8), 'activeBranch:', last.activeBranchId?.slice(0, 8));
+        }
+        return visibleMessages;
     },
     
     // Model actions
@@ -865,6 +880,7 @@ export function createStore(): {
           // Add new message
           state.allMessages.push(data.message);
         }
+        state.messagesVersion++;
         invalidateSortCache();
       });
       
@@ -892,12 +908,24 @@ export function createStore(): {
       });
       
       state.wsService.on('message_edited', (data: any) => {
-        // console.log('Store handling message_edited:', data);
+        console.log('=== MESSAGE_EDITED RECEIVED ===');
+        console.log('Message ID:', data.message.id.slice(0, 8));
+        console.log('New activeBranchId:', data.message.activeBranchId?.slice(0, 8));
+        console.log('Branches:', data.message.branches.map((b: any) => ({
+          id: b.id.slice(0, 8),
+          parent: b.parentBranchId?.slice(0, 8) || 'root',
+          contentLen: b.content?.length || 0
+        })));
+        
         const index = state.allMessages.findIndex(m => m.id === data.message.id);
         if (index !== -1) {
+          console.log('Found at index:', index, '- updating');
           state.allMessages[index] = data.message;
+          state.messagesVersion++;
           invalidateSortCache();
-          console.log('Updated message at index', index, 'new activeBranchId:', data.message.activeBranchId);
+          console.log('messagesVersion now:', state.messagesVersion);
+        } else {
+          console.log('NOT FOUND in allMessages!');
         }
       });
       
@@ -908,6 +936,7 @@ export function createStore(): {
         // If multiple messages were deleted (cascade delete)
         if (deletedMessages && deletedMessages.length > 0) {
           state.allMessages = state.allMessages.filter(m => !deletedMessages.includes(m.id));
+          state.messagesVersion++;
           invalidateSortCache();
         } else {
           // Single branch deletion
@@ -926,6 +955,7 @@ export function createStore(): {
               // Remove the entire message
               state.allMessages.splice(index, 1);
             }
+            state.messagesVersion++;
             invalidateSortCache();
           }
         }

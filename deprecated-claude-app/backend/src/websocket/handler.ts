@@ -902,9 +902,14 @@ async function handleRegenerate(
   const originalBranch = msg.branches.find(b => b.id === message.branchId);
   const participantId = originalBranch?.participantId;
   
-  // IMPORTANT: Use the original branch's parentBranchId, not the branch itself
-  // This ensures all regenerated branches have the same parent (the user message branch)
-  const correctParentBranchId = originalBranch?.parentBranchId || parentUserBranch?.id || 'root';
+  // Use the frontend-provided parentBranchId if available (reflects current visible path after branch switches)
+  // Fall back to original branch's parent, then to the parent user message's active branch
+  const correctParentBranchId = message.parentBranchId || originalBranch?.parentBranchId || parentUserBranch?.id || 'root';
+  
+  console.log('=== REGENERATE HANDLER ===');
+  console.log('Frontend parentBranchId:', message.parentBranchId?.slice(0, 8) || 'not provided');
+  console.log('Original branch parent:', originalBranch?.parentBranchId?.slice(0, 8) || 'none');
+  console.log('Using parentBranchId:', correctParentBranchId.slice(0, 8));
   
   Logger.debug('[Regenerate] Message:', message.messageId, 'Branch:', message.branchId);
   Logger.debug('[Regenerate] Original branch parent:', originalBranch?.parentBranchId);
