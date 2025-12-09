@@ -775,6 +775,30 @@
             <span class="text-body-1 mt-2">Drop files here</span>
           </div>
           
+          <!-- Multiuser controls row - shows when in shared/collaborative conversation -->
+          <div v-if="isMultiuserConversation" class="multiuser-controls d-flex align-center mb-1" style="opacity: 0.7;">
+            <v-checkbox
+              v-model="hiddenFromAi"
+              density="compact"
+              hide-details
+              class="flex-grow-0"
+              style="margin-left: -4px;"
+            >
+              <template v-slot:label>
+                <span class="text-caption d-flex align-center" style="white-space: nowrap;">
+                  <v-icon size="x-small" class="mr-1">mdi-eye-off</v-icon>
+                  Hidden from AI
+                </span>
+              </template>
+            </v-checkbox>
+            <v-tooltip location="top">
+              <template v-slot:activator="{ props }">
+                <v-icon v-bind="props" size="x-small" class="ml-1" style="opacity: 0.5;">mdi-help-circle-outline</v-icon>
+              </template>
+              <span>This message will be visible to all users but won't trigger an AI response</span>
+            </v-tooltip>
+          </div>
+          
           <v-textarea
             ref="messageTextarea"
             v-model="messageInput"
@@ -817,6 +841,7 @@
               color="primary"
               icon="mdi-send"
               variant="text"
+              style="touch-action: manipulation;"
               @click="sendMessage"
             />
             <v-btn
@@ -982,6 +1007,16 @@ const roomUsers = ref<Array<{ userId: string; joinedAt: Date }>>([]);
 const typingUsers = ref<Map<string, string>>(new Map()); // Map of userId -> email/name
 const activeAiRequest = ref<{ userId: string; messageId: string } | null>(null);
 const isAiRequestQueued = ref(false); // True if our request was queued because AI is already generating
+const hiddenFromAi = ref(false); // Toggle for sending messages hidden from AI
+
+// Computed: Check if this is a multiuser conversation (shared or has multiple users)
+const isMultiuserConversation = computed(() => {
+  // Show multiuser controls if there are multiple users in the room
+  // or if the conversation has collaborators (even if they're not currently online)
+  return roomUsers.value.length > 1 || sharedConversations.value.some(
+    s => s.conversationId === currentConversation.value?.id
+  );
+});
 
 // Computed label for the input field - shows who is typing
 const typingIndicatorLabel = computed(() => {
@@ -1822,9 +1857,20 @@ async function sendMessage() {
   console.log('Current visible messages:', messages.value.length);
   console.log('Selected parent branch:', selectedBranchForParent.value);
   
-  // Set streaming state IMMEDIATELY to prevent race conditions
-  // where user sends multiple messages before server responds
-  isStreaming.value = true;
+  // Capture and reset hiddenFromAi before sending
+  const messageHiddenFromAi = hiddenFromAi.value;
+  hiddenFromAi.value = false; // Reset for next message
+  
+  // Only set streaming state if message will trigger AI generation
+  // Hidden messages and messages without responder don't trigger AI
+  const willTriggerAi = !messageHiddenFromAi && (
+    currentConversation.value?.format === 'standard' || selectedResponder.value
+  );
+  
+  if (willTriggerAi && !isMultiuserConversation.value) {
+    // Only block UI in single-user mode when expecting AI response
+    isStreaming.value = true;
+  }
   streamingError.value = null;
   
   const attachmentsCopy = [...attachments.value];
@@ -1851,7 +1897,7 @@ async function sendMessage() {
     // Pass the selected parent branch if one is selected
     const parentBranchId = selectedBranchForParent.value?.branchId;
       
-    await store.sendMessage(content, participantId, responderId, attachmentsCopy, parentBranchId);
+    await store.sendMessage(content, participantId, responderId, attachmentsCopy, parentBranchId, messageHiddenFromAi);
     
     // Clear selection after successful send
     if (selectedBranchForParent.value) {
@@ -3025,6 +3071,10 @@ function formatDate(date: Date | string): string {
 /* Ensure container has proper styling and scrollbar is always visible */
 .messages-container {
   position: relative;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+  touch-action: pan-y; /* Allow vertical scrolling immediately */
+  overscroll-behavior: contain; /* Prevent scroll chaining to parent */
 }
 
 /* Mobile: reduce padding and make messages full-width */
@@ -3032,9 +3082,10 @@ function formatDate(date: Date | string): string {
   .messages-container {
     padding-left: 8px !important;
     padding-right: 8px !important;
+    overflow-x: hidden !important;
   }
   
-  .messages-container :deep(.v-card) {
+  .messages-container :deep(.message-container) {
     max-width: 100% !important;
     margin-left: 0 !important;
     margin-right: 0 !important;

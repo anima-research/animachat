@@ -1,96 +1,138 @@
 <template>
-  <v-card
+  <div
     ref="messageCard"
     :class="[
-      'mb-4',
-      message.branches[branchIndex].role === 'user' ? 'ml-auto' : 'mr-auto',
+      'message-container',
+      message.branches[branchIndex].role === 'user' ? 'user-message' : 'assistant-message',
       isSelectedParent ? 'selected-parent' : ''
     ]"
     :style="{
-      maxWidth: '80%',
-      alignSelf: message.branches[branchIndex].role === 'user' ? 'flex-end' : 'flex-start',
-      border: isSelectedParent ? '2px solid rgb(var(--v-theme-info))' : undefined
+      borderLeft: isSelectedParent ? '3px solid rgb(var(--v-theme-info))' : undefined,
+      padding: '12px 12px 8px 12px'
     }"
-    :color="message.branches[branchIndex].role === 'user' ? 'primary' : 'surface'"
-    :variant="message.branches[branchIndex].role === 'user' ? 'tonal' : 'elevated'"
+    @mouseenter="isHovered = true"
+    @mouseleave="isHovered = false"
   >
-    <v-card-text>
+    <!-- Hover action bar (Discord-style) -->
+    <div 
+      v-if="isHovered && !isEditing && !isStreaming" 
+      class="hover-actions"
+    >
+      <v-btn
+        v-if="message.branches[branchIndex].role === 'assistant'"
+        icon="mdi-refresh"
+        size="x-small"
+        variant="text"
+        density="compact"
+        title="Regenerate"
+        @click="$emit('regenerate', message.id, currentBranch.id)"
+      />
+      <v-btn
+        icon="mdi-pencil"
+        size="x-small"
+        variant="text"
+        density="compact"
+        title="Edit"
+        @click="startEdit"
+      />
+      <v-btn
+        icon="mdi-content-copy"
+        size="x-small"
+        variant="text"
+        density="compact"
+        title="Copy"
+        @click="copyContent"
+      />
+      <v-btn
+        :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
+        :color="isSelectedParent ? 'info' : undefined"
+        size="x-small"
+        variant="text"
+        density="compact"
+        title="Branch from here"
+        :disabled="isLastMessage"
+        @click="$emit('select-as-parent', message.id, currentBranch.id)"
+      />
+      <v-btn
+        ref="bookmarkButtonRef"
+        :icon="hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline'"
+        :color="hasBookmark ? participantColor : undefined"
+        size="x-small"
+        variant="text"
+        density="compact"
+        title="Bookmark"
+        @click="toggleBookmark"
+      />
+      <v-btn
+        icon="mdi-code-json"
+        size="x-small"
+        variant="text"
+        density="compact"
+        title="Download prompt"
+        @click="downloadPrompt"
+      />
+      <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
+      <v-btn
+        icon="mdi-delete-outline"
+        size="x-small"
+        variant="text"
+        density="compact"
+        color="error"
+        title="Delete"
+        @click="$emit('delete', message.id, currentBranch.id)"
+      />
+    </div>
 
-      <div
-        v-if="hasNavigableBranches"
-        class="top-controls d-flex align-center justify-space-evenly"
-      >
-      <!-- Branch navigation section -->
-        <div v-if="hasNavigableBranches" class="d-flex align-center">
-          <v-btn
-            icon="mdi-chevron-left"
-            size="small"
-            variant="text"
-            density="compact"
+    <!-- Branch navigation (separate row on narrow, inline on wide) -->
+    <div v-if="hasNavigableBranches" class="branch-nav-row d-flex align-center justify-center">
+      <v-btn icon="mdi-chevron-left" size="x-small" variant="text" density="compact" :disabled="siblingIndex === 0" @click="navigateBranch(-1)" />
+      <span class="text-caption meta-text">{{ siblingIndex + 1 }} / {{ siblingBranches.length }}</span>
+      <v-btn icon="mdi-chevron-right" size="x-small" variant="text" density="compact" :disabled="siblingIndex === siblingBranches.length - 1" @click="navigateBranch(1)" />
+    </div>
 
-            :disabled="siblingIndex === 0"
-            @click="navigateBranch(-1)"
-          />
-          
-          <span class="mx-1 meta-text">
-            {{ siblingIndex + 1 }} / {{ siblingBranches.length }}
-          </span>
-          
-          <v-btn
-            icon="mdi-chevron-right"
-            size="small"
-            variant="text"
-            density="compact"
-
-            :disabled="siblingIndex === siblingBranches.length - 1"
-            @click="navigateBranch(1)"
-          />
-        </div>
-
-      </div>
-
-      <div class="d-flex align-start mb-2">
+    <!-- Info line -->
+    <div class="info-row">
+      <!-- Left: name + meta -->
+      <div class="d-flex align-center flex-wrap" style="gap: 4px;">
         <v-icon
           :icon="message.branches[branchIndex].role === 'user' ? 'mdi-account' : 'mdi-robot'"
           :color="participantColor"
           size="small"
-          class="mr-2"
         />
-        <div v-if="participantDisplayName" class="text-caption" :style="participantColor ? `color: ${participantColor}; font-weight: 500;` : ''">
+        <span v-if="participantDisplayName" class="message-name font-weight-medium" :style="participantColor ? `color: ${participantColor};` : ''">
           {{ participantDisplayName }}
-        </div>
-        <div v-if="modelIndicator" class="text-caption ml-1 meta-text">
-          ({{ modelIndicator }})
-        </div>
-        <div v-if="currentBranch?.createdAt" class="text-caption ml-2 meta-text">
+        </span>
+        <span v-if="senderDisplayName && senderDisplayName !== participantDisplayName" class="text-caption meta-text">
+          ({{ senderDisplayName }})
+        </span>
+        <span v-if="modelIndicator" class="text-caption meta-text">
+          {{ modelIndicator }}
+        </span>
+        <span v-if="currentBranch?.createdAt" class="text-caption meta-text">
           {{ formatTimestamp(currentBranch.createdAt) }}
-        </div>
-        
-        <v-spacer />
-        
-        <div v-if="!isEditing" class="d-flex gap-1">
-
-          <v-btn
-            v-if="message.branches[branchIndex].role === 'assistant'"
-            icon="mdi-refresh"
-            size="x-small"
-            density="compact"
-            class="mr-4"
-            style="opacity: 0.6"
-            variant="text"
-            @click="$emit('regenerate', message.id, currentBranch.id)"
-          />
-
-          <v-btn
-            icon="mdi-delete-outline"
-            size="x-small"
-            density="compact"
-            variant="text"
-            color="error"
-            @click="$emit('delete', message.id, currentBranch.id)"
-          />
-        </div>
+        </span>
+        <!-- Badges -->
+        <v-chip v-if="currentBranch?.hiddenFromAi" size="x-small" color="warning" variant="tonal" density="compact">
+          <v-icon size="x-small" start>mdi-eye-off</v-icon>
+          Hidden
+        </v-chip>
+        <v-chip v-if="hasBookmark" size="x-small" :color="participantColor" variant="tonal" density="compact">
+          <v-icon size="x-small" start>mdi-bookmark</v-icon>
+          {{ bookmarkLabel }}
+        </v-chip>
       </div>
+      
+      <!-- Center: Branch navigation (desktop only) -->
+      <div v-if="hasNavigableBranches" class="branch-nav-inline d-flex align-center justify-center">
+        <v-btn icon="mdi-chevron-left" size="x-small" variant="text" density="compact" :disabled="siblingIndex === 0" @click="navigateBranch(-1)" />
+        <span class="text-caption meta-text">{{ siblingIndex + 1 }} / {{ siblingBranches.length }}</span>
+        <v-btn icon="mdi-chevron-right" size="x-small" variant="text" density="compact" :disabled="siblingIndex === siblingBranches.length - 1" @click="navigateBranch(1)" />
+      </div>
+      <div v-else class="branch-nav-inline"></div>
+      
+      <!-- Right: empty for balance -->
+      <div class="branch-nav-inline"></div>
+    </div>
       
       <!-- Thinking blocks (if present) -->
       <div v-if="thinkingBlocks.length > 0 && !isEditing" class="thinking-section mb-1">
@@ -188,89 +230,6 @@
         </v-btn>
       </div>
       
-      <div
-        v-if="!isEditing && !isStreaming"
-        class="bottom-controls d-flex align-center justify-space-between mt-3"
-      >
-
-        <v-btn
-          :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
-          :color="isSelectedParent ? 'info' : undefined"
-          size="small"
-          variant="text"
-          density="compact"
-          :style="isSelectedParent ? 'opacity: 1' : isLastMessage ? 'opacity: 0.3' : 'opacity: 0.6'"
-          @click="$emit('select-as-parent', message.id, currentBranch.id)"
-          title="Branch from here"
-          :disabled="isLastMessage"
-        />
-
-        <v-btn
-          ref="bookmarkButtonRef"
-          :icon="hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline'"
-          :color="hasBookmark ? participantColor : undefined"
-          size="small"
-          variant="text"
-          density="compact"
-          :style="hasBookmark ? 'opacity: 0.8' : 'opacity: 0.6'"
-          @click="toggleBookmark"
-        />
-        <v-tooltip
-          v-if="hasBookmark"
-          :activator="bookmarkButtonRef"
-          location="end"
-          content-class="bookmark-tooltip"
-        >
-          <span :style="`color: ${participantColor}; font-weight: 600;`">{{ bookmarkLabel }}</span>
-        </v-tooltip>
-
-        <v-spacer />
-
-        <div class="d-flex gap-1">
-          <v-btn
-            icon="mdi-content-copy"
-            size="x-small"
-            density="compact"
-            variant="text"
-            class="mr-4"
-            style="opacity: 0.6"
-            @click="copyContent"
-          />
-          <v-btn
-            icon="mdi-code-json"
-            size="x-small"
-            variant="text"
-            density="compact"
-            class="mr-4"
-            style="opacity: 0.6"
-            @click="downloadPrompt"
-            title="Download prompt as JSON"
-          />
-          <v-btn
-            icon="mdi-pencil"
-            size="x-small"
-            variant="text"
-            style="opacity: 0.6"
-            density="compact"
-            @click="startEdit"
-          />
-        </div>
-
-
-        
-        <!-- Scroll to top button -->
-        <!-- <v-btn
-          v-if="showScrollToTop"
-          size="small"
-          variant="tonal"
-          color="grey"
-          @click="scrollToTopOfMessage"
-        >
-          <v-icon start size="small">mdi-chevron-up</v-icon>
-          Scroll to top
-        </v-btn> -->
-      </div>
-      
       <!-- Generating indicator or error indicator -->
       <div v-if="hasError && currentBranch.role === 'assistant'" class="error-indicator mt-3">
         <div class="error-box">
@@ -286,24 +245,22 @@
           </div>
         </div>
       </div>
-      <div v-else-if="isStreaming && currentBranch.role === 'assistant'" class="generating-indicator mt-3">
+      <div v-else-if="isStreaming && currentBranch.role === 'assistant'" class="generating-indicator mt-1">
         <v-chip 
-          size="small" 
+          size="x-small" 
           :color="participantColor || 'grey'"
           variant="tonal"
-          class="generating-chip"
         >
           <v-progress-circular
             indeterminate
-            size="14"
+            size="12"
             width="2"
-            class="mr-2"
+            class="mr-1"
             :color="participantColor || 'grey'"
           />
           Generating...
         </v-chip>
       </div>
-    </v-card-text>
 
     <!-- Bookmark dialog -->
     <v-dialog v-model="bookmarkDialog" max-width="400">
@@ -357,7 +314,7 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-card>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -368,6 +325,8 @@ import type { Message, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
+
+const store = useStore();
 
 const props = defineProps<{
   message: Message;
@@ -394,6 +353,7 @@ const isEditing = ref(false);
 const editContent = ref('');
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
+const isHovered = ref(false);
 const bookmarkDialog = ref(false);
 const bookmarkInput = ref('');
 const bookmarkLabel = ref<string | null>(null);
@@ -410,6 +370,21 @@ const branchIndex = computed(() => {
 const currentBranch = computed(() => {
   const branch = props.message.branches[branchIndex.value];
   return branch;
+});
+
+// Get sender display name for multiuser attribution
+const senderDisplayName = computed(() => {
+  const sentByUserId = currentBranch.value?.sentByUserId;
+  if (!sentByUserId) return null;
+  
+  // Check if current user is the sender
+  if (store.state.user?.id === sentByUserId) {
+    return 'you';
+  }
+  
+  // For now, just show a shortened version of the user ID
+  // In the future, we could look up user names from a user cache
+  return sentByUserId.substring(0, 8);
 });
 
 const hasBookmark = computed(() => {
@@ -778,8 +753,6 @@ function formatTimestamp(timestamp: string | Date): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
-const store = useStore();
-
 async function downloadPrompt() {
   try {
     // Get the conversation ID from the store
@@ -973,6 +946,146 @@ watch(() => currentBranch.value.id, async () => {
 
 .flip-vertical {
   transform: scaleY(-1);
+}
+
+/* Compact message container */
+.message-container {
+  position: relative;
+  border-radius: 8px;
+  transition: background-color 0.15s ease;
+  margin-bottom: 10px;
+  max-width: 100%;
+  overflow-x: hidden;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Desktop: left-right offsets */
+@media (min-width: 600px) {
+  .message-container {
+    max-width: 80%;
+  }
+  
+  .message-container.user-message {
+    margin-left: auto;
+  }
+  
+  .message-container.assistant-message {
+    margin-right: auto;
+  }
+}
+
+/* User message styling - matches v-card primary tonal */
+.message-container.user-message {
+  background: rgba(var(--v-theme-primary), 0.15);
+}
+
+/* Assistant message styling - matches v-card surface elevated */
+.message-container.assistant-message {
+  background: rgb(var(--v-theme-surface));
+  box-shadow: 0 2px 4px -1px rgba(0,0,0,.2), 0 4px 5px 0 rgba(0,0,0,.14), 0 1px 10px 0 rgba(0,0,0,.12);
+}
+
+.message-container:hover {
+  filter: brightness(1.05);
+}
+
+/* Branch nav: separate row on narrow screens */
+.branch-nav-row {
+  display: flex;
+  margin-bottom: 2px;
+}
+
+/* Hide inline branch nav on narrow screens */
+.branch-nav-inline {
+  display: none !important;
+}
+
+/* Info row - simple flex by default */
+.info-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+/* Wide screens: hide separate row, show inline centered */
+@media (min-width: 700px) {
+  .branch-nav-row {
+    display: none !important;
+  }
+  
+  .branch-nav-inline {
+    display: flex !important;
+  }
+  
+  .info-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+}
+
+/* Name matches message font size */
+.message-name {
+  font-size: 0.875rem;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
+/* Match v-card-text typography */
+.message-content {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  overflow-x: hidden;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  margin-top: 6px;
+}
+
+/* Use :deep() to penetrate v-html content */
+.message-content :deep(p) {
+  margin-top: 0;
+  margin-bottom: 0.5em;
+}
+
+.message-content :deep(p:first-child) {
+  margin-top: 0;
+}
+
+.message-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+/* Discord-style hover action bar */
+.hover-actions {
+  position: absolute;
+  top: -8px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.15);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+.hover-actions .v-btn {
+  opacity: 0.6;
+  min-width: 28px;
+}
+
+.hover-actions .v-btn:hover {
+  opacity: 1;
 }
 </style>
 

@@ -2008,7 +2008,7 @@ export class Database {
   }
 
   // Message methods
-  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[]): Promise<Message> {
+  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean): Promise<Message> {
     const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) throw new Error("Conversation not found");
     // Get conversation messages to determine parent
@@ -2047,6 +2047,7 @@ export class Database {
         content,
         role,
         participantId,
+        sentByUserId, // Actual user who sent this message (for multi-user attribution)
         createdAt: new Date(),
         model,
         // isActive removed - deprecated field not used
@@ -2060,7 +2061,8 @@ export class Database {
           encoding: (att as any).encoding || 'base64' as const,
           mimeType: (att as any).mimeType,
           createdAt: new Date()
-        })) : undefined
+        })) : undefined,
+        hiddenFromAi // If true, message is visible to humans but excluded from AI context
       }],
       activeBranchId: '',
       order: 0
@@ -2118,7 +2120,7 @@ export class Database {
     return message;
   }
 
-  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[]): Promise<Message | null> {
+  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean): Promise<Message | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
     
@@ -2127,6 +2129,7 @@ export class Database {
       content,
       role,
       participantId,
+      sentByUserId, // Actual user who sent this message
       createdAt: new Date(),
       model,
       parentBranchId,
@@ -2140,7 +2143,8 @@ export class Database {
         encoding: (att as any).encoding || 'base64' as const,
         mimeType: (att as any).mimeType,
         createdAt: new Date()
-      })) : undefined
+      })) : undefined,
+      hiddenFromAi // If true, message is excluded from AI context
     };
 
     // Create new message object with added branch

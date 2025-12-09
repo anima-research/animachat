@@ -34,7 +34,7 @@
                   <v-icon color="success" class="mr-1">mdi-check-circle</v-icon>
                   You're All Set!
                 </h4>
-                <p class="text-body-2 mb-2">
+              <p class="text-body-2 mb-2">
                   You have 
                   <template v-for="(balance, index) in creditBalances" :key="balance.currency">
                     <strong>{{ formatCredits(balance.amount) }}</strong> {{ formatCurrencyName(balance.currency) }}<template v-if="index < creditBalances.length - 1">, </template>
@@ -59,7 +59,7 @@
                 >
                   <p class="text-body-2 mb-1">
                     For other models, you can <a href="#" @click.prevent="openSettings" class="text-primary">add your own API key</a>.
-                  </p>
+              </p>
                   <p class="text-body-2 mb-0">
                     Doing public research or art? <a href="https://discord.gg/anima" target="_blank" class="text-primary">Contact us on Discord</a> for additional grants.
                   </p>
@@ -121,16 +121,16 @@
                 </p>
                 <p class="text-body-2 mb-2 text-grey">
                   Anthropic, AWS Bedrock, and OpenRouter are supported.
-                </p>
-                <v-btn
-                  variant="outlined"
-                  size="small"
-                  color="primary"
-                  @click="openSettings"
-                >
-                  <v-icon start>mdi-cog</v-icon>
+              </p>
+              <v-btn
+                variant="outlined"
+                size="small"
+                color="primary"
+                @click="openSettings"
+              >
+                <v-icon start>mdi-cog</v-icon>
                   Add API Key
-                </v-btn>
+              </v-btn>
               </template>
             </div>
           </v-timeline-item>
@@ -354,7 +354,7 @@ function handleGetStarted() {
     emit('new-conversation');
   } else {
     // Otherwise, open settings to add API key
-    emit('open-settings');
+  emit('open-settings');
   }
 }
 

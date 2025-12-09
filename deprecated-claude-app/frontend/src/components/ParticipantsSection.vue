@@ -697,7 +697,7 @@ function updateParticipantName(participant: any, newName: string) {
 function onModelSelected(model: Model) {
   // Auto-fill the name with the model's shortName or displayName
   // This is triggered when a model is selected in the "Add Participant" dialog
-  if (model) {
+    if (model) {
     // Check if the current name is empty or matches the previous model's name
     const currentName = newParticipant.value.name;
     const previousModelId = newParticipant.value.model;

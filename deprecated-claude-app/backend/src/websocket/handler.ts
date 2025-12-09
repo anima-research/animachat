@@ -107,6 +107,29 @@ function buildConversationHistory(
   return history;
 }
 
+/**
+ * Filter out messages that are marked as hidden from AI.
+ * These messages are visible to humans but should not be included in the AI context.
+ * 
+ * @param messages - Array of messages to filter
+ * @returns Array of messages with hiddenFromAi branches removed
+ */
+function filterHiddenFromAiMessages(messages: Message[]): Message[] {
+  return messages
+    .map(msg => {
+      // Get the active branch
+      const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+      
+      // If the active branch is hidden from AI, skip this message entirely
+      if (activeBranch?.hiddenFromAi) {
+        return null;
+      }
+      
+      return msg;
+    })
+    .filter((msg): msg is Message => msg !== null);
+}
+
 async function userHasSufficientCredits(db: Database, userId: string, modelId?: string): Promise<boolean> {
   // Check if the user has their own API key for the model's provider
   if (modelId) {
@@ -381,7 +404,9 @@ async function handleChatMessage(
         message.parentBranchId,
         undefined, // model
         message.participantId,
-        attachments
+        attachments,
+        ws.userId, // sentByUserId - actual user who sent this
+        message.hiddenFromAi // whether message is hidden from AI
       );
     } else {
       // No siblings exist yet, create a new message
@@ -394,7 +419,9 @@ async function handleChatMessage(
         undefined, // model
         message.parentBranchId,
         message.participantId,
-        attachments
+        attachments,
+        ws.userId, // sentByUserId - actual user who sent this
+        message.hiddenFromAi // whether message is hidden from AI
       );
     }
   } else {
@@ -407,7 +434,9 @@ async function handleChatMessage(
       undefined, // model
       message.parentBranchId,
       message.participantId,
-      attachments
+      attachments,
+      ws.userId, // sentByUserId - actual user who sent this
+      message.hiddenFromAi // whether message is hidden from AI
     );
   }
   
@@ -426,6 +455,12 @@ async function handleChatMessage(
     message: userMessage,
     fromUserId: ws.userId
   }, ws); // Exclude sender
+
+  // If message is hidden from AI, don't trigger AI generation
+  if (message.hiddenFromAi) {
+    console.log('[Chat] Message is hidden from AI, skipping AI generation');
+    return;
+  }
 
   // Get participants for the conversation
   const participants = await db.getConversationParticipants(message.conversationId, conversation.userId);
@@ -544,11 +579,15 @@ async function handleChatMessage(
   visibleHistory.push(userMessage);
   console.log('Final visible history length:', visibleHistory.length);
   
+  // Filter out messages marked as hidden from AI (keep them in history for UI, but don't send to AI)
+  const filteredHistory = filterHiddenFromAiMessages(visibleHistory);
+  console.log('Filtered history length (excluding hiddenFromAi):', filteredHistory.length);
+  
   // For prefill format, we need to include the empty assistant message too
   // so that formatMessagesForConversation knows to append the assistant's name
   const messagesForInference = conversation.format === 'prefill' 
-    ? [...visibleHistory, assistantMessage]
-    : visibleHistory;
+    ? [...filteredHistory, assistantMessage]
+    : filteredHistory;
   
   // Stream response from appropriate service
   try {
@@ -842,6 +881,9 @@ async function handleRegenerate(
 
   // Get conversation history using the utility function
   const historyMessages = buildConversationHistory(allMessages, correctParentBranchId);
+  
+  // Filter out messages hidden from AI
+  const filteredHistoryMessages = filterHiddenFromAiMessages(historyMessages);
 
   // Get participants for the conversation
   const participants = await db.getConversationParticipants(conversation.id, conversation.userId);
@@ -913,7 +955,7 @@ async function handleRegenerate(
     try {
     await inferenceService.streamCompletion(
       modelConfig,
-      historyMessages,
+      filteredHistoryMessages,
       responderSystemPrompt || '',
       responderSettings,
       conversation.userId,
@@ -1164,6 +1206,9 @@ async function handleEdit(
       { messageId: updatedMessage.id, message: updatedMessage }
     );
     
+    // Filter out messages hidden from AI
+    const filteredHistoryMessages = filterHiddenFromAiMessages(historyMessages);
+    
     // Get the responder's settings (we already have responderModel from earlier)
     let responderSettings = conversation.settings;
     let responderSystemPrompt = conversation.systemPrompt;
@@ -1215,7 +1260,7 @@ async function handleEdit(
       
       await inferenceService.streamCompletion(
         modelConfig,
-        historyMessages,
+        filteredHistoryMessages,
         responderSystemPrompt || '',
         responderSettings,
         conversation.userId,
@@ -1474,8 +1519,11 @@ async function handleContinue(
       ? buildConversationHistory(messages, parentBranchId)
       : messages; // No parent specified, use all messages (default behavior)
     
+    // Filter out messages hidden from AI
+    const filteredHistory = filterHiddenFromAiMessages(visibleHistory);
+    
     // Include the new assistant message in the messages array for prefill formatting
-    const messagesWithNewAssistant = [...visibleHistory, assistantMessage];
+    const messagesWithNewAssistant = [...filteredHistory, assistantMessage];
 
     // Stream the completion
     const modelId = responder.model || conversation.model;

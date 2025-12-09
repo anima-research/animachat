@@ -43,10 +43,18 @@ export class WebSocketService {
       wsUrl.pathname = '/';
     }
     
+    console.log('WebSocket connecting to:', wsUrl.toString());
+    // DEBUG: Alert on mobile to see the URL
+    if (/Mobi|Android/i.test(navigator.userAgent)) {
+      alert('WS connecting to: ' + wsUrl.toString().split('?')[0]);
+    }
     this.ws = new WebSocket(wsUrl.toString());
     
     this.ws.onopen = () => {
       console.log('WebSocket connected');
+      if (/Mobi|Android/i.test(navigator.userAgent)) {
+        alert('WebSocket connected!');
+      }
       this.reconnectAttempts = 0;
       
       // Send queued messages
@@ -75,6 +83,9 @@ export class WebSocketService {
     
     this.ws.onerror = (error) => {
       console.error('WebSocket error:', error);
+      if (/Mobi|Android/i.test(navigator.userAgent)) {
+        alert('WebSocket error!');
+      }
     };
   }
   

@@ -126,15 +126,16 @@ async function startServer() {
     const listenPort = USE_HTTPS ? HTTPS_PORT : PORT;
     const protocol = USE_HTTPS ? 'HTTPS' : 'HTTP';
     
-    server.listen(listenPort, () => {
-      console.log(`${protocol} Server running on port ${listenPort}`);
+    const HOST = process.env.HOST || '0.0.0.0';
+    server.listen(listenPort, HOST, () => {
+      console.log(`${protocol} Server running on ${HOST}:${listenPort}`);
       console.log(`${USE_HTTPS ? 'Secure WebSocket (WSS)' : 'WebSocket'} server ready`);
       if (USE_HTTPS) {
-        console.log(`API endpoint: https://localhost:${listenPort}/api`);
-        console.log(`WebSocket endpoint: wss://localhost:${listenPort}`);
+        console.log(`API endpoint: https://${HOST}:${listenPort}/api`);
+        console.log(`WebSocket endpoint: wss://${HOST}:${listenPort}`);
       } else {
-        console.log(`API endpoint: http://localhost:${listenPort}/api`);
-        console.log(`WebSocket endpoint: ws://localhost:${listenPort}`);
+        console.log(`API endpoint: http://${HOST}:${listenPort}/api`);
+        console.log(`WebSocket endpoint: ws://${HOST}:${listenPort}`);
       }
     });
   } catch (error) {

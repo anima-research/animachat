@@ -47,7 +47,7 @@ export interface Store {
   duplicateConversation(id: string): Promise<Conversation>;
   
   loadMessages(conversationId: string): Promise<void>;
-  sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string): Promise<void>;
+  sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean): Promise<void>;
   continueGeneration(responderId?: string, explicitParentBranchId?: string): Promise<void>;
   regenerateMessage(messageId: string, branchId: string): Promise<void>;
   abortGeneration(): void;
@@ -398,7 +398,7 @@ export function createStore(): {
       }
     },
     
-    async sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string) {
+    async sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean) {
       if (!state.currentConversation || !state.wsService) return;
       
       let parentBranchId: string | undefined;
@@ -426,7 +426,8 @@ export function createStore(): {
         parentBranchId,
         participantId,
         responderId,
-        attachments
+        attachments,
+        hiddenFromAi // If true, message is visible to humans but excluded from AI context
       };
       
       console.log('Sending message with attachments:', attachments?.length || 0);

@@ -382,13 +382,15 @@ export const MessageBranchSchema = z.object({
   content: z.string(), // Main text content (for backward compatibility)
   contentBlocks: z.array(ContentBlockSchema).optional(), // Structured content blocks
   role: z.enum(['user', 'assistant', 'system']),
-  participantId: z.string().uuid().optional(), // Link to participant
+  participantId: z.string().uuid().optional(), // Link to participant (who they're speaking as)
+  sentByUserId: z.string().uuid().optional(), // Actual user who sent this message (for multi-user attribution)
   createdAt: z.date(),
   model: z.string().optional(),
   parentBranchId: z.string().uuid().optional(),
   isActive: z.boolean().optional(), // Deprecated - not used, kept for backward compatibility
   attachments: z.array(AttachmentSchema).optional(), // Attachments for this branch
-  bookmark: BookmarkSchema.optional() // Optional bookmark for this branch
+  bookmark: BookmarkSchema.optional(), // Optional bookmark for this branch
+  hiddenFromAi: z.boolean().optional() // If true, this message is visible to humans but excluded from AI context
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;
@@ -453,7 +455,8 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
       fileName: z.string(),
       fileType: z.string(),
       content: z.string()
-    })).optional()
+    })).optional(),
+    hiddenFromAi: z.boolean().optional() // If true, message is visible to humans but not included in AI context
   }),
   z.object({
     type: z.literal('regenerate'),
