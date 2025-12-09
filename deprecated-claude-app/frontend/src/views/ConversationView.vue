@@ -1207,6 +1207,22 @@ onMounted(async () => {
         }
       });
       
+      store.state.wsService.on('message_edited', (data: any) => {
+        // A message was edited (e.g., regenerate adds a new branch)
+        // Check if a new empty assistant branch was added - this means regeneration started
+        if (data.message && data.message.branches?.length > 0) {
+          const activeBranch = data.message.branches.find((b: any) => b.id === data.message.activeBranchId);
+          // If the active branch is an assistant with empty/minimal content, streaming is starting
+          if (activeBranch && activeBranch.role === 'assistant' && (!activeBranch.content || activeBranch.content.length < 10)) {
+            streamingMessageId.value = data.message.id;
+            isStreaming.value = true;
+            autoScrollEnabled.value = true;
+            streamingError.value = null;
+            console.log('[WebSocket] Regenerate detected - starting streaming for message:', data.message.id.slice(0, 8));
+          }
+        }
+      });
+      
       store.state.wsService.on('stream', (data: any) => {
         // Streaming content update
         if (data.messageId === streamingMessageId.value) {
@@ -1828,13 +1844,31 @@ async function triggerParticipantResponse(participant: Participant) {
 }
 
 async function regenerateMessage(messageId: string, branchId: string) {
+  // Find the current visible parent branch ID
+  // This ensures regenerated branches are children of the correct parent after branch switches
+  const visibleMessages = messages.value;
+  const messageIndex = visibleMessages.findIndex(m => m.id === messageId);
+  
+  let parentBranchId: string | undefined;
+  if (messageIndex > 0) {
+    const parentMessage = visibleMessages[messageIndex - 1];
+    parentBranchId = parentMessage.activeBranchId;
+  }
+  
+  console.log('=== REGENERATE CALLED ===');
+  console.log('messageId:', messageId.slice(0, 8));
+  console.log('branchId:', branchId.slice(0, 8));
+  console.log('parentBranchId:', parentBranchId?.slice(0, 8));
+  console.log('visible messages count:', visibleMessages.length);
+  console.log('message index in visible:', messageIndex);
+  
   // Set streaming state before sending request
   streamingMessageId.value = messageId;
   isStreaming.value = true;
   streamingError.value = null;
   autoScrollEnabled.value = true;
   
-  await store.regenerateMessage(messageId, branchId);
+  await store.regenerateMessage(messageId, branchId, parentBranchId);
 }
 
 function abortGeneration() {

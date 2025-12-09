@@ -465,7 +465,8 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('regenerate'),
     conversationId: z.string().uuid(),
     messageId: z.string().uuid(),
-    branchId: z.string().uuid()
+    branchId: z.string().uuid(),
+    parentBranchId: z.string().uuid().optional() // Current visible parent, for correct branch parenting after switches
   }),
   z.object({
     type: z.literal('edit'),
