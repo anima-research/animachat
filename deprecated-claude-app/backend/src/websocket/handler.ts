@@ -9,6 +9,7 @@ import { ContextManager } from '../services/context-manager.js';
 import { Logger } from '../utils/logger.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import { ModelLoader } from '../config/model-loader.js';
+import { roomManager } from './room-manager.js';
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -159,6 +160,9 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
   ws.userId = decoded.userId;
   ws.isAlive = true;
 
+  // Register this connection with the room manager
+  roomManager.registerConnection(ws, decoded.userId);
+
   // Setup heartbeat
   ws.on('pong', () => {
     ws.isAlive = true;
@@ -201,6 +205,18 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
         case 'abort':
           handleAbort(ws, message);
           break;
+        
+        case 'join_room':
+          handleJoinRoom(ws, message);
+          break;
+        
+        case 'leave_room':
+          handleLeaveRoom(ws, message);
+          break;
+        
+        case 'typing':
+          handleTyping(ws, message);
+          break;
           
         default:
           ws.send(JSON.stringify({ type: 'error', error: 'Unknown message type' }));
@@ -216,6 +232,9 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
 
   ws.on('close', async () => {
     Logger.websocket(`WebSocket closed for user ${ws.userId}`);
+    
+    // Unregister from room manager (removes from all rooms)
+    roomManager.unregisterConnection(ws);
     
     // Clean up any incomplete streaming messages
     // This is handled by the streaming service, but we should log it
@@ -246,6 +265,53 @@ function handleAbort(
     conversationId: message.conversationId,
     success: aborted
   }));
+}
+
+// Multi-user room handlers
+function handleJoinRoom(
+  ws: AuthenticatedWebSocket,
+  message: { type: 'join_room'; conversationId: string }
+) {
+  if (!ws.userId) return;
+  
+  roomManager.joinRoom(message.conversationId, ws);
+  
+  // Send back room state
+  ws.send(JSON.stringify({
+    type: 'room_joined',
+    conversationId: message.conversationId,
+    activeUsers: roomManager.getActiveUsers(message.conversationId),
+    activeAiRequest: roomManager.getActiveAiRequest(message.conversationId)
+  }));
+}
+
+function handleLeaveRoom(
+  ws: AuthenticatedWebSocket,
+  message: { type: 'leave_room'; conversationId: string }
+) {
+  if (!ws.userId) return;
+  
+  roomManager.leaveRoom(message.conversationId, ws);
+  
+  ws.send(JSON.stringify({
+    type: 'room_left',
+    conversationId: message.conversationId
+  }));
+}
+
+function handleTyping(
+  ws: AuthenticatedWebSocket,
+  message: { type: 'typing'; conversationId: string; isTyping: boolean }
+) {
+  if (!ws.userId) return;
+  
+  // Broadcast typing status to others in the room
+  roomManager.broadcastToRoom(message.conversationId, {
+    type: 'user_typing',
+    conversationId: message.conversationId,
+    userId: ws.userId,
+    isTyping: message.isTyping
+  }, ws); // Exclude sender
 }
 
 async function handleChatMessage(
@@ -335,11 +401,18 @@ async function handleChatMessage(
   Logger.debug('Created/updated user message:', userMessage.id, 'with branch:', userMessage.branches[userMessage.branches.length - 1]?.id);
   Logger.debug('User message has attachments?', userMessage.branches[userMessage.branches.length - 1]?.attachments?.length || 0);
 
-  // Send confirmation
+  // Send confirmation to sender
   ws.send(JSON.stringify({
     type: 'message_created',
     message: userMessage
   }));
+  
+  // Broadcast user message to all other users in the room
+  roomManager.broadcastToRoom(message.conversationId, {
+    type: 'message_created',
+    message: userMessage,
+    fromUserId: ws.userId
+  }, ws); // Exclude sender
 
   // Get participants for the conversation
   const participants = await db.getConversationParticipants(message.conversationId, conversation.userId);
@@ -372,6 +445,19 @@ async function handleChatMessage(
 
   if (!(await userHasSufficientCredits(db, conversation.userId, inferenceModel))) {
     sendInsufficientCreditsError(ws);
+    return;
+  }
+  
+  // Check if there's already an active AI request for this conversation
+  const existingAiRequest = roomManager.getActiveAiRequest(message.conversationId);
+  if (existingAiRequest) {
+    console.log(`[Chat] AI already generating for conversation ${message.conversationId} (requested by ${existingAiRequest.userId}), skipping new request`);
+    ws.send(JSON.stringify({
+      type: 'ai_request_queued',
+      conversationId: message.conversationId,
+      reason: 'AI is already generating a response',
+      requestedBy: existingAiRequest.userId
+    }));
     return;
   }
 
@@ -429,6 +515,13 @@ async function handleChatMessage(
     type: 'message_created',
     message: assistantMessage
   }));
+  
+  // Broadcast assistant message placeholder to other users
+  roomManager.broadcastToRoom(message.conversationId, {
+    type: 'message_created',
+    message: assistantMessage,
+    fromUserId: ws.userId
+  }, ws);
 
   // Get conversation history using the utility function
   const allMessages = await db.getConversationMessages(message.conversationId, conversation.userId);
@@ -491,8 +584,11 @@ async function handleChatMessage(
     // Create abort controller for this generation
     const abortController = startGeneration(conversation.userId, conversation.id);
     
+    // Track AI request in room manager for multi-user sync
+    roomManager.startAiRequest(message.conversationId, ws.userId!, assistantMessage.id);
+    
     try {
-      await inferenceService.streamCompletion(
+    await inferenceService.streamCompletion(
       modelConfig,
       messagesForInference,
       inferenceSystemPrompt || '',
@@ -537,7 +633,11 @@ async function handleChatMessage(
           console.log('[WebSocket] Sending content blocks:', contentBlocks.length, 'types:', contentBlocks.map(b => b.type));
         }
         
+        // Send to original requester
         ws.send(JSON.stringify(streamData));
+        
+        // Broadcast to all other users in the room
+        roomManager.broadcastToRoom(message.conversationId, streamData, ws);
 
         if (isComplete) {
           // Final save and update conversation timestamp
@@ -577,10 +677,12 @@ async function handleChatMessage(
     );
     } finally {
       endGeneration(conversation.userId, conversation.id);
+      roomManager.endAiRequest(message.conversationId);
     }
   } catch (error) {
     // Clean up generation tracking on error
     endGeneration(conversation.userId, conversation.id);
+    roomManager.endAiRequest(message.conversationId);
     
     // Check if this was an abort
     if (error instanceof Error && error.message === 'Generation aborted') {
@@ -716,10 +818,14 @@ async function handleRegenerate(
   }
 
   // Send the updated message with the new branch to the frontend
-  ws.send(JSON.stringify({
+  const editEvent = {
     type: 'message_edited',
     message: updatedMessage
-  }));
+  };
+  ws.send(JSON.stringify(editEvent));
+  
+  // Broadcast to other users in the room
+  roomManager.broadcastToRoom(message.conversationId, editEvent, ws);
 
   // Get conversation history using the utility function
   const historyMessages = buildConversationHistory(allMessages, correctParentBranchId);
@@ -788,71 +894,80 @@ async function handleRegenerate(
     // Create abort controller for this generation
     const abortController = startGeneration(conversation.userId, conversation.id);
     
+    // Track AI request in room manager for multi-user sync
+    roomManager.startAiRequest(message.conversationId, ws.userId!, updatedMessage.id);
+    
     try {
-      await inferenceService.streamCompletion(
-        modelConfig,
-        historyMessages,
-        responderSystemPrompt || '',
-        responderSettings,
-        conversation.userId,
-        async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-          const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
-          if (currentBranch) {
-            currentBranch.content += chunk;
-            
-            // Store content blocks if provided
-            if (contentBlocks && contentBlocks.length > 0) {
-              currentBranch.contentBlocks = contentBlocks;
-            }
+    await inferenceService.streamCompletion(
+      modelConfig,
+      historyMessages,
+      responderSystemPrompt || '',
+      responderSettings,
+      conversation.userId,
+      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+        const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
+        if (currentBranch) {
+          currentBranch.content += chunk;
+          
+          // Store content blocks if provided
+          if (contentBlocks && contentBlocks.length > 0) {
+            currentBranch.contentBlocks = contentBlocks;
+          }
             
             // Trim whitespace on completion
             if (isComplete) {
               currentBranch.content = currentBranch.content.trim();
             }
-            
-            // Save partial content periodically to prevent data loss
-            if (currentBranch.content.length % 500 === 0 || isComplete) {
-              await db.updateMessageContent(
-                updatedMessage.id,
-                updatedMessage.conversationId,
-                conversation.userId,
-                updatedMessage.activeBranchId,
-                currentBranch.content,
-                currentBranch.contentBlocks
-              );
-            }
-          }
-
-          ws.send(JSON.stringify({
-            type: 'stream',
-            messageId: updatedMessage.id,
-            branchId: updatedMessage.activeBranchId,
-            content: chunk,
-            contentBlocks: contentBlocks,
-            isComplete
-          }));
-        },
-        conversation,
-        responderParticipant,
-        async (metrics) => {
-          // Store metrics in database
-          await db.addMetrics(conversation.id, conversation.userId, metrics);
           
-          // Send metrics update to client
-          ws.send(JSON.stringify({
-            type: 'metrics_update',
-            conversationId: conversation.id,
-            metrics
-          }));
-        },
+          // Save partial content periodically to prevent data loss
+          if (currentBranch.content.length % 500 === 0 || isComplete) {
+            await db.updateMessageContent(
+              updatedMessage.id,
+              updatedMessage.conversationId,
+              conversation.userId,
+              updatedMessage.activeBranchId,
+              currentBranch.content,
+              currentBranch.contentBlocks
+            );
+          }
+        }
+
+        const streamData = {
+          type: 'stream',
+          messageId: updatedMessage.id,
+          branchId: updatedMessage.activeBranchId,
+          content: chunk,
+          contentBlocks: contentBlocks,
+          isComplete
+        };
+        ws.send(JSON.stringify(streamData));
+        
+        // Broadcast to other users in the room
+        roomManager.broadcastToRoom(message.conversationId, streamData, ws);
+      },
+      conversation,
+      responderParticipant,
+      async (metrics) => {
+        // Store metrics in database
+        await db.addMetrics(conversation.id, conversation.userId, metrics);
+        
+        // Send metrics update to client
+        ws.send(JSON.stringify({
+          type: 'metrics_update',
+          conversationId: conversation.id,
+          metrics
+        }));
+      },
         participants,
         abortController.signal
-      );
+    );
     } finally {
       endGeneration(conversation.userId, conversation.id);
+      roomManager.endAiRequest(message.conversationId);
     }
   } catch (error) {
     endGeneration(conversation.userId, conversation.id);
+    roomManager.endAiRequest(message.conversationId);
     
     // Check if this was an abort
     if (error instanceof Error && error.message === 'Generation aborted') {
@@ -922,10 +1037,14 @@ async function handleEdit(
     return;
   }
 
-  ws.send(JSON.stringify({
+  const userEditEvent = {
     type: 'message_edited',
     message: updatedMessage
-  }));
+  };
+  ws.send(JSON.stringify(userEditEvent));
+  
+  // Broadcast to other users in the room
+  roomManager.broadcastToRoom(message.conversationId, userEditEvent, ws);
 
   // If this was a user message, automatically generate an assistant response
   if (branch.role === 'user') {
@@ -992,10 +1111,14 @@ async function handleEdit(
       assistantMessage = newBranch;
       
       // Send the updated message with new branch
-      ws.send(JSON.stringify({
+      const assistantEditEvent = {
         type: 'message_edited',
         message: assistantMessage
-      }));
+      };
+      ws.send(JSON.stringify(assistantEditEvent));
+      
+      // Broadcast to other users
+      roomManager.broadcastToRoom(message.conversationId, assistantEditEvent, ws);
     } else {
       // No assistant message exists after this user message, create a new one
       // But we need to manually set the parentBranchId
@@ -1010,10 +1133,14 @@ async function handleEdit(
       );
       
       // Send assistant message to frontend
-      ws.send(JSON.stringify({
+      const createEvent = {
         type: 'message_created',
         message: assistantMessage
-      }));
+      };
+      ws.send(JSON.stringify(createEvent));
+      
+      // Broadcast to other users
+      roomManager.broadcastToRoom(message.conversationId, createEvent, ws);
     }
     
     // Build conversation history using the utility function
@@ -1107,14 +1234,18 @@ async function handleEdit(
             }
           }
 
-          ws.send(JSON.stringify({
+          const streamData = {
             type: 'stream',
             messageId: targetMessage.id,
             branchId: targetBranchId,
             content: chunk,
             contentBlocks: contentBlocks,
             isComplete
-          }));
+          };
+          ws.send(JSON.stringify(streamData));
+          
+          // Broadcast to other users
+          roomManager.broadcastToRoom(message.conversationId, streamData, ws);
         },
         conversation,
         responderParticipant,
@@ -1161,12 +1292,18 @@ async function handleDelete(
     const deleted = await db.deleteMessageBranch(messageId, conversationId, conversation.userId, branchId);
     
     if (deleted) {
-      ws.send(JSON.stringify({
+      const deleteEvent = {
         type: 'message_deleted',
         messageId,
         branchId,
         deletedMessages: deleted
-      }));
+      };
+      
+      // Send to requester
+      ws.send(JSON.stringify(deleteEvent));
+      
+      // Broadcast to all other users in the room
+      roomManager.broadcastToRoom(conversationId, deleteEvent, ws);
     } else {
       ws.send(JSON.stringify({ type: 'error', error: 'Failed to delete message' }));
     }
@@ -1287,10 +1424,14 @@ async function handleContinue(
     const assistantBranch = assistantMessage.branches[assistantMessage.branches.length - 1];
 
     // Send initial empty message
-    ws.send(JSON.stringify({
+    const continueEvent = {
       type: 'message_created',
       message: assistantMessage
-    }));
+    };
+    ws.send(JSON.stringify(continueEvent));
+    
+    // Broadcast to other users
+    roomManager.broadcastToRoom(conversationId, continueEvent, ws);
 
     // Log WebSocket event
     await llmLogger.logWebSocketEvent({
@@ -1325,87 +1466,96 @@ async function handleContinue(
     // Create abort controller for this generation
     const abortController = startGeneration(conversation.userId, conversationId);
     
+    // Track AI request in room manager
+    roomManager.startAiRequest(conversationId, ws.userId!, assistantMessage.id);
+    
     try {
-      await inferenceService.streamCompletion(
-        modelConfig,
-        messagesWithNewAssistant,
-        responder.systemPrompt || conversation.systemPrompt || '',
-        conversation.format === 'standard'
+    await inferenceService.streamCompletion(
+      modelConfig,
+      messagesWithNewAssistant,
+      responder.systemPrompt || conversation.systemPrompt || '',
+      conversation.format === 'standard'
           ? conversation.settings || { temperature: 1.0, maxTokens: 4096 }
-          : {
-              temperature: responder.settings?.temperature ?? conversation.settings?.temperature ?? 1.0,
+        : {
+            temperature: responder.settings?.temperature ?? conversation.settings?.temperature ?? 1.0,
               maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 4096,
-              topP: responder.settings?.topP ?? conversation.settings?.topP,
-              topK: responder.settings?.topK ?? conversation.settings?.topK,
-              // Always use conversation-level thinking settings
-              thinking: conversation.settings?.thinking
-            },
-        ws.userId!,
-        async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-          assistantBranch.content += chunk;
-          
-          // Store content blocks if provided
-          if (contentBlocks && contentBlocks.length > 0) {
-            assistantBranch.contentBlocks = contentBlocks;
-          }
+            topP: responder.settings?.topP ?? conversation.settings?.topP,
+            topK: responder.settings?.topK ?? conversation.settings?.topK,
+            // Always use conversation-level thinking settings
+            thinking: conversation.settings?.thinking
+          },
+      ws.userId!,
+      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+        assistantBranch.content += chunk;
+        
+        // Store content blocks if provided
+        if (contentBlocks && contentBlocks.length > 0) {
+          assistantBranch.contentBlocks = contentBlocks;
+        }
           
           // Trim whitespace on completion
           if (isComplete) {
             assistantBranch.content = assistantBranch.content.trim();
           }
-          
-          // Save partial content periodically
-          if (assistantBranch.content.length % 500 === 0 || isComplete) {
-            await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
-          }
-          
-          ws.send(JSON.stringify({
-            type: 'stream',
-            messageId: assistantMessage.id,
-            branchId: assistantBranch.id,
-            content: chunk,
-            contentBlocks: contentBlocks,
-            isComplete
-          }));
+        
+        // Save partial content periodically
+        if (assistantBranch.content.length % 500 === 0 || isComplete) {
+          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
+        }
+        
+        const streamData = {
+          type: 'stream',
+          messageId: assistantMessage.id,
+          branchId: assistantBranch.id,
+          content: chunk,
+          contentBlocks: contentBlocks,
+          isComplete
+        };
+        ws.send(JSON.stringify(streamData));
+        
+        // Broadcast to other users
+        roomManager.broadcastToRoom(conversationId, streamData, ws);
 
-          if (isComplete) {
+        if (isComplete) {
             // Final save (content already trimmed above)
-            await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
-            
-            // Send updated conversation
-            const updatedConversation = await db.getConversation(conversationId, conversation.userId);
-            if (updatedConversation) {
-              ws.send(JSON.stringify({
-                type: 'conversation_updated',
-                conversation: updatedConversation
-              }));
-            }
-          }
-        },
-        conversation,
-        responder,
-        async (metrics) => {
-          // Store metrics in database
-          await db.addMetrics(conversation.id, conversation.userId, metrics);
+          await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, assistantBranch.id, assistantBranch.content, assistantBranch.contentBlocks);
           
-          // Send metrics update to client
-          ws.send(JSON.stringify({
-            type: 'metrics_update',
-            conversationId: conversation.id,
-            metrics
-          }));
-        },
+          // Send updated conversation
+          const updatedConversation = await db.getConversation(conversationId, conversation.userId);
+          if (updatedConversation) {
+            ws.send(JSON.stringify({
+              type: 'conversation_updated',
+              conversation: updatedConversation
+            }));
+          }
+        }
+      },
+      conversation,
+      responder,
+      async (metrics) => {
+        // Store metrics in database
+        await db.addMetrics(conversation.id, conversation.userId, metrics);
+        
+        // Send metrics update to client
+        ws.send(JSON.stringify({
+          type: 'metrics_update',
+          conversationId: conversation.id,
+          metrics
+        }));
+      },
         participants,
         abortController.signal
-      );
+    );
     } finally {
       endGeneration(conversation.userId, conversationId);
+      roomManager.endAiRequest(conversationId);
     }
 
   } catch (error) {
     if (ws.userId) {
       endGeneration(ws.userId, conversationId);
     }
+    roomManager.endAiRequest(conversationId);
     
     // Check if this was an abort
     if (error instanceof Error && error.message === 'Generation aborted') {

@@ -496,6 +496,20 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('error'),
     error: z.string()
+  }),
+  // Multi-user room management
+  z.object({
+    type: z.literal('join_room'),
+    conversationId: z.string().uuid()
+  }),
+  z.object({
+    type: z.literal('leave_room'),
+    conversationId: z.string().uuid()
+  }),
+  z.object({
+    type: z.literal('typing'),
+    conversationId: z.string().uuid(),
+    isTyping: z.boolean()
   })
 ]);
 

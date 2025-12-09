@@ -240,6 +240,33 @@
           class="mr-2"
         />
         
+        <!-- Multi-user presence indicator -->
+        <v-chip
+          v-if="roomUsers.length > 1"
+          size="x-small"
+          color="success"
+          variant="tonal"
+          class="mr-2"
+        >
+          <v-icon size="small" class="mr-1">mdi-account-multiple</v-icon>
+          {{ roomUsers.length }}
+          <v-tooltip activator="parent" location="bottom">
+            {{ roomUsers.length }} users viewing this conversation
+          </v-tooltip>
+        </v-chip>
+        
+        <!-- Typing indicator -->
+        <v-chip
+          v-if="typingUsers.size > 0"
+          size="x-small"
+          color="info"
+          variant="tonal"
+          class="mr-2"
+        >
+          <v-icon size="small" class="mr-1">mdi-pencil</v-icon>
+          typing...
+        </v-chip>
+        
         <v-btn
           v-if="allMessages.length > 0"
           :icon="treeDrawer ? 'mdi-graph' : 'mdi-graph-outline'"
@@ -684,6 +711,30 @@
           </v-chip>
         </div>
         
+        <!-- AI generating notification (when another user triggered it) -->
+        <v-alert
+          v-if="activeAiRequest && activeAiRequest.userId !== store.state.user?.id"
+          type="info"
+          density="compact"
+          class="mb-2"
+          variant="tonal"
+        >
+          <v-icon class="mr-2">mdi-robot</v-icon>
+          AI is responding to another user's message. You can still send messages.
+        </v-alert>
+        
+        <!-- Request queued notification -->
+        <v-alert
+          v-if="isAiRequestQueued"
+          type="warning"
+          density="compact"
+          class="mb-2"
+          variant="tonal"
+        >
+          <v-icon class="mr-2">mdi-clock-outline</v-icon>
+          Your message was sent, but AI response is pending (another request in progress).
+        </v-alert>
+        
         <!-- Drop zone wrapper for drag-and-drop attachments -->
         <div 
           class="input-drop-zone"
@@ -891,6 +942,13 @@ const streamingMessageId = ref<string | null>(null);
 const autoScrollEnabled = ref(true);
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
+
+// Multi-user room state
+const roomUsers = ref<Array<{ userId: string; joinedAt: Date }>>([]);
+const typingUsers = ref<Set<string>>(new Set());
+const activeAiRequest = ref<{ userId: string; messageId: string } | null>(null);
+const isAiRequestQueued = ref(false); // True if our request was queued because AI is already generating
+
 const attachments = ref<Array<{
   fileName: string;
   fileType: string;
@@ -1363,6 +1421,63 @@ onMounted(async () => {
           // Don't clear streamingMessageId so we can show the error on the right message
         }
       });
+      
+      // Multi-user room events
+      store.state.wsService.on('room_joined', (data: any) => {
+        console.log('[Room] Joined room:', data.conversationId);
+        roomUsers.value = data.activeUsers || [];
+        activeAiRequest.value = data.activeAiRequest || null;
+      });
+      
+      store.state.wsService.on('user_joined', (data: any) => {
+        console.log('[Room] User joined:', data.userId);
+        roomUsers.value = data.activeUsers || [];
+      });
+      
+      store.state.wsService.on('user_left', (data: any) => {
+        console.log('[Room] User left:', data.userId);
+        roomUsers.value = data.activeUsers || [];
+        typingUsers.value.delete(data.userId);
+      });
+      
+      store.state.wsService.on('user_typing', (data: any) => {
+        if (data.conversationId === currentConversation.value?.id) {
+          if (data.isTyping) {
+            typingUsers.value.add(data.userId);
+          } else {
+            typingUsers.value.delete(data.userId);
+          }
+        }
+      });
+      
+      store.state.wsService.on('ai_generating', (data: any) => {
+        console.log('[Room] AI generating for:', data.conversationId, 'by user:', data.userId);
+        if (data.conversationId === currentConversation.value?.id) {
+          activeAiRequest.value = { userId: data.userId, messageId: data.messageId };
+          // If we're tracking streaming, update our state
+          if (data.userId !== store.state.user?.id) {
+            // Another user triggered the AI - we should see their message
+            streamingMessageId.value = data.messageId;
+            isStreaming.value = true;
+            autoScrollEnabled.value = true;
+          }
+        }
+      });
+      
+      store.state.wsService.on('ai_finished', (data: any) => {
+        console.log('[Room] AI finished for:', data.conversationId);
+        if (data.conversationId === currentConversation.value?.id) {
+          activeAiRequest.value = null;
+          isAiRequestQueued.value = false;
+        }
+      });
+      
+      store.state.wsService.on('ai_request_queued', (data: any) => {
+        console.log('[Room] AI request queued:', data.reason);
+        if (data.conversationId === currentConversation.value?.id) {
+          isAiRequestQueued.value = true;
+        }
+      });
     }
   });
   
@@ -1379,6 +1494,12 @@ onMounted(async () => {
     await store.loadConversation(route.params.id as string);
     await loadParticipants();
     await loadBookmarks();
+    
+    // Join the room for multi-user support
+    if (store.state.wsService) {
+      store.state.wsService.joinRoom(route.params.id as string);
+    }
+    
     // Scroll to bottom after messages load
     await nextTick();
     // Add small delay for long conversations
@@ -1398,13 +1519,27 @@ onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', updateMobileState);
   }
+  
+  // Leave room when unmounting
+  if (currentConversation.value && store.state.wsService) {
+    store.state.wsService.leaveRoom(currentConversation.value.id);
+  }
 });
 
 // Watch route changes
-watch(() => route.params.id, async (newId) => {
+watch(() => route.params.id, async (newId, oldId) => {
   if (isMobile.value) {
     mobilePanel.value = newId ? 'conversation' : 'sidebar';
   }
+  
+  // Leave old room
+  if (oldId && store.state.wsService) {
+    store.state.wsService.leaveRoom(oldId as string);
+    roomUsers.value = [];
+    typingUsers.value = new Set();
+    activeAiRequest.value = null;
+  }
+  
   if (newId) {
     // Clear selected branch when switching conversations
     if (selectedBranchForParent.value) {
@@ -1414,6 +1549,12 @@ watch(() => route.params.id, async (newId) => {
     await store.loadConversation(newId as string);
     await loadParticipants();
     await loadBookmarks();
+    
+    // Join the room for multi-user support
+    if (store.state.wsService) {
+      store.state.wsService.joinRoom(newId as string);
+    }
+    
     // Ensure DOM is updated before scrolling
     await nextTick();
     // Add small delay for long conversations

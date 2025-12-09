@@ -2,6 +2,17 @@ import type { WsMessage } from '@deprecated-claude/shared';
 
 type EventHandler = (data: any) => void;
 
+export interface RoomUser {
+  userId: string;
+  joinedAt: Date;
+}
+
+export interface ActiveAiRequest {
+  userId: string;
+  messageId: string;
+  startedAt: Date;
+}
+
 export class WebSocketService {
   private ws: WebSocket | null = null;
   private token: string;
@@ -10,6 +21,7 @@ export class WebSocketService {
   private reconnectTimeout: number | null = null;
   private eventHandlers: Map<string, Set<EventHandler>> = new Map();
   private messageQueue: WsMessage[] = [];
+  private currentRoomId: string | null = null;
   
   constructor(token: string) {
     this.token = token;
@@ -129,5 +141,51 @@ export class WebSocketService {
     this.reconnectTimeout = window.setTimeout(() => {
       this.connect();
     }, delay);
+  }
+  
+  // Room management for multi-user conversations
+  joinRoom(conversationId: string): void {
+    if (this.currentRoomId === conversationId) {
+      return; // Already in this room
+    }
+    
+    // Leave current room if any
+    if (this.currentRoomId) {
+      this.leaveRoom(this.currentRoomId);
+    }
+    
+    this.currentRoomId = conversationId;
+    this.sendMessage({
+      type: 'join_room',
+      conversationId
+    } as WsMessage);
+    
+    console.log('[WS] Joined room:', conversationId);
+  }
+  
+  leaveRoom(conversationId: string): void {
+    if (this.currentRoomId !== conversationId) {
+      return; // Not in this room
+    }
+    
+    this.sendMessage({
+      type: 'leave_room',
+      conversationId
+    } as WsMessage);
+    
+    this.currentRoomId = null;
+    console.log('[WS] Left room:', conversationId);
+  }
+  
+  sendTyping(conversationId: string, isTyping: boolean): void {
+    this.sendMessage({
+      type: 'typing',
+      conversationId,
+      isTyping
+    } as WsMessage);
+  }
+  
+  getCurrentRoom(): string | null {
+    return this.currentRoomId;
   }
 }
