@@ -78,8 +78,18 @@
         variant="text"
         density="compact"
         color="error"
-        title="Delete"
+        title="Delete this branch"
         @click="$emit('delete', message.id, currentBranch.id)"
+      />
+      <v-btn
+        v-if="message.branches.length > 1"
+        icon="mdi-delete-sweep-outline"
+        size="x-small"
+        variant="text"
+        density="compact"
+        color="error"
+        title="Delete all branches of this message"
+        @click="$emit('delete-all-branches', message.id)"
       />
     </div>
 
@@ -344,6 +354,7 @@ const emit = defineEmits<{
   edit: [messageId: string, branchId: string, content: string];
   'switch-branch': [messageId: string, branchId: string];
   delete: [messageId: string, branchId: string];
+  'delete-all-branches': [messageId: string];
   'select-as-parent': [messageId: string, branchId: string];
   'stop-auto-scroll': [];
   'bookmark-changed': [];

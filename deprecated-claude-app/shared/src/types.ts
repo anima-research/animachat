@@ -456,7 +456,8 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
       fileType: z.string(),
       content: z.string()
     })).optional(),
-    hiddenFromAi: z.boolean().optional() // If true, message is visible to humans but not included in AI context
+    hiddenFromAi: z.boolean().optional(), // If true, message is visible to humans but not included in AI context
+    samplingBranches: z.number().min(1).max(10).optional() // Number of parallel response branches to generate
   }),
   z.object({
     type: z.literal('regenerate'),
@@ -483,7 +484,8 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     conversationId: z.string().uuid(),
     messageId: z.string().uuid(),
     parentBranchId: z.string().uuid().optional(),
-    responderId: z.string().uuid().optional() // Which assistant should respond
+    responderId: z.string().uuid().optional(), // Which assistant should respond
+    samplingBranches: z.number().min(1).max(10).optional() // Number of parallel response branches to generate
   }),
   z.object({
     type: z.literal('abort'),

@@ -37,6 +37,13 @@
           </template>
         </v-select>
         
+        <div v-if="showGroupChatWarning" class="d-flex align-center mt-1 mb-2">
+          <v-icon size="small" color="warning" class="mr-1">mdi-alert</v-icon>
+          <span class="text-caption text-warning">
+            It's advised to have at least 6 messages before switching to group chat to avoid instability.
+          </span>
+        </div>
+        
         <ModelSelector
           v-if="settings.format === 'standard'"
           v-model="settings.model"
@@ -311,6 +318,41 @@
             </v-slider>
           </div>
           
+          <!-- Sampling Branches -->
+          <div class="mt-4">
+            <div class="d-flex align-center">
+              <v-slider
+                v-model="samplingBranches"
+                :min="1"
+                :max="8"
+                :step="1"
+                thumb-label
+                color="primary"
+                show-ticks="always"
+                tick-size="4"
+              >
+                <template v-slot:label>
+                  Response Samples
+                  <v-tooltip location="top" open-on-click open-on-focus>
+                    <template v-slot:activator="{ props }">
+                      <v-icon
+                        v-bind="props"
+                        size="small"
+                        class="ml-1 tooltip-icon"
+                        role="button"
+                        tabindex="0"
+                        aria-label="Sampling branches help"
+                      >
+                        mdi-help-circle-outline
+                      </v-icon>
+                    </template>
+                    Generate multiple response branches simultaneously for sampling. Each response will be created as a separate branch you can navigate between.
+                  </v-tooltip>
+                </template>
+              </v-slider>
+            </div>
+          </div>
+          
           <!-- Model-Specific Settings (for models with configurableSettings) -->
           <ModelSpecificSettings
             v-if="modelConfigurableSettings.length > 0"
@@ -501,6 +543,7 @@ const props = defineProps<{
   modelValue: boolean;
   conversation: Conversation | null;
   models: Model[];
+  messageCount?: number;
 }>();
 
 const emit = defineEmits<{
@@ -513,6 +556,7 @@ const topPEnabled = ref(false);
 const topKEnabled = ref(false);
 const thinkingEnabled = ref(false);
 const thinkingBudgetTokens = ref(10000);
+const samplingBranches = ref(1);
 
 const contextStrategy = ref('append');
 const rollingMaxTokens = ref(50000);
@@ -531,9 +575,16 @@ const formatOptions = [
   {
     value: 'prefill',
     title: 'Group Chat',
-    description: 'Supports multiple participants with "Name: message" format'
+    description: 'Supports multiple participants with custom names'
   }
 ];
+
+// Show warning when switching to group chat with fewer than 6 messages
+const showGroupChatWarning = computed(() => {
+  return settings.value.format === 'prefill' && 
+         props.conversation?.format !== 'prefill' && 
+         (props.messageCount ?? 0) < 6;
+});
 
 const contextStrategies = [
   {
@@ -632,6 +683,7 @@ watch(() => props.conversation, async (conversation) => {
     topKEnabled.value = conversation.settings?.topK !== undefined;
     thinkingEnabled.value = conversation.settings?.thinking?.enabled || false;
     thinkingBudgetTokens.value = conversation.settings?.thinking?.budgetTokens || 8000;
+    samplingBranches.value = conversation.settings?.samplingBranches || 1;
     
     // Load context management settings
     if (conversation.contextManagement) {
@@ -814,6 +866,7 @@ function resetToDefaults() {
     topKEnabled.value = false;
     thinkingEnabled.value = false;
     thinkingBudgetTokens.value = 10000;
+    samplingBranches.value = 1;
   }
 }
 
@@ -832,6 +885,7 @@ function save() {
     ...(topPEnabled.value && settings.value.settings.topP !== undefined && { topP: settings.value.settings.topP }),
     ...(topKEnabled.value && settings.value.settings.topK !== undefined && { topK: settings.value.settings.topK }),
     ...(thinkingEnabled.value && { thinking: { enabled: true, budgetTokens: thinkingBudgetTokens.value } }),
+    ...(samplingBranches.value > 1 && { samplingBranches: samplingBranches.value }),
     ...(hasModelSpecific && { modelSpecific })
   };
   

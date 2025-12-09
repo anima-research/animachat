@@ -332,6 +332,7 @@
             @edit="editMessage"
             @switch-branch="switchBranch"
             @delete="deleteMessage"
+            @delete-all-branches="deleteAllBranches"
             @select-as-parent="selectBranchAsParent"
             @stop-auto-scroll="stopAutoScroll"
             @bookmark-changed="handleBookmarkChanged"
@@ -585,6 +586,34 @@
               :title="thinkingEnabled ? 'Disable extended thinking' : 'Enable extended thinking'"
             />
             
+            <!-- Sampling branches -->
+            <v-menu location="top">
+              <template v-slot:activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  size="small"
+                  :variant="samplingBranches > 1 ? 'tonal' : 'text'"
+                  :color="samplingBranches > 1 ? 'secondary' : 'grey'"
+                  class="ml-1"
+                  :title="`Generate ${samplingBranches} response${samplingBranches > 1 ? 's' : ''}`"
+                >
+                  <v-icon size="small" class="mr-1">mdi-source-branch</v-icon>
+                  <span v-if="samplingBranches > 1" class="text-caption">{{ samplingBranches }}</span>
+                </v-btn>
+              </template>
+              <v-list density="compact" class="pa-0">
+                <v-list-subheader class="text-caption">Response samples</v-list-subheader>
+                <v-list-item
+                  v-for="n in 8"
+                  :key="n"
+                  :active="samplingBranches === n"
+                  @click="samplingBranches = n"
+                >
+                  <v-list-item-title>{{ n }}{{ n > 1 ? ' branches' : '' }}</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+            
             <!-- Settings -->
             <v-btn
               icon="mdi-cog-outline"
@@ -678,6 +707,7 @@
       v-model="conversationSettingsDialog"
       :conversation="currentConversation"
       :models="store.state.models"
+      :message-count="messages.length"
       @update="updateConversationSettings"
       @update-participants="updateParticipants"
     />
@@ -783,6 +813,7 @@ const typingUsers = ref<Map<string, string>>(new Map()); // Map of userId -> ema
 const activeAiRequest = ref<{ userId: string; messageId: string } | null>(null);
 const isAiRequestQueued = ref(false); // True if our request was queued because AI is already generating
 const hiddenFromAi = ref(false); // Toggle for sending messages hidden from AI
+const samplingBranches = ref(1); // Number of response branches to generate
 
 // Computed: Check if this is a multiuser conversation (shared or has multiple users)
 const isMultiuserConversation = computed(() => {
@@ -1637,9 +1668,10 @@ async function sendMessage() {
   console.log('Current visible messages:', messages.value.length);
   console.log('Selected parent branch:', selectedBranchForParent.value);
   
-  // Capture and reset hiddenFromAi before sending
+  // Capture hiddenFromAi and samplingBranches (don't reset sampling - user may want to continue sampling)
   const messageHiddenFromAi = hiddenFromAi.value;
-  hiddenFromAi.value = false; // Reset for next message
+  const messageSamplingBranches = samplingBranches.value;
+  hiddenFromAi.value = false; // Reset hiddenFromAi for next message (sampling stays)
   
   // Only set streaming state if message will trigger AI generation
   // Hidden messages and messages without responder don't trigger AI
@@ -1677,7 +1709,7 @@ async function sendMessage() {
     // Pass the selected parent branch if one is selected
     const parentBranchId = selectedBranchForParent.value?.branchId;
       
-    await store.sendMessage(content, participantId, responderId, attachmentsCopy, parentBranchId, messageHiddenFromAi);
+    await store.sendMessage(content, participantId, responderId, attachmentsCopy, parentBranchId, messageHiddenFromAi, messageSamplingBranches);
     
     // Clear selection after successful send
     if (selectedBranchForParent.value) {
@@ -1715,8 +1747,8 @@ async function continueGeneration() {
     // Pass the selected parent branch if one is selected
     const parentBranchId = selectedBranchForParent.value?.branchId;
     
-    // Send empty message to trigger AI response
-    await store.continueGeneration(responderId, parentBranchId);
+    // Send empty message to trigger AI response (with sampling if enabled)
+    await store.continueGeneration(responderId, parentBranchId, samplingBranches.value);
     
     // Clear selection after successful continue
     if (selectedBranchForParent.value) {
@@ -2335,6 +2367,27 @@ async function switchToGroupChat() {
 async function deleteMessage(messageId: string, branchId: string) {
   if (confirm('Are you sure you want to delete this message and all its replies?')) {
     await store.deleteMessage(messageId, branchId);
+  }
+}
+
+async function deleteAllBranches(messageId: string) {
+  const message = messages.value.find(m => m.id === messageId);
+  if (!message) return;
+  
+  const branchCount = message.branches.length;
+  if (branchCount <= 1) {
+    // Only one branch, just delete normally
+    if (confirm('Are you sure you want to delete this message and all its replies?')) {
+      await store.deleteMessage(messageId, message.activeBranchId);
+    }
+    return;
+  }
+  
+  if (confirm(`Delete all ${branchCount} versions of this message and their replies?`)) {
+    // Delete all branches (delete in reverse order to avoid index issues)
+    for (const branch of [...message.branches].reverse()) {
+      await store.deleteMessage(messageId, branch.id);
+    }
   }
 }
 

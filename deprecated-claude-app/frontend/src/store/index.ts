@@ -47,8 +47,8 @@ export interface Store {
   duplicateConversation(id: string): Promise<Conversation>;
   
   loadMessages(conversationId: string): Promise<void>;
-  sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean): Promise<void>;
-  continueGeneration(responderId?: string, explicitParentBranchId?: string): Promise<void>;
+  sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number): Promise<void>;
+  continueGeneration(responderId?: string, explicitParentBranchId?: string, samplingBranches?: number): Promise<void>;
   regenerateMessage(messageId: string, branchId: string): Promise<void>;
   abortGeneration(): void;
   editMessage(messageId: string, branchId: string, content: string, responderId?: string): Promise<void>;
@@ -398,7 +398,7 @@ export function createStore(): {
       }
     },
     
-    async sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean) {
+    async sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number) {
       if (!state.currentConversation || !state.wsService) return;
       
       let parentBranchId: string | undefined;
@@ -427,7 +427,8 @@ export function createStore(): {
         participantId,
         responderId,
         attachments,
-        hiddenFromAi // If true, message is visible to humans but excluded from AI context
+        hiddenFromAi, // If true, message is visible to humans but excluded from AI context
+        samplingBranches: samplingBranches && samplingBranches > 1 ? samplingBranches : undefined
       };
       
       console.log('Sending message with attachments:', attachments?.length || 0);
@@ -445,7 +446,7 @@ export function createStore(): {
       }
     },
     
-    async continueGeneration(responderId?: string, explicitParentBranchId?: string) {
+    async continueGeneration(responderId?: string, explicitParentBranchId?: string, samplingBranches?: number) {
       if (!state.currentConversation || !state.wsService) return;
       
       let parentBranchId: string | undefined;
@@ -470,8 +471,9 @@ export function createStore(): {
         conversationId: state.currentConversation.id,
         messageId: crypto.randomUUID(),
         parentBranchId,
-        responderId
-      });
+        responderId,
+        samplingBranches: samplingBranches && samplingBranches > 1 ? samplingBranches : undefined
+      } as any);
       
       // Update the conversation's updatedAt timestamp locally for immediate sorting
       const conv = state.conversations.find(c => c.id === state.currentConversation!.id);
