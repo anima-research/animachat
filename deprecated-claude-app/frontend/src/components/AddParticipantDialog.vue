@@ -5,9 +5,22 @@
     max-width="400"
   >
     <v-card>
-      <v-card-title>Add Participant</v-card-title>
+      <v-card-title>{{ isStandardConversation ? 'Switch to Group Chat' : 'Add Participant' }}</v-card-title>
       
       <v-card-text>
+        <!-- Notice for standard conversations -->
+        <v-alert
+          v-if="isStandardConversation"
+          type="info"
+          variant="tonal"
+          density="compact"
+          class="mb-4"
+        >
+          <template v-slot:text>
+            Adding a participant will convert this to a group chat. The current model will become a participant, and you'll be able to have multiple models respond.
+          </template>
+        </v-alert>
+        
         <v-radio-group
           v-model="newParticipant.type"
           inline
@@ -68,7 +81,7 @@
           :disabled="!isValid"
           @click="confirm"
         >
-          Add
+          {{ isStandardConversation ? 'Convert & Add' : 'Add' }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -84,6 +97,7 @@ const props = defineProps<{
   modelValue: boolean;
   models: Model[];
   conversationId: string;
+  isStandardConversation?: boolean;
 }>();
 
 const emit = defineEmits<{

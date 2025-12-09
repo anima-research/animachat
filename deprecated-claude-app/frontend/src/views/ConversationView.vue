@@ -357,65 +357,41 @@
         
         <!-- MOBILE CONTROLS -->
         <template v-if="isMobile">
-          <!-- Model Pill Bar (for multi-participant conversations) - horizontal scroll on mobile -->
+          <!-- Model Pill Bar - for ALL conversations now -->
           <ModelPillBar
-            v-if="currentConversation.format !== 'standard'"
             :participants="participantsByLastSpoken"
-            :suggested-models="suggestedNonParticipantModels"
+            :suggested-models="suggestedModelsForPillBar"
             :selected-responder-id="selectedResponder"
             :disabled="isStreaming"
+            :single-model="currentModel"
+            :is-standard-conversation="currentConversation.format === 'standard'"
             class="mb-2"
             @select-responder="(p) => selectedResponder = p.id"
             @quick-send="triggerParticipantResponse"
-            @add-model="addParticipantDialog = true"
+            @add-model="handleAddModel"
             @add-suggested-model="triggerModelResponse"
             @quick-send-model="triggerModelResponse"
+            @open-settings="conversationSettingsDialog = true"
           />
-          
-          <!-- Standard conversation model chip -->
-          <div v-if="currentConversation.format === 'standard'" class="mb-2 d-flex justify-center">
-            <v-chip 
-              variant="outlined"
-              :color="getModelColor(currentConversation?.model)"
-              @click="conversationSettingsDialog = true"
-            >
-              {{ currentModel?.shortName || currentModel?.displayName || 'Model' }}
-              <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
-            </v-chip>
-          </div>
         </template>
         
         <!-- DESKTOP CONTROLS -->
         <template v-else>
-          <!-- Model Pill Bar (for multi-participant conversations) -->
+          <!-- Model Pill Bar - for ALL conversations now -->
           <ModelPillBar
-            v-if="currentConversation.format !== 'standard'"
             :participants="participantsByLastSpoken"
-            :suggested-models="suggestedNonParticipantModels"
+            :suggested-models="suggestedModelsForPillBar"
             :selected-responder-id="selectedResponder"
             :disabled="isStreaming"
+            :single-model="currentModel"
+            :is-standard-conversation="currentConversation.format === 'standard'"
             @select-responder="(p) => selectedResponder = p.id"
             @quick-send="triggerParticipantResponse"
-            @add-model="addParticipantDialog = true"
+            @add-model="handleAddModel"
             @add-suggested-model="triggerModelResponse"
             @quick-send-model="triggerModelResponse"
+            @open-settings="conversationSettingsDialog = true"
           />
-          
-          <!-- Standard conversation model chip -->
-          <div v-if="currentConversation.format === 'standard'" class="mb-2 d-flex justify-center">
-            <v-chip 
-              class="clickable-chip" 
-              variant="outlined"
-              :color="getModelColor(currentConversation?.model)"
-              @click="conversationSettingsDialog = true"
-            >
-              {{ currentModel?.displayName || 'Select Model' }}
-              <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
-              <v-tooltip activator="parent" location="bottom">
-                Click to change model and settings
-              </v-tooltip>
-            </v-chip>
-          </div>
         </template>
         
         <!-- Attachments display -->
@@ -745,6 +721,7 @@
       v-model="addParticipantDialog"
       :models="store.state.models"
       :conversation-id="currentConversation?.id || ''"
+      :is-standard-conversation="currentConversation?.format === 'standard'"
       @add="handleAddParticipant"
     />
   </v-layout>
@@ -1149,6 +1126,38 @@ const suggestedNonParticipantModels = computed(() => {
     
   return suggestedModelIds
     .filter(modelId => !participantModelIds.has(modelId))
+    .map(modelId => store.state.models.find(m => m.id === modelId))
+    .filter(Boolean);
+});
+
+// Suggested models for the pill bar (works for both standard and group chat)
+const suggestedModelsForPillBar = computed(() => {
+  if (!currentConversation.value) return [];
+  
+  const suggestedModelIds = systemConfig.value.groupChatSuggestedModels || [];
+  
+  // For standard conversations, exclude the current model
+  // For group chats, exclude all participant models
+  const excludeModelIds = new Set<string>();
+  
+  if (currentConversation.value.format === 'standard') {
+    if (currentConversation.value.model) {
+      excludeModelIds.add(currentConversation.value.model);
+    }
+  } else {
+    participants.value
+      .filter(p => p.type === 'assistant')
+      .forEach(p => {
+        if (p.model) excludeModelIds.add(p.model);
+      });
+  }
+  
+  // Limit suggestions to avoid clutter
+  const maxSuggestions = currentConversation.value.format === 'standard' ? 3 : (participants.value.length > 3 ? 0 : 3);
+  
+  return suggestedModelIds
+    .filter(modelId => !excludeModelIds.has(modelId))
+    .slice(0, maxSuggestions)
     .map(modelId => store.state.models.find(m => m.id === modelId))
     .filter(Boolean);
 });
@@ -2634,10 +2643,41 @@ async function loadParticipants() {
   }
 }
 
+function handleAddModel() {
+  // Opens the add participant dialog
+  // For standard conversations, this will trigger conversion to group chat
+  addParticipantDialog.value = true;
+}
+
 async function handleAddParticipant(participant: { name: string; type: 'user' | 'assistant'; model?: string }) {
   if (!currentConversation.value) return;
   
+  // If this is a standard conversation, we need to convert to group chat first
+  const isStandard = currentConversation.value.format === 'standard';
+  
   try {
+    if (isStandard) {
+      // Convert to group chat format
+      console.log('[handleAddParticipant] Converting to group chat format');
+      await updateConversationSettings({ format: 'prefill' });
+      
+      // Create a participant for the current model
+      const currentModelId = currentConversation.value.model;
+      const currentModelData = store.state.models.find(m => m.id === currentModelId);
+      
+      if (currentModelData) {
+        const currentModelResponse = await api.post('/participants', {
+          conversationId: currentConversation.value.id,
+          name: currentModelData.shortName || currentModelData.displayName,
+          type: 'assistant',
+          model: currentModelId
+        });
+        participants.value.push(currentModelResponse.data);
+        console.log('[handleAddParticipant] Added current model as participant:', currentModelResponse.data);
+      }
+    }
+    
+    // Now add the new participant
     const response = await api.post('/participants', {
       conversationId: currentConversation.value.id,
       name: participant.name,

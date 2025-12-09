@@ -4,37 +4,53 @@
     <div 
       class="pill add-pill"
       @click="$emit('add-model')"
-      title="Add model to conversation"
+      :title="isStandardConversation ? 'Add model and convert to group chat' : 'Add model to conversation'"
     >
       <v-icon size="small">mdi-plus</v-icon>
     </div>
 
-    <!-- Participant pills -->
+    <!-- Single model pill for standard conversations -->
     <div
-      v-for="participant in participants"
-      :key="participant.id"
-      class="pill"
-      :class="{ 
-        'selected': participant.id === selectedResponderId,
-        'disabled': disabled
-      }"
-      :style="getPillStyle(participant)"
-      @click="selectResponder(participant)"
+      v-if="isStandardConversation && singleModel"
+      class="pill selected"
+      :style="getSingleModelStyle()"
+      @click="$emit('open-settings')"
     >
-      <v-icon size="x-small" class="pill-icon">{{ getParticipantIcon(participant) }}</v-icon>
-      <span class="pill-name">{{ getDisplayName(participant) }}</span>
-      <span 
-        class="pill-send"
-        :class="{ 'selected': participant.id === selectedResponderId }"
-        @click.stop="quickSend(participant)"
-        title="Quick send with this model"
-      >
-        <v-icon size="x-small">mdi-send</v-icon>
+      <v-icon size="x-small" class="pill-icon">{{ getModelIcon(singleModel) }}</v-icon>
+      <span class="pill-name">{{ singleModel.shortName || singleModel.displayName }}</span>
+      <span class="pill-settings" @click.stop="$emit('open-settings')" title="Model settings">
+        <v-icon size="x-small">mdi-cog</v-icon>
       </span>
     </div>
 
+    <!-- Participant pills (for group chat) -->
+    <template v-if="!isStandardConversation">
+      <div
+        v-for="participant in participants"
+        :key="participant.id"
+        class="pill"
+        :class="{ 
+          'selected': participant.id === selectedResponderId,
+          'disabled': disabled
+        }"
+        :style="getPillStyle(participant)"
+        @click="selectResponder(participant)"
+      >
+        <v-icon size="x-small" class="pill-icon">{{ getParticipantIcon(participant) }}</v-icon>
+        <span class="pill-name">{{ getDisplayName(participant) }}</span>
+        <span 
+          class="pill-send"
+          :class="{ 'selected': participant.id === selectedResponderId }"
+          @click.stop="quickSend(participant)"
+          title="Quick send with this model"
+        >
+          <v-icon size="x-small">mdi-send</v-icon>
+        </span>
+      </div>
+    </template>
+
     <!-- Divider -->
-    <div v-if="participants.length > 0 && suggestedModels.length > 0" class="pill-divider" />
+    <div v-if="(participants.length > 0 || isStandardConversation) && suggestedModels.length > 0" class="pill-divider" />
 
     <!-- Suggested model pills (not yet in conversation) -->
     <div
@@ -42,11 +58,12 @@
       :key="model.id"
       class="pill suggested"
       :class="{ 'disabled': disabled }"
-      @click="$emit('add-suggested-model', model)"
+      @click="isStandardConversation ? $emit('add-model') : $emit('add-suggested-model', model)"
+      :title="isStandardConversation ? 'Add model and convert to group chat' : 'Add to conversation'"
     >
       <v-icon size="x-small" class="pill-icon">{{ getProviderIcon(model.provider) }}</v-icon>
       <span class="pill-name">{{ model.shortName || model.displayName }}</span>
-      <span class="pill-send" @click.stop="$emit('quick-send-model', model)">
+      <span class="pill-send" @click.stop="isStandardConversation ? $emit('add-model') : $emit('quick-send-model', model)">
         <v-icon size="x-small">mdi-send</v-icon>
       </span>
     </div>
@@ -70,6 +87,9 @@ const props = defineProps<{
   suggestedModels: Model[];
   selectedResponderId: string;
   disabled?: boolean;
+  // For one-on-one conversations
+  singleModel?: Model | null;
+  isStandardConversation?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -78,6 +98,7 @@ const emit = defineEmits<{
   'add-model': [];
   'add-suggested-model': [model: Model];
   'quick-send-model': [model: Model];
+  'open-settings': [];
 }>();
 
 const isMobile = computed(() => {
@@ -113,6 +134,28 @@ function getPillStyle(participant: Participant) {
     '--pill-text': isSelected ? '#fff' : color,
     borderColor: color
   };
+}
+
+function getSingleModelStyle() {
+  const color = getModelColor(props.singleModel?.id || '');
+  return {
+    '--pill-color': color,
+    '--pill-bg': color,
+    '--pill-text': '#fff',
+    borderColor: color
+  };
+}
+
+function getModelIcon(model: Model): string {
+  const id = model.id?.toLowerCase() || '';
+  if (id.includes('opus')) return 'mdi-star-four-points';
+  if (id.includes('sonnet')) return 'mdi-star-outline';
+  if (id.includes('haiku')) return 'mdi-feather';
+  if (id.includes('claude')) return 'mdi-robot';
+  if (id.includes('gpt')) return 'mdi-creation';
+  if (id.includes('gemini')) return 'mdi-diamond-stone';
+  if (id.includes('llama')) return 'mdi-llama';
+  return 'mdi-robot';
 }
 
 function getParticipantIcon(participant: Participant): string {
@@ -243,6 +286,25 @@ function getProviderIcon(provider: string): string {
 
 .pill-send.selected {
   background: rgba(0,0,0,0.2);
+}
+
+.pill-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.2);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: inherit;
+}
+
+.pill-settings:hover {
+  background: rgba(0,0,0,0.35);
+  transform: scale(1.1);
 }
 
 .pill-divider {
