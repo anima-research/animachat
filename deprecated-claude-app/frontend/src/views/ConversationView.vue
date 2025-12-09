@@ -1445,12 +1445,12 @@ watch(messagesContainer, (container) => {
         // Check if user has scrolled away from bottom - disable auto-scroll if so
         if (isStreaming.value) {
           const scrollBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-          // If more than 100px from bottom, user has scrolled up - disable auto-scroll
-          if (scrollBottom > 100) {
+          // If even 1px from bottom, user has scrolled up - disable auto-scroll
+          if (scrollBottom > 1) {
             autoScrollEnabled.value = false;
           }
-          // If user scrolls back to bottom (within 50px), re-enable
-          else if (scrollBottom < 50) {
+          // If user scrolls back to absolute bottom, re-enable
+          else if (scrollBottom <= 1) {
             autoScrollEnabled.value = true;
           }
         }
