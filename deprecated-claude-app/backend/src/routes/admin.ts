@@ -375,23 +375,33 @@ export function adminRouter(db: Database): Router {
       const beforeDate = req.body.beforeDate ? new Date(req.body.beforeDate) : new Date('2024-12-08T00:00:00Z');
       
       const users = await db.getAllUsers();
+      console.log(`[Admin] verify-legacy-users: Found ${users.length} total users, checking against date ${beforeDate.toISOString()}`);
+      
       let verifiedCount = 0;
       const verifiedUsers: string[] = [];
+      const skippedUsers: { email: string; reason: string }[] = [];
       
       for (const user of users) {
         const createdAt = user.createdAt instanceof Date ? user.createdAt : new Date(user.createdAt);
         
-        if (createdAt < beforeDate && !user.emailVerified) {
+        if (createdAt >= beforeDate) {
+          skippedUsers.push({ email: user.email, reason: `created ${createdAt.toISOString()} >= ${beforeDate.toISOString()}` });
+        } else if (user.emailVerified) {
+          skippedUsers.push({ email: user.email, reason: 'already verified' });
+        } else {
           await db.verifyUserManually(user.id);
           verifiedCount++;
           verifiedUsers.push(user.email);
         }
       }
       
+      console.log(`[Admin] verify-legacy-users: Verified ${verifiedCount}, skipped:`, skippedUsers);
+      
       res.json({ 
         success: true, 
         message: `Verified ${verifiedCount} legacy user${verifiedCount !== 1 ? 's' : ''}`,
-        verifiedUsers
+        verifiedUsers,
+        debug: { totalUsers: users.length, skipped: skippedUsers }
       });
     } catch (error) {
       console.error('Error verifying legacy users:', error);

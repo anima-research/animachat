@@ -586,6 +586,14 @@ async function verifyLegacyUsers() {
     if (response.data.verifiedUsers?.length > 0) {
       successMessage.value += `: ${response.data.verifiedUsers.join(', ')}`;
     }
+    // Show debug info if present
+    if (response.data.debug) {
+      const debug = response.data.debug;
+      console.log('[Admin] Legacy users debug:', debug);
+      if (debug.skipped?.length > 0) {
+        successMessage.value += ` (${debug.totalUsers} total, skipped: ${debug.skipped.map((s: any) => `${s.email}: ${s.reason}`).join('; ')})`;
+      }
+    }
   } catch (e: any) {
     error.value = e?.response?.data?.error || 'Failed to verify legacy users';
   } finally {
