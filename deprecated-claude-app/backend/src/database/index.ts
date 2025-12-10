@@ -644,9 +644,14 @@ export class Database {
             console.error('Skipping corrupted user_created event - missing user data');
             return;
           }
+          // Legacy users (created before email verification was added) default to verified
+          // This prevents breaking existing accounts when the feature was introduced
+          const emailVerified = user.emailVerified !== undefined ? user.emailVerified : true;
           const userWithDates = {
             ...user,
-            createdAt: new Date(user.createdAt)
+            createdAt: new Date(user.createdAt),
+            emailVerified,
+            emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : (emailVerified ? new Date(user.createdAt) : undefined)
           };
           this.users.set(user.id, userWithDates);
           this.usersByEmail.set(user.email, user.id);
@@ -1077,6 +1082,58 @@ export class Database {
         const userModelIds = this.userModelsByUser.get(userId);
         if (userModelIds) {
           userModelIds.delete(modelId);
+        }
+        break;
+      }
+
+      // Email verification events
+      case 'email_verified':
+      case 'email_verified_manually': {
+        const { userId, verifiedAt } = event.data;
+        const user = this.users.get(userId);
+        if (user) {
+          user.emailVerified = true;
+          user.emailVerifiedAt = verifiedAt ? new Date(verifiedAt) : new Date(event.timestamp);
+          this.users.set(userId, user);
+          
+          // Clean up any lingering verification tokens for this user
+          for (const [token, data] of this.emailVerificationTokens.entries()) {
+            if (data.userId === userId) {
+              this.emailVerificationTokens.delete(token);
+            }
+          }
+        }
+        break;
+      }
+
+      // Email verification token events - restore tokens that haven't expired
+      case 'email_verification_token_created': {
+        const { token, userId, expiresAt } = event.data;
+        const expiry = new Date(expiresAt);
+        // Only restore if not expired
+        if (expiry > new Date()) {
+          this.emailVerificationTokens.set(token, { userId, expiresAt: expiry });
+        }
+        break;
+      }
+      
+      case 'password_reset_token_created': {
+        const { token, userId, expiresAt } = event.data;
+        const expiry = new Date(expiresAt);
+        // Only restore if not expired
+        if (expiry > new Date()) {
+          this.passwordResetTokens.set(token, { userId, expiresAt: expiry });
+        }
+        break;
+      }
+      
+      case 'password_reset': {
+        // Password was reset - clean up any lingering reset tokens for this user
+        const { userId } = event.data;
+        for (const [token, data] of this.passwordResetTokens.entries()) {
+          if (data.userId === userId) {
+            this.passwordResetTokens.delete(token);
+          }
         }
         break;
       }

@@ -94,7 +94,8 @@
           
           <div v-if="requiresVerification" class="verification-notice">
             <span class="notice-icon">✉</span>
-            <span>Please verify your email address. Check your inbox for a verification link.</span>
+            <span v-if="verificationEmailSent">Please verify your email address. Check your inbox for a verification link.</span>
+            <span v-else>Please verify your email address. We couldn't send the email automatically - click resend.</span>
             <button type="button" class="link-button" @click="resendVerification">resend</button>
           </div>
           
@@ -223,6 +224,7 @@ const error = ref('');
 const showPassword = ref(false);
 const requiresVerification = ref(false);
 const verificationEmail = ref('');
+const verificationEmailSent = ref(true); // Track if the verification email was actually sent
 
 // Forgot password state
 const showForgotPassword = ref(false);
@@ -315,6 +317,7 @@ async function submit() {
     if (err.response?.data?.requiresVerification) {
       requiresVerification.value = true;
       verificationEmail.value = err.response.data.email || email.value;
+      verificationEmailSent.value = err.response.data.emailSent !== false;
       error.value = '';
     } else {
       error.value = err.response?.data?.error || 'connection.failed';
@@ -328,16 +331,25 @@ async function resendVerification() {
   if (!verificationEmail.value && !email.value) return;
   
   try {
-    await fetch('/api/auth/resend-verification', {
+    const response = await fetch('/api/auth/resend-verification', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: verificationEmail.value || email.value })
     });
+    
+    const data = await response.json();
+    
+    if (!response.ok || data.sent === false) {
+      error.value = data.error || 'Failed to send verification email. Please try again.';
+      return;
+    }
+    
     error.value = '';
     requiresVerification.value = false;
     router.push({ path: '/verify-email', query: { email: verificationEmail.value || email.value } });
   } catch (err) {
     console.error('Failed to resend verification:', err);
+    error.value = 'Failed to send verification email. Please try again.';
   }
 }
 

@@ -26,9 +26,23 @@
       <div v-else-if="state === 'error'" class="error-state">
         <div class="icon">✗</div>
         <p>{{ errorMessage }}</p>
+        <div class="resend-form">
+          <p class="sub">Enter your email to request a new verification link:</p>
+          <input 
+            v-model="email" 
+            type="email" 
+            placeholder="your@email.com"
+            class="email-input"
+          />
+        </div>
         <div class="actions">
-          <button class="btn-primary" @click="resendVerification">resend.verification</button>
+          <button class="btn-primary" @click="resendVerification" :disabled="resending || !email">
+            {{ resending ? 'sending...' : 'resend.verification' }}
+          </button>
           <button class="btn-secondary" @click="$router.push('/login')">back.to.login</button>
+        </div>
+        <div v-if="resendMessage" class="message" :class="{ success: !resendError }">
+          {{ resendMessage }}
         </div>
       </div>
       
@@ -116,7 +130,15 @@ async function resendVerification() {
   resendMessage.value = '';
   
   try {
-    await api.post('/auth/resend-verification', { email: email.value });
+    const response = await api.post('/auth/resend-verification', { email: email.value });
+    
+    // Check if email was actually sent (handles 200 OK but sent: false case)
+    if (response.data.sent === false) {
+      resendError.value = true;
+      resendMessage.value = response.data.error || 'Failed to send verification email. Please try again.';
+      return;
+    }
+    
     resendError.value = false;
     resendMessage.value = 'Verification email sent! Please check your inbox.';
   } catch (error: any) {
@@ -243,6 +265,37 @@ async function resendVerification() {
 .pending .icon {
   color: #8b7aa6;
   font-size: 36px;
+}
+
+.resend-form {
+  margin: 20px 0;
+  text-align: center;
+}
+
+.resend-form .sub {
+  margin-bottom: 15px;
+}
+
+.email-input {
+  background: rgba(8, 8, 12, 0.8);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #fafaf8;
+  padding: 12px 15px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  outline: none;
+  transition: all 0.2s;
+  width: 100%;
+  max-width: 280px;
+}
+
+.email-input:focus {
+  border-color: rgba(139, 122, 166, 0.5);
+  background: rgba(5, 5, 10, 0.95);
+}
+
+.email-input::placeholder {
+  color: rgba(255,255,255,0.3);
 }
 
 p {
