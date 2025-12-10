@@ -28,6 +28,16 @@ export class AnthropicService {
       outputTokens: number;
       cacheCreationInputTokens: number;
       cacheReadInputTokens: number;
+    },
+    rawRequest?: {
+      model: string;
+      system?: string;
+      messages: any[];
+      max_tokens: number;
+      temperature?: number;
+      top_p?: number;
+      top_k?: number;
+      stop_sequences?: string[];
     }
   }> {
     // Demo mode - simulate streaming response
@@ -46,6 +56,14 @@ export class AnthropicService {
       
       // Debug logging
       console.log(`Total messages to Anthropic: ${anthropicMessages.length}`);
+      console.log('[DEBUG] Message 0 role:', anthropicMessages[0]?.role, 'content type:', typeof anthropicMessages[0]?.content);
+      if (anthropicMessages.length > 1) {
+        console.log('[DEBUG] Message 1 role:', anthropicMessages[1]?.role, 'content type:', typeof anthropicMessages[1]?.content, 'is array:', Array.isArray(anthropicMessages[1]?.content));
+        if (Array.isArray(anthropicMessages[1]?.content)) {
+          console.log('[DEBUG] Message 1 has', anthropicMessages[1].content.length, 'content blocks');
+          console.log('[DEBUG] First block:', JSON.stringify(anthropicMessages[1].content[0]).substring(0, 300));
+        }
+      }
       if (anthropicMessages.length > 160) {
         console.log(`Message 160-165 content lengths:`, 
           anthropicMessages.slice(160, 165).map((m, i) => ({
@@ -333,13 +351,23 @@ export class AnthropicService {
         }
       }
       
-      // Return actual usage metrics from Anthropic
+      // Return actual usage metrics from Anthropic and raw request
       return {
         usage: {
           inputTokens: usage.input_tokens || 0,
           outputTokens: usage.output_tokens || 0,
           cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
           cacheReadInputTokens: cacheMetrics.cacheReadInputTokens
+        },
+        rawRequest: {
+          model: requestParams.model,
+          system: requestParams.system,
+          messages: anthropicMessages,
+          max_tokens: requestParams.max_tokens,
+          temperature: requestParams.temperature,
+          top_p: requestParams.top_p,
+          top_k: requestParams.top_k,
+          stop_sequences: requestParams.stop_sequences
         }
       };
     } catch (error) {

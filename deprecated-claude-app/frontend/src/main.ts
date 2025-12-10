@@ -23,6 +23,7 @@ import SharedView from './views/SharedView.vue';
 import ModelTestView from './views/ModelTestView.vue';
 import ModelPricingView from './views/ModelPricingView.vue';
 import AdminView from './views/AdminView.vue';
+import PersonasView from './views/PersonasView.vue';
 import VerifyEmailView from './views/VerifyEmailView.vue';
 import ResetPasswordView from './views/ResetPasswordView.vue';
 
@@ -100,6 +101,12 @@ const router = createRouter({
       path: '/admin',
       name: 'admin',
       component: AdminView,
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/personas',
+      name: 'personas',
+      component: PersonasView,
       meta: { requiresAuth: true },
     },
     {

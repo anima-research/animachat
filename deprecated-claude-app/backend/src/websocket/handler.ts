@@ -206,11 +206,11 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
 
       switch (message.type) {
         case 'chat':
-          await handleChatMessage(ws, message, db, inferenceService);
+          await handleChatMessage(ws, message, db, inferenceService, baseInferenceService);
           break;
           
         case 'regenerate':
-          await handleRegenerate(ws, message, db, inferenceService);
+          await handleRegenerate(ws, message, db, inferenceService, baseInferenceService);
           break;
           
         case 'edit':
@@ -347,7 +347,8 @@ async function handleChatMessage(
   ws: AuthenticatedWebSocket,
   message: Extract<WsMessage, { type: 'chat' }>,
   db: Database,
-  inferenceService: EnhancedInferenceService
+  inferenceService: EnhancedInferenceService,
+  baseInferenceService: InferenceService
 ) {
   if (!ws.userId) return;
 
@@ -792,11 +793,72 @@ async function handleChatMessage(
     
     // Run all branches in parallel
     await Promise.all(
-      branchesToGenerate.map((branch, index) => 
+      branchesToGenerate.map((branch, index) =>
         runBranchInference(branch.branchId, index)
       )
     );
-    
+
+    // Capture debug request/response for researchers
+    console.log('[DEBUG CAPTURE] Starting debug data capture...');
+    try {
+      // Get the raw API request that was just sent
+      const rawRequest = baseInferenceService.lastRawRequest;
+      console.log(`[DEBUG CAPTURE] Raw request available: ${!!rawRequest}`);
+
+      if (rawRequest) {
+        // Store debug data on each generated branch
+        console.log(`[DEBUG CAPTURE] Processing ${branchesToGenerate.length} branches`);
+        for (const branch of branchesToGenerate) {
+          const branchObj = assistantMessage.branches.find((b: any) => b.id === branch.branchId);
+          console.log(`[DEBUG CAPTURE] Branch ${branch.branchId}: branchObj found = ${!!branchObj}`);
+          if (branchObj) {
+            // Store the raw API request
+            const debugRequest = {
+              ...rawRequest,
+              provider: modelConfig.provider,
+              settings: inferenceSettings
+            };
+
+            // Store the response (content is already in the branch)
+            const debugResponse = {
+              content: branchObj.content,
+              contentBlocks: branchObj.contentBlocks,
+              model: branchObj.model
+            };
+
+            console.log(`[DEBUG CAPTURE] Updating message branch ${branch.branchId}...`);
+            await db.updateMessageBranch(
+              assistantMessage.id,
+              conversation.userId,
+              branch.branchId,
+              {
+                debugRequest,
+                debugResponse
+              }
+            );
+            console.log(`[DEBUG CAPTURE] Branch ${branch.branchId} updated successfully`);
+
+            // Send update to frontend so bug icon appears immediately
+            const updatedMessage = await db.getMessage(assistantMessage.id, conversation.id, conversation.userId);
+            if (updatedMessage) {
+              const updateEvent = {
+                type: 'message_edited',
+                message: updatedMessage
+              };
+              ws.send(JSON.stringify(updateEvent));
+              roomManager.broadcastToRoom(conversation.id, updateEvent, ws);
+            }
+          }
+        }
+        console.log('[DEBUG CAPTURE] Debug data capture complete');
+      } else {
+        console.log('[DEBUG CAPTURE] No raw request available (non-Anthropic provider?)');
+      }
+    } catch (debugError) {
+      console.error('[DEBUG CAPTURE] Failed to capture debug data:', debugError);
+      // Don't fail the whole request if debug capture fails
+    }
+
     // Update conversation timestamp after all branches complete
     await db.updateConversation(conversation.id, conversation.userId, { updatedAt: new Date() });
     
@@ -876,7 +938,8 @@ async function handleRegenerate(
   ws: AuthenticatedWebSocket,
   message: Extract<WsMessage, { type: 'regenerate' }>,
   db: Database,
-  inferenceService: EnhancedInferenceService
+  inferenceService: EnhancedInferenceService,
+  baseInferenceService: InferenceService
 ) {
   if (!ws.userId) return;
 
@@ -1098,10 +1161,69 @@ async function handleRegenerate(
       endGeneration(conversation.userId, conversation.id);
       roomManager.endAiRequest(message.conversationId);
     }
+
+    // Capture debug request/response for researchers
+    console.log('[DEBUG CAPTURE] Starting debug data capture for regenerate...');
+    try {
+      // Get the raw API request that was just sent
+      const rawRequest = baseInferenceService.lastRawRequest;
+      console.log(`[DEBUG CAPTURE] Raw request available: ${!!rawRequest}`);
+
+      if (rawRequest) {
+        // Store debug data on the regenerated branch
+        const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
+        console.log(`[DEBUG CAPTURE] Branch ${updatedMessage.activeBranchId}: branchObj found = ${!!currentBranch}`);
+
+        if (currentBranch) {
+          // Store the raw API request
+          const debugRequest = {
+            ...rawRequest,
+            provider: modelConfig.provider,
+            settings: responderSettings
+          };
+
+          // Store the response (content is already in the branch)
+          const debugResponse = {
+            content: currentBranch.content,
+            contentBlocks: currentBranch.contentBlocks,
+            model: currentBranch.model
+          };
+
+          console.log(`[DEBUG CAPTURE] Updating message branch ${updatedMessage.activeBranchId}...`);
+          await db.updateMessageBranch(
+            updatedMessage.id,
+            conversation.userId,
+            updatedMessage.activeBranchId,
+            {
+              debugRequest,
+              debugResponse
+            }
+          );
+          console.log(`[DEBUG CAPTURE] Branch ${updatedMessage.activeBranchId} updated successfully`);
+
+          // Send update to frontend so bug icon appears immediately
+          const refreshedMessage = await db.getMessage(updatedMessage.id, conversation.id, conversation.userId);
+          if (refreshedMessage) {
+            const updateEvent = {
+              type: 'message_edited',
+              message: refreshedMessage
+            };
+            ws.send(JSON.stringify(updateEvent));
+            roomManager.broadcastToRoom(conversation.id, updateEvent, ws);
+          }
+        }
+        console.log('[DEBUG CAPTURE] Debug data capture complete for regenerate');
+      } else {
+        console.log('[DEBUG CAPTURE] No raw request available (non-Anthropic provider?)');
+      }
+    } catch (debugError) {
+      console.error('[DEBUG CAPTURE] Failed to capture debug data:', debugError);
+      // Don't fail the whole request if debug capture fails
+    }
   } catch (error) {
     endGeneration(conversation.userId, conversation.id);
     roomManager.endAiRequest(message.conversationId);
-    
+
     // Check if this was an abort
     if (error instanceof Error && error.message === 'Generation aborted') {
       console.log(`[Abort] Regeneration was aborted for conversation ${message.conversationId}`);

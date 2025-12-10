@@ -1,4 +1,4 @@
-import { User, Conversation, Message, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite } from '@deprecated-claude/shared';
+import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -11,7 +11,19 @@ import { BulkEventStore } from './bulk-event-store.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { SharesStore, SharedConversation } from './shares.js';
 import { CollaborationStore } from './collaboration.js';
+import { PersonaStore } from './persona.js';
 import { SharePermission, ConversationShare, canChat, canDelete } from '@deprecated-claude/shared';
+import {
+  Persona,
+  PersonaHistoryBranch,
+  PersonaParticipation,
+  PersonaShare,
+  PersonaPermission,
+  CreatePersonaRequest,
+  UpdatePersonaRequest,
+  PersonaJoinRequest,
+  ForkHistoryBranchRequest
+} from '@deprecated-claude/shared';
 import { encryption } from '../utils/encryption.js';
 
 // Metrics interface for tracking token usage
@@ -107,6 +119,7 @@ export class Database {
   private conversationEventStore: BulkEventStore; // per conversation event store
   private sharesStore: SharesStore;
   private collaborationStore: CollaborationStore;
+  private personaStore: PersonaStore;
   private initialized: boolean = false;
 
   constructor() {
@@ -116,6 +129,7 @@ export class Database {
 
     this.sharesStore = new SharesStore();
     this.collaborationStore = new CollaborationStore();
+    this.personaStore = new PersonaStore();
   }
   
   async init(): Promise<void> {
@@ -829,8 +843,8 @@ export class Database {
         const message = this.messages.get(messageId);
         if (message) {
           // Create new message object with updated content
-          const updatedBranches = message.branches.map(branch => 
-            branch.id === branchId 
+          const updatedBranches = message.branches.map(branch =>
+            branch.id === branchId
               ? { ...branch, content }
               : branch
           );
@@ -839,7 +853,23 @@ export class Database {
         }
         break;
       }
-      
+
+      case 'message_branch_updated': {
+        const { messageId, branchId, updates } = event.data;
+        const message = this.messages.get(messageId);
+        if (message) {
+          // Apply partial updates to the specified branch
+          const updatedBranches = message.branches.map(branch =>
+            branch.id === branchId
+              ? { ...branch, ...updates }
+              : branch
+          );
+          const updated = { ...message, branches: updatedBranches };
+          this.messages.set(messageId, updated);
+        }
+        break;
+      }
+
       case 'message_deleted': {
         const { messageId, conversationId } = event.data;
         this.messages.delete(messageId);
@@ -1051,6 +1081,23 @@ export class Database {
         break;
       }
 
+      // Persona events
+      case 'persona_created':
+      case 'persona_updated':
+      case 'persona_archived':
+      case 'persona_deleted':
+      case 'persona_history_branch_created':
+      case 'persona_history_branch_head_changed':
+      case 'persona_participation_created':
+      case 'persona_participation_ended':
+      case 'persona_participation_canonical_set':
+      case 'persona_participation_logical_time_updated':
+      case 'persona_share_created':
+      case 'persona_share_updated':
+      case 'persona_share_revoked':
+        this.personaStore.replayEvent(event);
+        break;
+
       // Add more cases as needed
       }
     } catch (error) {
@@ -1129,6 +1176,34 @@ export class Database {
     await this.logEvent('email_verified', { userId: user.id, verifiedAt: user.emailVerifiedAt.toISOString() });
     
     return user;
+  }
+  
+  // Manual email verification (for admin use - migrating legacy users)
+  async verifyUserManually(userId: string): Promise<boolean> {
+    const user = this.users.get(userId);
+    if (!user) {
+      return false;
+    }
+    
+    if (user.emailVerified) {
+      return true; // Already verified
+    }
+    
+    user.emailVerified = true;
+    user.emailVerifiedAt = new Date();
+    this.users.set(user.id, user);
+    
+    await this.logEvent('email_verified_manually', { 
+      userId: user.id, 
+      verifiedAt: user.emailVerifiedAt.toISOString() 
+    });
+    
+    return true;
+  }
+
+  // Get all users (for admin operations)
+  async getAllUsers(): Promise<User[]> {
+    return Array.from(this.users.values());
   }
   
   // Password reset methods  
@@ -1796,6 +1871,11 @@ export class Database {
     return await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
   }
 
+  // Internal method: Get conversation by ID (no access control, for internal use only)
+  getConversationById(conversationId: string): Conversation | null {
+    return this.conversations.get(conversationId) || null;
+  }
+
   async getUserConversations(userId: string): Promise<Conversation[]> {
     await this.loadUser(userId); // load user if not already loaded
     const convIds = this.userConversations.get(userId) || new Set();
@@ -2387,7 +2467,28 @@ export class Database {
 
     return true;
   }
-  
+
+  async updateMessageBranch(messageId: string, conversationOwnerUserId: string, branchId: string, updates: Partial<MessageBranch>): Promise<boolean> {
+    const message = this.messages.get(messageId);
+    if (!message) return false;
+
+    const branch = message.branches.find(b => b.id === branchId);
+    if (!branch) return false;
+
+    // Create new message object with updated branch
+    const updatedBranches = message.branches.map(b =>
+      b.id === branchId
+        ? { ...b, ...updates }
+        : b
+    );
+    const updated = { ...message, branches: updatedBranches };
+    this.messages.set(messageId, updated);
+
+    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates: Object.keys(updates) });
+
+    return true;
+  }
+
   async deleteMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string): Promise<string[] | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
@@ -3214,7 +3315,7 @@ export class Database {
     }
 
     this.userModels.delete(modelId);
-    
+
     const userModelIds = this.userModelsByUser.get(userId);
     if (userModelIds) {
       userModelIds.delete(modelId);
@@ -3223,6 +3324,399 @@ export class Database {
     await this.logUserEvent(userId, 'user_model_deleted', { modelId, userId });
 
     return true;
+  }
+
+  // ============================================================================
+  // Persona Methods
+  // ============================================================================
+
+  async createPersona(userId: string, request: CreatePersonaRequest): Promise<Persona> {
+    const result = this.personaStore.createPersona(userId, request);
+    await this.logUserEvent(userId, result.eventData.type, result.eventData.data);
+    return result.persona;
+  }
+
+  async getPersona(personaId: string): Promise<Persona | undefined> {
+    return this.personaStore.getPersona(personaId);
+  }
+
+  async getPersonasByOwner(userId: string): Promise<Persona[]> {
+    return this.personaStore.getPersonasByOwner(userId);
+  }
+
+  async getPersonasSharedWithUser(userId: string): Promise<Array<{ persona: Persona; permission: PersonaPermission }>> {
+    return this.personaStore.getPersonasSharedWithUser(userId);
+  }
+
+  async getUserAccessiblePersonas(userId: string): Promise<{
+    owned: Persona[];
+    shared: Array<{ persona: Persona; permission: PersonaPermission }>;
+  }> {
+    return {
+      owned: this.personaStore.getPersonasByOwner(userId),
+      shared: this.personaStore.getPersonasSharedWithUser(userId)
+    };
+  }
+
+  getUserPermissionForPersona(userId: string, personaId: string): PersonaPermission | null {
+    return this.personaStore.getUserPermissionForPersona(userId, personaId);
+  }
+
+  // Alias for convenience (reversed parameter order)
+  getPersonaPermission(personaId: string, userId: string): PersonaPermission | null {
+    return this.getUserPermissionForPersona(userId, personaId);
+  }
+
+  async updatePersona(personaId: string, userId: string, request: UpdatePersonaRequest): Promise<Persona | null> {
+    // Check permission
+    const permission = this.personaStore.getUserPermissionForPersona(userId, personaId);
+    if (!permission || (permission !== 'owner' && permission !== 'editor')) {
+      return null;
+    }
+
+    const result = this.personaStore.updatePersona(personaId, request);
+    if (!result) return null;
+
+    const persona = this.personaStore.getPersona(personaId);
+    if (persona) {
+      await this.logUserEvent(persona.ownerId, result.eventData.type, result.eventData.data);
+    }
+    return result.persona;
+  }
+
+  async archivePersona(personaId: string, userId: string): Promise<boolean> {
+    // Check permission
+    const permission = this.personaStore.getUserPermissionForPersona(userId, personaId);
+    if (!permission || (permission !== 'owner' && permission !== 'editor')) {
+      return false;
+    }
+
+    const result = this.personaStore.archivePersona(personaId);
+    if (!result) return false;
+
+    const persona = this.personaStore.getPersona(personaId);
+    if (persona) {
+      await this.logUserEvent(persona.ownerId, result.eventData.type, result.eventData.data);
+    }
+    return true;
+  }
+
+  async deletePersona(personaId: string, userId: string): Promise<boolean> {
+    const persona = this.personaStore.getPersona(personaId);
+    if (!persona) return false;
+
+    // Only owner can delete
+    if (persona.ownerId !== userId) return false;
+
+    const result = this.personaStore.deletePersona(personaId);
+    if (!result) return false;
+
+    await this.logUserEvent(userId, result.eventData.type, result.eventData.data);
+    return true;
+  }
+
+  // History Branch Methods
+
+  getPersonaHeadBranch(personaId: string): PersonaHistoryBranch | undefined {
+    return this.personaStore.getHeadBranch(personaId);
+  }
+
+  getPersonaHistoryBranches(personaId: string): PersonaHistoryBranch[] {
+    return this.personaStore.getHistoryBranches(personaId);
+  }
+
+  async createPersonaHistoryBranch(
+    personaId: string,
+    userId: string,
+    request: ForkHistoryBranchRequest
+  ): Promise<PersonaHistoryBranch | null> {
+    // Check permission
+    const permission = this.personaStore.getUserPermissionForPersona(userId, personaId);
+    if (!permission || permission === 'viewer') {
+      return null;
+    }
+
+    const result = this.personaStore.createHistoryBranch(
+      personaId,
+      request.name,
+      request.forkPointParticipationId
+    );
+    if (!result) return null;
+
+    const persona = this.personaStore.getPersona(personaId);
+    if (persona) {
+      await this.logUserEvent(persona.ownerId, result.eventData.type, result.eventData.data);
+    }
+    return result.branch;
+  }
+
+  async setPersonaHeadBranch(personaId: string, userId: string, branchId: string): Promise<boolean> {
+    // Check permission
+    const permission = this.personaStore.getUserPermissionForPersona(userId, personaId);
+    if (!permission || permission === 'viewer') {
+      return false;
+    }
+
+    const result = this.personaStore.setHeadBranch(personaId, branchId);
+    if (!result) return false;
+
+    const persona = this.personaStore.getPersona(personaId);
+    if (persona) {
+      await this.logUserEvent(persona.ownerId, result.eventData.type, result.eventData.data);
+    }
+    return true;
+  }
+
+  // Participation Methods
+
+  async personaJoinConversation(
+    personaId: string,
+    request: PersonaJoinRequest
+  ): Promise<{ participation: PersonaParticipation; participant: Participant } | null> {
+    const persona = this.personaStore.getPersona(personaId);
+    if (!persona) {
+      return null;
+    }
+
+    // Check if persona already has an active participation (and interleaving not allowed)
+    if (!persona.allowInterleavedParticipation) {
+      const activeParticipation = this.personaStore.getActiveParticipation(personaId);
+      if (activeParticipation) {
+        throw new Error(`Persona ${persona.name} already active in another conversation`);
+      }
+    }
+
+    // Get conversation to verify it exists and get owner
+    const conversation = this.getConversationById(request.conversationId);
+    if (!conversation) {
+      return null;
+    }
+
+    // Create a participant record for the persona
+    const participantName = request.participantName || persona.name;
+    const participant = await this.createParticipant(
+      request.conversationId,
+      conversation.userId,
+      participantName,
+      'assistant',
+      persona.modelId,
+      undefined, // systemPrompt - could be set later
+      undefined, // settings
+      undefined  // contextManagement
+    );
+
+    // Update participant with persona link
+    await this.updateParticipant(participant.id, conversation.userId, {
+      personaId: personaId
+    });
+
+    // Get updated participant with persona fields
+    const updatedParticipant = await this.getParticipant(participant.id, conversation.userId);
+    if (!updatedParticipant) {
+      return null;
+    }
+
+    // Use 'root' as the default canonical branch (main conversation branch)
+    const canonicalBranchId = 'root';
+
+    const result = this.personaStore.createParticipation(
+      personaId,
+      request.conversationId,
+      participant.id,
+      canonicalBranchId
+    );
+    if (!result) {
+      // Clean up the participant we created
+      await this.deleteParticipant(participant.id, conversation.userId);
+      return null;
+    }
+
+    // Update participant with participation link
+    await this.updateParticipant(participant.id, conversation.userId, {
+      personaParticipationId: result.participation.id
+    });
+
+    // Get final participant state
+    const finalParticipant = await this.getParticipant(participant.id, conversation.userId);
+
+    await this.logUserEvent(persona.ownerId, result.eventData.type, result.eventData.data);
+
+    return {
+      participation: result.participation,
+      participant: finalParticipant || updatedParticipant
+    };
+  }
+
+  async personaLeaveConversation(personaId: string, conversationId: string): Promise<PersonaParticipation | null> {
+    // Find the active participation for this persona in this conversation
+    const activeParticipation = this.personaStore.getActiveParticipation(personaId);
+    if (!activeParticipation || activeParticipation.conversationId !== conversationId) {
+      return null;
+    }
+
+    // Compute canonical branch: find the latest message's branch ID in this conversation
+    const conversation = this.getConversationById(conversationId);
+    if (!conversation) return null;
+
+    const messages = await this.getConversationMessages(conversationId, conversation.userId);
+    let canonicalBranchId = 'root';
+
+    if (messages.length > 0) {
+      // Use the active branch of the last message as the canonical branch
+      const lastMessage = messages[messages.length - 1];
+      canonicalBranchId = lastMessage.activeBranchId;
+    }
+
+    // Set the canonical branch before ending participation
+    const canonicalResult = this.personaStore.setCanonicalBranch(
+      activeParticipation.id,
+      canonicalBranchId
+    );
+    if (canonicalResult) {
+      const persona = this.personaStore.getPersona(personaId);
+      if (persona) {
+        await this.logUserEvent(persona.ownerId, canonicalResult.eventData.type, canonicalResult.eventData.data);
+      }
+    }
+
+    // Now end the participation
+    const result = this.personaStore.endParticipation(activeParticipation.id);
+    if (!result) return null;
+
+    const persona = this.personaStore.getPersona(personaId);
+    if (persona) {
+      await this.logUserEvent(persona.ownerId, result.eventData.type, result.eventData.data);
+    }
+    return result.participation;
+  }
+
+  getPersonaParticipation(participationId: string): PersonaParticipation | undefined {
+    return this.personaStore.getParticipation(participationId);
+  }
+
+  getPersonaActiveParticipation(personaId: string): PersonaParticipation | undefined {
+    return this.personaStore.getActiveParticipation(personaId);
+  }
+
+  getPersonaOrderedParticipations(branchId: string): PersonaParticipation[] {
+    return this.personaStore.getOrderedParticipations(branchId);
+  }
+
+  getPersonaParticipations(personaId: string, branchId?: string): PersonaParticipation[] {
+    if (branchId) {
+      return this.personaStore.getParticipationsForBranch(branchId);
+    }
+    return this.personaStore.getParticipationsForPersona(personaId);
+  }
+
+  getPersonaParticipationsForConversation(conversationId: string): PersonaParticipation[] {
+    return this.personaStore.getParticipationsForConversation(conversationId);
+  }
+
+  collectPersonaBranchParticipations(branchId: string): PersonaParticipation[] {
+    return this.personaStore.collectBranchParticipations(branchId);
+  }
+
+  async setParticipationCanonicalBranch(
+    participationId: string,
+    userId: string,
+    branchId: string
+  ): Promise<boolean> {
+    const participation = this.personaStore.getParticipation(participationId);
+    if (!participation) return false;
+
+    // Check permission
+    const permission = this.personaStore.getUserPermissionForPersona(userId, participation.personaId);
+    if (!permission || permission === 'viewer') {
+      return false;
+    }
+
+    const result = this.personaStore.setCanonicalBranch(participationId, branchId);
+    if (!result) return false;
+
+    const persona = this.personaStore.getPersona(participation.personaId);
+    if (persona) {
+      await this.logUserEvent(persona.ownerId, result.eventData.type, result.eventData.data);
+    }
+    return true;
+  }
+
+  async updateParticipationLogicalTime(
+    participationId: string,
+    userId: string,
+    logicalStart: number,
+    logicalEnd: number
+  ): Promise<boolean> {
+    const participation = this.personaStore.getParticipation(participationId);
+    if (!participation) return false;
+
+    // Check permission
+    const permission = this.personaStore.getUserPermissionForPersona(userId, participation.personaId);
+    if (!permission || permission === 'viewer') {
+      return false;
+    }
+
+    const result = this.personaStore.updateLogicalTime(participationId, logicalStart, logicalEnd);
+    if (!result) return false;
+
+    const persona = this.personaStore.getPersona(participation.personaId);
+    if (persona) {
+      await this.logUserEvent(persona.ownerId, result.eventData.type, result.eventData.data);
+    }
+    return true;
+  }
+
+  // Persona Share Methods
+
+  async sharePersona(
+    personaId: string,
+    sharedByUserId: string,
+    sharedWithUserId: string,
+    permission: PersonaPermission
+  ): Promise<PersonaShare | null> {
+    const persona = this.personaStore.getPersona(personaId);
+    if (!persona) return null;
+
+    // Only owner can share
+    if (persona.ownerId !== sharedByUserId) return null;
+
+    const result = this.personaStore.createShare(personaId, sharedWithUserId, sharedByUserId, permission);
+    if (!result) return null;
+
+    await this.logUserEvent(sharedByUserId, result.eventData.type, result.eventData.data);
+    return result.share;
+  }
+
+  async updatePersonaShare(shareId: string, userId: string, permission: PersonaPermission): Promise<PersonaShare | null> {
+    const share = this.personaStore.getShare(shareId);
+    if (!share) return null;
+
+    const persona = this.personaStore.getPersona(share.personaId);
+    if (!persona || persona.ownerId !== userId) return null;
+
+    const result = this.personaStore.updateShare(shareId, permission);
+    if (!result) return null;
+
+    await this.logUserEvent(userId, result.eventData.type, result.eventData.data);
+    return result.share;
+  }
+
+  async revokePersonaShare(shareId: string, userId: string): Promise<boolean> {
+    const share = this.personaStore.getShare(shareId);
+    if (!share) return false;
+
+    const persona = this.personaStore.getPersona(share.personaId);
+    if (!persona || persona.ownerId !== userId) return false;
+
+    const result = this.personaStore.revokeShare(shareId);
+    if (!result) return false;
+
+    await this.logUserEvent(userId, result.eventData.type, result.eventData.data);
+    return true;
+  }
+
+  getPersonaShares(personaId: string): PersonaShare[] {
+    return this.personaStore.getSharesForPersona(personaId);
   }
 
   // Close database connection

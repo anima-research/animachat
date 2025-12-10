@@ -1,15 +1,17 @@
 import { Message, Conversation, ContextManagement, DEFAULT_CONTEXT_MANAGEMENT, Participant } from '@deprecated-claude/shared';
-import { 
-  ContextStrategy, 
+import {
+  ContextStrategy,
   ContextWindow,
   CacheMarker,
   AppendContextStrategy,
   RollingContextStrategy,
   LegacyRollingContextStrategy,
   StaticContextStrategy,
-  AdaptiveContextStrategy 
+  AdaptiveContextStrategy
 } from './context-strategies.js';
 import { Logger } from '../utils/logger.js';
+import { PersonaContextBuilder } from './persona-context-builder.js';
+import type { Database } from '../database/index.js';
 
 interface ContextState {
   conversationId: string;
@@ -38,19 +40,25 @@ export class ContextManager {
   private strategies: Map<string, ContextStrategy>;
   private states: Map<string, ContextState>; // key is conversationId or conversationId:participantId
   private config: ContextManagerConfig;
-  
-  constructor(config: Partial<ContextManagerConfig> = {}) {
+  private personaContextBuilder?: PersonaContextBuilder;
+
+  constructor(config: Partial<ContextManagerConfig> = {}, db?: Database) {
     this.config = {
       defaultStrategy: 'rolling',
       enableCaching: true,
       cachePrefix: 'arc-cache',
       ...config
     };
-    
+
     // Initialize empty - strategies will be created on demand with proper config
     this.strategies = new Map<string, ContextStrategy>();
-    
+
     this.states = new Map();
+
+    // Initialize PersonaContextBuilder if database provided
+    if (db) {
+      this.personaContextBuilder = new PersonaContextBuilder(db);
+    }
   }
   
   async prepareContext(
@@ -72,18 +80,42 @@ export class ContextManager {
     // Compute stateKey BEFORE getting strategy - this ensures each conversation/participant
     // gets its own strategy instance (important for stateful strategies like rolling window)
     const stateKey = participant ? `${conversation.id}:${participant.id}` : conversation.id;
-    
+
     // Log for debugging
     Logger.debug('[ContextManager] Using context management:', JSON.stringify(contextManagement), 'for', stateKey);
-    
+
+    // Check if this is a persona-linked participant - if so, build accumulated context
+    let contextMessages = messages;
+    if (participant?.personaId && this.personaContextBuilder) {
+      Logger.debug('[ContextManager] Detected persona participant:', participant.personaId);
+
+      // Get the persona from the database (PersonaContextBuilder has db access)
+      // We'll need to get the persona through the builder
+      try {
+        const personaMessages = await this.buildPersonaContextForParticipant(
+          participant.personaId,
+          conversation.id,
+          messages
+        );
+
+        if (personaMessages.length > 0) {
+          Logger.debug(`[ContextManager] Using ${personaMessages.length} messages from persona context (includes ${messages.length} backscroll)`);
+          contextMessages = personaMessages;
+        }
+      } catch (error) {
+        Logger.error('[ContextManager] Failed to build persona context:', error);
+        // Fallback to regular messages if persona context build fails
+      }
+    }
+
     // Get or create appropriate strategy - pass stateKey to ensure per-context instances
     const strategy = this.getOrCreateStrategy(contextManagement, stateKey);
-    
+
     // Get or create state
     const state = this.getOrCreateState(stateKey, contextManagement.strategy);
-    
-    // Prepare context window
-    const window = strategy.prepareContext(messages, newMessage, state.cacheMarker, modelMaxContext);
+
+    // Prepare context window using persona-enhanced messages if available
+    const window = strategy.prepareContext(contextMessages, newMessage, state.cacheMarker, modelMaxContext);
     
     // Update cache marker if changed
     if (window.cacheMarker?.messageId !== state.cacheMarker?.messageId) {
@@ -300,7 +332,7 @@ export class ContextManager {
     if (conversationId) {
       const stateKey = participantId ? `${conversationId}:${participantId}` : conversationId;
       this.states.delete(stateKey);
-      
+
       // Also clear any participant-specific states if clearing conversation state
       if (!participantId) {
         const prefix = `${conversationId}:`;
@@ -311,5 +343,22 @@ export class ContextManager {
     } else {
       this.states.clear();
     }
+  }
+
+  private async buildPersonaContextForParticipant(
+    personaId: string,
+    conversationId: string,
+    currentMessages: Message[]
+  ): Promise<Message[]> {
+    if (!this.personaContextBuilder) {
+      return currentMessages;
+    }
+
+    // Use PersonaContextBuilder to assemble accumulated context
+    return await this.personaContextBuilder.buildPersonaContextById(
+      personaId,
+      conversationId,
+      currentMessages
+    );
   }
 }

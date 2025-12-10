@@ -71,6 +71,15 @@
         title="Download prompt"
         @click="downloadPrompt"
       />
+      <v-btn
+        v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)"
+        icon="mdi-bug"
+        size="x-small"
+        variant="text"
+        density="compact"
+        title="Debug: View LLM request/response"
+        @click="showDebugDialog = true"
+      />
       <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
       <v-btn
         icon="mdi-delete-outline"
@@ -313,8 +322,8 @@
     <v-dialog v-model="imagePreviewDialog" max-width="90vw">
       <v-card class="pa-2" style="background: rgba(0,0,0,0.9);">
         <v-card-text class="pa-0 text-center">
-          <img 
-            :src="previewImageSrc" 
+          <img
+            :src="previewImageSrc"
             :alt="previewImageAlt"
             style="max-width: 100%; max-height: 85vh; object-fit: contain;"
           />
@@ -324,6 +333,13 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Debug Dialog -->
+    <DebugMessageDialog
+      v-model="showDebugDialog"
+      :debug-request="currentBranch.debugRequest"
+      :debug-response="currentBranch.debugResponse"
+    />
   </div>
 </template>
 
@@ -335,6 +351,7 @@ import type { Message, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
+import DebugMessageDialog from './DebugMessageDialog.vue';
 
 const store = useStore();
 
@@ -373,6 +390,7 @@ const bookmarkButtonRef = ref<HTMLElement>();
 const imagePreviewDialog = ref(false);
 const previewImageSrc = ref('');
 const previewImageAlt = ref('');
+const showDebugDialog = ref(false);
 
 const branchIndex = computed(() => {
   return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;

@@ -69,6 +69,26 @@
     <!-- Config Editor -->
     <ConfigEditor class="mb-6" />
 
+    <!-- Legacy User Verification (Temporary) -->
+    <v-card class="mb-6" variant="outlined" color="warning">
+      <v-card-text class="d-flex align-center">
+        <v-icon color="warning" class="mr-3">mdi-email-check</v-icon>
+        <div class="flex-grow-1">
+          <div class="font-weight-medium">Verify Legacy Users</div>
+          <div class="text-caption text-grey">Mark all users registered before Dec 8, 2024 as email-verified</div>
+        </div>
+        <v-btn
+          color="warning"
+          variant="tonal"
+          :loading="verifyingLegacyUsers"
+          @click="verifyLegacyUsers"
+        >
+          <v-icon start>mdi-check-all</v-icon>
+          Verify Legacy Users
+        </v-btn>
+      </v-card-text>
+    </v-card>
+
     <!-- Error Alert -->
     <v-alert v-if="error" type="error" variant="tonal" class="mb-4" closable @click:close="error = null">
       {{ error }}
@@ -363,6 +383,7 @@ const reloadingUser = ref(false);
 
 const allCapabilities = ['admin', 'mint', 'send', 'overspend', 'researcher'];
 const currencies = ['credit', 'sonnets', 'opus', 'haiku', 'gemini'];
+const verifyingLegacyUsers = ref(false);
 
 const tableHeaders = [
   { title: 'User', key: 'email', sortable: true },
@@ -548,6 +569,27 @@ async function reloadUser() {
     error.value = e?.response?.data?.error || 'Failed to reload user';
   } finally {
     reloadingUser.value = false;
+  }
+}
+
+async function verifyLegacyUsers() {
+  if (!confirm('This will mark all users registered before Dec 8, 2024 as email-verified. Continue?')) {
+    return;
+  }
+  
+  verifyingLegacyUsers.value = true;
+  try {
+    const response = await api.post('/admin/verify-legacy-users', {
+      beforeDate: '2024-12-08T00:00:00Z'
+    });
+    successMessage.value = response.data.message;
+    if (response.data.verifiedUsers?.length > 0) {
+      successMessage.value += `: ${response.data.verifiedUsers.join(', ')}`;
+    }
+  } catch (e: any) {
+    error.value = e?.response?.data?.error || 'Failed to verify legacy users';
+  } finally {
+    verifyingLegacyUsers.value = false;
   }
 }
 

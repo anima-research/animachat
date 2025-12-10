@@ -271,7 +271,11 @@ export const ParticipantSchema = z.object({
   systemPrompt: z.string().optional(), // Only for assistant participants
   settings: ModelSettingsSchema.optional(), // Only for assistant participants
   contextManagement: ContextManagementSchema.optional(), // Only for assistant participants
-  isActive: z.boolean().default(true)
+  isActive: z.boolean().default(true),
+
+  // Persona system fields
+  personaId: z.string().uuid().optional(), // If set, this participant is a persona
+  personaParticipationId: z.string().uuid().optional() // Link to participation record
 });
 
 export type Participant = z.infer<typeof ParticipantSchema>;
@@ -282,7 +286,10 @@ export const UpdateParticipantSchema = z.object({
   systemPrompt: z.string().optional(),
   settings: ModelSettingsSchema.optional(),
   contextManagement: ContextManagementSchema.optional(),
-  isActive: z.boolean().optional()
+  isActive: z.boolean().optional(),
+  // Persona system fields
+  personaId: z.string().uuid().optional(),
+  personaParticipationId: z.string().uuid().optional()
 }).transform((o) => ({ ...o, contextManagement: o.contextManagement })); // specifically pass through undefined and null
 
 // Attachment types - enhanced for multimodal support
@@ -392,7 +399,9 @@ export const MessageBranchSchema = z.object({
   isActive: z.boolean().optional(), // Deprecated - not used, kept for backward compatibility
   attachments: z.array(AttachmentSchema).optional(), // Attachments for this branch
   bookmark: BookmarkSchema.optional(), // Optional bookmark for this branch
-  hiddenFromAi: z.boolean().optional() // If true, this message is visible to humans but excluded from AI context
+  hiddenFromAi: z.boolean().optional(), // If true, this message is visible to humans but excluded from AI context
+  debugRequest: z.any().optional(), // Raw LLM request for debugging (researchers/admins only)
+  debugResponse: z.any().optional() // Raw LLM response for debugging (researchers/admins only)
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;
@@ -612,3 +621,170 @@ export const InviteSchema = z.object({
 });
 
 export type Invite = z.infer<typeof InviteSchema>;
+
+// ============================================================================
+// Persona System Types
+// ============================================================================
+
+// Persona context strategy - how history is assembled
+export const PersonaContextStrategySchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('rolling'),
+    maxTokens: z.number().default(60000) // How many tokens of history to include
+  }),
+  z.object({
+    type: z.literal('anchored'),
+    prefixTokens: z.number().default(10000), // Fixed prefix from earliest history
+    rollingTokens: z.number().default(50000) // Rolling window from recent history
+  })
+]);
+
+export type PersonaContextStrategy = z.infer<typeof PersonaContextStrategySchema>;
+
+export const DEFAULT_PERSONA_CONTEXT_STRATEGY: PersonaContextStrategy = {
+  type: 'rolling',
+  maxTokens: 60000
+};
+
+// Persona - a persistent AI identity that accumulates history across conversations
+export const PersonaSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1).max(100),
+  modelId: z.string(), // e.g., "claude-opus-4.5"
+  ownerId: z.string().uuid(),
+
+  contextStrategy: PersonaContextStrategySchema.default({ type: 'rolling', maxTokens: 60000 }),
+  backscrollTokens: z.number().default(30000), // How much of current conversation to include
+  allowInterleavedParticipation: z.boolean().default(false), // Allow multiple simultaneous conversations
+
+  createdAt: z.date(),
+  updatedAt: z.date(),
+  archivedAt: z.date().optional() // If set, persona is frozen
+});
+
+export type Persona = z.infer<typeof PersonaSchema>;
+
+// PersonaHistoryBranch - a timeline/branch of persona history (like git branches)
+export const PersonaHistoryBranchSchema = z.object({
+  id: z.string().uuid(),
+  personaId: z.string().uuid(),
+  name: z.string().min(1).max(100), // e.g., "main", "what-if-ethics"
+  parentBranchId: z.string().uuid().optional(), // Fork source (null for root branch)
+  forkPointParticipationId: z.string().uuid().optional(), // Where this branch diverged
+  isHead: z.boolean().default(false), // Canonical HEAD (only one per persona)
+  createdAt: z.date()
+});
+
+export type PersonaHistoryBranch = z.infer<typeof PersonaHistoryBranchSchema>;
+
+// Canonical branch history entry - tracks changes to canonical conversation branch
+export const CanonicalHistoryEntrySchema = z.object({
+  branchId: z.string().uuid(),
+  setAt: z.date(),
+  previousBranchId: z.string().uuid().optional()
+});
+
+export type CanonicalHistoryEntry = z.infer<typeof CanonicalHistoryEntrySchema>;
+
+// PersonaParticipation - records when a persona joins/leaves a conversation
+export const PersonaParticipationSchema = z.object({
+  id: z.string().uuid(),
+  personaId: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  participantId: z.string().uuid(), // Link to Participant record
+  historyBranchId: z.string().uuid(), // Which persona timeline this belongs to
+
+  joinedAt: z.date(), // Real-world timestamp
+  leftAt: z.date().optional(), // Real-world timestamp (null if currently active)
+
+  // Logical time ordering (user-editable, determines subjective order)
+  logicalStart: z.number(), // e.g., 100, 200, 300...
+  logicalEnd: z.number(), // Must be > logicalStart
+
+  canonicalBranchId: z.string().uuid(), // Which conversation branch is "real"
+  canonicalHistory: z.array(CanonicalHistoryEntrySchema).default([]) // Audit trail of canonical changes
+});
+
+export type PersonaParticipation = z.infer<typeof PersonaParticipationSchema>;
+
+// PersonaShare - sharing personas with other users
+export const PersonaPermissionSchema = z.enum(['viewer', 'user', 'editor', 'owner']);
+export type PersonaPermission = z.infer<typeof PersonaPermissionSchema>;
+
+export const PersonaShareSchema = z.object({
+  id: z.string().uuid(),
+  personaId: z.string().uuid(),
+  sharedWithUserId: z.string().uuid(),
+  sharedByUserId: z.string().uuid(),
+  permission: PersonaPermissionSchema,
+  createdAt: z.date()
+});
+
+export type PersonaShare = z.infer<typeof PersonaShareSchema>;
+
+// API request/response schemas for personas
+
+export const CreatePersonaRequestSchema = z.object({
+  name: z.string().min(1).max(100),
+  modelId: z.string(),
+  contextStrategy: PersonaContextStrategySchema.optional(),
+  backscrollTokens: z.number().optional(),
+  allowInterleavedParticipation: z.boolean().optional()
+});
+
+export type CreatePersonaRequest = z.infer<typeof CreatePersonaRequestSchema>;
+
+export const UpdatePersonaRequestSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  contextStrategy: PersonaContextStrategySchema.optional(),
+  backscrollTokens: z.number().optional(),
+  allowInterleavedParticipation: z.boolean().optional()
+});
+
+export type UpdatePersonaRequest = z.infer<typeof UpdatePersonaRequestSchema>;
+
+export const PersonaJoinRequestSchema = z.object({
+  conversationId: z.string().uuid(),
+  participantName: z.string().optional() // Defaults to persona name
+});
+
+export type PersonaJoinRequest = z.infer<typeof PersonaJoinRequestSchema>;
+
+export const PersonaLeaveRequestSchema = z.object({
+  conversationId: z.string().uuid()
+});
+
+export type PersonaLeaveRequest = z.infer<typeof PersonaLeaveRequestSchema>;
+
+export const UpdateLogicalTimeRequestSchema = z.object({
+  logicalStart: z.number(),
+  logicalEnd: z.number()
+});
+
+export type UpdateLogicalTimeRequest = z.infer<typeof UpdateLogicalTimeRequestSchema>;
+
+export const SetCanonicalBranchRequestSchema = z.object({
+  branchId: z.string().uuid()
+});
+
+export type SetCanonicalBranchRequest = z.infer<typeof SetCanonicalBranchRequestSchema>;
+
+export const ForkHistoryBranchRequestSchema = z.object({
+  name: z.string().min(1).max(100),
+  forkPointParticipationId: z.string().uuid().optional() // If not provided, forks from latest
+});
+
+export type ForkHistoryBranchRequest = z.infer<typeof ForkHistoryBranchRequestSchema>;
+
+export const SharePersonaRequestSchema = z.object({
+  email: z.string().email(),
+  permission: PersonaPermissionSchema
+});
+
+export type SharePersonaRequest = z.infer<typeof SharePersonaRequestSchema>;
+
+export const UpdateShareRequestSchema = z.object({
+  permission: PersonaPermissionSchema
+});
+
+export type UpdateShareRequest = z.infer<typeof UpdateShareRequestSchema>;

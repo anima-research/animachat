@@ -25,6 +25,7 @@ import { createBookmarksRouter } from './routes/bookmarks.js';
 import { createInvitesRouter } from './routes/invites.js';
 import { adminRouter } from './routes/admin.js';
 import { collaborationRouter } from './routes/collaboration.js';
+import { personaRouter } from './routes/personas.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
 import { authenticateToken } from './middleware/auth.js';
@@ -99,6 +100,7 @@ app.use('/api/bookmarks', createBookmarksRouter(db));
 app.use('/api/invites', createInvitesRouter(db));
 app.use('/api/admin', adminRouter(db));
 app.use('/api/collaboration', collaborationRouter(db));
+app.use('/api/personas', authenticateToken, personaRouter(db));
 app.use('/api/system', systemRouter());
 
 // Health check

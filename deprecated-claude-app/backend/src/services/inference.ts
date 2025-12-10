@@ -8,6 +8,7 @@ import { GeminiService } from './gemini.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { Logger } from '../utils/logger.js';
+import { ContextManager } from './context-manager.js';
 
 // Internal format type that includes 'messages' mode
 type InternalConversationFormat = ConversationFormat | 'messages';
@@ -18,6 +19,8 @@ export class InferenceService {
   private apiKeyManager: ApiKeyManager;
   private modelLoader: ModelLoader;
   private db: Database;
+  private contextManager: ContextManager;
+  public lastRawRequest?: any; // Store the last raw API request for debugging
 
   constructor(db: Database) {
     this.db = db;
@@ -25,6 +28,7 @@ export class InferenceService {
     this.modelLoader = ModelLoader.getInstance();
     this.bedrockService = new BedrockService(db);
     this.anthropicService = new AnthropicService(db);
+    this.contextManager = new ContextManager({}, db);
   }
 
   /**
@@ -46,7 +50,7 @@ export class InferenceService {
     if (!model) {
       throw new Error(`Model ${modelId} not found`);
     }
-    
+
     // Determine the actual format to use
     let actualFormat: InternalConversationFormat = format;
     if (format === 'prefill') {
@@ -54,9 +58,31 @@ export class InferenceService {
         actualFormat = 'messages';
       }
     }
-    
+
+    // Check if responder is a persona-linked participant and build accumulated context
+    let contextMessages = messages;
+    if (responderId && conversation) {
+      const responder = participants.find(p => p.id === responderId);
+      if (responder?.personaId) {
+        Logger.debug(`[InferenceService.buildPrompt] Responder is persona-linked (${responder.personaId}), building accumulated context`);
+        try {
+          const result = await this.contextManager.prepareContext(
+            conversation,
+            messages,
+            undefined,
+            responder,
+            model.maxContext
+          );
+          contextMessages = result.window.messages;
+          Logger.debug(`[InferenceService.buildPrompt] Using ${contextMessages.length} messages from persona context (original: ${messages.length})`);
+        } catch (error) {
+          Logger.error('[InferenceService.buildPrompt] Failed to build persona context, using original messages:', error);
+        }
+      }
+    }
+
     // Format messages based on conversation format
-    const formattedMessages = this.formatMessagesForConversation(messages, actualFormat, participants, responderId, model.provider, conversation);
+    const formattedMessages = this.formatMessagesForConversation(contextMessages, actualFormat, participants, responderId, model.provider, conversation);
     
     // Now format for the specific provider
     let apiMessages: any[];
@@ -155,18 +181,40 @@ export class InferenceService {
         actualFormat = 'messages';
       }
     }
-    
+
+    // Check if responder is a persona-linked participant and build accumulated context
+    let contextMessages = messages;
+    if (responderId && conversation) {
+      const responder = participants.find(p => p.id === responderId);
+      if (responder?.personaId) {
+        Logger.inference(`[InferenceService] Responder is persona-linked (${responder.personaId}), building accumulated context`);
+        try {
+          const result = await this.contextManager.prepareContext(
+            conversation,
+            messages,
+            undefined, // newMessage - not needed for inference
+            responder,
+            model.maxContext
+          );
+          contextMessages = result.window.messages;
+          Logger.inference(`[InferenceService] Using ${contextMessages.length} messages from persona context (original: ${messages.length})`);
+        } catch (error) {
+          Logger.error('[InferenceService] Failed to build persona context, using original messages:', error);
+        }
+      }
+    }
+
     // Format messages based on conversation format
     // For prefill format with Anthropic direct, pass cache marker indices to insert breakpoints
     const shouldInsertCacheBreakpoints = actualFormat === 'prefill' && model.provider === 'anthropic';
     // Trigger thinking via <think> tag in prefill mode if thinking was enabled in settings
     const shouldTriggerPrefillThinking = actualFormat === 'prefill' && settings.thinking?.enabled;
     const formattedMessages = this.formatMessagesForConversation(
-      messages, 
-      actualFormat, 
-      participants, 
-      responderId, 
-      model.provider, 
+      contextMessages,
+      actualFormat,
+      participants,
+      responderId,
+      model.provider,
       conversation,
       shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined,
       shouldTriggerPrefillThinking
@@ -319,6 +367,11 @@ export class InferenceService {
         finalOnChunk,
         stopSequences
       );
+
+      // Store the raw request for debugging
+      if (usageResult.rawRequest) {
+        this.lastRawRequest = usageResult.rawRequest;
+      }
     } else if (model.provider === 'bedrock') {
       if (!selectedKey) {
         throw new Error('No API key available for Bedrock');

@@ -185,6 +185,12 @@
               @click="settingsDialog = true"
             />
             <v-list-item
+              v-if="isResearcher"
+              prepend-icon="mdi-account-multiple-outline"
+              title="Personas"
+              @click="$router.push('/personas')"
+            />
+            <v-list-item
               v-if="isAdmin"
               prepend-icon="mdi-shield-crown"
               title="Admin"
@@ -720,8 +726,10 @@
     <AddParticipantDialog
       v-model="addParticipantDialog"
       :models="store.state.models"
+      :personas="personas"
       :conversation-id="currentConversation?.id || ''"
       :is-standard-conversation="currentConversation?.format === 'standard'"
+      :can-use-personas="isResearcher"
       @add="handleAddParticipant"
     />
   </v-layout>
@@ -733,7 +741,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
-import type { Conversation, Message, Participant, Model, Bookmark } from '@deprecated-claude/shared';
+import type { Conversation, Message, Participant, Model, Bookmark, Persona } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema } from '@deprecated-claude/shared';
 import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
@@ -778,6 +786,7 @@ const welcomeDialog = ref(false);
 const addParticipantDialog = ref(false);
 const rawImportData = ref('');
 const messageInput = ref('');
+const personas = ref<Persona[]>([]);
 const isStreaming = ref(false);
 const streamingMessageId = ref<string | null>(null);
 const autoScrollEnabled = ref(true);
@@ -893,6 +902,16 @@ async function loadSharedConversations() {
   }
 }
 
+async function loadPersonas() {
+  try {
+    const response = await api.get('/personas');
+    // API returns {owned: [], shared: []}, combine them
+    personas.value = [...response.data.owned, ...response.data.shared];
+  } catch (error) {
+    console.error('Failed to load personas:', error);
+  }
+}
+
 function getPermissionColor(permission: string): string {
   switch (permission) {
     case 'viewer': return 'grey';
@@ -916,6 +935,18 @@ const isAdmin = computed(() => {
   if (adminRecords.length === 0) return false;
   
   const latest = adminRecords.reduce((a: any, b: any) => (a.time > b.time ? a : b));
+  return latest.action === 'granted';
+});
+
+const isResearcher = computed(() => {
+  const summary = store.state.grantSummary;
+  if (!summary?.grantCapabilities) return false;
+  
+  // Find the latest researcher capability record
+  const researcherRecords = summary.grantCapabilities.filter((c: any) => c.capability === 'researcher');
+  if (researcherRecords.length === 0) return false;
+  
+  const latest = researcherRecords.reduce((a: any, b: any) => (a.time > b.time ? a : b));
   return latest.action === 'granted';
 });
 
@@ -1183,7 +1214,8 @@ onMounted(async () => {
   await store.loadSystemConfig();
   await store.loadConversations();
   await loadSharedConversations();
-  
+  await loadPersonas();
+
   // Set local systemConfig from store
   if (store.state.systemConfig) {
     systemConfig.value = store.state.systemConfig;
@@ -2649,22 +2681,22 @@ function handleAddModel() {
   addParticipantDialog.value = true;
 }
 
-async function handleAddParticipant(participant: { name: string; type: 'user' | 'assistant'; model?: string }) {
+async function handleAddParticipant(participant: { name: string; type: 'user' | 'assistant' | 'persona'; model?: string; personaId?: string }) {
   if (!currentConversation.value) return;
-  
+
   // If this is a standard conversation, we need to convert to group chat first
   const isStandard = currentConversation.value.format === 'standard';
-  
+
   try {
     if (isStandard) {
       // Convert to group chat format
       console.log('[handleAddParticipant] Converting to group chat format');
       await updateConversationSettings({ format: 'prefill' });
-      
+
       // Create a participant for the current model
       const currentModelId = currentConversation.value.model;
       const currentModelData = store.state.models.find(m => m.id === currentModelId);
-      
+
       if (currentModelData) {
         const currentModelResponse = await api.post('/participants', {
           conversationId: currentConversation.value.id,
@@ -2676,24 +2708,56 @@ async function handleAddParticipant(participant: { name: string; type: 'user' | 
         console.log('[handleAddParticipant] Added current model as participant:', currentModelResponse.data);
       }
     }
-    
-    // Now add the new participant
-    const response = await api.post('/participants', {
-      conversationId: currentConversation.value.id,
-      name: participant.name,
-      type: participant.type,
-      model: participant.model
-    });
-    
-    // Add to local list
-    participants.value.push(response.data);
-    
-    // If it's an assistant, set it as the selected responder
-    if (participant.type === 'assistant') {
-      selectedResponder.value = response.data.id;
+
+    // Handle persona type differently - use persona join API
+    if (participant.type === 'persona' && participant.personaId) {
+      const persona = personas.value.find(p => p.id === participant.personaId);
+      if (!persona) {
+        console.error('Persona not found:', participant.personaId);
+        return;
+      }
+
+      // Get the persona's HEAD branch
+      const branchesResponse = await api.get(`/personas/${persona.id}/branches`);
+      const headBranch = branchesResponse.data.find((b: any) => b.isHead);
+      if (!headBranch) {
+        console.error('No HEAD branch found for persona');
+        return;
+      }
+
+      console.log('[handleAddParticipant] Joining persona to conversation');
+      const response = await api.post(`/personas/${persona.id}/join`, {
+        conversationId: currentConversation.value.id,
+        participantName: persona.name,
+        historyBranchId: headBranch.id
+      });
+
+      // Add the participant to local list
+      participants.value.push(response.data.participant);
+
+      // Set as selected responder
+      selectedResponder.value = response.data.participant.id;
+
+      console.log('[handleAddParticipant] Persona joined:', response.data);
+    } else {
+      // Regular user/assistant participant
+      const response = await api.post('/participants', {
+        conversationId: currentConversation.value.id,
+        name: participant.name,
+        type: participant.type,
+        model: participant.model
+      });
+
+      // Add to local list
+      participants.value.push(response.data);
+
+      // If it's an assistant, set it as the selected responder
+      if (participant.type === 'assistant') {
+        selectedResponder.value = response.data.id;
+      }
+
+      console.log('[handleAddParticipant] Added participant:', response.data);
     }
-    
-    console.log('[handleAddParticipant] Added participant:', response.data);
   } catch (error) {
     console.error('Failed to add participant:', error);
   }

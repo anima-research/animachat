@@ -368,6 +368,37 @@ export function adminRouter(db: Database): Router {
     }
   });
 
+  // POST /admin/verify-legacy-users - Verify emails for all users registered before a date
+  // This is a temporary endpoint for migrating pre-email-verification users
+  router.post('/verify-legacy-users', async (req: AuthRequest, res) => {
+    try {
+      const beforeDate = req.body.beforeDate ? new Date(req.body.beforeDate) : new Date('2024-12-08T00:00:00Z');
+      
+      const users = await db.getAllUsers();
+      let verifiedCount = 0;
+      const verifiedUsers: string[] = [];
+      
+      for (const user of users) {
+        const createdAt = user.createdAt instanceof Date ? user.createdAt : new Date(user.createdAt);
+        
+        if (createdAt < beforeDate && !user.emailVerified) {
+          await db.verifyUserManually(user.id);
+          verifiedCount++;
+          verifiedUsers.push(user.email);
+        }
+      }
+      
+      res.json({ 
+        success: true, 
+        message: `Verified ${verifiedCount} legacy user${verifiedCount !== 1 ? 's' : ''}`,
+        verifiedUsers
+      });
+    } catch (error) {
+      console.error('Error verifying legacy users:', error);
+      res.status(500).json({ error: 'Failed to verify legacy users' });
+    }
+  });
+
   return router;
 }
 
