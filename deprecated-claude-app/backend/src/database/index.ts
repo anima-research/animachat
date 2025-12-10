@@ -1267,10 +1267,6 @@ export class Database {
     return this.users.get(id) || null;
   }
 
-  async getAllUsers(): Promise<User[]> {
-    return Array.from(this.users.values());
-  }
-
   // Admin methods for user management
   async getAllUsersWithStats(): Promise<Array<{
     id: string;
@@ -3587,7 +3583,9 @@ export class Database {
     if (persona) {
       await this.logUserEvent(persona.ownerId, result.eventData.type, result.eventData.data);
     }
-    return result.participation;
+    
+    // Get the updated participation after ending
+    return this.personaStore.getParticipation(activeParticipation.id) || null;
   }
 
   getPersonaParticipation(participationId: string): PersonaParticipation | undefined {

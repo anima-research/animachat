@@ -105,7 +105,7 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const persona = await db.updatePersona(req.params.id, data);
+      const persona = await db.updatePersona(req.params.id, req.userId, data);
       if (!persona) {
         return res.status(404).json({ error: 'Persona not found' });
       }
@@ -133,7 +133,7 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Only owner can delete persona' });
       }
 
-      const success = await db.deletePersona(req.params.id);
+      const success = await db.deletePersona(req.params.id, req.userId);
       if (success) {
         res.json({ success: true });
       } else {
@@ -158,11 +158,12 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const persona = await db.archivePersona(req.params.id);
-      if (!persona) {
+      const success = await db.archivePersona(req.params.id, req.userId);
+      if (!success) {
         return res.status(404).json({ error: 'Persona not found' });
       }
 
+      const persona = await db.getPersona(req.params.id);
       res.json(persona);
     } catch (error) {
       console.error('Archive persona error:', error);
@@ -208,7 +209,10 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const branch = await db.forkHistoryBranch(req.params.id, data);
+      const branch = await db.createPersonaHistoryBranch(req.params.id, req.userId, data);
+      if (!branch) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
       res.status(201).json(branch);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -232,11 +236,12 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const branch = await db.setPersonaHeadBranch(req.params.id, req.params.branchId);
-      if (!branch) {
-        return res.status(404).json({ error: 'Branch not found' });
+      const success = await db.setPersonaHeadBranch(req.params.id, req.userId, req.params.branchId);
+      if (!success) {
+        return res.status(404).json({ error: 'Branch not found or access denied' });
       }
 
+      const branch = db.getPersonaHeadBranch(req.params.id);
       res.json(branch);
     } catch (error) {
       console.error('Set head branch error:', error);
@@ -377,14 +382,16 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const participation = await db.setParticipationCanonicalBranch(
+      const success = await db.setParticipationCanonicalBranch(
         req.params.participationId,
+        req.userId,
         data.branchId
       );
-      if (!participation) {
-        return res.status(404).json({ error: 'Participation not found' });
+      if (!success) {
+        return res.status(404).json({ error: 'Participation not found or access denied' });
       }
 
+      const participation = db.getPersonaParticipation(req.params.participationId);
       res.json(participation);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -415,15 +422,17 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const participation = await db.updateParticipationLogicalTime(
+      const success = await db.updateParticipationLogicalTime(
         req.params.participationId,
+        req.userId,
         data.logicalStart,
         data.logicalEnd
       );
-      if (!participation) {
-        return res.status(404).json({ error: 'Participation not found' });
+      if (!success) {
+        return res.status(404).json({ error: 'Participation not found or access denied' });
       }
 
+      const participation = db.getPersonaParticipation(req.params.participationId);
       res.json(participation);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -472,7 +481,13 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Only owner can share persona' });
       }
 
-      const share = await db.sharePersona(req.params.id, req.userId, data);
+      // Resolve email to userId
+      const targetUser = await db.getUserByEmail(data.email);
+      if (!targetUser) {
+        return res.status(404).json({ error: 'User not found with that email' });
+      }
+
+      const share = await db.sharePersona(req.params.id, req.userId, targetUser.id, data.permission);
       res.status(201).json(share);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -498,7 +513,7 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Only owner can modify shares' });
       }
 
-      const share = await db.updatePersonaShare(req.params.shareId, data.permission);
+      const share = await db.updatePersonaShare(req.params.shareId, req.userId, data.permission);
       if (!share) {
         return res.status(404).json({ error: 'Share not found' });
       }
@@ -526,7 +541,7 @@ export function personaRouter(db: Database): Router {
         return res.status(403).json({ error: 'Only owner can revoke shares' });
       }
 
-      const success = await db.revokePersonaShare(req.params.shareId);
+      const success = await db.revokePersonaShare(req.params.shareId, req.userId);
       if (success) {
         res.json({ success: true });
       } else {

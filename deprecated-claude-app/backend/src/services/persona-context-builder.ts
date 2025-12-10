@@ -181,7 +181,7 @@ export class PersonaContextBuilder {
 
     // Build path following canonical branch backwards to root
     const path: Message[] = [];
-    let currentBranchId = participation.canonicalBranchId;
+    let currentBranchId: string | null = participation.canonicalBranchId;
 
     // Build map for quick lookup
     const messagesByBranchId = new Map<string, Message>();
@@ -294,7 +294,9 @@ export class PersonaContextBuilder {
    */
   private estimateTokens(message: Message): number {
     // Rough estimate: 1 token ~= 4 characters
-    const contentLength = message.content?.length || 0;
+    // Get content from the active branch
+    const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+    const contentLength = activeBranch?.content?.length || 0;
     return Math.ceil(contentLength / 4);
   }
 

@@ -71,7 +71,7 @@ export class InferenceService {
             messages,
             undefined,
             responder,
-            model.maxContext
+            model.contextWindow
           );
           contextMessages = result.window.messages;
           Logger.debug(`[InferenceService.buildPrompt] Using ${contextMessages.length} messages from persona context (original: ${messages.length})`);
@@ -194,7 +194,7 @@ export class InferenceService {
             messages,
             undefined, // newMessage - not needed for inference
             responder,
-            model.maxContext
+            model.contextWindow
           );
           contextMessages = result.window.messages;
           Logger.inference(`[InferenceService] Using ${contextMessages.length} messages from persona context (original: ${messages.length})`);
@@ -348,7 +348,7 @@ export class InferenceService {
         }
       : baseOnChunk;
 
-    let usageResult: { usage?: any } = {};
+    let usageResult: { usage?: any; rawRequest?: any } = {};
 
     if (model.provider === 'anthropic') {
       if (!selectedKey) {
