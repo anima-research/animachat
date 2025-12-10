@@ -75,7 +75,7 @@
         <v-icon color="warning" class="mr-3">mdi-email-check</v-icon>
         <div class="flex-grow-1">
           <div class="font-weight-medium">Verify Legacy Users</div>
-          <div class="text-caption text-grey">Mark all users registered before Dec 8, 2024 as email-verified</div>
+          <div class="text-caption text-grey">Mark all users registered before Dec 8, 2025 as email-verified</div>
         </div>
         <v-btn
           color="warning"
@@ -573,14 +573,14 @@ async function reloadUser() {
 }
 
 async function verifyLegacyUsers() {
-  if (!confirm('This will mark all users registered before Dec 8, 2024 as email-verified. Continue?')) {
+  if (!confirm('This will mark all users registered before Dec 8, 2025 as email-verified. Continue?')) {
     return;
   }
   
   verifyingLegacyUsers.value = true;
   try {
     const response = await api.post('/admin/verify-legacy-users', {
-      beforeDate: '2024-12-08T00:00:00Z'
+      beforeDate: '2025-12-08T00:00:00Z'
     });
     successMessage.value = response.data.message;
     if (response.data.verifiedUsers?.length > 0) {

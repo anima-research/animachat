@@ -372,7 +372,7 @@ export function adminRouter(db: Database): Router {
   // This is a temporary endpoint for migrating pre-email-verification users
   router.post('/verify-legacy-users', async (req: AuthRequest, res) => {
     try {
-      const beforeDate = req.body.beforeDate ? new Date(req.body.beforeDate) : new Date('2024-12-08T00:00:00Z');
+      const beforeDate = req.body.beforeDate ? new Date(req.body.beforeDate) : new Date('2025-12-08T00:00:00Z');
       
       const users = await db.getAllUsers();
       console.log(`[Admin] verify-legacy-users: Found ${users.length} total users, checking against date ${beforeDate.toISOString()}`);
