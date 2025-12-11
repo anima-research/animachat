@@ -116,7 +116,10 @@ export function authRouter(db: Database): Router {
             emailVerified: false
           },
           requiresVerification: true,
-          message: 'Please check your email to verify your account'
+          emailSent, // Let frontend know if initial email was sent
+          message: emailSent 
+            ? 'Please check your email to verify your account'
+            : 'Account created but we could not send the verification email. Please use the resend option.'
         });
       }
 
@@ -183,7 +186,7 @@ export function authRouter(db: Database): Router {
       const user = await db.getUserByEmail(data.email);
       if (!user) {
         // Don't reveal if user exists or not
-        return res.json({ message: 'If an account exists with this email, a verification link has been sent' });
+        return res.json({ message: 'If an account exists with this email, a verification link has been sent', sent: true });
       }
       
       if (user.emailVerified) {
@@ -191,9 +194,18 @@ export function authRouter(db: Database): Router {
       }
       
       const verificationToken = await db.createEmailVerificationToken(user.id);
-      await sendVerificationEmail(data.email, verificationToken, user.name);
+      const emailSent = await sendVerificationEmail(data.email, verificationToken, user.name);
       
-      res.json({ message: 'If an account exists with this email, a verification link has been sent' });
+      if (!emailSent) {
+        // User exists and is unverified, so they already know they have an account
+        // Give them accurate feedback about email delivery failure
+        return res.status(500).json({ 
+          error: 'Failed to send verification email. Please try again or contact support.',
+          sent: false
+        });
+      }
+      
+      res.json({ message: 'Verification email sent! Please check your inbox.', sent: true });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid input', details: error.errors });
@@ -223,10 +235,15 @@ export function authRouter(db: Database): Router {
       const requireEmailVerification = (config as any).requireEmailVerification !== false && !!process.env.RESEND_API_KEY;
       
       if (requireEmailVerification && !user.emailVerified) {
+        // Auto-send verification email on login attempt
+        const verificationToken = await db.createEmailVerificationToken(user.id);
+        const emailSent = await sendVerificationEmail(data.email, verificationToken, user.name);
+        
         return res.status(403).json({ 
           error: 'Email not verified',
           requiresVerification: true,
-          email: user.email
+          email: user.email,
+          emailSent // Let frontend know if email was actually sent
         });
       }
 
