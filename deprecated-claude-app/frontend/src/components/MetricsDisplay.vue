@@ -1,8 +1,16 @@
 <template>
   <div class="metrics-display" 
+       ref="metricsRoot"
        @mouseenter="handleMouseEnter" 
        @mouseleave="handleMouseLeave">
-    <div class="metrics-bar">
+    <div 
+      class="metrics-bar"
+      role="button"
+      tabindex="0"
+      @click="handleToggleClick"
+      @keydown.enter.prevent="handleToggleClick"
+      @keydown.space.prevent="handleToggleClick"
+    >
       <!-- Compact metrics in top bar -->
       <div class="metric-item hoverable">
         <Icon icon="mdi:text-box-outline" />
@@ -104,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import { Icon } from '@iconify/vue';
 import { ConversationMetrics, ContextManagement, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { useStore } from '@/store';
@@ -116,7 +124,9 @@ const props = defineProps<{
 const store = useStore();
 const showDetails = ref(false);
 const metrics = ref<ConversationMetrics | null>(null);
-let hoverTimer: number | null = null;
+const metricsRoot = ref<HTMLElement | null>(null);
+const isPinned = ref(false);
+let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 const ALL_MODELS_METRICS = "All";
 const selectedModel = ref<string>(ALL_MODELS_METRICS);
 
@@ -124,15 +134,72 @@ const selectedModel = ref<string>(ALL_MODELS_METRICS);
 const processedMetricsTimestamps = new Set<string>();
 
 const handleMouseEnter = () => {
-  if (hoverTimer) clearTimeout(hoverTimer);
+  if (hoverTimer !== null) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
   showDetails.value = true;
 };
 
 const handleMouseLeave = () => {
-  hoverTimer = setTimeout(() => {
+  if (isPinned.value) {
+    return;
+  }
+  if (hoverTimer !== null) {
+    clearTimeout(hoverTimer);
+  }
+  const scheduleTimeout = typeof window === 'undefined' ? setTimeout : window.setTimeout;
+  hoverTimer = scheduleTimeout(() => {
     showDetails.value = false;
-  }, 200) as unknown as number;
+    hoverTimer = null;
+  }, 200);
 };
+
+const closePinnedPanel = () => {
+  isPinned.value = false;
+  showDetails.value = false;
+};
+
+const handleToggleClick = (event?: MouseEvent | KeyboardEvent) => {
+  event?.stopPropagation();
+  const nextState = !(isPinned.value && showDetails.value);
+  isPinned.value = nextState;
+  showDetails.value = nextState;
+
+  if (!nextState && hoverTimer !== null) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+};
+
+const handleOutsideClick = (event: MouseEvent) => {
+  const target = event.target as Node | null;
+  if (metricsRoot.value && target && metricsRoot.value.contains(target)) {
+    return;
+  }
+  closePinnedPanel();
+};
+
+watch(isPinned, (pinned) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (pinned) {
+    document.addEventListener('click', handleOutsideClick);
+  } else {
+    document.removeEventListener('click', handleOutsideClick);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (hoverTimer !== null) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+  if (typeof window !== 'undefined') {
+    document.removeEventListener('click', handleOutsideClick);
+  }
+});
 
 // Fetch metrics
 const fetchMetrics = async () => {
