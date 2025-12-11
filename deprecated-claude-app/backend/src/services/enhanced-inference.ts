@@ -3,6 +3,8 @@ import { ContextManager } from './context-manager.js';
 import { InferenceService } from './inference.js';
 import { ContextWindow } from './context-strategies.js';
 import { Logger } from '../utils/logger.js';
+import { ConfigLoader } from '../config/loader.js';
+import { getOpenRouterPricing } from './pricing-cache.js';
 
 interface CacheMetrics {
   conversationId: string;
@@ -255,6 +257,7 @@ export class EnhancedInferenceService {
         }
         
         // Log metrics
+        const estimatedSaved = await this.calculateCostSaved(model, cachedTokens);
         const metric: CacheMetrics = {
           conversationId: conversation.id,
           participantId: participant?.id,
@@ -265,7 +268,7 @@ export class EnhancedInferenceService {
           inputTokens,
           cachedTokens,
           outputTokens,
-          estimatedCostSaved: this.calculateCostSaved(model, cachedTokens),
+          estimatedCostSaved: estimatedSaved,
         };
         
         this.metricsLog.push(metric);
@@ -288,8 +291,8 @@ export class EnhancedInferenceService {
         // Call metrics callback if provided
         if (onMetrics) {
           const endTime = Date.now();
-          const breakdown = this.calculateCostBreakdown(model, inputTokens, outputTokens);
-          const savings = this.calculateCostSaved(model, cachedTokens);
+          const breakdown = await this.calculateCostBreakdown(model, inputTokens, outputTokens);
+          const savings = await this.calculateCostSaved(model, cachedTokens);
           await onMetrics({
             inputTokens,
             outputTokens,
@@ -421,14 +424,14 @@ export class EnhancedInferenceService {
     return Math.ceil(text.length / 4);
   }
   
-  private calculateCostSaved(model: Model, cachedTokens: number): number {
-    const pricePerToken = this.getInputPricePerToken(model.id, model.providerModelId);
+  private async calculateCostSaved(model: Model, cachedTokens: number): Promise<number> {
+    const pricePerToken = await this.getInputPricePerToken(model);
     return cachedTokens * pricePerToken * CACHE_DISCOUNT;
   }
 
-  private calculateCostBreakdown(model: Model, inputTokens: number, outputTokens: number): CostBreakdown {
-    const inputPrice = this.getInputPricePerToken(model.id, model.providerModelId);
-    const outputPrice = this.getOutputPricePerToken(model.id, model.providerModelId);
+  private async calculateCostBreakdown(model: Model, inputTokens: number, outputTokens: number): Promise<CostBreakdown> {
+    const inputPrice = await this.getInputPricePerToken(model);
+    const outputPrice = await this.getOutputPricePerToken(model);
     const inputCost = inputTokens * inputPrice;
     const outputCost = outputTokens * outputPrice;
 
@@ -473,27 +476,93 @@ export class EnhancedInferenceService {
     };
   }
 
-  private getInputPricePerToken(modelId: string, providerModelId?: string): number {
-    // Try providerModelId first (more specific), then modelId
-    const price = INPUT_PRICING_PER_MILLION[providerModelId || ''] 
-      ?? INPUT_PRICING_PER_MILLION[modelId];
+  /**
+   * Look up pricing from admin config for a specific provider and model.
+   * Returns { input, output } in per-million rates, or null if not configured.
+   */
+  private async getConfigPricing(provider: string, modelId: string, providerModelId?: string): Promise<{ input: number; output: number } | null> {
+    try {
+      const configLoader = ConfigLoader.getInstance();
+      const config = await configLoader.loadConfig();
+      const profiles = config.providers[provider as keyof typeof config.providers];
+      
+      if (!profiles || profiles.length === 0) return null;
+      
+      // Search through all profiles for this provider
+      for (const profile of profiles) {
+        if (profile.modelCosts) {
+          // Try to find by providerModelId first, then modelId
+          const modelCost = profile.modelCosts.find(mc => 
+            mc.modelId === providerModelId || mc.modelId === modelId
+          );
+          
+          if (modelCost) {
+            console.log(`[Pricing] Using admin config pricing for ${modelId} (provider: ${provider})`);
+            return {
+              input: modelCost.providerCost.inputTokensPerMillion,
+              output: modelCost.providerCost.outputTokensPerMillion
+            };
+          }
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.warn('[Pricing] Error loading config pricing:', error);
+      return null;
+    }
+  }
+
+  private async getInputPricePerToken(model: Model): Promise<number> {
+    // 1. Try admin-configured pricing first
+    const configPricing = await this.getConfigPricing(model.provider, model.id, model.providerModelId);
+    if (configPricing) {
+      return configPricing.input / 1_000_000;
+    }
+    
+    // 2. For OpenRouter models, check the cached pricing from their API
+    if (model.provider === 'openrouter' && model.providerModelId) {
+      const orPricing = getOpenRouterPricing(model.providerModelId);
+      if (orPricing) {
+        console.log(`[Pricing] Using cached OpenRouter pricing for ${model.providerModelId}`);
+        return orPricing.input / 1_000_000;
+      }
+    }
+    
+    // 3. Fallback to hardcoded pricing table
+    const price = INPUT_PRICING_PER_MILLION[model.providerModelId || ''] 
+      ?? INPUT_PRICING_PER_MILLION[model.id];
     
     if (price === undefined) {
-      console.error(`⚠️ PRICING ERROR: No input price found for model "${modelId}" (provider: "${providerModelId}"). Using $0 - THIS NEEDS TO BE FIXED!`);
-      return 0; // Return 0 so it's obvious something is wrong
+      console.error(`⚠️ PRICING ERROR: No input price found for model "${model.id}" (provider: "${model.providerModelId}", type: ${model.provider}). Using $0 - configure in Admin panel, use OpenRouter model list, or add to hardcoded table.`);
+      return 0;
     }
     
     return price / 1_000_000;
   }
 
-  private getOutputPricePerToken(modelId: string, providerModelId?: string): number {
-    // Try providerModelId first (more specific), then modelId
-    const price = OUTPUT_PRICING_PER_MILLION[providerModelId || ''] 
-      ?? OUTPUT_PRICING_PER_MILLION[modelId];
+  private async getOutputPricePerToken(model: Model): Promise<number> {
+    // 1. Try admin-configured pricing first
+    const configPricing = await this.getConfigPricing(model.provider, model.id, model.providerModelId);
+    if (configPricing) {
+      return configPricing.output / 1_000_000;
+    }
+    
+    // 2. For OpenRouter models, check the cached pricing from their API
+    if (model.provider === 'openrouter' && model.providerModelId) {
+      const orPricing = getOpenRouterPricing(model.providerModelId);
+      if (orPricing) {
+        return orPricing.output / 1_000_000;
+      }
+    }
+    
+    // 3. Fallback to hardcoded pricing table
+    const price = OUTPUT_PRICING_PER_MILLION[model.providerModelId || ''] 
+      ?? OUTPUT_PRICING_PER_MILLION[model.id];
     
     if (price === undefined) {
-      console.error(`⚠️ PRICING ERROR: No output price found for model "${modelId}" (provider: "${providerModelId}"). Using $0 - THIS NEEDS TO BE FIXED!`);
-      return 0; // Return 0 so it's obvious something is wrong
+      console.error(`⚠️ PRICING ERROR: No output price found for model "${model.id}" (provider: "${model.providerModelId}", type: ${model.provider}). Using $0 - configure in Admin panel, use OpenRouter model list, or add to hardcoded table.`);
+      return 0;
     }
     
     return price / 1_000_000;
