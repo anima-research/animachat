@@ -80,7 +80,7 @@ export function publicModelRouter(): Router {
           displayName: model.displayName,
           provider: model.provider,
           providerModelId: model.providerModelId,
-          deprecated: model.deprecated,
+          hidden: model.hidden,
           contextWindow: model.contextWindow,
           outputTokenLimit: model.outputTokenLimit,
           supportsThinking: Boolean(model.supportsThinking),

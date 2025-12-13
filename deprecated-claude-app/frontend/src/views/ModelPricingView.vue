@@ -64,12 +64,12 @@
                         </div>
                       </div>
                     <v-chip
-                      v-if="model.deprecated"
+                      v-if="model.hidden"
                       color="warning"
                       size="small"
                       class="ml-auto"
                     >
-                      deprecated
+                      hidden
                     </v-chip>
                   </v-expansion-panel-title>
                   <v-expansion-panel-text>
@@ -168,7 +168,7 @@ interface ModelPricingSummary {
   displayName: string;
   provider: string;
   providerModelId: string;
-  deprecated: boolean;
+  hidden: boolean;
   contextWindow: number;
   outputTokenLimit: number;
   supportsThinking: boolean;

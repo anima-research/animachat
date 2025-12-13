@@ -47,13 +47,13 @@
               thinking
             </v-chip>
             <v-chip
-              v-if="item.raw.deprecated"
+              v-if="item.raw.hidden"
               size="x-small"
               variant="outlined"
               color="warning"
               class="ml-2"
             >
-              deprecated
+              hidden
             </v-chip>
           </div>
         </template>
@@ -126,7 +126,7 @@ const props = withDefaults(defineProps<{
   clearable?: boolean;
   showIcon?: boolean;
   showProviderFilter?: boolean;
-  excludeDeprecated?: boolean;
+  excludeHidden?: boolean;
 }>(), {
   label: 'Model',
   placeholder: 'Search models...',
@@ -137,7 +137,7 @@ const props = withDefaults(defineProps<{
   clearable: false,
   showIcon: true,
   showProviderFilter: true,
-  excludeDeprecated: true
+  excludeHidden: true
 });
 
 const emit = defineEmits<{
@@ -152,7 +152,7 @@ const selectedProvider = ref<string | null>(null);
 const providers = computed(() => {
   const providerSet = new Set(
     props.models
-      .filter(m => !props.excludeDeprecated || !m.deprecated)
+      .filter(m => !props.excludeHidden || !m.hidden)
       .map(m => m.provider)
   );
   return Array.from(providerSet).sort();
@@ -162,9 +162,9 @@ const providers = computed(() => {
 const filteredModels = computed(() => {
   let models = props.models;
   
-  // Exclude deprecated if configured
-  if (props.excludeDeprecated) {
-    models = models.filter(m => !m.deprecated);
+  // Exclude hidden if configured
+  if (props.excludeHidden) {
+    models = models.filter(m => !m.hidden);
   }
   
   // Filter by provider

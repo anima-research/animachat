@@ -415,7 +415,7 @@ const conversationFormatOptions = [
 const models = computed(() => store.state.models);
 
 const activeModels = computed(() => {
-  return models.value.filter(m => !m.deprecated);
+  return models.value.filter(m => !m.hidden);
 });
 
 const isTextFormat = computed(() => 

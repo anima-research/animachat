@@ -2,6 +2,7 @@ import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { readFile, writeFile } from 'fs/promises';
+import { join } from 'path';
 import { Database } from '../database/index.js';
 import { authenticateToken, AuthRequest } from '../middleware/auth.js';
 import { ConfigLoader } from '../config/loader.js';
@@ -291,11 +292,53 @@ export function adminRouter(db: Database): Router {
         id: m.id,
         providerModelId: m.providerModelId,
         displayName: m.displayName,
-        provider: m.provider
+        provider: m.provider,
+        hidden: m.hidden
       }))});
     } catch (error) {
       console.error('Error fetching models:', error);
       res.status(500).json({ error: 'Failed to fetch models' });
+    }
+  });
+
+  // PATCH /admin/models/:modelId/visibility - Update model visibility
+  router.patch('/models/:modelId/visibility', async (req: AuthRequest, res) => {
+    try {
+      const { modelId } = req.params;
+      const { hidden } = req.body;
+
+      if (typeof hidden !== 'boolean') {
+        return res.status(400).json({ error: 'hidden must be a boolean' });
+      }
+
+      // Read models.json
+      const modelsPath = process.env.MODELS_CONFIG_PATH || 
+        (process.env.NODE_ENV === 'production' 
+          ? '/etc/claude-app/models.json'
+          : join(process.cwd(), 'config', 'models.json'));
+      
+      const modelsData = await readFile(modelsPath, 'utf-8');
+      const modelsConfig = JSON.parse(modelsData);
+
+      // Find and update the model
+      const modelIndex = modelsConfig.models.findIndex((m: any) => m.id === modelId);
+      if (modelIndex === -1) {
+        return res.status(404).json({ error: 'Model not found' });
+      }
+
+      modelsConfig.models[modelIndex].hidden = hidden;
+
+      // Write back
+      await writeFile(modelsPath, JSON.stringify(modelsConfig, null, 2), 'utf-8');
+
+      // Reload models in memory
+      const modelLoader = ModelLoader.getInstance();
+      await modelLoader.reloadModels();
+
+      res.json({ success: true, modelId, hidden });
+    } catch (error) {
+      console.error('Error updating model visibility:', error);
+      res.status(500).json({ error: 'Failed to update model visibility' });
     }
   });
 

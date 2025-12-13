@@ -140,7 +140,7 @@ export const ModelSchema = z.object({
   displayName: z.string(), // User-facing display name
   shortName: z.string(), // Short name for participant display
   provider: ProviderEnum,
-  deprecated: z.boolean(),
+  hidden: z.boolean(),
   contextWindow: z.number(),
   outputTokenLimit: z.number(),
   supportsThinking: z.boolean().optional(), // Whether the model supports extended thinking
@@ -209,7 +209,7 @@ export const UserDefinedModelSchema = z.object({
   contextWindow: z.number().min(1000).max(10000000),
   outputTokenLimit: z.number().min(100).max(1000000),
   supportsThinking: z.boolean().default(false),
-  deprecated: z.boolean().default(false),
+  hidden: z.boolean().default(false),
   settings: ModelSettingsSchema,
   createdAt: z.date(),
   updatedAt: z.date(),

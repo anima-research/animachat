@@ -644,7 +644,7 @@ const modelSpecificValues = computed({
 const localParticipants = ref<Participant[]>([]);
 
 const activeModels = computed(() => {
-  return props.models.filter(m => !m.deprecated);
+  return props.models.filter(m => !m.hidden);
 });
 
 const selectedModel = computed(() => {

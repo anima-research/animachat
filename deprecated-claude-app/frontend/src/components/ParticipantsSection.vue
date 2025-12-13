@@ -431,7 +431,7 @@ const participants = computed({
 });
 
 const activeModels = computed(() => {
-  return props.models.filter(m => !m.deprecated);
+  return props.models.filter(m => !m.hidden);
 });
 
 const showAddDialog = ref(false);

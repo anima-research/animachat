@@ -6,7 +6,7 @@
       "displayName": "Claude Opus 4.5",
       "shortName": "Opus 4.5",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 32000,
       "supportsThinking": true,
@@ -45,7 +45,7 @@
       "displayName": "Claude Haiku 4.5",
       "shortName": "Haiku 4.5",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
@@ -86,7 +86,7 @@
       "displayName": "Claude Sonnet 4.5",
       "shortName": "Sonnet 4.5",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
@@ -126,7 +126,7 @@
       "displayName": "Claude Opus 4.1",
       "shortName": "Opus 4.1",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 32000,
       "supportsThinking": true,
@@ -165,7 +165,7 @@
       "displayName": "Claude Opus 4",
       "shortName": "Opus 4",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 32000,
       "supportsThinking": true,
@@ -204,7 +204,7 @@
       "displayName": "Claude Sonnet 4",
       "shortName": "Sonnet 4",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
@@ -244,7 +244,7 @@
       "displayName": "Claude 3.7 Sonnet",
       "shortName": "Sonnet 3.7",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
@@ -284,7 +284,7 @@
       "displayName": "Claude 3.5 Haiku",
       "shortName": "Haiku 3.5",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
       "currencies": {
@@ -322,7 +322,7 @@
       "displayName": "Claude 3.6 Sonnet",
       "shortName": "Sonnet 3.6",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": true,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
       "currencies": {
@@ -360,7 +360,7 @@
       "displayName": "Claude 3.5 Sonnet",
       "shortName": "Sonnet 3.5",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": true,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
       "currencies": {
@@ -398,7 +398,7 @@
       "displayName": "Claude 3 Opus",
       "shortName": "Opus 3",
       "provider": "anthropic",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 4096,
       "currencies": {
@@ -431,16 +431,16 @@
       }
     },
     {
-      "id": "claude-3.5-haiku-bedrock",
-      "providerModelId": "anthropic.claude-3-5-haiku-20241022-v1:0",
-      "displayName": "Claude 3.5 Haiku (Bedrock)",
-      "shortName": "Haiku 3.5 (BR)",
+      "id": "claude-3.5-sonnet-bedrock",
+      "providerModelId": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "displayName": "Claude 3.5 Sonnet (Bedrock)",
+      "shortName": "Sonnet 3.5",
       "provider": "bedrock",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
       "currencies": {
-        "haiku": true
+        "sonnets": true
       },
       "settings": {
         "temperature": {
@@ -474,7 +474,7 @@
       "displayName": "Claude 3.6 Sonnet (Bedrock)",
       "shortName": "Sonnet 3.6",
       "provider": "bedrock",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
       "currencies": {
@@ -512,7 +512,7 @@
       "displayName": "Claude 3 Sonnet (Bedrock)",
       "shortName": "Sonnet 3",
       "provider": "bedrock",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 4096,
       "currencies": {
@@ -550,7 +550,7 @@
       "displayName": "Claude 3 Haiku (Bedrock)",
       "shortName": "Haiku 3",
       "provider": "bedrock",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 4096,
       "currencies": {
@@ -588,7 +588,7 @@
       "displayName": "Claude 3.6 Sonnet (OpenRouter)",
       "shortName": "Sonnet 3.6",
       "provider": "openrouter",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 8192,
       "currencies": {
@@ -620,7 +620,7 @@
       "displayName": "Claude 3 Opus (OpenRouter)",
       "shortName": "Opus 3",
       "provider": "openrouter",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 4096,
       "currencies": {
@@ -652,7 +652,7 @@
       "displayName": "Claude Opus 4.5 (OpenRouter)",
       "shortName": "Opus 4.5",
       "provider": "openrouter",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 32000,
       "supportsThinking": true,
@@ -685,7 +685,7 @@
       "displayName": "GPT-4 Turbo (OpenRouter)",
       "shortName": "GPT-4T (OR)",
       "provider": "openrouter",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 128000,
       "outputTokenLimit": 4096,
       "currencies": {
@@ -718,7 +718,7 @@
       "displayName": "Gemini 2.5 Flash",
       "shortName": "Flash 2.5",
       "provider": "google",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 1000000,
       "outputTokenLimit": 65536,
       "supportsThinking": true,
@@ -780,7 +780,7 @@
       "displayName": "Gemini 2.5 Pro",
       "shortName": "Pro 2.5",
       "provider": "google",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 1000000,
       "outputTokenLimit": 65536,
       "supportsThinking": true,
@@ -843,7 +843,7 @@
       "displayName": "Gemini 2.5 Flash (Image)",
       "shortName": "Flash 2.5 🎨",
       "provider": "google",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 32768,
       "outputTokenLimit": 65536,
       "supportsThinking": true,
@@ -866,10 +866,18 @@
           "label": "Output Types",
           "description": "What types of content should the model return?",
           "options": [
-            {"value": "TEXT", "label": "Text"},
-            {"value": "IMAGE", "label": "Image"}
+            {
+              "value": "TEXT",
+              "label": "Text"
+            },
+            {
+              "value": "IMAGE",
+              "label": "Image"
+            }
           ],
-          "default": ["TEXT"]
+          "default": [
+            "TEXT"
+          ]
         },
         {
           "type": "select",
@@ -877,11 +885,26 @@
           "label": "Image Aspect Ratio",
           "description": "Aspect ratio for generated images",
           "options": [
-            {"value": "1:1", "label": "Square (1:1)"},
-            {"value": "16:9", "label": "Landscape (16:9)"},
-            {"value": "9:16", "label": "Portrait (9:16)"},
-            {"value": "4:3", "label": "Standard (4:3)"},
-            {"value": "3:4", "label": "Portrait (3:4)"}
+            {
+              "value": "1:1",
+              "label": "Square (1:1)"
+            },
+            {
+              "value": "16:9",
+              "label": "Landscape (16:9)"
+            },
+            {
+              "value": "9:16",
+              "label": "Portrait (9:16)"
+            },
+            {
+              "value": "4:3",
+              "label": "Standard (4:3)"
+            },
+            {
+              "value": "3:4",
+              "label": "Portrait (3:4)"
+            }
           ],
           "default": "1:1",
           "condition": "responseModalities includes IMAGE"
@@ -933,7 +956,7 @@
       "displayName": "Gemini 2.5 Flash (Image Gen)",
       "shortName": "Flash 2.5 📷",
       "provider": "google",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 32768,
       "outputTokenLimit": 65536,
       "capabilities": {
@@ -955,10 +978,19 @@
           "label": "Output Types",
           "description": "What types of content should the model return?",
           "options": [
-            {"value": "TEXT", "label": "Text"},
-            {"value": "IMAGE", "label": "Image"}
+            {
+              "value": "TEXT",
+              "label": "Text"
+            },
+            {
+              "value": "IMAGE",
+              "label": "Image"
+            }
           ],
-          "default": ["TEXT", "IMAGE"]
+          "default": [
+            "TEXT",
+            "IMAGE"
+          ]
         },
         {
           "type": "select",
@@ -966,11 +998,26 @@
           "label": "Image Aspect Ratio",
           "description": "Aspect ratio for generated images",
           "options": [
-            {"value": "1:1", "label": "Square (1:1)"},
-            {"value": "16:9", "label": "Landscape (16:9)"},
-            {"value": "9:16", "label": "Portrait (9:16)"},
-            {"value": "4:3", "label": "Standard (4:3)"},
-            {"value": "3:4", "label": "Portrait (3:4)"}
+            {
+              "value": "1:1",
+              "label": "Square (1:1)"
+            },
+            {
+              "value": "16:9",
+              "label": "Landscape (16:9)"
+            },
+            {
+              "value": "9:16",
+              "label": "Portrait (9:16)"
+            },
+            {
+              "value": "4:3",
+              "label": "Standard (4:3)"
+            },
+            {
+              "value": "3:4",
+              "label": "Portrait (3:4)"
+            }
           ],
           "default": "1:1"
         },
@@ -1021,7 +1068,7 @@
       "displayName": "Gemini 3 Pro Preview",
       "shortName": "Pro 3",
       "provider": "google",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 1000000,
       "outputTokenLimit": 65536,
       "supportsThinking": true,
@@ -1045,10 +1092,18 @@
           "label": "Output Types",
           "description": "What types of content should the model return?",
           "options": [
-            {"value": "TEXT", "label": "Text"},
-            {"value": "IMAGE", "label": "Image"}
+            {
+              "value": "TEXT",
+              "label": "Text"
+            },
+            {
+              "value": "IMAGE",
+              "label": "Image"
+            }
           ],
-          "default": ["TEXT"]
+          "default": [
+            "TEXT"
+          ]
         },
         {
           "type": "select",
@@ -1056,11 +1111,26 @@
           "label": "Image Aspect Ratio",
           "description": "Aspect ratio for generated images",
           "options": [
-            {"value": "1:1", "label": "Square (1:1)"},
-            {"value": "16:9", "label": "Landscape (16:9)"},
-            {"value": "9:16", "label": "Portrait (9:16)"},
-            {"value": "4:3", "label": "Standard (4:3)"},
-            {"value": "3:4", "label": "Portrait (3:4)"}
+            {
+              "value": "1:1",
+              "label": "Square (1:1)"
+            },
+            {
+              "value": "16:9",
+              "label": "Landscape (16:9)"
+            },
+            {
+              "value": "9:16",
+              "label": "Portrait (9:16)"
+            },
+            {
+              "value": "4:3",
+              "label": "Standard (4:3)"
+            },
+            {
+              "value": "3:4",
+              "label": "Portrait (3:4)"
+            }
           ],
           "default": "1:1",
           "condition": "responseModalities includes IMAGE"
@@ -1071,9 +1141,18 @@
           "label": "Image Resolution",
           "description": "Output image resolution (higher = slower)",
           "options": [
-            {"value": "1K", "label": "1K"},
-            {"value": "2K", "label": "2K (Default)"},
-            {"value": "4K", "label": "4K (Slower)"}
+            {
+              "value": "1K",
+              "label": "1K"
+            },
+            {
+              "value": "2K",
+              "label": "2K (Default)"
+            },
+            {
+              "value": "4K",
+              "label": "4K (Slower)"
+            }
           ],
           "default": "2K",
           "condition": "responseModalities includes IMAGE"
@@ -1125,7 +1204,7 @@
       "displayName": "Gemini 3 Pro (Image Gen 4K)",
       "shortName": "Pro 3 📷",
       "provider": "google",
-      "deprecated": false,
+      "hidden": false,
       "contextWindow": 32768,
       "outputTokenLimit": 65536,
       "supportsThinking": true,
@@ -1150,10 +1229,19 @@
           "label": "Output Types",
           "description": "What types of content should the model return?",
           "options": [
-            {"value": "TEXT", "label": "Text"},
-            {"value": "IMAGE", "label": "Image"}
+            {
+              "value": "TEXT",
+              "label": "Text"
+            },
+            {
+              "value": "IMAGE",
+              "label": "Image"
+            }
           ],
-          "default": ["TEXT", "IMAGE"]
+          "default": [
+            "TEXT",
+            "IMAGE"
+          ]
         },
         {
           "type": "select",
@@ -1161,11 +1249,26 @@
           "label": "Image Aspect Ratio",
           "description": "Aspect ratio for generated images",
           "options": [
-            {"value": "1:1", "label": "Square (1:1)"},
-            {"value": "16:9", "label": "Landscape (16:9)"},
-            {"value": "9:16", "label": "Portrait (9:16)"},
-            {"value": "4:3", "label": "Standard (4:3)"},
-            {"value": "3:4", "label": "Portrait (3:4)"}
+            {
+              "value": "1:1",
+              "label": "Square (1:1)"
+            },
+            {
+              "value": "16:9",
+              "label": "Landscape (16:9)"
+            },
+            {
+              "value": "9:16",
+              "label": "Portrait (9:16)"
+            },
+            {
+              "value": "4:3",
+              "label": "Standard (4:3)"
+            },
+            {
+              "value": "3:4",
+              "label": "Portrait (3:4)"
+            }
           ],
           "default": "1:1"
         },
@@ -1175,9 +1278,18 @@
           "label": "Image Resolution",
           "description": "Output image resolution (higher = slower)",
           "options": [
-            {"value": "1K", "label": "1K"},
-            {"value": "2K", "label": "2K (Default)"},
-            {"value": "4K", "label": "4K (Slower)"}
+            {
+              "value": "1K",
+              "label": "1K"
+            },
+            {
+              "value": "2K",
+              "label": "2K (Default)"
+            },
+            {
+              "value": "4K",
+              "label": "4K (Slower)"
+            }
           ],
           "default": "4K"
         },
