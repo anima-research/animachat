@@ -903,24 +903,17 @@ export class Database {
         const message = this.messages.get(messageId);
         if (message) {
           const updatedBranches = message.branches.filter(b => b.id !== branchId);
-          if (updatedBranches.length > 0) {
-            const updated = {
-              ...message,
-              branches: updatedBranches,
-              activeBranchId: message.activeBranchId === branchId ? updatedBranches[0].id : message.activeBranchId
-            };
-            this.messages.set(messageId, updated);
-          } else {
-            // Should not happen, but handle gracefully
-            this.messages.delete(messageId);
-            const convMessages = this.conversationMessages.get(conversationId);
-            if (convMessages) {
-              const index = convMessages.indexOf(messageId);
-              if (index > -1) {
-                convMessages.splice(index, 1);
-              }
-            }
-          }
+          // Always keep the message - a new branch might be added later
+          // If all branches are deleted, keep the message with empty branches
+          // and a placeholder activeBranchId that will be fixed when a new branch is added
+          const updated = {
+            ...message,
+            branches: updatedBranches,
+            activeBranchId: message.activeBranchId === branchId 
+              ? (updatedBranches[0]?.id || message.activeBranchId) // Keep old ID as placeholder if no branches left
+              : message.activeBranchId
+          };
+          this.messages.set(messageId, updated);
         }
         break;
       }
@@ -2733,11 +2726,11 @@ export class Database {
     const messageIds = this.conversationMessages.get(conversationId) || [];
     const messages = messageIds
       .map(id => this.messages.get(id))
-      .filter((msg): msg is Message => msg !== undefined);
+      .filter((msg): msg is Message => msg !== undefined && msg.branches.length > 0); // Filter out messages with no branches
     
     // Only log if there's a potential issue
     if (messageIds.length !== messages.length) {
-      console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found`);
+      console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found (some may have no branches)`);
     }
     
     // Sort by tree order (parents before children) instead of order field

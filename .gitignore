@@ -22,4 +22,5 @@ deprecated-claude-app/backend/logs/llm/**
 .archive/**
 
 # Test files
-prompt_caching/**
+prompt_caching/***.json
+production-*.json
