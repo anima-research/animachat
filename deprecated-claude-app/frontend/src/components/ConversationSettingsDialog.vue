@@ -831,6 +831,14 @@ watch(() => settings.value.model, (modelId) => {
     // Disable topP and topK by default when changing models
     topPEnabled.value = false;
     topKEnabled.value = false;
+    
+    // Auto-enable thinking for models that have it enabled by default
+    if ((model as any).thinkingDefaultEnabled) {
+      thinkingEnabled.value = true;
+    } else if (!model.supportsThinking) {
+      // Disable thinking if the new model doesn't support it
+      thinkingEnabled.value = false;
+    }
   }
 });
 

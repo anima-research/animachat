@@ -84,6 +84,7 @@ export function publicModelRouter(): Router {
           contextWindow: model.contextWindow,
           outputTokenLimit: model.outputTokenLimit,
           supportsThinking: Boolean(model.supportsThinking),
+          thinkingDefaultEnabled: Boolean((model as any).thinkingDefaultEnabled),
           currencies: extractCurrencies(model),
           pricing,
         };

@@ -414,7 +414,7 @@
         "maxTokens": {
           "min": 1,
           "max": 4096,
-          "default": 32768
+          "default": 4096
         },
         "topP": {
           "min": 0,
@@ -1025,6 +1025,7 @@
       "contextWindow": 1000000,
       "outputTokenLimit": 65536,
       "supportsThinking": true,
+      "thinkingDefaultEnabled": true,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
@@ -1127,6 +1128,8 @@
       "deprecated": false,
       "contextWindow": 32768,
       "outputTokenLimit": 65536,
+      "supportsThinking": true,
+      "thinkingDefaultEnabled": true,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
