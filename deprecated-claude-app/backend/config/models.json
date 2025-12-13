@@ -1025,6 +1025,7 @@
       "contextWindow": 1000000,
       "outputTokenLimit": 65536,
       "supportsThinking": true,
+      "thinkingDefaultEnabled": true,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
@@ -1127,6 +1128,8 @@
       "deprecated": false,
       "contextWindow": 32768,
       "outputTokenLimit": 65536,
+      "supportsThinking": true,
+      "thinkingDefaultEnabled": true,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,

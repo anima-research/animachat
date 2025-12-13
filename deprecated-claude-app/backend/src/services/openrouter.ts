@@ -197,18 +197,37 @@ export class OpenRouterService {
       // Convert messages to OpenRouter format with cache support
       const openRouterMessages = this.formatMessagesForOpenRouter(messages, systemPrompt, provider);
       
+      // Ensure max_tokens > reasoning budget when thinking is enabled
+      let effectiveMaxTokens = settings.maxTokens;
+      if (settings.thinking?.enabled && settings.thinking.budgetTokens) {
+        // max_tokens must be greater than reasoning budget
+        // Add reasonable room for the actual response (at least 4096 tokens)
+        const minMaxTokens = settings.thinking.budgetTokens + 4096;
+        if (effectiveMaxTokens < minMaxTokens) {
+          console.log(`[OpenRouter] Adjusting max_tokens from ${effectiveMaxTokens} to ${minMaxTokens} (reasoning budget: ${settings.thinking.budgetTokens})`);
+          effectiveMaxTokens = minMaxTokens;
+        }
+      }
+
       const requestBody: any = {
         model: modelId,
         messages: openRouterMessages,
         stream: true,
         temperature: settings.temperature,
-        max_tokens: settings.maxTokens,
+        max_tokens: effectiveMaxTokens,
         ...(settings.topP !== undefined && { top_p: settings.topP }),
         ...(settings.topK !== undefined && { top_k: settings.topK }),
         ...(stopSequences && stopSequences.length > 0 && { stop: stopSequences }),
         
         // Required for cache metrics in response
-        usage: { include: true }
+        usage: { include: true },
+        
+        // Add reasoning/thinking support for models that support it
+        ...(settings.thinking?.enabled && settings.thinking.budgetTokens && {
+          reasoning: {
+            max_tokens: settings.thinking.budgetTokens
+          }
+        })
       };
       
       // For Anthropic models: force native provider and enable caching
@@ -219,6 +238,11 @@ export class OpenRouterService {
         };
         requestBody.transforms = ['prompt-caching'];
         Logger.cache(`[OpenRouter] 🔒 Forcing native Anthropic with prompt-caching enabled`);
+      }
+      
+      // Log reasoning configuration
+      if (settings.thinking?.enabled) {
+        console.log(`[OpenRouter] 🧠 Reasoning enabled with budget: ${settings.thinking.budgetTokens} tokens`);
       }
 
       // Log request to file (with truncated message content) and get cache hash
@@ -271,6 +295,11 @@ export class OpenRouterService {
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 0
       };
+      
+      // Track reasoning/thinking content blocks
+      const contentBlocks: any[] = [];
+      let reasoningContent = '';
+      let hasReasoningStarted = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -295,17 +324,150 @@ export class OpenRouterService {
                 cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
                 cacheReadInputTokens: cacheMetrics.cacheReadInputTokens
               };
-              await onChunk('', true, undefined, actualUsage);
+              
+              // Include content blocks (reasoning) in final response
+              const finalContentBlocks = contentBlocks.length > 0 ? contentBlocks : undefined;
+              
+              if (hasReasoningStarted) {
+                console.log(`[OpenRouter] 🧠 Reasoning complete: ${reasoningContent.length} chars`);
+              }
+              
+              await onChunk('', true, finalContentBlocks, actualUsage);
               break;
             }
 
             try {
               const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content;
+              const delta = parsed.choices?.[0]?.delta;
               
+              // Handle reasoning/thinking content (OpenRouter format)
+              // OpenRouter may use different field names depending on the model/version:
+              // - reasoning_content: main field for reasoning text (string) - PREFERRED
+              // - reasoning: may be a string OR array of {type: "reasoning.text", text: "...", signature: "..."}
+              // - reasoning_details: may contain structured reasoning data
+              // Use EXCLUSIVE checks - only process the first field that has content
+              
+              let reasoningText = '';
+              
+              // Priority 1: Check for reasoning_content (simple string format - most common for streaming deltas)
+              if (delta?.reasoning_content && typeof delta.reasoning_content === 'string') {
+                reasoningText = delta.reasoning_content;
+              }
+              // Priority 2: Check for reasoning field (only if reasoning_content was empty)
+              else if (delta?.reasoning) {
+                if (typeof delta.reasoning === 'string') {
+                  reasoningText = delta.reasoning;
+                } else if (Array.isArray(delta.reasoning)) {
+                  // Array format: [{type: "reasoning.text", text: "...", signature: "..."}]
+                  for (const item of delta.reasoning) {
+                    if (item && typeof item === 'object' && item.text) {
+                      reasoningText += item.text;
+                    }
+                  }
+                } else if (typeof delta.reasoning === 'object' && delta.reasoning.text) {
+                  // Single object format: {type: "reasoning.text", text: "..."}
+                  reasoningText = delta.reasoning.text;
+                }
+              }
+              // Priority 3: Handle reasoning_details (fallback, only if nothing else found)
+              else if (delta?.reasoning_details) {
+                const details = delta.reasoning_details;
+                if (typeof details === 'string') {
+                  reasoningText = details;
+                } else if (Array.isArray(details)) {
+                  for (const item of details) {
+                    if (item && typeof item === 'object' && item.text) {
+                      reasoningText += item.text;
+                    }
+                  }
+                } else if (typeof details === 'object' && details.text) {
+                  reasoningText = details.text;
+                }
+              }
+              
+              // If we have reasoning text, add it to the thinking block
+              if (reasoningText) {
+                if (!hasReasoningStarted) {
+                  hasReasoningStarted = true;
+                  // Use unshift to ensure thinking block is always at index 0
+                  contentBlocks.unshift({ type: 'thinking', thinking: '' });
+                  console.log('[OpenRouter] 🧠 Reasoning block started');
+                }
+                reasoningContent += reasoningText;
+                contentBlocks[0] = { type: 'thinking', thinking: reasoningContent };
+                // Stream reasoning update via contentBlocks (empty content chunk)
+                await onChunk('', false, contentBlocks);
+              }
+              
+              const content = delta?.content;
               if (content) {
                 chunks.push(content);
-                await onChunk(content, false);
+                await onChunk(content, false, contentBlocks.length > 0 ? contentBlocks : undefined);
+              }
+              
+              // Handle image generation responses (OpenRouter/Gemini image models)
+              // OpenRouter returns images in delta.images array: [{type: "image_url", image_url: {url: "data:..."}}]
+              // OpenRouter may send multiple versions of the same image - we keep only the latest one
+              const addOrReplaceImage = (mimeType: string, base64Data: string) => {
+                // Find existing image block index
+                const existingImageIndex = contentBlocks.findIndex((b: any) => b.type === 'image');
+                const imageBlock = {
+                  type: 'image',
+                  mimeType,
+                  data: base64Data
+                };
+                
+                if (existingImageIndex >= 0) {
+                  // Replace existing image with the newer version
+                  console.log(`[OpenRouter] 🖼️ Replacing image with newer version: ${mimeType}, ${base64Data.length} bytes`);
+                  contentBlocks[existingImageIndex] = imageBlock;
+                } else {
+                  // Add new image
+                  console.log(`[OpenRouter] 🖼️ Received generated image: ${mimeType}, ${base64Data.length} bytes`);
+                  contentBlocks.push(imageBlock as any);
+                }
+              };
+              
+              if (delta?.images && Array.isArray(delta.images)) {
+                console.log(`[OpenRouter] 🖼️ Found ${delta.images.length} images in delta`);
+                for (const img of delta.images) {
+                  if (img.type === 'image_url' && img.image_url?.url) {
+                    // Parse data URL: data:image/png;base64,<base64_data>
+                    const dataUrl = img.image_url.url;
+                    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+                    if (match) {
+                      addOrReplaceImage(match[1], match[2]);
+                    }
+                  }
+                }
+                await onChunk('', false, contentBlocks);
+              }
+              
+              // Also check message.images (non-streaming format)
+              const message = parsed.choices?.[0]?.message;
+              if (message?.images && Array.isArray(message.images)) {
+                console.log(`[OpenRouter] 🖼️ Found ${message.images.length} images in message`);
+                for (const img of message.images) {
+                  if (img.type === 'image_url' && img.image_url?.url) {
+                    const dataUrl = img.image_url.url;
+                    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+                    if (match) {
+                      addOrReplaceImage(match[1], match[2]);
+                    }
+                  }
+                }
+                await onChunk('', false, contentBlocks);
+              }
+              
+              // Also check for inlineData format (direct Gemini-style response)
+              if (delta?.inlineData) {
+                contentBlocks.push({
+                  type: 'image',
+                  mimeType: delta.inlineData.mimeType || 'image/png',
+                  data: delta.inlineData.data
+                } as any);
+                console.log(`[OpenRouter] 🖼️ Received inline image: ${delta.inlineData.mimeType || 'image/png'}`);
+                await onChunk('', false, contentBlocks);
               }
               
               // Capture prompt tokens early to calculate fresh tokens later

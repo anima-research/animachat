@@ -184,6 +184,7 @@ export const ModelPricingSummarySchema = z.object({
   contextWindow: z.number(),
   outputTokenLimit: z.number(),
   supportsThinking: z.boolean().optional(),
+  thinkingDefaultEnabled: z.boolean().optional(),
   pricing: z.array(ModelPricingTierSchema),
   currencies: z.array(z.string()).default([])
 });
