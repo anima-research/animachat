@@ -249,15 +249,40 @@
           </v-slider>
           
           <v-text-field
-            :model-value="getParticipantSettingsField('maxTokens', 1.0)"
+            :model-value="getParticipantSettingsField('maxTokens', 4096)"
             @update:model-value="(val) => setParticipantSettingsField('maxTokens', Number(val))"
             type="number"
             label="Max Tokens"
             variant="outlined"
             hide-details
             :min="1"
-            :max="200000"
+            :max="selectedParticipantModel?.outputTokenLimit || 200000"
+            class="mb-4"
           />
+          
+          <!-- Thinking Settings (for models that support it) -->
+          <div v-if="selectedParticipantModel?.supportsThinking" class="mb-4">
+            <v-checkbox
+              :model-value="getParticipantSettingsField('thinking.enabled', false)"
+              @update:model-value="(val) => setParticipantSettingsField('thinking', val ? { enabled: true, budgetTokens: getParticipantSettingsField('thinking.budgetTokens', 8000) } : undefined)"
+              label="Extended Thinking"
+              density="compact"
+              hide-details
+            />
+            <v-slider
+              v-if="getParticipantSettingsField('thinking.enabled', false)"
+              :model-value="getParticipantSettingsField('thinking.budgetTokens', 8000)"
+              @update:model-value="(val) => setParticipantSettingsField('thinking', { enabled: true, budgetTokens: val })"
+              :min="1024"
+              :max="32000"
+              :step="1024"
+              thumb-label
+              label="Thinking Budget"
+              hide-details
+              color="primary"
+              class="mt-2"
+            />
+          </div>
           
           <!-- Model-Specific Settings -->
           <ModelSpecificSettings
@@ -670,6 +695,20 @@ function updateParticipantModel(participant: any, newModelId: string) {
     model: newModelId,
     ...(shouldAutoFillName && newModelName ? { name: newModelName } : {})
   };
+  
+  // If the new model doesn't support thinking, clear thinking settings
+  if (updated[idx].settings?.thinking && !newModel?.supportsThinking) {
+    console.log('  Clearing thinking settings (new model does not support thinking)');
+    delete updated[idx].settings.thinking;
+  }
+  
+  // Ensure maxTokens doesn't exceed the new model's output limit
+  if (updated[idx].settings?.maxTokens && newModel?.outputTokenLimit) {
+    if (updated[idx].settings.maxTokens > newModel.outputTokenLimit) {
+      console.log(`  Capping maxTokens from ${updated[idx].settings.maxTokens} to ${newModel.outputTokenLimit}`);
+      updated[idx].settings.maxTokens = newModel.outputTokenLimit;
+    }
+  }
   
   console.log('  ✅ Emitting updated participants:', updated);
   
