@@ -27,6 +27,9 @@
           variant="outlined"
           density="compact"
           class="mt-4"
+          :disabled="isAlreadyGroupChat"
+          :hint="isAlreadyGroupChat ? 'Group chats cannot be converted back to one-on-one' : ''"
+          :persistent-hint="isAlreadyGroupChat"
         >
           <template v-slot:item="{ props, item }">
             <v-list-item v-bind="props">
@@ -75,6 +78,8 @@
           <ParticipantsSection
             v-model="localParticipants"
             :models="activeModels"
+            :personas="personas || []"
+            :can-use-personas="canUsePersonas || false"
           />
           
           <v-divider class="my-4" />
@@ -532,7 +537,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { Conversation, Model, Participant, ConfigurableSetting } from '@deprecated-claude/shared';
+import type { Conversation, Model, Participant, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
 import ModelSelector from './ModelSelector.vue';
 import ModelSpecificSettings from './ModelSpecificSettings.vue';
@@ -557,6 +562,8 @@ const props = defineProps<{
   conversation: Conversation | null;
   models: Model[];
   messageCount?: number;
+  personas?: Persona[];
+  canUsePersonas?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -591,6 +598,11 @@ const formatOptions = [
     description: 'Supports multiple participants with custom names'
   }
 ];
+
+// Prevent conversion from group chat back to one-on-one
+const isAlreadyGroupChat = computed(() => {
+  return props.conversation?.format === 'prefill';
+});
 
 // Show warning when switching to group chat with fewer than 6 messages
 const showGroupChatWarning = computed(() => {

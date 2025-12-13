@@ -132,6 +132,7 @@ const props = defineProps<{
   conversationId: string;
   isStandardConversation?: boolean;
   canUsePersonas?: boolean;
+  defaultModelId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -182,14 +183,20 @@ function getModelName(modelId: string): string {
 // Reset form when dialog opens
 watch(() => props.modelValue, (open) => {
   if (open) {
+    // If a default model is provided, use it
+    const defaultModel = props.defaultModelId 
+      ? props.models.find(m => m.id === props.defaultModelId) 
+      : null;
+    const defaultName = defaultModel?.shortName || defaultModel?.displayName?.split(':').pop()?.trim() || '';
+    
     newParticipant.value = {
-      name: '',
+      name: defaultName,
       type: 'assistant',
-      model: '',
+      model: props.defaultModelId || '',
       personaId: ''
     };
     nameManuallyEdited.value = false;
-    lastAutoName.value = '';
+    lastAutoName.value = defaultName;
   }
 });
 

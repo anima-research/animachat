@@ -58,12 +58,12 @@
       :key="model.id"
       class="pill suggested"
       :class="{ 'disabled': disabled }"
-      @click="isStandardConversation ? $emit('add-model') : $emit('add-suggested-model', model)"
+      @click="isStandardConversation ? $emit('add-model', model) : $emit('add-suggested-model', model)"
       :title="isStandardConversation ? 'Add model and convert to group chat' : 'Add to conversation'"
     >
       <v-icon size="x-small" class="pill-icon">{{ getProviderIcon(model.provider) }}</v-icon>
       <span class="pill-name">{{ model.shortName || model.displayName }}</span>
-      <span class="pill-send" @click.stop="isStandardConversation ? $emit('add-model') : $emit('quick-send-model', model)">
+      <span class="pill-send" @click.stop="isStandardConversation ? $emit('add-model', model) : $emit('quick-send-model', model)">
         <v-icon size="x-small">mdi-send</v-icon>
       </span>
     </div>
@@ -95,7 +95,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'select-responder': [participant: Participant];
   'quick-send': [participant: Participant];
-  'add-model': [];
+  'add-model': [model?: Model];
   'add-suggested-model': [model: Model];
   'quick-send-model': [model: Model];
   'open-settings': [];

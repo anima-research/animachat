@@ -690,6 +690,8 @@
       :conversation="currentConversation"
       :models="store.state.models"
       :message-count="messages.length"
+      :personas="personas"
+      :can-use-personas="isResearcher"
       @update="updateConversationSettings"
       @update-participants="updateParticipants"
     />
@@ -730,6 +732,7 @@
       :conversation-id="currentConversation?.id || ''"
       :is-standard-conversation="currentConversation?.format === 'standard'"
       :can-use-personas="isResearcher"
+      :default-model-id="addParticipantDefaultModelId"
       @add="handleAddParticipant"
     />
   </v-layout>
@@ -1852,8 +1855,10 @@ async function triggerModelResponse(model: Model) {
       
       participant = await response.json();
       
-      // Reload participants to ensure UI is in sync
-      await loadParticipants();
+      // Add to local participants array immediately (don't wait for loadParticipants)
+      // This ensures the participant is available when the streaming message arrives
+      participants.value.push(participant);
+      console.log('Added new participant to local array:', participant.name, participant.id);
     }
     
     // Set the responder to this participant
@@ -2671,9 +2676,13 @@ async function loadParticipants() {
   }
 }
 
-function handleAddModel() {
+// Model to pre-fill in the add participant dialog
+const addParticipantDefaultModelId = ref<string | undefined>(undefined);
+
+function handleAddModel(model?: { id: string }) {
   // Opens the add participant dialog
   // For standard conversations, this will trigger conversion to group chat
+  addParticipantDefaultModelId.value = model?.id;
   addParticipantDialog.value = true;
 }
 
@@ -2689,19 +2698,53 @@ async function handleAddParticipant(participant: { name: string; type: 'user' | 
       console.log('[handleAddParticipant] Converting to group chat format');
       await updateConversationSettings({ format: 'prefill' });
 
-      // Create a participant for the current model
-      const currentModelId = currentConversation.value.model;
-      const currentModelData = store.state.models.find(m => m.id === currentModelId);
-
-      if (currentModelData) {
-        const currentModelResponse = await api.post('/participants', {
-          conversationId: currentConversation.value.id,
-          name: currentModelData.shortName || currentModelData.displayName,
-          type: 'assistant',
-          model: currentModelId
-        });
-        participants.value.push(currentModelResponse.data);
-        console.log('[handleAddParticipant] Added current model as participant:', currentModelResponse.data);
+      // Load existing participants
+      await loadParticipants();
+      
+      // Get user's first name - safe to use since it's always the same user
+      const user = store.state.user;
+      const userFirstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || 'User';
+      
+      // Check if all assistant messages in the conversation used the same model
+      // Note: Message has branches, role/model are on each branch, need to access via activeBranchId
+      const visibleMsgs = messages.value;
+      const modelsUsed = new Set<string>();
+      
+      for (const msg of visibleMsgs) {
+        const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+        if (activeBranch?.role === 'assistant' && activeBranch.model) {
+          modelsUsed.add(activeBranch.model);
+        }
+      }
+      
+      console.log(`[handleAddParticipant] Models used in visible messages:`, [...modelsUsed]);
+      const singleModelUsed = modelsUsed.size === 1;
+      
+      let assistantName = 'Assistant';
+      if (singleModelUsed && modelsUsed.size === 1) {
+        const modelId = [...modelsUsed][0];
+        const modelData = store.state.models.find(m => m.id === modelId);
+        assistantName = modelData?.shortName || modelData?.displayName || 'Assistant';
+        console.log(`[handleAddParticipant] All messages from same model: ${modelId} -> "${assistantName}"`);
+      } else if (modelsUsed.size > 1) {
+        console.log(`[handleAddParticipant] Mixed models used: ${[...modelsUsed].join(', ')} -> keeping "Assistant"`);
+      }
+      
+      // Rename existing participants with generic names
+      for (const p of participants.value) {
+        let newName: string | null = null;
+        
+        if (p.type === 'user' && (p.name === 'H' || p.name === 'User')) {
+          newName = userFirstName;
+        } else if (p.type === 'assistant' && (p.name === 'A' || p.name === 'Assistant')) {
+          newName = assistantName;
+        }
+        
+        if (newName && newName !== p.name) {
+          console.log(`[handleAddParticipant] Renaming participant ${p.id} from "${p.name}" to "${newName}"`);
+          await api.patch(`/participants/${p.id}`, { name: newName });
+          p.name = newName; // Update local copy
+        }
       }
     }
 

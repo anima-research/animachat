@@ -1842,19 +1842,23 @@ export class Database {
 
     await this.logUserEvent(conversation.userId, 'conversation_created', conversation);
     
+    // Get user's first name for the user participant
+    const user = await this.getUserById(userId);
+    const userFirstName = user?.name?.split(' ')[0] || 'User';
+    
     // Create default participants
+    // For standard format, use generic "A" since user might switch models during conversation
+    // For prefill (group chat), use the model's actual name
     if (format === 'standard' || !format) {
-      // Standard format: fixed User and Assistant
-      await this.createParticipant(conversation.id, userId, 'H', 'user');
+      await this.createParticipant(conversation.id, userId, userFirstName, 'user');
       await this.createParticipant(conversation.id, userId, 'A', 'assistant', model, systemPrompt, settings);
     } else {
-      // Prefill format: starts with default participants but can add more
-      // Get model display name for assistant participant
+      // Group chat format - use proper model name
       const modelLoader = ModelLoader.getInstance();
       const modelConfig = await modelLoader.getModelById(model);
-      const assistantName = modelConfig?.displayName || 'A';
+      const assistantName = modelConfig?.shortName || modelConfig?.displayName || 'Assistant';
       
-      await this.createParticipant(conversation.id, userId, 'H', 'user');
+      await this.createParticipant(conversation.id, userId, userFirstName, 'user');
       await this.createParticipant(conversation.id, userId, assistantName, 'assistant', model, systemPrompt, settings);
     }
 
