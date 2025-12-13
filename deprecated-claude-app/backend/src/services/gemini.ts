@@ -165,8 +165,14 @@ export class GeminiService {
         requestBody.tools = [{ googleSearch: {} }];
       }
       
-      // Add thinking config if thinking is enabled (Gemini 2.5+ and Gemini 3 models)
-      if (settings.thinking?.enabled) {
+      // Add thinking config if thinking is enabled (only for models that support it)
+      // Known thinking-capable models: gemini-2.5-*, gemini-3-* (but NOT image generation variants)
+      const isThinkingCapableModel = (
+        (modelId.includes('gemini-2.5') || modelId.includes('gemini-3')) && 
+        !modelId.includes('image') // Image generation models don't support thinking
+      );
+      
+      if (settings.thinking?.enabled && isThinkingCapableModel) {
         generationConfig.thinkingConfig = {
           includeThoughts: true,
         };
@@ -175,6 +181,8 @@ export class GeminiService {
           generationConfig.thinkingConfig.thinkingBudget = settings.thinking.budgetTokens;
         }
         console.log(`[Gemini API] 🧠 Thinking enabled with budget: ${settings.thinking.budgetTokens || 'auto'}`);
+      } else if (settings.thinking?.enabled && !isThinkingCapableModel) {
+        console.log(`[Gemini API] ⚠️ Thinking requested but model ${modelId} doesn't support it - skipping thinkingConfig`);
       }
       
       requestId = `gemini-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -442,8 +450,13 @@ export class GeminiService {
       requestBody.tools = [{ googleSearch: {} }];
     }
     
-    // Add thinking config if thinking is enabled
-    if (settings.thinking?.enabled) {
+    // Add thinking config if thinking is enabled (only for models that support it)
+    const isThinkingCapableModel = (
+      (modelId.includes('gemini-2.5') || modelId.includes('gemini-3')) && 
+      !modelId.includes('image')
+    );
+    
+    if (settings.thinking?.enabled && isThinkingCapableModel) {
       generationConfig.thinkingConfig = {
         includeThoughts: true,
       };
