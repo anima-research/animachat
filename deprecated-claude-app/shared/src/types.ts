@@ -144,6 +144,7 @@ export const ModelSchema = z.object({
   contextWindow: z.number(),
   outputTokenLimit: z.number(),
   supportsThinking: z.boolean().optional(), // Whether the model supports extended thinking
+  thinkingDefaultEnabled: z.boolean().optional(), // Whether thinking should be enabled by default for this model
   capabilities: ModelCapabilitiesSchema.optional(), // Multimodal capabilities
   currencies: z.record(z.boolean()).optional(),
   

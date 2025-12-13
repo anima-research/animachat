@@ -1,6 +1,13 @@
 *node_modules*
 .specstory
 .specstory/*
+
+# Environment files (NEVER commit these!)
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
 deprecated-claude-app/frontend/node_modules/**
 deprecated-claude-app/shared/dist/**
 .idea/**

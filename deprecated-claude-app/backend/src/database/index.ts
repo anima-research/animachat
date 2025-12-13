@@ -844,13 +844,13 @@ export class Database {
       }
       
       case 'message_content_updated': {
-        const { messageId, branchId, content } = event.data;
+        const { messageId, branchId, content, contentBlocks } = event.data;
         const message = this.messages.get(messageId);
         if (message) {
-          // Create new message object with updated content
+          // Create new message object with updated content and contentBlocks
           const updatedBranches = message.branches.map(branch =>
             branch.id === branchId
-              ? { ...branch, content }
+              ? { ...branch, content, ...(contentBlocks && Array.isArray(contentBlocks) ? { contentBlocks } : {}) }
               : branch
           );
           const updated = { ...message, branches: updatedBranches };
@@ -2516,7 +2516,7 @@ export class Database {
     this.messages.set(messageId, updated);
     
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'message_content_updated', { messageId, branchId, content, contentBlocks: contentBlocks ? true : false });
+    await this.logConversationEvent(conversationId, 'message_content_updated', { messageId, branchId, content, contentBlocks });
 
     return true;
   }

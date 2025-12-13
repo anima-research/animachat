@@ -741,9 +741,9 @@ async function handleChatMessage(
             branchIndex: branchIndex // Let client know which branch this is for
           };
           
-          // Log content blocks being sent
+          // Log content blocks being sent (only when there are blocks and no text chunk)
           if (contentBlocks && contentBlocks.length > 0 && !chunk) {
-            console.log(`[WebSocket] Branch ${branchIndex}: Sending content blocks:`, contentBlocks.length, 'types:', contentBlocks.map(b => b.type));
+            console.log(`[WebSocket] Branch ${branchIndex}: Sending content blocks:`, contentBlocks.length, 'types:', contentBlocks.map((b: any) => b.type));
           }
           
           // Send to original requester

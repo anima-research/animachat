@@ -979,15 +979,11 @@ const thinkingBudgetTokens = computed(() => {
   return currentConversation.value?.settings?.thinking?.budgetTokens || 10000;
 });
 
-// Check if current model supports thinking (Claude models that support extended thinking)
+// Check if current model supports thinking (from model config)
 const modelSupportsThinking = computed(() => {
   const modelId = currentConversation.value?.model || '';
-  // Claude 3.5 Sonnet, Claude 3.7 Sonnet, Claude 4.x, and Opus 4.5 support extended thinking
-  return modelId.includes('claude-3-5-sonnet') || 
-         modelId.includes('claude-3-7-sonnet') ||
-         modelId.includes('claude-sonnet-4') ||
-         modelId.includes('claude-opus-4') ||
-         modelId.includes('opus-4');
+  const model = store.state.models.find(m => m.id === modelId);
+  return model?.supportsThinking || false;
 });
 
 async function toggleThinking() {
