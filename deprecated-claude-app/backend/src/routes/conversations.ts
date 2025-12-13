@@ -363,5 +363,30 @@ export function conversationRouter(db: Database): Router {
     }
   });
 
+  // Get conversation archive - all messages with orphan/deleted status for debugging
+  router.get('/:id/archive', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      if (conversation.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const archiveData = await db.getConversationArchive(req.params.id);
+      res.json(archiveData);
+    } catch (error) {
+      console.error('Get conversation archive error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }

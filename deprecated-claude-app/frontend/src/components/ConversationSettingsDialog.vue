@@ -491,12 +491,22 @@
         
         <v-divider class="my-4" />
         
-        <v-btn
-          variant="text"
-          @click="resetToDefaults"
-        >
-          Reset to Defaults
-        </v-btn>
+        <div class="d-flex gap-2">
+          <v-btn
+            variant="text"
+            @click="resetToDefaults"
+          >
+            Reset to Defaults
+          </v-btn>
+          <v-btn
+            variant="text"
+            color="info"
+            @click="openArchive"
+          >
+            <v-icon start size="small">mdi-archive-outline</v-icon>
+            View Archive
+          </v-btn>
+        </div>
       </v-card-text>
       
       <v-card-actions>
@@ -521,12 +531,15 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import type { Conversation, Model, Participant, ConfigurableSetting } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
 import ModelSelector from './ModelSelector.vue';
 import ModelSpecificSettings from './ModelSpecificSettings.vue';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
+
+const router = useRouter();
 
 const store = useStore();
 
@@ -880,6 +893,13 @@ function resetToDefaults() {
 
 function cancel() {
   emit('update:modelValue', false);
+}
+
+function openArchive() {
+  if (props.conversation) {
+    emit('update:modelValue', false);
+    router.push(`/conversation/${props.conversation.id}/archive`);
+  }
 }
 
 function save() {

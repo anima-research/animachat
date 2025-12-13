@@ -2749,6 +2749,206 @@ export class Database {
     return await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
   }
 
+  // Get conversation archive with all branches and orphan/deleted status for debugging
+  async getConversationArchive(conversationId: string): Promise<{
+    messages: Array<{
+      id: string;
+      order: number;
+      branches: Array<{
+        id: string;
+        parentBranchId: string | null;
+        content: string;
+        role: string;
+        createdAt: string;
+        isActive: boolean;
+        isOrphan: boolean;
+        isDeleted: boolean;
+        model?: string;
+      }>;
+    }>;
+    stats: {
+      totalMessages: number;
+      totalBranches: number;
+      orphanedBranches: number;
+      deletedBranches: number;
+      rootBranches: number;
+    };
+  }> {
+    // Load raw events from the conversation event store
+    const events = await this.conversationEventStore.loadEvents(conversationId);
+    
+    // Process events to build complete picture
+    const messagesMap = new Map<string, {
+      id: string;
+      order: number;
+      activeBranchId: string;
+      branches: Map<string, {
+        id: string;
+        parentBranchId: string | null;
+        content: string;
+        role: string;
+        createdAt: string;
+        model?: string;
+        isDeleted: boolean;
+      }>;
+      isDeleted: boolean;
+    }>();
+    
+    const deletedBranchIds = new Set<string>();
+    const deletedMessageIds = new Set<string>();
+    
+    for (const event of events) {
+      const data = event.data as any;
+      
+      if (event.type === 'message_created') {
+        const branches = new Map();
+        for (const b of data.branches || []) {
+          branches.set(b.id, {
+            id: b.id,
+            parentBranchId: b.parentBranchId || null,
+            content: b.content || '',
+            role: b.role,
+            createdAt: b.createdAt,
+            model: b.model,
+            isDeleted: false,
+          });
+        }
+        messagesMap.set(data.id, {
+          id: data.id,
+          order: data.order ?? 0,
+          activeBranchId: data.activeBranchId,
+          branches,
+          isDeleted: false,
+        });
+      } else if (event.type === 'message_branch_added') {
+        const msg = messagesMap.get(data.messageId);
+        if (msg && data.branch) {
+          msg.branches.set(data.branch.id, {
+            id: data.branch.id,
+            parentBranchId: data.branch.parentBranchId || null,
+            content: data.branch.content || '',
+            role: data.branch.role,
+            createdAt: data.branch.createdAt,
+            model: data.branch.model,
+            isDeleted: false,
+          });
+        }
+      } else if (event.type === 'active_branch_changed') {
+        const msg = messagesMap.get(data.messageId);
+        if (msg) {
+          msg.activeBranchId = data.branchId;
+        }
+      } else if (event.type === 'message_deleted') {
+        deletedMessageIds.add(data.messageId);
+        const msg = messagesMap.get(data.messageId);
+        if (msg) {
+          msg.isDeleted = true;
+          for (const [bid] of msg.branches) {
+            deletedBranchIds.add(bid);
+          }
+        }
+      } else if (event.type === 'message_branch_deleted') {
+        deletedBranchIds.add(data.branchId);
+        const msg = messagesMap.get(data.messageId);
+        if (msg) {
+          const branch = msg.branches.get(data.branchId);
+          if (branch) {
+            branch.isDeleted = true;
+          }
+        }
+      } else if (event.type === 'message_content_updated') {
+        const msg = messagesMap.get(data.messageId);
+        if (msg) {
+          const branch = msg.branches.get(data.branchId);
+          if (branch) {
+            branch.content = data.content;
+          }
+        }
+      }
+    }
+    
+    // Build set of all existing (non-deleted) branch IDs
+    const existingBranchIds = new Set<string>();
+    for (const [, msg] of messagesMap) {
+      if (!msg.isDeleted) {
+        for (const [bid, branch] of msg.branches) {
+          if (!branch.isDeleted) {
+            existingBranchIds.add(bid);
+          }
+        }
+      }
+    }
+    
+    // Build result with orphan status
+    const result: Array<{
+      id: string;
+      order: number;
+      branches: Array<{
+        id: string;
+        parentBranchId: string | null;
+        content: string;
+        role: string;
+        createdAt: string;
+        isActive: boolean;
+        isOrphan: boolean;
+        isDeleted: boolean;
+        model?: string;
+      }>;
+    }> = [];
+    
+    let orphanedCount = 0;
+    let deletedCount = 0;
+    let rootCount = 0;
+    let totalBranches = 0;
+    
+    for (const [, msg] of messagesMap) {
+      const branchesArray = [];
+      for (const [bid, branch] of msg.branches) {
+        totalBranches++;
+        
+        // Check if orphan: parent exists but is deleted or doesn't exist
+        const isOrphan = branch.parentBranchId !== null && 
+          !existingBranchIds.has(branch.parentBranchId);
+        
+        if (isOrphan) orphanedCount++;
+        if (branch.isDeleted) deletedCount++;
+        if (branch.parentBranchId === null) rootCount++;
+        
+        branchesArray.push({
+          id: bid,
+          parentBranchId: branch.parentBranchId,
+          content: branch.content,
+          role: branch.role,
+          createdAt: branch.createdAt,
+          isActive: bid === msg.activeBranchId,
+          isOrphan,
+          isDeleted: branch.isDeleted || msg.isDeleted,
+          model: branch.model,
+        });
+      }
+      
+      result.push({
+        id: msg.id,
+        order: msg.order,
+        branches: branchesArray,
+      });
+    }
+    
+    // Sort by order
+    result.sort((a, b) => a.order - b.order);
+    
+    return {
+      messages: result,
+      stats: {
+        totalMessages: result.length,
+        totalBranches,
+        orphanedBranches: orphanedCount,
+        deletedBranches: deletedCount,
+        rootBranches: rootCount,
+      },
+    };
+  }
+
   async tryLoadAndVerifyParticipant(participantId: string, conversationOwnerUserId: string) : Promise<Participant | null> {
     await this.loadUser(conversationOwnerUserId); // participant data is stored in user files
     const participant = this.participants.get(participantId);
