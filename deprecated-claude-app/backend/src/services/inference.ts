@@ -279,6 +279,18 @@ export class InferenceService {
       effectiveSettings.thinking = { ...effectiveSettings.thinking, enabled: false };
     }
     
+    // Disable thinking if the model doesn't support it
+    if (effectiveSettings.thinking?.enabled && !model.supportsThinking) {
+      console.log(`[InferenceService] Disabling thinking for model ${model.id} (doesn't support thinking)`);
+      effectiveSettings.thinking = undefined;
+    }
+    
+    // Cap maxTokens to the model's output limit
+    if (model.outputTokenLimit && effectiveSettings.maxTokens > model.outputTokenLimit) {
+      console.log(`[InferenceService] Capping maxTokens from ${effectiveSettings.maxTokens} to ${model.outputTokenLimit} for model ${model.id}`);
+      effectiveSettings.maxTokens = model.outputTokenLimit;
+    }
+    
     // For prefill thinking mode, handle thinking tags during streaming:
     // - Buffer thinking content until </think> is seen (don't add to content)
     // - Stream thinking updates via contentBlocks only
