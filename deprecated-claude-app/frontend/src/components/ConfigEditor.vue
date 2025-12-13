@@ -211,6 +211,7 @@
               <v-table density="compact" class="model-costs-table">
                 <thead>
                   <tr>
+                    <th style="width: 50px;">Visible</th>
                     <th style="min-width: 320px;">Model ID</th>
                     <th style="width: 70px;">In $/M</th>
                     <th style="width: 70px;">Out $/M</th>
@@ -221,6 +222,14 @@
                 </thead>
                 <tbody>
                   <tr v-for="(cost, idx) in profile.modelCosts" :key="idx">
+                    <td>
+                      <v-checkbox
+                        :model-value="!isModelHidden(cost.modelId)"
+                        @update:model-value="toggleModelVisibility(cost.modelId, $event)"
+                        hide-details
+                        density="compact"
+                      />
+                    </td>
                     <td>
                       <v-text-field
                         v-model="cost.modelId"
@@ -368,6 +377,7 @@ interface ModelInfo {
   providerModelId: string;
   displayName: string;
   provider: string;
+  hidden: boolean;
 }
 
 const loading = ref(true);
@@ -520,6 +530,24 @@ async function saveModelCosts(provider: string, profileId: string, modelCosts: M
     showError(e?.response?.data?.error || 'Failed to save model costs');
   } finally {
     savingModelCosts[key] = false;
+  }
+}
+
+function isModelHidden(modelId: string): boolean {
+  const model = availableModels.value.find(m => m.id === modelId || m.providerModelId === modelId);
+  return model?.hidden ?? false;
+}
+
+async function toggleModelVisibility(modelId: string, visible: boolean) {
+  const model = availableModels.value.find(m => m.id === modelId || m.providerModelId === modelId);
+  if (!model) return;
+  
+  try {
+    await api.patch(`/admin/models/${model.id}/visibility`, { hidden: !visible });
+    model.hidden = !visible;
+    showSuccess(`Model ${model.displayName} is now ${visible ? 'visible' : 'hidden'}`);
+  } catch (e: any) {
+    showError(e?.response?.data?.error || 'Failed to update model visibility');
   }
 }
 

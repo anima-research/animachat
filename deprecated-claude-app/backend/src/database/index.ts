@@ -3498,7 +3498,7 @@ export class Database {
       userId,
       ...modelData,
       supportsThinking: modelData.supportsThinking || false,
-      deprecated: false,
+      hidden: false,
       settings: modelData.settings || {
         temperature: 1.0,
         maxTokens: 4096
@@ -3523,7 +3523,7 @@ export class Database {
     const modelIds = this.userModelsByUser.get(userId) || new Set();
     return Array.from(modelIds)
       .map(id => this.userModels.get(id))
-      .filter((model): model is UserDefinedModel => model !== undefined && !model.deprecated);
+      .filter((model): model is UserDefinedModel => model !== undefined && !model.hidden);
   }
 
   async getUserModel(modelId: string, userId: string): Promise<UserDefinedModel | null> {

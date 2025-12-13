@@ -66,7 +66,7 @@ export class ModelLoader {
       displayName: um.displayName,
       shortName: um.shortName,
       provider: um.provider,
-      deprecated: um.deprecated,
+      hidden: um.hidden,
       contextWindow: um.contextWindow,
       outputTokenLimit: um.outputTokenLimit,
       supportsThinking: um.supportsThinking,
@@ -126,14 +126,6 @@ export class ModelLoader {
   async getModelProvider(modelId: string): Promise<string | null> {
     const model = await this.getModelById(modelId);
     return model?.provider || null;
-  }
-
-  /**
-   * Get only active (non-deprecated) models
-   */
-  async getActiveModels(): Promise<Model[]> {
-    const models = await this.loadModels();
-    return models.filter(m => !m.deprecated);
   }
 
   /**

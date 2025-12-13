@@ -180,7 +180,7 @@ export const ModelPricingSummarySchema = z.object({
   displayName: z.string(),
   provider: z.string(),
   providerModelId: z.string(),
-  deprecated: z.boolean(),
+  hidden: z.boolean(),
   contextWindow: z.number(),
   outputTokenLimit: z.number(),
   supportsThinking: z.boolean().optional(),

@@ -250,7 +250,7 @@
                 >
                   {{ getProviderChip(model.provider).label }}
                 </v-chip>
-                <span v-if="model.deprecated" class="text-orange ml-1">(Deprecated)</span>
+                <span v-if="model.hidden" class="text-orange ml-1">(Hidden)</span>
                 <br>
                 <small class="text-grey">{{ model.contextWindow.toLocaleString() }} tokens context</small>
               </li>
