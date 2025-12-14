@@ -42,13 +42,14 @@
       padding: '12px 12px 8px 12px'
     }"
     @mouseenter="isHovered = true"
-    @mouseleave="isHovered = false"
+    @mouseleave="handleMouseLeave"
   >
     <!-- Hover action bar (Discord-style) -->
     <div 
-      v-if="isHovered && !isEditing && !isStreaming" 
+      v-if="(isHovered || moreMenuOpen) && !isEditing && !isStreaming" 
       class="hover-actions"
     >
+      <!-- Primary actions -->
       <span v-if="message.branches[branchIndex].role === 'assistant'" class="hover-tooltip" data-tooltip="Regenerate">
         <v-btn
           icon="mdi-refresh"
@@ -76,16 +77,6 @@
           @click="copyContent"
         />
       </span>
-      <span class="hover-tooltip" :data-tooltip="isMonospace ? 'Normal text' : 'Monospace'">
-        <v-btn
-          :icon="isMonospace ? 'mdi-format-text' : 'mdi-code-tags'"
-          :color="isMonospace ? 'info' : undefined"
-          size="x-small"
-          variant="text"
-          density="compact"
-          @click="isMonospace = !isMonospace"
-        />
-      </span>
       <span class="hover-tooltip" data-tooltip="Branch">
         <v-btn
           :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
@@ -108,33 +99,72 @@
           @click="toggleBookmark"
         />
       </span>
-      <span class="hover-tooltip" data-tooltip="Download">
-        <v-btn
-          icon="mdi-code-json"
-          size="x-small"
-          variant="text"
-          density="compact"
-          @click="downloadPrompt"
-        />
-      </span>
-      <span v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)" class="hover-tooltip" data-tooltip="Debug">
-        <v-btn
-          icon="mdi-bug"
-          size="x-small"
-          variant="text"
-          density="compact"
-          @click="showDebugDialog = true"
-        />
-      </span>
-      <span v-if="canViewMetadata" class="hover-tooltip" data-tooltip="Metadata">
-        <v-btn
-          icon="mdi-information-outline"
-          size="x-small"
-          variant="text"
-          density="compact"
-          @click="showMetadataDialog = true"
-        />
-      </span>
+      
+      <!-- More actions menu -->
+      <div class="more-menu-wrapper" @mouseenter.stop @mouseleave.stop>
+        <v-menu 
+          v-model="moreMenuOpen"
+          location="bottom" 
+          :offset="8"
+          :close-on-content-click="true"
+        >
+          <template v-slot:activator="{ props }">
+            <v-btn
+              v-bind="props"
+              icon="mdi-dots-horizontal"
+              size="x-small"
+              variant="text"
+              density="compact"
+              title="More actions"
+            />
+          </template>
+          <v-list 
+            density="compact" 
+            class="more-menu py-0" 
+            min-width="140"
+          >
+          <v-list-item density="compact" @click="isMonospace = !isMonospace">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-code-tags" />
+            </template>
+            <v-list-item-title class="text-caption">{{ isMonospace ? 'Normal text' : 'Monospace' }}</v-list-item-title>
+            <template v-slot:append>
+              <v-icon v-if="isMonospace" icon="mdi-check" size="14" color="info" />
+            </template>
+          </v-list-item>
+          <v-list-item density="compact" @click="saveAsImage">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-camera" />
+            </template>
+            <v-list-item-title class="text-caption">Save as image</v-list-item-title>
+          </v-list-item>
+          <v-list-item density="compact" @click="downloadPrompt">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-code-json" />
+            </template>
+            <v-list-item-title class="text-caption">Download JSON</v-list-item-title>
+          </v-list-item>
+          <v-divider v-if="(message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)) || canViewMetadata" class="my-0" />
+          <v-list-item
+            v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)"
+            density="compact"
+            @click="showDebugDialog = true"
+          >
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-bug" />
+            </template>
+            <v-list-item-title class="text-caption">Debug data</v-list-item-title>
+          </v-list-item>
+          <v-list-item v-if="canViewMetadata" density="compact" @click="showMetadataDialog = true">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-information-outline" />
+            </template>
+            <v-list-item-title class="text-caption">Metadata</v-list-item-title>
+          </v-list-item>
+        </v-list>
+        </v-menu>
+      </div>
+      
       <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
       <span class="hover-tooltip" data-tooltip="Delete">
         <v-btn
@@ -702,6 +732,7 @@ const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
 const isHovered = ref(false);
 const isMonospace = ref(false); // Toggle monospace display for entire message
+const moreMenuOpen = ref(false); // Track more menu state for debugging
 const bookmarkDialog = ref(false);
 const bookmarkInput = ref('');
 const bookmarkLabel = ref<string | null>(null);
@@ -1127,6 +1158,66 @@ function saveEdit() {
 
 function copyContent() {
   navigator.clipboard.writeText(currentBranch.value.content);
+}
+
+function handleMouseLeave() {
+  // Don't hide hover bar if the more menu is open (user is interacting with menu popup)
+  if (!moreMenuOpen.value) {
+    isHovered.value = false;
+  }
+}
+
+async function saveAsImage() {
+  if (!messageCard.value) return;
+  
+  try {
+    const html2canvas = (await import('html2canvas')).default;
+    
+    // Find the message content element
+    const contentEl = messageCard.value.querySelector('.message-content') as HTMLElement;
+    if (!contentEl) {
+      console.error('No message content element found');
+      return;
+    }
+    
+    // Create a clone for rendering (to avoid visual glitches)
+    const clone = contentEl.cloneNode(true) as HTMLElement;
+    clone.style.padding = '20px';
+    clone.style.background = 'rgb(30, 30, 30)';
+    clone.style.color = '#e0e0e0';
+    clone.style.fontFamily = isMonospace.value 
+      ? "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
+      : 'system-ui, -apple-system, sans-serif';
+    clone.style.fontSize = isMonospace.value ? '14px' : '15px';
+    clone.style.lineHeight = '1.5';
+    clone.style.whiteSpace = isMonospace.value ? 'pre-wrap' : 'normal';
+    clone.style.width = 'max-content';
+    clone.style.maxWidth = '1200px';
+    clone.style.borderRadius = '8px';
+    
+    // Temporarily append to body (hidden)
+    clone.style.position = 'absolute';
+    clone.style.left = '-9999px';
+    document.body.appendChild(clone);
+    
+    const canvas = await html2canvas(clone, {
+      backgroundColor: '#1e1e1e',
+      scale: 2, // Higher resolution
+      logging: false,
+    });
+    
+    // Clean up
+    document.body.removeChild(clone);
+    
+    // Download the image
+    const link = document.createElement('a');
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
+    link.download = `message-${props.message.id.slice(0, 8)}-${timestamp}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  } catch (error) {
+    console.error('Failed to save as image:', error);
+  }
 }
 
 function navigateBranch(direction: number) {
@@ -1660,6 +1751,24 @@ watch(() => currentBranch.value.id, async () => {
 .hover-tooltip:hover::after {
   opacity: 1;
   visibility: visible;
+}
+
+/* Compact more menu */
+.more-menu .v-list-item {
+  min-height: 28px !important;
+  padding: 4px 10px !important;
+}
+
+.more-menu .v-list-item__prepend {
+  margin-right: 8px !important;
+}
+
+.more-menu .v-list-item__append {
+  margin-left: 8px !important;
+}
+
+.more-menu-wrapper {
+  display: inline-flex;
 }
 
 .hover-actions .v-btn {
