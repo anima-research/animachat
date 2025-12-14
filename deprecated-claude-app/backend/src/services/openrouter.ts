@@ -184,7 +184,8 @@ export class OpenRouterService {
       outputTokens: number;
       cacheCreationInputTokens?: number;
       cacheReadInputTokens?: number;
-    }
+    };
+    rawRequest?: any;
   }> {
     const requestId = `openrouter-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const startTime = Date.now();
@@ -611,11 +612,12 @@ export class OpenRouterService {
             outputTokens: completionTokens,
             cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
             cacheReadInputTokens: cacheMetrics.cacheReadInputTokens
-          }
+          },
+          rawRequest: requestBody
         };
       }
       
-      return {}; // No usage data available
+      return { rawRequest: requestBody }; // No usage data available
     } catch (error) {
       console.error('OpenRouter streaming error:', error);
       

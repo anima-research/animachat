@@ -132,5 +132,52 @@ export function participantRouter(db: Database): Router {
     }
   });
 
+  // Assign participants to existing messages that don't have a participantId
+  // Used when converting from standard format to group chat
+  router.post('/conversation/:conversationId/assign-to-messages', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.conversationId, req.userId);
+      if (!conversation) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Get participants
+      const participants = await db.getConversationParticipants(req.params.conversationId, conversation.userId);
+      const userParticipant = participants.find(p => p.type === 'user');
+      const assistantParticipant = participants.find(p => p.type === 'assistant');
+
+      if (!userParticipant || !assistantParticipant) {
+        return res.status(400).json({ error: 'Conversation needs at least one user and one assistant participant' });
+      }
+
+      // Get all messages
+      const messages = await db.getConversationMessages(req.params.conversationId, conversation.userId);
+      
+      let updatedCount = 0;
+      for (const message of messages) {
+        for (const branch of message.branches) {
+          // Only update branches that don't have a participantId
+          if (!branch.participantId) {
+            const targetParticipant = branch.role === 'user' ? userParticipant : assistantParticipant;
+            await db.updateMessageBranch(message.id, conversation.userId, branch.id, { 
+              participantId: targetParticipant.id 
+            });
+            updatedCount++;
+          }
+        }
+      }
+
+      console.log(`[assign-to-messages] Updated ${updatedCount} branches in conversation ${req.params.conversationId}`);
+      res.json({ success: true, updatedCount });
+    } catch (error) {
+      console.error('Assign participants to messages error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }

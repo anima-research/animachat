@@ -42,11 +42,11 @@ export class BedrockService {
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
     stopSequences?: string[]
-  ): Promise<void> {
+  ): Promise<{ rawRequest?: any }> {
     // Demo mode - simulate streaming response
     if (process.env.DEMO_MODE === 'true') {
       await this.simulateStreamingResponse(messages, onChunk);
-      return;
+      return {};
     }
 
     let requestId: string | undefined;
@@ -60,6 +60,12 @@ export class BedrockService {
       // Build the request body based on model version
       const requestBody = this.buildRequestBody(modelId, claudeMessages, systemPrompt, settings, stopSequences);
       bedrockModelId = modelId; // modelId is already the provider model ID from config
+      
+      // Store raw request for debugging
+      const rawRequest = {
+        model: bedrockModelId,
+        ...requestBody
+      };
 
       requestId = `bedrock-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
@@ -126,6 +132,8 @@ export class BedrockService {
           }
         }
       }
+      
+      return { rawRequest };
     } catch (error) {
       console.error('Bedrock streaming error:', error);
       

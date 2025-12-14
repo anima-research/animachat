@@ -80,6 +80,15 @@
         title="Debug: View LLM request/response"
         @click="showDebugDialog = true"
       />
+      <v-btn
+        v-if="canViewMetadata"
+        icon="mdi-information-outline"
+        size="x-small"
+        variant="text"
+        density="compact"
+        title="View message metadata (IDs, branches, debug data)"
+        @click="showMetadataDialog = true"
+      />
       <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
       <v-btn
         icon="mdi-delete-outline"
@@ -340,6 +349,182 @@
       :debug-request="currentBranch.debugRequest"
       :debug-response="currentBranch.debugResponse"
     />
+    
+    <!-- Metadata Dialog (for researchers/admins) -->
+    <v-dialog v-model="showMetadataDialog" max-width="800">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2">mdi-information-outline</v-icon>
+          Message Metadata
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="showMetadataDialog = false" />
+        </v-card-title>
+        <v-card-text>
+          <div class="mb-4">
+            <h4 class="text-subtitle-1 mb-2">Message</h4>
+            <v-table density="compact">
+              <tbody>
+                <tr>
+                  <td class="font-weight-medium" style="width: 180px;">Message ID</td>
+                  <td><code>{{ message.id }}</code></td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Conversation ID</td>
+                  <td><code>{{ message.conversationId }}</code></td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Active Branch ID</td>
+                  <td><code>{{ message.activeBranchId }}</code></td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Order</td>
+                  <td>{{ message.order }}</td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Created At</td>
+                  <td>{{ new Date(message.createdAt).toLocaleString() }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
+          
+          <div class="mb-4">
+            <h4 class="text-subtitle-1 mb-2">Current Branch ({{ branchIndex + 1 }} of {{ message.branches.length }})</h4>
+            <v-table density="compact">
+              <tbody>
+                <tr>
+                  <td class="font-weight-medium" style="width: 180px;">Branch ID</td>
+                  <td><code>{{ currentBranch.id }}</code></td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Role</td>
+                  <td>{{ currentBranch.role }}</td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Parent Branch ID</td>
+                  <td><code>{{ currentBranch.parentBranchId || 'root' }}</code></td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Model</td>
+                  <td>
+                    <template v-if="currentBranchModelDetails">
+                      <div>{{ currentBranchModelDetails.displayName }}</div>
+                      <div class="text-caption text-grey">
+                        <code>{{ currentBranchModelDetails.providerModelId }}</code>
+                        <span v-if="currentBranchModelDetails.isCustom" class="ml-1">(custom)</span>
+                      </div>
+                    </template>
+                    <template v-else>
+                      {{ currentBranch.model || 'N/A' }}
+                    </template>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Internal Model ID</td>
+                  <td><code>{{ currentBranch.model || 'N/A' }}</code></td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Participant ID</td>
+                  <td><code>{{ currentBranch.participantId || 'N/A' }}</code></td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Sent By User</td>
+                  <td><code>{{ currentBranch.sentByUserId || 'N/A' }}</code></td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Content Length</td>
+                  <td>{{ currentBranch.content?.length || 0 }} chars</td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Content Blocks</td>
+                  <td>{{ currentBranch.contentBlocks?.length || 0 }}</td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Has Debug Request</td>
+                  <td>{{ !!currentBranch.debugRequest }}</td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Has Debug Response</td>
+                  <td>{{ !!currentBranch.debugResponse }}</td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Created At</td>
+                  <td>{{ currentBranch.createdAt ? new Date(currentBranch.createdAt).toLocaleString() : 'N/A' }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
+          
+          <div v-if="message.branches.length > 1" class="mb-4">
+            <h4 class="text-subtitle-1 mb-2">All Branches ({{ message.branches.length }})</h4>
+            <v-expansion-panels variant="accordion" density="compact">
+              <v-expansion-panel v-for="(branch, idx) in message.branches" :key="branch.id">
+                <v-expansion-panel-title>
+                  <span :class="{ 'font-weight-bold': branch.id === message.activeBranchId }">
+                    Branch {{ idx + 1 }}: {{ branch.role }}
+                    <span v-if="branch.id === message.activeBranchId" class="text-success ml-2">(active)</span>
+                  </span>
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-table density="compact">
+                    <tbody>
+                      <tr>
+                        <td class="font-weight-medium" style="width: 180px;">Branch ID</td>
+                        <td><code>{{ branch.id }}</code></td>
+                      </tr>
+                      <tr>
+                        <td class="font-weight-medium">Parent Branch ID</td>
+                        <td><code>{{ branch.parentBranchId || 'root' }}</code></td>
+                      </tr>
+                      <tr>
+                        <td class="font-weight-medium">Model</td>
+                        <td>
+                          <template v-if="getModelDetails(branch.model)">
+                            {{ getModelDetails(branch.model)?.displayName }}
+                            <div class="text-caption text-grey">
+                              <code>{{ getModelDetails(branch.model)?.providerModelId }}</code>
+                            </div>
+                          </template>
+                          <template v-else>
+                            {{ branch.model || 'N/A' }}
+                          </template>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="font-weight-medium">Has Debug Data</td>
+                        <td>{{ !!branch.debugRequest || !!branch.debugResponse }}</td>
+                      </tr>
+                    </tbody>
+                  </v-table>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+          </div>
+          
+          <div v-if="currentBranch.debugRequest" class="mb-4">
+            <h4 class="text-subtitle-1 mb-2">Debug Request</h4>
+            <pre class="debug-json pa-2 rounded" style="max-height: 300px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugRequest, null, 2) }}</pre>
+          </div>
+          
+          <div v-if="currentBranch.debugResponse" class="mb-4">
+            <h4 class="text-subtitle-1 mb-2">Debug Response</h4>
+            <pre class="debug-json pa-2 rounded" style="max-height: 200px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugResponse, null, 2) }}</pre>
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-btn
+            variant="text"
+            size="small"
+            @click="copyMetadataToClipboard"
+          >
+            <v-icon start>mdi-content-copy</v-icon>
+            Copy All
+          </v-btn>
+          <v-spacer />
+          <v-btn variant="text" @click="showMetadataDialog = false">Close</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -391,6 +576,23 @@ const imagePreviewDialog = ref(false);
 const previewImageSrc = ref('');
 const previewImageAlt = ref('');
 const showDebugDialog = ref(false);
+const showMetadataDialog = ref(false);
+
+// Check if user is researcher or admin (can see metadata)
+const canViewMetadata = computed(() => {
+  const summary = store.state.grantSummary;
+  if (!summary?.grantCapabilities) return false;
+  
+  // Check for researcher or admin capability
+  for (const cap of ['researcher', 'admin']) {
+    const records = summary.grantCapabilities.filter((c: any) => c.capability === cap);
+    if (records.length > 0) {
+      const latest = records.reduce((a: any, b: any) => (a.time > b.time ? a : b));
+      if (latest.action === 'granted') return true;
+    }
+  }
+  return false;
+});
 
 const branchIndex = computed(() => {
   return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;
@@ -399,6 +601,39 @@ const branchIndex = computed(() => {
 const currentBranch = computed(() => {
   const branch = props.message.branches[branchIndex.value];
   return branch;
+});
+
+// Look up model details from store
+function getModelDetails(modelId: string | undefined) {
+  if (!modelId) return null;
+  
+  // Check standard models
+  const standardModel = store.state.models.find(m => m.id === modelId);
+  if (standardModel) {
+    return {
+      displayName: standardModel.displayName || standardModel.shortName || modelId,
+      providerModelId: standardModel.providerModelId,
+      provider: standardModel.provider,
+      isCustom: false
+    };
+  }
+  
+  // Check custom models
+  const customModel = store.state.customModels?.find(m => m.id === modelId);
+  if (customModel) {
+    return {
+      displayName: customModel.displayName || modelId,
+      providerModelId: customModel.providerModelId,
+      provider: customModel.provider,
+      isCustom: true
+    };
+  }
+  
+  return null;
+}
+
+const currentBranchModelDetails = computed(() => {
+  return getModelDetails(currentBranch.value?.model);
 });
 
 // Get sender display name for multiuser attribution
@@ -492,9 +727,12 @@ const modelIndicator = computed(() => {
   
   // Only show model indicator for assistant messages that have a model stored
   if (branch.role === 'assistant' && branch.model) {
-    // Return a shortened version of the model ID for display
-    // e.g., "claude-3.5-sonnet" -> "claude-3.5"
-    // or just return the full ID if you prefer
+    const details = getModelDetails(branch.model);
+    if (details) {
+      // Always prefer providerModelId (e.g., google/gemini-3-pro-preview)
+      // as it's most useful for identifying the actual model
+      return details.providerModelId || details.displayName;
+    }
     return branch.model;
   }
   
@@ -813,6 +1051,49 @@ async function downloadPrompt() {
   }
 }
 
+// Copy all message metadata to clipboard
+async function copyMetadataToClipboard() {
+  const metadata = {
+    message: {
+      id: props.message.id,
+      conversationId: props.message.conversationId,
+      activeBranchId: props.message.activeBranchId,
+      order: props.message.order,
+      createdAt: props.message.createdAt,
+    },
+    currentBranch: {
+      id: currentBranch.value.id,
+      role: currentBranch.value.role,
+      parentBranchId: currentBranch.value.parentBranchId,
+      model: currentBranch.value.model,
+      participantId: currentBranch.value.participantId,
+      sentByUserId: currentBranch.value.sentByUserId,
+      contentLength: currentBranch.value.content?.length || 0,
+      contentBlocks: currentBranch.value.contentBlocks?.length || 0,
+      hasDebugRequest: !!currentBranch.value.debugRequest,
+      hasDebugResponse: !!currentBranch.value.debugResponse,
+      createdAt: currentBranch.value.createdAt,
+    },
+    allBranches: props.message.branches.map((b, idx) => ({
+      index: idx,
+      id: b.id,
+      role: b.role,
+      parentBranchId: b.parentBranchId,
+      model: b.model,
+      isActive: b.id === props.message.activeBranchId,
+    })),
+    debugRequest: currentBranch.value.debugRequest,
+    debugResponse: currentBranch.value.debugResponse,
+  };
+  
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(metadata, null, 2));
+    console.log('Metadata copied to clipboard');
+  } catch (err) {
+    console.error('Failed to copy metadata:', err);
+  }
+}
+
 // Bookmark management
 async function loadBookmark() {
   try {
@@ -1115,6 +1396,15 @@ watch(() => currentBranch.value.id, async () => {
 
 .hover-actions .v-btn:hover {
   opacity: 1;
+}
+
+/* Metadata dialog debug JSON */
+.debug-json {
+  background: rgba(0, 0, 0, 0.3);
+  color: #a5d6a7;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>
 

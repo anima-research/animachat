@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage, Conversation } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, TokenUsage, Conversation, Model } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
@@ -10,8 +10,12 @@ import { ModelLoader } from '../config/model-loader.js';
 import { Logger } from '../utils/logger.js';
 import { ContextManager } from './context-manager.js';
 
-// Internal format type that includes 'messages' mode
-type InternalConversationFormat = ConversationFormat | 'messages';
+// Internal format type that includes 'messages' and 'completion' modes
+// - 'standard': Traditional alternating user/assistant (no participant names)
+// - 'prefill': Conversation log format with participant names
+// - 'messages': Like prefill but without actual prefill support (fallback)
+// - 'completion': OpenRouter completion mode (prompt field instead of messages)
+type InternalConversationFormat = ConversationFormat | 'messages' | 'completion';
 
 export class InferenceService {
   private bedrockService: BedrockService;
@@ -52,12 +56,8 @@ export class InferenceService {
     }
 
     // Determine the actual format to use
-    let actualFormat: InternalConversationFormat = format;
-    if (format === 'prefill') {
-      if (!this.providerSupportsPrefill(model.provider)) {
-        actualFormat = 'messages';
-      }
-    }
+    const responderForFormat = participants.find(p => p.id === responderId);
+    let actualFormat: InternalConversationFormat = this.determineActualFormat(format, model, responderForFormat?.conversationMode);
 
     // Check if responder is a persona-linked participant and build accumulated context
     let contextMessages = messages;
@@ -171,16 +171,13 @@ export class InferenceService {
     }
     Logger.inference(`[InferenceService] Found model: provider=${model.provider}, providerModelId=${model.providerModelId}`)
     
-    // Determine the actual format to use
-    let actualFormat: InternalConversationFormat = format;
-    if (format === 'prefill') {
-      // Only switch to messages mode if the provider doesn't support prefill
-      // Otherwise, always respect the user's choice of prefill format
-      if (!this.providerSupportsPrefill(model.provider)) {
-        console.log(`[InferenceService] Provider ${model.provider} doesn't support prefill, switching to messages mode`);
-        actualFormat = 'messages';
-      }
-    }
+    // Determine the actual format to use based on:
+    // 1. Participant's conversationMode override (if specified)
+    // 2. Conversation format (prefill vs standard)
+    // 3. Model's prefill support
+    const responder = participants.find(p => p.id === responderId);
+    let actualFormat: InternalConversationFormat = this.determineActualFormat(format, model, responder?.conversationMode);
+    Logger.inference(`[InferenceService] Format: conversation=${format}, participant=${responder?.conversationMode || 'auto'}, actual=${actualFormat}`);
 
     // Check if responder is a persona-linked participant and build accumulated context
     let contextMessages = messages;
@@ -219,6 +216,19 @@ export class InferenceService {
       shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined,
       shouldTriggerPrefillThinking
     );
+
+    // For messages mode, provide a default system prompt if none is provided
+    // This helps the model understand its role in a multi-participant chat
+    // If user provides a custom prompt, use it as-is (full override)
+    let effectiveSystemPrompt = systemPrompt;
+    if (actualFormat === 'messages' && responderId) {
+      const responder = participants.find(p => p.id === responderId);
+      if (responder && (!effectiveSystemPrompt || effectiveSystemPrompt.trim() === '')) {
+        const responderName = responder.name || 'Assistant';
+        effectiveSystemPrompt = `You are ${responderName}, a participant in a multi-user chat. Other participants' messages are shown with their names prefixed. You don't need to prefix your responses with your name.`;
+        Logger.inference(`[InferenceService] Using default messages-mode system prompt for ${responderName}`);
+      }
+    }
 
     // Build stop sequences for prefill/messages formats
     let stopSequences: string[] | undefined;
@@ -374,25 +384,20 @@ export class InferenceService {
       usageResult = await anthropicService.streamCompletion(
         model.providerModelId,
         formattedMessages,
-        systemPrompt,
+        effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
         stopSequences
       );
-
-      // Store the raw request for debugging
-      if (usageResult.rawRequest) {
-        this.lastRawRequest = usageResult.rawRequest;
-      }
     } else if (model.provider === 'bedrock') {
       if (!selectedKey) {
         throw new Error('No API key available for Bedrock');
       }
       const bedrockService = new BedrockService(this.db, selectedKey.credentials);
-      await bedrockService.streamCompletion(
+      usageResult = await bedrockService.streamCompletion(
         model.providerModelId,
         formattedMessages,
-        systemPrompt,
+        effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
         stopSequences
@@ -414,7 +419,7 @@ export class InferenceService {
         usageResult = await openRouterService.streamCompletionExactTest(
           model.providerModelId,
           formattedMessages,
-          systemPrompt,
+          effectiveSystemPrompt,
           effectiveSettings,
           finalOnChunk,
           stopSequences
@@ -423,7 +428,7 @@ export class InferenceService {
         usageResult = await openRouterService.streamCompletion(
         model.providerModelId,
         formattedMessages,
-        systemPrompt,
+        effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
         stopSequences
@@ -451,10 +456,10 @@ export class InferenceService {
         modelPrefix
       );
       
-      await openAIService.streamCompletion(
+      usageResult = await openAIService.streamCompletion(
         model.providerModelId,
         formattedMessages,
-        systemPrompt,
+        effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
         stopSequences
@@ -498,20 +503,25 @@ export class InferenceService {
       console.log(`[Gemini] autoTruncateContext: user=${userAutoTruncate}, model=${modelAutoTruncate}, effective=${shouldAutoTruncate}, contextWindow: ${model.contextWindow}`);
       if (shouldAutoTruncate && model.contextWindow) {
         console.log(`[Gemini] Truncating context to fit ${model.contextWindow} tokens...`);
-        messagesToSend = this.truncateMessagesToFit(formattedMessages, model.contextWindow, systemPrompt);
+        messagesToSend = this.truncateMessagesToFit(formattedMessages, model.contextWindow, effectiveSystemPrompt);
         console.log(`[Gemini] After truncation: ${messagesToSend.length} messages (was ${formattedMessages.length})`);
       }
       
       usageResult = await geminiService.streamCompletion(
         model.providerModelId,
         messagesToSend,
-        systemPrompt,
+        effectiveSystemPrompt,
         geminiSettings,
         finalOnChunk,
         stopSequences
       );
     } else {
       throw new Error(`Unsupported provider: ${model.provider}`);
+    }
+
+    // Store raw request for debugging if provider returned it
+    if (usageResult.rawRequest) {
+      this.lastRawRequest = usageResult.rawRequest;
     }
 
     // Use actual usage from provider if available, otherwise estimate
@@ -1046,9 +1056,78 @@ export class InferenceService {
     return consolidated;
   }
   
+  /**
+   * Check if a model supports prefill mode.
+   * - Anthropic and Bedrock always support prefill
+   * - Other providers: check model.supportsPrefill flag (for custom models)
+   */
+  private modelSupportsPrefill(model: Model): boolean {
+    // Anthropic and Bedrock (Claude models) always support prefill
+    if (model.provider === 'anthropic' || model.provider === 'bedrock') {
+      return true;
+    }
+    // For other providers, check the model's explicit supportsPrefill flag
+    // This allows custom OpenRouter models to opt-in to prefill
+    return model.supportsPrefill === true;
+  }
+  
+  /**
+   * @deprecated Use modelSupportsPrefill instead
+   */
   private providerSupportsPrefill(provider: string): boolean {
     // Only Anthropic and Bedrock (Claude models) reliably support prefill
     return provider === 'anthropic' || provider === 'bedrock';
+  }
+  
+  /**
+   * Determine the actual format to use for inference based on:
+   * 1. Participant's conversationMode override (if specified and not 'auto')
+   * 2. Conversation format (prefill vs standard)
+   * 3. Model's prefill support
+   */
+  private determineActualFormat(
+    conversationFormat: ConversationFormat,
+    model: Model,
+    participantMode?: ConversationMode
+  ): InternalConversationFormat {
+    // If conversation is standard, always use standard (no group chat)
+    if (conversationFormat === 'standard') {
+      return 'standard';
+    }
+    
+    // For prefill conversations, check participant override
+    if (participantMode && participantMode !== 'auto') {
+      // Participant has an explicit preference
+      switch (participantMode) {
+        case 'prefill':
+          // Force prefill - but only if model supports it
+          if (this.modelSupportsPrefill(model)) {
+            return 'prefill';
+          }
+          Logger.warn(`[InferenceService] Participant requested prefill but model ${model.id} doesn't support it, using messages`);
+          return 'messages';
+          
+        case 'messages':
+          // Force messages mode (no prefill)
+          return 'messages';
+          
+        case 'completion':
+          // OpenRouter completion mode - only valid for openrouter provider
+          if (model.provider === 'openrouter') {
+            return 'completion';
+          }
+          Logger.warn(`[InferenceService] Completion mode only works with OpenRouter, using messages`);
+          return 'messages';
+      }
+    }
+    
+    // Default behavior: use prefill if model supports it, otherwise messages
+    if (this.modelSupportsPrefill(model)) {
+      return 'prefill';
+    }
+    
+    Logger.inference(`[InferenceService] Model ${model.id} doesn't support prefill, using messages mode`);
+    return 'messages';
   }
   
   /**

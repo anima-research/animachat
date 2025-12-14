@@ -177,6 +177,26 @@
       class="mb-3"
     />
     
+    <v-checkbox
+      v-model="formData.supportsPrefill"
+      label="Supports Prefill / Completion Mode"
+      density="compact"
+      hide-details
+      class="mb-3"
+    >
+      <template v-slot:label>
+        <div class="d-flex align-center">
+          <span>Supports Prefill / Completion Mode</span>
+          <v-tooltip location="top" max-width="300">
+            <template v-slot:activator="{ props }">
+              <v-icon v-bind="props" size="small" class="ml-1" style="opacity: 0.6">mdi-help-circle-outline</v-icon>
+            </template>
+            Enable for Anthropic models on OpenRouter or other models that support starting assistant responses with content (prefill). Also enables completion mode for OpenRouter.
+          </v-tooltip>
+        </div>
+      </template>
+    </v-checkbox>
+    
     <v-btn
       color="primary"
       variant="elevated"
@@ -280,7 +300,8 @@ const formData = ref({
   providerModelId: '',
   contextWindow: 100000,
   outputTokenLimit: 4096,
-  supportsThinking: false
+  supportsThinking: false,
+  supportsPrefill: false
 });
 
 const customEndpointData = ref({
@@ -329,7 +350,8 @@ function openEditDialog(model: UserDefinedModel) {
     providerModelId: model.providerModelId,
     contextWindow: model.contextWindow,
     outputTokenLimit: model.outputTokenLimit,
-    supportsThinking: model.supportsThinking || false
+    supportsThinking: model.supportsThinking || false,
+    supportsPrefill: model.supportsPrefill || false
   };
   
   selectedProvider.value = model.provider;
@@ -356,7 +378,8 @@ function resetForm() {
     providerModelId: '',
     contextWindow: 100000,
     outputTokenLimit: 4096,
-    supportsThinking: false
+    supportsThinking: false,
+    supportsPrefill: false
   };
   
   customEndpointData.value = {

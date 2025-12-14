@@ -410,6 +410,32 @@
             </div>
           </div>
           
+          <v-divider class="my-4" />
+          
+          <h4 class="text-subtitle-1 mb-3">Conversation Mode</h4>
+          <p class="text-caption text-grey mb-3">
+            How messages are formatted for this participant's model.
+          </p>
+          <v-select
+            :model-value="selectedParticipantConversationMode"
+            @update:model-value="(val) => updateParticipantConversationMode(val)"
+            :items="conversationModeOptions"
+            item-title="title"
+            item-value="value"
+            label="Mode"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+          >
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:subtitle>
+                  {{ item.raw.description }}
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
+          
           <v-alert
             type="info"
             variant="tonal"
@@ -544,6 +570,30 @@ const contextStrategies = [
   }
 ];
 
+// Conversation mode options for per-participant format override
+const conversationModeOptions = [
+  {
+    value: 'auto',
+    title: 'Auto',
+    description: 'Use prefill if model supports it, otherwise messages'
+  },
+  {
+    value: 'prefill',
+    title: 'Prefill',
+    description: 'Conversation log format with participant names (Claude native)'
+  },
+  {
+    value: 'messages',
+    title: 'Messages',
+    description: 'Alternating user/assistant format (OpenAI compatible)'
+  },
+  {
+    value: 'completion',
+    title: 'Completion',
+    description: 'OpenRouter completion mode (prompt field)'
+  }
+];
+
 
 // generic functions for getting and setting participant fields
 // these need to send updates correctly by modifying the participants array
@@ -625,6 +675,20 @@ const selectedParticipantModelSpecific = computed({
     setParticipantSettingsField('modelSpecific', value);
   },
 });
+
+// Conversation mode for the selected participant
+const selectedParticipantConversationMode = computed(() => {
+  const participant = participants.value.find(p => p.id === selectedParticipantId.value);
+  return participant?.conversationMode || 'auto';
+});
+
+function updateParticipantConversationMode(mode: string) {
+  const participant = participants.value.find(p => p.id === selectedParticipantId.value);
+  if (participant) {
+    participant.conversationMode = mode as 'auto' | 'prefill' | 'messages' | 'completion';
+    emit('update:participants', [...participants.value]);
+  }
+}
 
 function getParticipantPlaceholder(participant: any) {
   if (participant.name === '') {

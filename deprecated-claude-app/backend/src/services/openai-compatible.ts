@@ -28,7 +28,7 @@ export class OpenAICompatibleService {
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     stopSequences?: string[],
     onTokenUsage?: (usage: TokenUsage) => Promise<void>
-  ): Promise<void> {
+  ): Promise<{ rawRequest?: any }> {
     const requestId = `openai-compatible-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const startTime = Date.now();
     const chunks: string[] = [];
@@ -162,6 +162,8 @@ export class OpenAICompatibleService {
         duration,
         tokenCount: totalTokens
       });
+      
+      return { rawRequest: requestBody };
     } catch (error) {
       console.error('OpenAI-compatible streaming error:', error);
       

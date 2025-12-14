@@ -2534,7 +2534,8 @@ export class Database {
     const updated = { ...message, branches: updatedBranches };
     this.messages.set(messageId, updated);
 
-    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates: Object.keys(updates) });
+    // Log the actual updates, not just the keys - needed for event replay to restore debug data
+    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates });
 
     return true;
   }

@@ -97,7 +97,8 @@ export class GeminiService {
     usage?: {
       inputTokens: number;
       outputTokens: number;
-    }
+    };
+    rawRequest?: any;
   }> {
     let requestId: string | undefined;
     const startTime = Date.now();
@@ -381,7 +382,7 @@ export class GeminiService {
       const duration = Date.now() - startTime;
       console.log(`[Gemini API] Request ${requestId} completed in ${duration}ms, tokens: ${usage?.inputTokens || 0} in / ${usage?.outputTokens || 0} out`);
       
-      return { usage };
+      return { usage, rawRequest: requestBody };
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

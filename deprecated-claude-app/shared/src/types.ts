@@ -133,6 +133,14 @@ export type TextSetting = z.infer<typeof TextSettingSchema>;
 export const ProviderEnum = z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible', 'google']);
 export type Provider = z.infer<typeof ProviderEnum>;
 
+// Conversation mode - how messages are formatted for inference
+// - 'auto': Use provider default (prefill for anthropic/bedrock, messages for others)
+// - 'prefill': Force prefill format (conversation log with participant names)
+// - 'messages': Force messages format (alternating user/assistant)
+// - 'completion': OpenRouter completion mode (prompt field instead of messages)
+export const ConversationModeEnum = z.enum(['auto', 'prefill', 'messages', 'completion']);
+export type ConversationMode = z.infer<typeof ConversationModeEnum>;
+
 // Model types
 export const ModelSchema = z.object({
   id: z.string(), // Unique identifier for this model configuration
@@ -145,6 +153,7 @@ export const ModelSchema = z.object({
   outputTokenLimit: z.number(),
   supportsThinking: z.boolean().optional(), // Whether the model supports extended thinking
   thinkingDefaultEnabled: z.boolean().optional(), // Whether thinking should be enabled by default for this model
+  supportsPrefill: z.boolean().optional(), // Whether model supports prefill/completion mode (defaults based on provider)
   capabilities: ModelCapabilitiesSchema.optional(), // Multimodal capabilities
   currencies: z.record(z.boolean()).optional(),
   
@@ -209,6 +218,7 @@ export const UserDefinedModelSchema = z.object({
   contextWindow: z.number().min(1000).max(10000000),
   outputTokenLimit: z.number().min(100).max(1000000),
   supportsThinking: z.boolean().default(false),
+  supportsPrefill: z.boolean().default(false), // Whether model supports prefill/completion mode
   hidden: z.boolean().default(false),
   settings: ModelSettingsSchema,
   createdAt: z.date(),
@@ -230,6 +240,7 @@ export const CreateUserModelSchema = z.object({
   contextWindow: z.number().min(1000).max(10000000),
   outputTokenLimit: z.number().min(100).max(1000000),
   supportsThinking: z.boolean().optional(),
+  supportsPrefill: z.boolean().optional(), // Whether model supports prefill/completion mode
   settings: ModelSettingsSchema.optional(),
   customEndpoint: z.object({
     baseUrl: z.string().url(),
@@ -272,6 +283,7 @@ export const ParticipantSchema = z.object({
   systemPrompt: z.string().optional(), // Only for assistant participants
   settings: ModelSettingsSchema.optional(), // Only for assistant participants
   contextManagement: ContextManagementSchema.optional(), // Only for assistant participants
+  conversationMode: ConversationModeEnum.optional(), // Per-participant format override (auto, prefill, messages, completion)
   isActive: z.boolean().default(true),
 
   // Persona system fields
@@ -287,6 +299,7 @@ export const UpdateParticipantSchema = z.object({
   systemPrompt: z.string().optional(),
   settings: ModelSettingsSchema.optional(),
   contextManagement: ContextManagementSchema.optional(),
+  conversationMode: ConversationModeEnum.optional(), // Per-participant format override
   isActive: z.boolean().optional(),
   // Persona system fields
   personaId: z.string().uuid().optional(),

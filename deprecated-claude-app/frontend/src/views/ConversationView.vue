@@ -2746,6 +2746,10 @@ async function handleAddParticipant(participant: { name: string; type: 'user' | 
           p.name = newName; // Update local copy
         }
       }
+      
+      // Assign participants to existing messages that don't have participantId
+      console.log('[handleAddParticipant] Assigning participants to existing messages');
+      await api.post(`/participants/conversation/${currentConversation.value.id}/assign-to-messages`);
     }
 
     // Handle persona type differently - use persona join API
@@ -2823,6 +2827,7 @@ async function updateParticipants(updatedParticipants: Participant[]) {
         const hasChanges = existing.name !== updated.name ||
           existing.model !== updated.model ||
           existing.systemPrompt !== updated.systemPrompt ||
+          existing.conversationMode !== updated.conversationMode ||
           !isEqual(existing.settings, updated.settings) ||
           !isEqual(existing.contextManagement, updated.contextManagement);
         
@@ -2838,7 +2843,8 @@ async function updateParticipants(updatedParticipants: Participant[]) {
             model: updated.model,
             systemPrompt: updated.systemPrompt,
             settings: updated.settings,
-            contextManagement: updated.contextManagement
+            contextManagement: updated.contextManagement,
+            conversationMode: updated.conversationMode
           });
           
           console.log('[updateParticipants] ✅ Updating participant:', existing.id, updateData);
