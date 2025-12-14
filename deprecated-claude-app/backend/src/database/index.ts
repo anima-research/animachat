@@ -848,8 +848,8 @@ export class Database {
         const message = this.messages.get(messageId);
         if (message) {
           // Create new message object with updated content and contentBlocks
-          const updatedBranches = message.branches.map(branch =>
-            branch.id === branchId
+          const updatedBranches = message.branches.map(branch => 
+            branch.id === branchId 
               ? { ...branch, content, ...(contentBlocks && Array.isArray(contentBlocks) ? { contentBlocks } : {}) }
               : branch
           );
@@ -874,7 +874,7 @@ export class Database {
         }
         break;
       }
-
+      
       case 'message_deleted': {
         const { messageId, conversationId } = event.data;
         this.messages.delete(messageId);
@@ -906,14 +906,14 @@ export class Database {
           // Always keep the message - a new branch might be added later
           // If all branches are deleted, keep the message with empty branches
           // and a placeholder activeBranchId that will be fixed when a new branch is added
-          const updated = {
-            ...message,
-            branches: updatedBranches,
+            const updated = {
+              ...message,
+              branches: updatedBranches,
             activeBranchId: message.activeBranchId === branchId 
               ? (updatedBranches[0]?.id || message.activeBranchId) // Keep old ID as placeholder if no branches left
               : message.activeBranchId
-          };
-          this.messages.set(messageId, updated);
+            };
+            this.messages.set(messageId, updated);
         }
         break;
       }
@@ -1906,7 +1906,7 @@ export class Database {
       
       if (conversation) {
         console.log(`[Database] User ${requestingUserId} accessing shared conversation ${conversationId} with permission: ${permission}`);
-        return conversation;
+    return conversation;
       }
     }
     
@@ -2324,6 +2324,74 @@ export class Database {
     return message;
   }
 
+  /**
+   * Create a post-hoc operation message.
+   * Post-hoc operations are special messages that modify how previous messages
+   * appear in context without actually changing them.
+   */
+  async createPostHocOperation(
+    conversationId: string,
+    conversationOwnerUserId: string,
+    content: string,
+    operation: {
+      type: 'hide' | 'hide_before' | 'edit' | 'hide_attachment';
+      targetMessageId: string;
+      targetBranchId: string;
+      replacementContent?: any[];
+      attachmentIndices?: number[];
+      reason?: string;
+      parentBranchId?: string; // Parent branch passed from frontend for correct tree integration
+    }
+  ): Promise<Message> {
+    const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
+    if (!conversation) throw new Error("Conversation not found");
+    
+    // Use provided parentBranchId if available, otherwise find from existing messages
+    let parentBranchId = operation.parentBranchId;
+    
+    if (!parentBranchId) {
+      // Fallback: Get existing messages to determine parent branch
+      const existingMessages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
+      if (existingMessages.length > 0) {
+        const lastMessage = existingMessages[existingMessages.length - 1];
+        parentBranchId = lastMessage.activeBranchId;
+      }
+    }
+    
+    const message: Message = {
+      id: uuidv4(),
+      conversationId,
+      branches: [{
+        id: uuidv4(),
+        content,
+        role: 'system' as const, // Operations are system-level
+        createdAt: new Date(),
+        parentBranchId,
+        postHocOperation: operation
+      }],
+      activeBranchId: '',
+      order: 0
+    };
+    
+    message.activeBranchId = message.branches[0].id;
+    
+    // Get current message count for ordering
+    let convMessages = this.conversationMessages.get(conversationId);
+    if (!convMessages) {
+      convMessages = [];
+      this.conversationMessages.set(conversationId, convMessages);
+    }
+    message.order = convMessages.length;
+    
+    this.messages.set(message.id, message);
+    convMessages.push(message.id);
+    
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    await this.logConversationEvent(conversationId, 'message_created', message);
+
+    return message;
+  }
+
   private async tryLoadAndVerifyMessage(messageId: string, conversationId: string, conversationOwnerUserId: string) : Promise<Message | null> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
@@ -2539,7 +2607,7 @@ export class Database {
 
     return true;
   }
-
+  
   async deleteMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string): Promise<string[] | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
@@ -3566,7 +3634,7 @@ export class Database {
     }
 
     this.userModels.delete(modelId);
-
+    
     const userModelIds = this.userModelsByUser.get(userId);
     if (userModelIds) {
       userModelIds.delete(modelId);

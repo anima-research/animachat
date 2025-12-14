@@ -1,10 +1,41 @@
 <template>
+  <!-- Post-hoc operation messages render as compact inline markers -->
   <div
+    v-if="isPostHocOperation"
+    class="post-hoc-operation-marker"
+    @mouseenter="isHovered = true"
+    @mouseleave="isHovered = false"
+  >
+    <v-icon
+      :icon="postHocOperationIcon"
+      size="small"
+      class="mr-2"
+      color="warning"
+    />
+    <span class="text-caption">{{ currentBranch.content }}</span>
+    <v-btn
+      v-if="isHovered"
+      icon="mdi-close"
+      size="x-small"
+      variant="text"
+      density="compact"
+      color="error"
+      class="ml-2"
+      title="Remove this operation"
+      @click="$emit('delete-post-hoc-operation', message.id)"
+    />
+  </div>
+
+  <!-- Regular messages -->
+  <div
+    v-else
     ref="messageCard"
     :class="[
       'message-container',
       message.branches[branchIndex].role === 'user' ? 'user-message' : 'assistant-message',
-      isSelectedParent ? 'selected-parent' : ''
+      isSelectedParent ? 'selected-parent' : '',
+      postHocAffected?.hidden ? 'post-hoc-hidden' : '',
+      postHocAffected?.edited ? 'post-hoc-edited' : ''
     ]"
     :style="{
       borderLeft: isSelectedParent ? '3px solid rgb(var(--v-theme-info))' : undefined,
@@ -109,6 +140,46 @@
         title="Delete all branches of this message"
         @click="$emit('delete-all-branches', message.id)"
       />
+      <!-- Post-hoc context operations -->
+      <template v-if="!isPostHocOperation">
+        <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
+        <!-- Show Unhide button if message is hidden, otherwise show Hide button -->
+        <v-btn
+          v-if="postHocAffected?.hidden"
+          icon="mdi-eye-outline"
+          size="x-small"
+          variant="text"
+          density="compact"
+          color="success"
+          title="Unhide from future context"
+          @click="$emit('post-hoc-unhide', message.id, currentBranch.id)"
+        />
+        <v-btn
+          v-else
+          icon="mdi-eye-off-outline"
+          size="x-small"
+          variant="text"
+          density="compact"
+          title="Hide from future context"
+          @click="$emit('post-hoc-hide', message.id, currentBranch.id)"
+        />
+        <v-btn
+          icon="mdi-pencil-off-outline"
+          size="x-small"
+          variant="text"
+          density="compact"
+          title="Edit for future context (no regeneration)"
+          @click="startPostHocEdit"
+        />
+        <v-btn
+          icon="mdi-arrow-collapse-up"
+          size="x-small"
+          variant="text"
+          density="compact"
+          title="Hide all messages before this"
+          @click="$emit('post-hoc-hide-before', message.id, currentBranch.id)"
+        />
+      </template>
     </div>
 
     <!-- Branch navigation (separate row on narrow, inline on wide) -->
@@ -144,6 +215,41 @@
           <v-icon size="x-small" start>mdi-eye-off</v-icon>
           Hidden
         </v-chip>
+        <v-chip v-if="postHocAffected?.hidden" size="x-small" color="grey" variant="tonal" density="compact" class="mr-1">
+          <v-icon size="x-small" start>mdi-eye-off</v-icon>
+          Hidden from AI
+        </v-chip>
+        <v-btn 
+          v-if="postHocAffected?.hidden" 
+          size="x-small" 
+          variant="text" 
+          density="compact"
+          title="Unhide this message for future AI context"
+          @click="$emit('post-hoc-unhide', message.id, currentBranch.id)"
+        >
+          <v-icon size="x-small">mdi-eye</v-icon>
+          Unhide
+        </v-btn>
+        <v-menu v-if="postHocAffected?.edited" location="bottom" :close-on-content-click="false">
+          <template v-slot:activator="{ props }">
+            <v-chip v-bind="props" size="x-small" color="info" variant="tonal" density="compact" style="cursor: pointer;">
+              <v-icon size="x-small" start>mdi-pencil</v-icon>
+              Edited for AI
+              <v-icon size="x-small" end>mdi-chevron-down</v-icon>
+            </v-chip>
+          </template>
+          <v-card max-width="400" class="pa-2">
+            <div class="text-caption font-weight-bold mb-1">Original content:</div>
+            <div class="text-caption text-grey-lighten-1 mb-2" style="white-space: pre-wrap; max-height: 100px; overflow-y: auto;">
+              {{ truncateText(postHocAffected.originalContent || '', 200) }}
+            </div>
+            <v-divider class="my-2" />
+            <div class="text-caption font-weight-bold mb-1">AI will see:</div>
+            <div class="text-caption" style="white-space: pre-wrap; max-height: 100px; overflow-y: auto;">
+              {{ truncateText(postHocAffected.editedContent || '', 200) }}
+            </div>
+          </v-card>
+        </v-menu>
         <v-chip v-if="hasBookmark" size="x-small" :color="participantColor" variant="tonal" density="compact">
           <v-icon size="x-small" start>mdi-bookmark</v-icon>
           {{ bookmarkLabel }}
@@ -244,10 +350,10 @@
       <div v-if="isEditing" class="d-flex gap-2 mt-2">
         <v-btn
           size="small"
-          color="primary"
+          :color="isPostHocEditing ? 'info' : 'primary'"
           @click="saveEdit"
         >
-          Save
+          {{ isPostHocEditing ? 'Save for AI' : 'Save & Regenerate' }}
         </v-btn>
         <v-btn
           size="small"
@@ -549,6 +655,7 @@ const props = defineProps<{
   hasError?: boolean;
   errorMessage?: string;
   errorSuggestion?: string;
+  postHocAffected?: { hidden: boolean; edited: boolean; editedContent?: string; originalContent?: string; hiddenAttachments: number[] };
 }>();
 
 const emit = defineEmits<{
@@ -560,9 +667,16 @@ const emit = defineEmits<{
   'select-as-parent': [messageId: string, branchId: string];
   'stop-auto-scroll': [];
   'bookmark-changed': [];
+  'post-hoc-hide': [messageId: string, branchId: string];
+  'post-hoc-edit': [messageId: string, branchId: string];
+  'post-hoc-edit-content': [messageId: string, branchId: string, content: string];
+  'post-hoc-hide-before': [messageId: string, branchId: string];
+  'post-hoc-unhide': [messageId: string, branchId: string];
+  'delete-post-hoc-operation': [messageId: string];
 }>();
 
 const isEditing = ref(false);
+const isPostHocEditing = ref(false); // True when editing for post-hoc operation (no regeneration)
 const editContent = ref('');
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
@@ -601,6 +715,31 @@ const branchIndex = computed(() => {
 const currentBranch = computed(() => {
   const branch = props.message.branches[branchIndex.value];
   return branch;
+});
+
+// Check if this message is a post-hoc operation
+const isPostHocOperation = computed(() => {
+  return !!currentBranch.value?.postHocOperation;
+});
+
+// Truncate text for display
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength) + '...';
+}
+
+// Get icon for post-hoc operation type
+const postHocOperationIcon = computed(() => {
+  const op = currentBranch.value?.postHocOperation;
+  if (!op) return 'mdi-help';
+  switch (op.type) {
+    case 'hide': return 'mdi-eye-off';
+    case 'hide_before': return 'mdi-arrow-collapse-up';
+    case 'edit': return 'mdi-pencil';
+    case 'hide_attachment': return 'mdi-paperclip-off';
+    case 'unhide': return 'mdi-eye';
+    default: return 'mdi-help';
+  }
 });
 
 // Look up model details from store
@@ -839,7 +978,8 @@ watch(isThinkingStreaming, (streaming, oldStreaming) => {
 }, { immediate: true });
 
 const renderedContent = computed(() => {
-  let content = currentBranch.value.content;
+  // Use edited content if this message has a post-hoc edit applied
+  let content = props.postHocAffected?.editedContent ?? currentBranch.value.content;
   
   // Preserve leading/trailing whitespace by converting to non-breaking spaces
   const leadingSpaces = content.match(/^(\s+)/)?.[1] || '';
@@ -931,17 +1071,31 @@ function escapeHtml(text: string): string {
 
 function startEdit() {
   isEditing.value = true;
+  isPostHocEditing.value = false;
+  editContent.value = currentBranch.value.content;
+}
+
+function startPostHocEdit() {
+  isEditing.value = true;
+  isPostHocEditing.value = true;
   editContent.value = currentBranch.value.content;
 }
 
 function cancelEdit() {
   isEditing.value = false;
+  isPostHocEditing.value = false;
   editContent.value = '';
 }
 
 function saveEdit() {
   if (editContent.value !== currentBranch.value.content) {
-    emit('edit', props.message.id, currentBranch.value.id, editContent.value);
+    if (isPostHocEditing.value) {
+      // Create a post-hoc edit operation (no regeneration)
+      emit('post-hoc-edit-content', props.message.id, currentBranch.value.id, editContent.value);
+    } else {
+      // Regular edit that triggers regeneration
+      emit('edit', props.message.id, currentBranch.value.id, editContent.value);
+    }
   }
   cancelEdit();
 }
@@ -1171,6 +1325,39 @@ watch(() => currentBranch.value.id, async () => {
 </script>
 
 <style scoped>
+/* Post-hoc operation marker - compact inline display */
+.post-hoc-operation-marker {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  margin: 4px 0;
+  background: rgba(var(--v-theme-warning), 0.1);
+  border-left: 3px solid rgb(var(--v-theme-warning));
+  border-radius: 4px;
+  opacity: 0.85;
+}
+
+.post-hoc-operation-marker:hover {
+  opacity: 1;
+  background: rgba(var(--v-theme-warning), 0.15);
+}
+
+/* Messages affected by post-hoc hide operations */
+.post-hoc-hidden {
+  opacity: 0.5;
+  background: rgba(128, 128, 128, 0.1);
+}
+
+.post-hoc-hidden .message-content {
+  text-decoration: line-through;
+  color: rgb(var(--v-theme-on-surface-variant));
+}
+
+/* Messages affected by post-hoc edit operations */
+.post-hoc-edited {
+  border-left: 3px solid rgb(var(--v-theme-info)) !important;
+}
+
 /* Mobile: full-width messages */
 @media (max-width: 768px) {
   .v-card {

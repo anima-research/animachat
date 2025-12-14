@@ -334,6 +334,7 @@
             :has-error="streamingError?.messageId === message.id"
             :error-message="streamingError?.messageId === message.id ? streamingError.error : undefined"
             :error-suggestion="streamingError?.messageId === message.id ? streamingError.suggestion : undefined"
+            :post-hoc-affected="postHocAffectedMessages.get(message.id)"
             @regenerate="regenerateMessage"
             @edit="editMessage"
             @switch-branch="switchBranch"
@@ -342,6 +343,12 @@
             @select-as-parent="selectBranchAsParent"
             @stop-auto-scroll="stopAutoScroll"
             @bookmark-changed="handleBookmarkChanged"
+            @post-hoc-hide="handlePostHocHide"
+            @post-hoc-edit="handlePostHocEdit"
+            @post-hoc-edit-content="handlePostHocEditContent"
+            @post-hoc-hide-before="handlePostHocHideBefore"
+            @post-hoc-unhide="handlePostHocUnhide"
+            @delete-post-hoc-operation="handleDeletePostHocOperation"
           />
         </div>
       </v-container>
@@ -927,6 +934,112 @@ function getPermissionColor(permission: string): string {
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
+
+// Compute which messages are affected by post-hoc operations
+// IMPORTANT: Only consider operations that are on the CURRENT visible branch path
+const postHocAffectedMessages = computed(() => {
+  const affected = new Map<string, { hidden: boolean; edited: boolean; editedContent?: string; originalContent?: string; hiddenAttachments: number[] }>();
+  
+  // Only look at VISIBLE messages - operations on other branches shouldn't affect us
+  const visibleMsgs = messages.value;
+  
+  // Build a set of visible message IDs for quick lookup
+  const visibleMessageIds = new Set(visibleMsgs.map(m => m.id));
+  
+  // Collect post-hoc operations ONLY from visible messages
+  const operations: Array<{ order: number; op: any }> = [];
+  for (const msg of visibleMsgs) {
+    const activeBranch = msg.branches.find((b: any) => b.id === msg.activeBranchId);
+    if (activeBranch?.postHocOperation) {
+      operations.push({ order: msg.order, op: activeBranch.postHocOperation });
+      console.log('[PostHoc] Found visible operation:', activeBranch.postHocOperation.type, 'targeting:', activeBranch.postHocOperation.targetMessageId);
+    }
+  }
+  
+  console.log('[PostHoc] Visible messages:', visibleMsgs.length, 'Operations found:', operations.length);
+  
+  if (operations.length === 0) return affected;
+  
+  // Build order lookup from visible messages
+  const messageOrderById = new Map<string, number>();
+  for (const msg of visibleMsgs) {
+    messageOrderById.set(msg.id, msg.order);
+  }
+  
+  // Process operations in order
+  for (const { op } of operations) {
+    // Only apply to targets that are also visible
+    if (!visibleMessageIds.has(op.targetMessageId)) continue;
+    
+    switch (op.type) {
+      case 'hide':
+        affected.set(op.targetMessageId, { 
+          ...affected.get(op.targetMessageId) || { hidden: false, edited: false, hiddenAttachments: [] },
+          hidden: true 
+        });
+        break;
+        
+      case 'hide_before': {
+        const targetOrder = messageOrderById.get(op.targetMessageId);
+        if (targetOrder !== undefined) {
+          for (const msg of visibleMsgs) {
+            if (msg.order < targetOrder) {
+              affected.set(msg.id, { 
+                ...affected.get(msg.id) || { hidden: false, edited: false, hiddenAttachments: [] },
+                hidden: true 
+              });
+            }
+          }
+        }
+        break;
+      }
+        
+      case 'edit': {
+        // Extract text content from replacement content blocks
+        let editedText = '';
+        if (op.replacementContent) {
+          for (const block of op.replacementContent) {
+            if (block.type === 'text') {
+              editedText += block.text;
+            }
+          }
+        }
+        // Get original content from the target message
+        const targetMsg = visibleMsgs.find(m => m.id === op.targetMessageId);
+        const targetBranch = targetMsg?.branches.find((b: any) => b.id === op.targetBranchId);
+        const originalText = targetBranch?.content || '';
+        
+        affected.set(op.targetMessageId, { 
+          ...affected.get(op.targetMessageId) || { hidden: false, edited: false, hiddenAttachments: [] },
+          edited: true,
+          editedContent: editedText || undefined,
+          originalContent: originalText
+        });
+        break;
+      }
+        
+      case 'hide_attachment':
+        if (op.attachmentIndices) {
+          const current = affected.get(op.targetMessageId) || { hidden: false, edited: false, hiddenAttachments: [] };
+          affected.set(op.targetMessageId, { 
+            ...current,
+            hiddenAttachments: [...current.hiddenAttachments, ...op.attachmentIndices]
+          });
+        }
+        break;
+        
+      case 'unhide':
+        // Remove the hidden flag (reverses a previous hide)
+        const currentState = affected.get(op.targetMessageId);
+        if (currentState) {
+          affected.set(op.targetMessageId, { ...currentState, hidden: false });
+        }
+        break;
+    }
+  }
+  
+  return affected;
+});
 
 // Check if current user has admin capability
 const isAdmin = computed(() => {
@@ -2464,6 +2577,108 @@ async function deleteAllBranches(messageId: string) {
     for (const branch of [...message.branches].reverse()) {
       await store.deleteMessage(messageId, branch.id);
     }
+  }
+}
+
+// Get the last visible message's active branch ID for post-hoc operations
+function getLastVisibleBranchId(): string | undefined {
+  const visible = messages.value;
+  if (visible.length === 0) return undefined;
+  const lastMessage = visible[visible.length - 1];
+  return lastMessage.activeBranchId;
+}
+
+// Post-hoc operation handlers
+async function handlePostHocHide(messageId: string, branchId: string) {
+  if (!currentConversation.value) return;
+  
+  try {
+    await api.post(`/conversations/${currentConversation.value.id}/post-hoc-operation`, {
+      type: 'hide',
+      targetMessageId: messageId,
+      targetBranchId: branchId,
+      parentBranchId: getLastVisibleBranchId() // Send the correct parent branch
+    });
+    await store.loadConversation(currentConversation.value.id);
+  } catch (error) {
+    console.error('Failed to create post-hoc hide operation:', error);
+  }
+}
+
+// Legacy handler - kept for backwards compatibility but not used with inline editing
+async function handlePostHocEdit(messageId: string, branchId: string) {
+  // This is now handled by inline editing via handlePostHocEditContent
+  console.log('handlePostHocEdit called - should use inline editing instead');
+}
+
+// New handler for inline post-hoc editing
+async function handlePostHocEditContent(messageId: string, branchId: string, content: string) {
+  if (!currentConversation.value) return;
+  
+  try {
+    await api.post(`/conversations/${currentConversation.value.id}/post-hoc-operation`, {
+      type: 'edit',
+      targetMessageId: messageId,
+      targetBranchId: branchId,
+      replacementContent: [{ type: 'text', text: content }],
+      parentBranchId: getLastVisibleBranchId()
+    });
+    await store.loadConversation(currentConversation.value.id);
+  } catch (error) {
+    console.error('Failed to create post-hoc edit operation:', error);
+  }
+}
+
+async function handlePostHocHideBefore(messageId: string, branchId: string) {
+  if (!currentConversation.value) return;
+  
+  if (!confirm('Hide all messages before this one from future AI context?')) return;
+  
+  try {
+    await api.post(`/conversations/${currentConversation.value.id}/post-hoc-operation`, {
+      type: 'hide_before',
+      targetMessageId: messageId,
+      targetBranchId: branchId,
+      parentBranchId: getLastVisibleBranchId()
+    });
+    await store.loadConversation(currentConversation.value.id);
+  } catch (error) {
+    console.error('Failed to create post-hoc hide-before operation:', error);
+  }
+}
+
+async function handlePostHocUnhide(messageId: string, branchId: string) {
+  if (!currentConversation.value) return;
+  
+  try {
+    await api.post(`/conversations/${currentConversation.value.id}/post-hoc-operation`, {
+      type: 'unhide',
+      targetMessageId: messageId,
+      targetBranchId: branchId,
+      parentBranchId: getLastVisibleBranchId()
+    });
+    await store.loadConversation(currentConversation.value.id);
+  } catch (error) {
+    console.error('Failed to create post-hoc unhide operation:', error);
+  }
+}
+
+async function handleDeletePostHocOperation(messageId: string) {
+  if (!currentConversation.value) return;
+  
+  const confirmed = confirm(
+    'Delete this post-hoc operation?\n\n' +
+    'This will also delete all messages that come after it in this branch ' +
+    '(including any AI responses that were generated with this operation in effect).'
+  );
+  
+  if (!confirmed) return;
+  
+  try {
+    await api.delete(`/conversations/${currentConversation.value.id}/post-hoc-operation/${messageId}`);
+    await store.loadConversation(currentConversation.value.id);
+  } catch (error) {
+    console.error('Failed to delete post-hoc operation:', error);
   }
 }
 

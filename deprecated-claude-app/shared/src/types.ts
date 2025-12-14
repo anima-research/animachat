@@ -399,6 +399,24 @@ export type ThinkingContentBlock = z.infer<typeof ThinkingContentBlockSchema>;
 export type ImageContentBlock = z.infer<typeof ImageContentBlockSchema>;
 export type AudioContentBlock = z.infer<typeof AudioContentBlockSchema>;
 
+// Post-hoc operations - modify how previous messages appear in future contexts
+export const PostHocOperationTypeSchema = z.enum(['hide', 'hide_before', 'edit', 'hide_attachment', 'unhide']);
+export type PostHocOperationType = z.infer<typeof PostHocOperationTypeSchema>;
+
+export const PostHocOperationSchema = z.object({
+  type: PostHocOperationTypeSchema,
+  targetMessageId: z.string().uuid(),
+  targetBranchId: z.string().uuid(),
+  // For edits - the replacement content
+  replacementContent: z.array(ContentBlockSchema).optional(),
+  // For attachment hiding - which attachments to hide (by index)
+  attachmentIndices: z.array(z.number()).optional(),
+  // User-provided reason for the operation
+  reason: z.string().optional(),
+});
+
+export type PostHocOperation = z.infer<typeof PostHocOperationSchema>;
+
 // Message types
 export const MessageBranchSchema = z.object({
   id: z.string().uuid(),
@@ -415,7 +433,9 @@ export const MessageBranchSchema = z.object({
   bookmark: BookmarkSchema.optional(), // Optional bookmark for this branch
   hiddenFromAi: z.boolean().optional(), // If true, this message is visible to humans but excluded from AI context
   debugRequest: z.any().optional(), // Raw LLM request for debugging (researchers/admins only)
-  debugResponse: z.any().optional() // Raw LLM response for debugging (researchers/admins only)
+  debugResponse: z.any().optional(), // Raw LLM response for debugging (researchers/admins only)
+  // Post-hoc operation - if present, this message is an operation that affects a previous message
+  postHocOperation: PostHocOperationSchema.optional()
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;
