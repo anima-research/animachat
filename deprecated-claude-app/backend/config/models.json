@@ -714,7 +714,7 @@
     },
     {
       "id": "gemini-2.5-flash-text",
-      "providerModelId": "gemini-2.5-flash-preview-05-20",
+      "providerModelId": "gemini-2.5-flash",
       "displayName": "Gemini 2.5 Flash",
       "shortName": "Flash 2.5",
       "provider": "google",
@@ -776,7 +776,7 @@
     },
     {
       "id": "gemini-2.5-pro-text",
-      "providerModelId": "gemini-2.5-pro-preview-05-06",
+      "providerModelId": "gemini-2.5-pro",
       "displayName": "Gemini 2.5 Pro",
       "shortName": "Pro 2.5",
       "provider": "google",
