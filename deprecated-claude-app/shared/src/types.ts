@@ -235,13 +235,18 @@ export function getValidatedModelDefaults(model: Model): ModelSettings {
     maxTokens: maxTokensDefault,
   };
   
-  // Only include optional settings if the model supports them
-  if (model.settings.topP) {
-    settings.topP = model.settings.topP.default;
-  }
+  // Anthropic API doesn't allow both temperature AND topP/topK together
+  // Only include topP/topK for non-Anthropic providers
+  const isAnthropic = model.provider === 'anthropic' || model.provider === 'bedrock';
   
-  if (model.settings.topK) {
-    settings.topK = model.settings.topK.default;
+  if (!isAnthropic) {
+    if (model.settings.topP) {
+      settings.topP = model.settings.topP.default;
+    }
+    
+    if (model.settings.topK) {
+      settings.topK = model.settings.topK.default;
+    }
   }
   
   // Include thinking settings for models that support it

@@ -188,14 +188,16 @@ export class BedrockService {
     // Claude 3 models use Messages API format
     // Check if it's a Claude 3 model by looking for the pattern in the Bedrock model ID
     if (modelId.includes('claude-3')) {
+      // Anthropic API doesn't allow both temperature AND top_p/top_k together
+      const useTemperature = settings.temperature !== undefined;
       return {
         anthropic_version: 'bedrock-2023-05-31',
         messages,
         ...(systemPrompt && { system: systemPrompt }),
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
-        ...(settings.topP !== undefined && { top_p: settings.topP }),
-        ...(settings.topK !== undefined && { top_k: settings.topK }),
+        ...(!useTemperature && settings.topP !== undefined && { top_p: settings.topP }),
+        ...(!useTemperature && settings.topK !== undefined && { top_k: settings.topK }),
         ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences })
       };
     }
@@ -217,12 +219,14 @@ export class BedrockService {
     
     prompt += '\n\nAssistant:';
 
+    // Anthropic API doesn't allow both temperature AND top_p/top_k together
+    const useTemperature = settings.temperature !== undefined;
     return {
       prompt,
       max_tokens_to_sample: settings.maxTokens,
       temperature: settings.temperature,
-      ...(settings.topP !== undefined && { top_p: settings.topP }),
-      ...(settings.topK !== undefined && { top_k: settings.topK }),
+      ...(!useTemperature && settings.topP !== undefined && { top_p: settings.topP }),
+      ...(!useTemperature && settings.topK !== undefined && { top_k: settings.topK }),
       ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences })
     };
   }

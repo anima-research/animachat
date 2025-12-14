@@ -102,12 +102,16 @@ export class AnthropicService {
         }
       }
       
+      // Anthropic API doesn't allow both temperature AND top_p/top_k together
+      // If temperature is set, don't send top_p/top_k
+      const useTemperature = settings.temperature !== undefined;
+      
       requestParams = {
         model: modelId,
         max_tokens: effectiveMaxTokens,
         temperature: settings.temperature,
-        ...(settings.topP !== undefined && { top_p: settings.topP }),
-        ...(settings.topK !== undefined && { top_k: settings.topK }),
+        ...(!useTemperature && settings.topP !== undefined && { top_p: settings.topP }),
+        ...(!useTemperature && settings.topK !== undefined && { top_k: settings.topK }),
         ...(systemContent && { system: systemContent }),
         ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences }),
         ...(settings.thinking && settings.thinking.enabled && {
