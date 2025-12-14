@@ -1087,11 +1087,18 @@ export class InferenceService {
   
   /**
    * Check if a model supports prefill mode.
-   * - Anthropic, Bedrock, and Google (Gemini) always support prefill
+   * - If model has explicit supportsPrefill flag, use that (allows opt-out for image gen models)
+   * - Anthropic, Bedrock, and Google (Gemini) default to supporting prefill
    * - Other providers: check model.supportsPrefill flag (for custom models)
    */
   private modelSupportsPrefill(model: Model): boolean {
-    // Anthropic, Bedrock (Claude models), and Google (Gemini) always support prefill
+    // If the model has an explicit supportsPrefill flag set to false, respect that
+    // This allows image generation models to opt out of prefill
+    if (model.supportsPrefill === false) {
+      return false;
+    }
+    
+    // Anthropic, Bedrock (Claude models), and Google (Gemini) support prefill by default
     if (model.provider === 'anthropic' || model.provider === 'bedrock' || model.provider === 'google') {
       return true;
     }

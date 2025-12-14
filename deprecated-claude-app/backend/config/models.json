@@ -847,6 +847,7 @@
       "contextWindow": 32768,
       "outputTokenLimit": 65536,
       "supportsThinking": true,
+      "supportsPrefill": false,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
@@ -959,6 +960,7 @@
       "hidden": false,
       "contextWindow": 32768,
       "outputTokenLimit": 65536,
+      "supportsPrefill": false,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
@@ -1209,6 +1211,7 @@
       "outputTokenLimit": 65536,
       "supportsThinking": true,
       "thinkingDefaultEnabled": true,
+      "supportsPrefill": false,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
