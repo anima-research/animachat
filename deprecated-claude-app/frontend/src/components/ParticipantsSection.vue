@@ -731,8 +731,8 @@ function confirmAddParticipant() {
       participant.settings = getValidatedModelDefaults(selectedModel);
     } else {
       // Fallback for when model not found (shouldn't happen normally)
-      participant.settings = {
-        temperature: 1.0,
+    participant.settings = {
+      temperature: 1.0,
         maxTokens: 4096
       };
     }

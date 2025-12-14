@@ -410,7 +410,7 @@ const newGrantAmount = ref(0);
 const newSuggestedModel = ref('');
 const newModelCostId = reactive<Record<string, string>>({});
 
-const availableCurrencies = ['credit', 'sonnets', 'opus', 'haiku', 'gemini', 'gemini-pro', 'openai', 'models-2025'];
+const availableCurrencies = ['credit', 'old_sonnets', 'opus', 'haiku', 'gemini', 'gemini-pro', 'openai', 'models-2025'];
 
 function showSuccess(message: string) {
   snackbarMessage.value = message;

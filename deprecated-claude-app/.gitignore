@@ -23,3 +23,6 @@ certs/
 *.key
 *.crt
 *.csr
+
+*.md
+*.txt

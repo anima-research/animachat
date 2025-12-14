@@ -723,15 +723,15 @@ export function createStore(): {
         }
         
         // Create a deep copy with the selected branch as active
-        const messageCopy = { 
-          ...message, 
+              const messageCopy = { 
+                ...message, 
           activeBranchId: selectedBranch.id,
           branches: [...message.branches]
-        };
-        visibleMessages.push(messageCopy);
-            
+              };
+              visibleMessages.push(messageCopy);
+              
         const parentIndex = branchPath.indexOf(selectedBranch.parentBranchId!);
-        branchPath.length = parentIndex + 1;
+              branchPath.length = parentIndex + 1;
         branchPath.push(selectedBranch.id);
       }
       

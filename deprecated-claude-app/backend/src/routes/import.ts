@@ -52,11 +52,21 @@ export function importRouter(db: Database): Router {
       // First, parse the content
       const preview = await parser.parse(importRequest.format, importRequest.content);
       
+      // Determine the model to use for the conversation
+      // Priority: 1. Explicit model in request, 2. First assistant from arc_chat participants, 3. Default
+      let conversationModel = importRequest.model;
+      if (!conversationModel && importRequest.format === 'arc_chat' && preview.metadata?.participants) {
+        const firstAssistant = preview.metadata.participants.find((p: any) => p.type === 'assistant');
+        conversationModel = firstAssistant?.model;
+      }
+      // Fallback to a sensible default
+      conversationModel = conversationModel || 'anthropic/claude-sonnet-4-20250514';
+      
       // Create the conversation
       const conversation = await db.createConversation(
         req.userId,
         importRequest.title || preview.title || 'Imported Conversation',
-        importRequest.model,
+        conversationModel,
         undefined, // System prompt will be set on participants
         undefined, // Settings will be set on participants
         importRequest.conversationFormat
@@ -132,7 +142,7 @@ export function importRouter(db: Database): Router {
               conversation.userId,
               mapping.targetName,
               mapping.type,
-              mapping.type === 'assistant' ? importRequest.model : undefined
+              mapping.type === 'assistant' ? conversationModel : undefined
             );
           }
           

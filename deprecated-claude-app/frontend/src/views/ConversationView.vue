@@ -2952,6 +2952,12 @@ async function handleAddParticipant(participant: { name: string; type: 'user' | 
         console.log(`[handleAddParticipant] All messages from same model: ${modelId} -> "${assistantName}"`);
       } else if (modelsUsed.size > 1) {
         console.log(`[handleAddParticipant] Mixed models used: ${[...modelsUsed].join(', ')} -> keeping "Assistant"`);
+      } else if (modelsUsed.size === 0) {
+        // No assistant messages yet - use the conversation's model
+        const conversationModelId = currentConversation.value.model;
+        const modelData = store.state.models.find(m => m.id === conversationModelId);
+        assistantName = modelData?.shortName || modelData?.displayName || 'Assistant';
+        console.log(`[handleAddParticipant] No messages yet, using conversation model: ${conversationModelId} -> "${assistantName}"`);
       }
       
       // Rename existing participants with generic names and apply validated settings

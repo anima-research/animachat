@@ -732,7 +732,9 @@ async function handleChatMessage(
           topP: responder.settings?.topP ?? conversation.settings.topP,
           topK: responder.settings?.topK ?? conversation.settings.topK,
           // Always use conversation-level thinking settings
-          thinking: conversation.settings.thinking
+          thinking: conversation.settings.thinking,
+          // Include model-specific settings (e.g., image resolution)
+          modelSpecific: responder.settings?.modelSpecific ?? conversation.settings.modelSpecific
         };
     
     // Debug: Log the settings being used
@@ -1197,7 +1199,9 @@ async function handleRegenerate(
           topP: participant.settings?.topP ?? conversation.settings.topP,
           topK: participant.settings?.topK ?? conversation.settings.topK,
           // Always use conversation-level thinking settings
-          thinking: conversation.settings.thinking
+          thinking: conversation.settings.thinking,
+          // Include model-specific settings (e.g., image resolution)
+          modelSpecific: participant.settings?.modelSpecific ?? conversation.settings.modelSpecific
         };
       }
     }
@@ -1592,7 +1596,9 @@ async function handleEdit(
             topP: responderParticipant.settings?.topP ?? conversation.settings.topP,
             topK: responderParticipant.settings?.topK ?? conversation.settings.topK,
             // Always use conversation-level thinking settings
-            thinking: conversation.settings.thinking
+            thinking: conversation.settings.thinking,
+            // Include model-specific settings (e.g., image resolution)
+            modelSpecific: responderParticipant.settings?.modelSpecific ?? conversation.settings.modelSpecific
           };
         }
       }

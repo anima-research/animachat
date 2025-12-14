@@ -497,12 +497,12 @@
         <v-divider class="my-4" />
         
         <div class="d-flex gap-2">
-          <v-btn
-            variant="text"
-            @click="resetToDefaults"
-          >
-            Reset to Defaults
-          </v-btn>
+        <v-btn
+          variant="text"
+          @click="resetToDefaults"
+        >
+          Reset to Defaults
+        </v-btn>
           <v-btn
             variant="text"
             color="info"
