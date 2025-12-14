@@ -231,8 +231,16 @@ export class InferenceService {
       const responder = participants.find(p => p.id === responderId);
       if (responder && (!effectiveSystemPrompt || effectiveSystemPrompt.trim() === '')) {
         const responderName = responder.name || 'Assistant';
-        effectiveSystemPrompt = `You are ${responderName}, a participant in a multi-user chat. Other participants' messages are shown with their names prefixed. You don't need to prefix your responses with your name.`;
-        Logger.inference(`[InferenceService] Using default messages-mode system prompt for ${responderName}`);
+        // Check if this provider supports prefill (we'll be prefilling with the name)
+        const supportsPrefill = this.providerSupportsPrefill(model.provider);
+        if (supportsPrefill && responderName !== 'Assistant') {
+          // With prefill: the response is already prefilled with "Name: ", so just continue
+          effectiveSystemPrompt = `You are ${responderName}, a participant in a multi-user chat.`;
+        } else {
+          // Without prefill: model should not add its name
+          effectiveSystemPrompt = `You are ${responderName}, a participant in a multi-user chat. Other participants' messages are shown with their names prefixed. Don't prefix your responses with your name.`;
+        }
+        Logger.inference(`[InferenceService] Using default messages-mode system prompt for ${responderName} (prefill: ${supportsPrefill})`);
       }
     }
 
@@ -786,18 +794,11 @@ export class InferenceService {
         // Build the message content with attachments
         let messageContent = '';
         
-        // For assistant messages with thinking blocks, convert to <think> tags (prefill format)
-        if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
-          for (const block of activeBranch.contentBlocks) {
-            if (block.type === 'thinking') {
-              messageContent += `<think>\n${block.thinking}\n</think>\n\n`;
-            } else if (block.type === 'redacted_thinking') {
-              messageContent += `<think>[Redacted for safety]</think>\n\n`;
-            }
-          }
-        }
+        // NOTE: Thinking blocks are NOT included in context for other participants
+        // Reasoning/thinking is private to each model and should not be shared
+        // This prevents models from seeing each other's internal reasoning
         
-        // Add the main content
+        // Add the main content only (no thinking blocks)
         messageContent += activeBranch.content;
         
         // Append attachments for user messages
@@ -989,6 +990,28 @@ export class InferenceService {
         return this.consolidateConsecutiveMessages(messagesFormatted);
       }
       
+      // For providers that support prefill, add a prefilled assistant message with the responder's name
+      // This helps guide the model to respond as the correct participant
+      if (provider && this.providerSupportsPrefill(provider) && responderName && responderName !== '' && responderName !== 'Assistant') {
+        const prefillBranchId = `prefill-name-branch-${Date.now()}`;
+        const prefillMessage: Message = {
+          id: `prefill-name-${Date.now()}`,
+          conversationId: messages[0]?.conversationId || '',
+          branches: [{
+            id: prefillBranchId,
+            content: `${responderName}: `,
+            role: 'assistant',
+            createdAt: new Date(),
+            isActive: true,
+            parentBranchId: messagesFormatted[messagesFormatted.length - 1]?.branches[0]?.id
+          }],
+          activeBranchId: prefillBranchId,
+          order: messagesFormatted.length
+        };
+        messagesFormatted.push(prefillMessage);
+        console.log(`[Messages Mode] Added prefill with responder name: "${responderName}: "`);
+      }
+      
       return messagesFormatted;
     }
     
@@ -1064,12 +1087,12 @@ export class InferenceService {
   
   /**
    * Check if a model supports prefill mode.
-   * - Anthropic and Bedrock always support prefill
+   * - Anthropic, Bedrock, and Google (Gemini) always support prefill
    * - Other providers: check model.supportsPrefill flag (for custom models)
    */
   private modelSupportsPrefill(model: Model): boolean {
-    // Anthropic and Bedrock (Claude models) always support prefill
-    if (model.provider === 'anthropic' || model.provider === 'bedrock') {
+    // Anthropic, Bedrock (Claude models), and Google (Gemini) always support prefill
+    if (model.provider === 'anthropic' || model.provider === 'bedrock' || model.provider === 'google') {
       return true;
     }
     // For other providers, check the model's explicit supportsPrefill flag
@@ -1081,8 +1104,8 @@ export class InferenceService {
    * @deprecated Use modelSupportsPrefill instead
    */
   private providerSupportsPrefill(provider: string): boolean {
-    // Only Anthropic and Bedrock (Claude models) reliably support prefill
-    return provider === 'anthropic' || provider === 'bedrock';
+    // Anthropic, Bedrock (Claude models), and Google (Gemini) support prefill
+    return provider === 'anthropic' || provider === 'bedrock' || provider === 'google';
   }
   
   /**
