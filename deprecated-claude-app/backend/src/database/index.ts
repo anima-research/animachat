@@ -2334,7 +2334,7 @@ export class Database {
     conversationOwnerUserId: string,
     content: string,
     operation: {
-      type: 'hide' | 'hide_before' | 'edit' | 'hide_attachment';
+      type: 'hide' | 'hide_before' | 'edit' | 'hide_attachment' | 'unhide';
       targetMessageId: string;
       targetBranchId: string;
       replacementContent?: any[];
@@ -3571,6 +3571,7 @@ export class Database {
       userId,
       ...modelData,
       supportsThinking: modelData.supportsThinking || false,
+      supportsPrefill: modelData.supportsPrefill ?? false,
       hidden: false,
       settings: modelData.settings || {
         temperature: 1.0,

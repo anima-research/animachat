@@ -55,14 +55,6 @@
               title="Manage Public Links"
               @click="manageSharesDialog = true"
             />
-            
-            <v-list-item
-              prepend-icon="mdi-account-multiple-plus"
-              title="Share with Users"
-              subtitle="Collaborate in real-time"
-              @click="collaborationDialog = true"
-              :disabled="!currentConversation"
-            />
           </v-list>
 
           <v-divider />
@@ -110,8 +102,14 @@
                     />
                     <v-list-item
                       prepend-icon="mdi-share-variant"
-                      title="Share"
+                      title="Share Link"
                       @click="shareConversation(conversation)"
+                    />
+                    <v-list-item
+                      prepend-icon="mdi-account-multiple-plus"
+                      title="Collaborate"
+                      subtitle="Real-time with users"
+                      @click="openCollaborationDialog(conversation)"
                     />
                     <v-list-item
                       prepend-icon="mdi-download"
@@ -2142,6 +2140,15 @@ function shareConversation(conversation: Conversation) {
   }
   // Open the share dialog
   shareDialog.value = true;
+}
+
+function openCollaborationDialog(conversation: Conversation) {
+  // Navigate to the conversation if it's not the current one
+  if (currentConversation.value?.id !== conversation.id) {
+    router.push(`/conversation/${conversation.id}`);
+  }
+  // Open the collaboration share dialog
+  collaborationDialog.value = true;
 }
 
 async function exportConversation(id: string) {
