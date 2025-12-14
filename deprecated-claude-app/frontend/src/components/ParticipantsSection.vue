@@ -463,6 +463,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, PropType } from 'vue';
 import type { Participant, Model, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
+import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { get as _get, set as _set, cloneDeep, isEqual } from 'lodash-es';
 import ModelSelector from './ModelSelector.vue';
@@ -724,15 +725,17 @@ function confirmAddParticipant() {
   if (newParticipant.value.type === 'assistant') {
     participant.model = newParticipant.value.model;
     participant.systemPrompt = '';
-    // Use model's outputTokenLimit if available, otherwise safe default
+    // Use validated model defaults
     const selectedModel = activeModels.value.find(m => m.id === newParticipant.value.model);
-    const maxTokensDefault = selectedModel?.outputTokenLimit 
-      ? Math.min(selectedModel.outputTokenLimit, 8192) // Cap at 8192 for thinking models
-      : 4096; // Safe fallback
-    participant.settings = {
-      temperature: 1.0,
-      maxTokens: maxTokensDefault
-    };
+    if (selectedModel) {
+      participant.settings = getValidatedModelDefaults(selectedModel);
+    } else {
+      // Fallback for when model not found (shouldn't happen normally)
+      participant.settings = {
+        temperature: 1.0,
+        maxTokens: 4096
+      };
+    }
   } else if (newParticipant.value.type === 'persona') {
     // For persona, get the model and name from the persona
     const persona = props.personas.find(p => p.id === newParticipant.value.personaId);

@@ -207,6 +207,59 @@ export const ModelSettingsSchema = z.object({
 
 export type ModelSettings = z.infer<typeof ModelSettingsSchema>;
 
+/**
+ * Get validated default settings for a model.
+ * This ensures defaults are within valid ranges and includes all necessary settings.
+ * Use this everywhere participant settings are initialized.
+ */
+export function getValidatedModelDefaults(model: Model): ModelSettings {
+  // Ensure maxTokens default is within valid range
+  const maxTokensDefault = Math.min(
+    model.settings.maxTokens.default,
+    model.settings.maxTokens.max,
+    model.outputTokenLimit
+  );
+  
+  // Build modelSpecific defaults from configurableSettings
+  const modelSpecific: Record<string, unknown> = {};
+  if (model.configurableSettings) {
+    for (const setting of model.configurableSettings) {
+      if (setting.default !== undefined) {
+        modelSpecific[setting.key] = setting.default;
+      }
+    }
+  }
+  
+  const settings: ModelSettings = {
+    temperature: model.settings.temperature.default,
+    maxTokens: maxTokensDefault,
+  };
+  
+  // Only include optional settings if the model supports them
+  if (model.settings.topP) {
+    settings.topP = model.settings.topP.default;
+  }
+  
+  if (model.settings.topK) {
+    settings.topK = model.settings.topK.default;
+  }
+  
+  // Include thinking settings for models that support it
+  if (model.supportsThinking) {
+    settings.thinking = {
+      enabled: model.thinkingDefaultEnabled ?? false,
+      budgetTokens: 8000 // Default thinking budget
+    };
+  }
+  
+  // Include modelSpecific if there are any configurable settings
+  if (Object.keys(modelSpecific).length > 0) {
+    settings.modelSpecific = modelSpecific;
+  }
+  
+  return settings;
+}
+
 // User-defined model types
 export const UserDefinedModelSchema = z.object({
   id: z.string().uuid(),

@@ -750,7 +750,7 @@ import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
 import type { Conversation, Message, Participant, Model, Bookmark, Persona } from '@deprecated-claude/shared';
-import { UpdateParticipantSchema } from '@deprecated-claude/shared';
+import { UpdateParticipantSchema, getValidatedModelDefaults } from '@deprecated-claude/shared';
 import MessageComponent from '@/components/MessageComponent.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
@@ -1953,10 +1953,7 @@ async function triggerModelResponse(model: Model) {
           name: model.shortName || model.displayName,
           type: 'assistant',
           model: model.id,
-          settings: {
-            temperature: 1.0,
-            maxTokens: model.outputTokenLimit ? Math.min(model.outputTokenLimit, 8192) : 4096
-          }
+          settings: getValidatedModelDefaults(model)
         })
       });
       
@@ -2918,6 +2915,11 @@ async function handleAddParticipant(participant: { name: string; type: 'user' | 
     if (isStandard) {
       // Convert to group chat format
       console.log('[handleAddParticipant] Converting to group chat format');
+      
+      // Invalidate cache before conversion to ensure fresh data
+      participantCache.invalidate(currentConversation.value.id);
+      
+      // Update format - this will trigger loadParticipants() internally
       await updateConversationSettings({ format: 'prefill' });
 
       // Load existing participants
@@ -2952,22 +2954,40 @@ async function handleAddParticipant(participant: { name: string; type: 'user' | 
         console.log(`[handleAddParticipant] Mixed models used: ${[...modelsUsed].join(', ')} -> keeping "Assistant"`);
       }
       
-      // Rename existing participants with generic names
+      // Rename existing participants with generic names and apply validated settings
       for (const p of participants.value) {
         let newName: string | null = null;
+        let newSettings: any = null;
         
         if (p.type === 'user' && (p.name === 'H' || p.name === 'User')) {
           newName = userFirstName;
         } else if (p.type === 'assistant' && (p.name === 'A' || p.name === 'Assistant')) {
           newName = assistantName;
+          // Also apply validated settings when renaming assistant
+          if (p.model) {
+            const modelData = store.state.models.find(m => m.id === p.model);
+            if (modelData) {
+              newSettings = getValidatedModelDefaults(modelData);
+            }
+          }
         }
         
         if (newName && newName !== p.name) {
           console.log(`[handleAddParticipant] Renaming participant ${p.id} from "${p.name}" to "${newName}"`);
-          await api.patch(`/participants/${p.id}`, { name: newName });
+          const updateData: any = { name: newName };
+          if (newSettings) {
+            updateData.settings = newSettings;
+          }
+          await api.patch(`/participants/${p.id}`, updateData);
           p.name = newName; // Update local copy
+          if (newSettings) {
+            p.settings = newSettings;
+          }
         }
       }
+      
+      // Invalidate cache after updates
+      participantCache.invalidate(currentConversation.value.id);
       
       // Assign participants to existing messages that don't have participantId
       console.log('[handleAddParticipant] Assigning participants to existing messages');
@@ -3006,22 +3026,32 @@ async function handleAddParticipant(participant: { name: string; type: 'user' | 
       console.log('[handleAddParticipant] Persona joined:', response.data);
     } else {
       // Regular user/assistant participant
-      const response = await api.post('/participants', {
+      const participantData: any = {
         conversationId: currentConversation.value.id,
         name: participant.name,
         type: participant.type,
         model: participant.model
-      });
+      };
+      
+      // Add validated settings for assistant participants
+      if (participant.type === 'assistant' && participant.model) {
+        const modelData = store.state.models.find(m => m.id === participant.model);
+        if (modelData) {
+          participantData.settings = getValidatedModelDefaults(modelData);
+        }
+      }
+      
+      const response = await api.post('/participants', participantData);
+      console.log('[handleAddParticipant] Added participant:', response.data);
 
-      // Add to local list
-      participants.value.push(response.data);
+      // Invalidate cache and reload to get fresh state from backend
+      participantCache.invalidate(currentConversation.value.id);
+      await loadParticipants();
 
       // If it's an assistant, set it as the selected responder
       if (participant.type === 'assistant') {
         selectedResponder.value = response.data.id;
       }
-
-      console.log('[handleAddParticipant] Added participant:', response.data);
     }
   } catch (error) {
     console.error('Failed to add participant:', error);
