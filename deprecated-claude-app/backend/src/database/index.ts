@@ -1,4 +1,4 @@
-import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite } from '@deprecated-claude/shared';
+import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -1808,6 +1808,19 @@ export class Database {
 
   // Conversation methods
   async createConversation(userId: string, title: string, model: string, systemPrompt?: string, settings?: any, format?: 'standard' | 'prefill', contextManagement?: any): Promise<Conversation> {
+    // If no settings provided, try to get validated defaults from model config
+    let resolvedSettings = settings;
+    if (!resolvedSettings) {
+      const modelLoader = ModelLoader.getInstance();
+      const modelConfig = await modelLoader.getModelById(model, userId);
+      if (modelConfig) {
+        resolvedSettings = getValidatedModelDefaults(modelConfig);
+      } else {
+        // Fallback for unknown models
+        resolvedSettings = { temperature: 1.0, maxTokens: 4096 };
+      }
+    }
+    
     const conversation: Conversation = {
       id: uuidv4(),
       userId,
@@ -1818,11 +1831,7 @@ export class Database {
       createdAt: new Date(),
       updatedAt: new Date(),
       archived: false,
-      settings: settings || {
-        temperature: 1.0,
-        maxTokens: 4096 // Safe default for all models
-        // topP and topK are intentionally omitted to use API defaults
-      },
+      settings: resolvedSettings,
       contextManagement
     };
 
@@ -3566,6 +3575,22 @@ export class Database {
       throw new Error('Maximum number of custom models (20) reached');
     }
 
+    // Resolve settings with validation
+    let resolvedSettings = modelData.settings;
+    if (!resolvedSettings) {
+      // Default settings for user models - cap maxTokens at outputTokenLimit
+      resolvedSettings = {
+        temperature: 1.0,
+        maxTokens: Math.min(4096, modelData.outputTokenLimit)
+      };
+    } else {
+      // Validate provided maxTokens doesn't exceed outputTokenLimit
+      resolvedSettings = {
+        ...resolvedSettings,
+        maxTokens: Math.min(resolvedSettings.maxTokens, modelData.outputTokenLimit)
+      };
+    }
+    
     const model: UserDefinedModel = {
       id: uuidv4(),
       userId,
@@ -3573,10 +3598,7 @@ export class Database {
       supportsThinking: modelData.supportsThinking || false,
       supportsPrefill: modelData.supportsPrefill ?? false,
       hidden: false,
-      settings: modelData.settings || {
-        temperature: 1.0,
-        maxTokens: 4096
-      },
+      settings: resolvedSettings,
       createdAt: new Date(),
       updatedAt: new Date()
     };

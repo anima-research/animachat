@@ -1,5 +1,6 @@
 import { reactive, inject, InjectionKey, App } from 'vue';
 import type { User, Conversation, Message, Model, OpenRouterModel, UserDefinedModel, CreateUserModel, UpdateUserModel, UserGrantSummary } from '@deprecated-claude/shared';
+import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { api } from '../services/api';
 import { WebSocketService } from '../services/websocket';
 
@@ -311,15 +312,17 @@ export function createStore(): {
     
     async createConversation(model: string, title?: string, format: 'standard' | 'prefill' = 'standard') {
       try {
+        // Look up model to get validated defaults
+        const modelObj = state.models.find(m => m.id === model);
+        const settings = modelObj 
+          ? getValidatedModelDefaults(modelObj)
+          : { temperature: 1.0, maxTokens: 4096 }; // Fallback for unknown models
+        
         const response = await api.post('/conversations', {
           model,
           title: title || 'New Conversation',
           format,
-          settings: {
-            temperature: 1.0,
-            maxTokens: 4096 // Safe default for all models
-            // topP and topK are intentionally omitted to use API defaults
-          }
+          settings
         });
         
         const conversation = response.data;
@@ -739,7 +742,7 @@ export function createStore(): {
           const last = visibleMessages[visibleMessages.length - 1];
           console.log('Last visible:', last.id.slice(0, 8), 'activeBranch:', last.activeBranchId?.slice(0, 8));
         }
-        return visibleMessages;
+      return visibleMessages;
     },
     
     // Model actions
