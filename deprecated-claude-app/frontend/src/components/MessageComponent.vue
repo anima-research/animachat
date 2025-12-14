@@ -49,136 +49,154 @@
       v-if="isHovered && !isEditing && !isStreaming" 
       class="hover-actions"
     >
-      <v-btn
-        v-if="message.branches[branchIndex].role === 'assistant'"
-        icon="mdi-refresh"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Regenerate"
-        @click="$emit('regenerate', message.id, currentBranch.id)"
-      />
-      <v-btn
-        icon="mdi-pencil"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Edit"
-        @click="startEdit"
-      />
-      <v-btn
-        icon="mdi-content-copy"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Copy"
-        @click="copyContent"
-      />
-      <v-btn
-        :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
-        :color="isSelectedParent ? 'info' : undefined"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Branch from here"
-        :disabled="isLastMessage"
-        @click="$emit('select-as-parent', message.id, currentBranch.id)"
-      />
-      <v-btn
-        ref="bookmarkButtonRef"
-        :icon="hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline'"
-        :color="hasBookmark ? participantColor : undefined"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Bookmark"
-        @click="toggleBookmark"
-      />
-      <v-btn
-        icon="mdi-code-json"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Download prompt"
-        @click="downloadPrompt"
-      />
-      <v-btn
-        v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)"
-        icon="mdi-bug"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Debug: View LLM request/response"
-        @click="showDebugDialog = true"
-      />
-      <v-btn
-        v-if="canViewMetadata"
-        icon="mdi-information-outline"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="View message metadata (IDs, branches, debug data)"
-        @click="showMetadataDialog = true"
-      />
+      <span v-if="message.branches[branchIndex].role === 'assistant'" class="hover-tooltip" data-tooltip="Regenerate">
+        <v-btn
+          icon="mdi-refresh"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="$emit('regenerate', message.id, currentBranch.id)"
+        />
+      </span>
+      <span class="hover-tooltip" data-tooltip="Edit">
+        <v-btn
+          icon="mdi-pencil"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="startEdit"
+        />
+      </span>
+      <span class="hover-tooltip" data-tooltip="Copy">
+        <v-btn
+          icon="mdi-content-copy"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="copyContent"
+        />
+      </span>
+      <span class="hover-tooltip" :data-tooltip="isMonospace ? 'Normal text' : 'Monospace'">
+        <v-btn
+          :icon="isMonospace ? 'mdi-format-text' : 'mdi-code-tags'"
+          :color="isMonospace ? 'info' : undefined"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="isMonospace = !isMonospace"
+        />
+      </span>
+      <span class="hover-tooltip" data-tooltip="Branch">
+        <v-btn
+          :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
+          :color="isSelectedParent ? 'info' : undefined"
+          size="x-small"
+          variant="text"
+          density="compact"
+          :disabled="isLastMessage"
+          @click="$emit('select-as-parent', message.id, currentBranch.id)"
+        />
+      </span>
+      <span class="hover-tooltip" data-tooltip="Bookmark">
+        <v-btn
+          ref="bookmarkButtonRef"
+          :icon="hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline'"
+          :color="hasBookmark ? participantColor : undefined"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="toggleBookmark"
+        />
+      </span>
+      <span class="hover-tooltip" data-tooltip="Download">
+        <v-btn
+          icon="mdi-code-json"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="downloadPrompt"
+        />
+      </span>
+      <span v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)" class="hover-tooltip" data-tooltip="Debug">
+        <v-btn
+          icon="mdi-bug"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="showDebugDialog = true"
+        />
+      </span>
+      <span v-if="canViewMetadata" class="hover-tooltip" data-tooltip="Metadata">
+        <v-btn
+          icon="mdi-information-outline"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="showMetadataDialog = true"
+        />
+      </span>
       <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
-      <v-btn
-        icon="mdi-delete-outline"
-        size="x-small"
-        variant="text"
-        density="compact"
-        color="error"
-        title="Delete this branch"
-        @click="$emit('delete', message.id, currentBranch.id)"
-      />
-      <v-btn
-        v-if="message.branches.length > 1"
-        icon="mdi-delete-sweep-outline"
-        size="x-small"
-        variant="text"
-        density="compact"
-        color="error"
-        title="Delete all branches of this message"
-        @click="$emit('delete-all-branches', message.id)"
-      />
+      <span class="hover-tooltip" data-tooltip="Delete">
+        <v-btn
+          icon="mdi-delete-outline"
+          size="x-small"
+          variant="text"
+          density="compact"
+          color="error"
+          @click="$emit('delete', message.id, currentBranch.id)"
+        />
+      </span>
+      <span v-if="message.branches.length > 1" class="hover-tooltip" data-tooltip="Delete all">
+        <v-btn
+          icon="mdi-delete-sweep-outline"
+          size="x-small"
+          variant="text"
+          density="compact"
+          color="error"
+          @click="$emit('delete-all-branches', message.id)"
+        />
+      </span>
       <!-- Post-hoc context operations -->
       <template v-if="!isPostHocOperation">
         <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
         <!-- Show Unhide button if message is hidden, otherwise show Hide button -->
-        <v-btn
-          v-if="postHocAffected?.hidden"
-          icon="mdi-eye-outline"
-          size="x-small"
-          variant="text"
-          density="compact"
-          color="success"
-          title="Unhide from future context"
-          @click="$emit('post-hoc-unhide', message.id, currentBranch.id)"
-        />
-        <v-btn
-          v-else
-          icon="mdi-eye-off-outline"
-          size="x-small"
-          variant="text"
-          density="compact"
-          title="Hide from future context"
-          @click="$emit('post-hoc-hide', message.id, currentBranch.id)"
-        />
-        <v-btn
-          icon="mdi-pencil-off-outline"
-          size="x-small"
-          variant="text"
-          density="compact"
-          title="Edit for future context (no regeneration)"
-          @click="startPostHocEdit"
-        />
-        <v-btn
-          icon="mdi-arrow-collapse-up"
-          size="x-small"
-          variant="text"
-          density="compact"
-          title="Hide all messages before this"
-          @click="$emit('post-hoc-hide-before', message.id, currentBranch.id)"
-        />
+        <span v-if="postHocAffected?.hidden" class="hover-tooltip" data-tooltip="Unhide">
+          <v-btn
+            icon="mdi-eye-outline"
+            size="x-small"
+            variant="text"
+            density="compact"
+            color="success"
+            @click="$emit('post-hoc-unhide', message.id, currentBranch.id)"
+          />
+        </span>
+        <span v-else class="hover-tooltip" data-tooltip="Hide">
+          <v-btn
+            icon="mdi-eye-off-outline"
+            size="x-small"
+            variant="text"
+            density="compact"
+            @click="$emit('post-hoc-hide', message.id, currentBranch.id)"
+          />
+        </span>
+        <span class="hover-tooltip" data-tooltip="Context edit">
+          <v-btn
+            icon="mdi-pencil-off-outline"
+            size="x-small"
+            variant="text"
+            density="compact"
+            @click="startPostHocEdit"
+          />
+        </span>
+        <span class="hover-tooltip" data-tooltip="Hide before">
+          <v-btn
+            icon="mdi-arrow-collapse-up"
+            size="x-small"
+            variant="text"
+            density="compact"
+            @click="$emit('post-hoc-hide-before', message.id, currentBranch.id)"
+          />
+        </span>
       </template>
     </div>
 
@@ -292,7 +310,7 @@
       </div>
       
       <!-- Message content or edit mode -->
-      <div v-if="!isEditing" class="message-content" v-html="renderedContent" />
+      <div v-if="!isEditing" :class="['message-content', { 'monospace-mode': isMonospace }]" v-html="renderedContent" />
       
       <v-textarea
         v-else
@@ -683,6 +701,7 @@ const editContent = ref('');
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
 const isHovered = ref(false);
+const isMonospace = ref(false); // Toggle monospace display for entire message
 const bookmarkDialog = ref(false);
 const bookmarkInput = ref('');
 const bookmarkLabel = ref<string | null>(null);
@@ -1566,6 +1585,33 @@ watch(() => currentBranch.value.id, async () => {
   margin-bottom: 0;
 }
 
+/* Monospace mode for message content */
+.message-content.monospace-mode {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  background-color: rgba(var(--v-theme-surface-variant), 0.3);
+  padding: 12px;
+  border-radius: 6px;
+  margin-top: 8px;
+}
+
+.message-content.monospace-mode :deep(p) {
+  margin-bottom: 0.25em;
+}
+
+.message-content.monospace-mode :deep(code) {
+  background: transparent;
+  padding: 0;
+}
+
+.message-content.monospace-mode :deep(pre) {
+  background: transparent;
+  padding: 0;
+  margin: 0;
+}
+
 /* Discord-style hover action bar */
 .hover-actions {
   position: absolute;
@@ -1573,13 +1619,47 @@ watch(() => currentBranch.value.id, async () => {
   right: 12px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   padding: 4px 8px;
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-on-surface), 0.15);
   border-radius: 6px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   z-index: 10;
+  overflow: visible;
+}
+
+/* Instant CSS tooltips for hover bar */
+.hover-tooltip {
+  position: relative;
+  display: inline-flex;
+}
+
+.hover-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background: rgba(20, 20, 20, 0.95);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  border-radius: 4px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.08s ease;
+  pointer-events: none;
+  z-index: 1000;
+  margin-top: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.hover-tooltip:hover::after {
+  opacity: 1;
+  visibility: visible;
 }
 
 .hover-actions .v-btn {
