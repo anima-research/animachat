@@ -538,6 +538,7 @@
 import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { Conversation, Model, Participant, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
+import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
 import ModelSelector from './ModelSelector.vue';
 import ModelSpecificSettings from './ModelSpecificSettings.vue';
@@ -768,6 +769,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
       
       // If no participants exist, create defaults
       if (localParticipants.value.length === 0) {
+        const currentModel = props.models.find(m => m.id === settings.value.model);
         localParticipants.value = [
           {
             id: 'temp-user',
@@ -783,10 +785,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             name: modelName,
             model: settings.value.model,
             isActive: true,
-            settings: {
-              temperature: 1.0,
-              maxTokens: 4096
-            }
+            settings: currentModel ? getValidatedModelDefaults(currentModel) : { temperature: 1.0, maxTokens: 4096 }
           }
         ];
       } else {
@@ -808,6 +807,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
     } catch (error) {
       console.error('Failed to load participants:', error);
       // Create default participants
+      const currentModel = props.models.find(m => m.id === settings.value.model);
       localParticipants.value = [
         {
           id: 'temp-user',
@@ -823,10 +823,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
           name: modelName,
           model: settings.value.model,
           isActive: true,
-          settings: {
-            temperature: 1.0,
-            maxTokens: 4096
-          }
+          settings: currentModel ? getValidatedModelDefaults(currentModel) : { temperature: 1.0, maxTokens: 4096 }
         }
       ];
     }
@@ -845,9 +842,16 @@ watch(() => settings.value.model, (modelId) => {
       }
     }
     
+    // Ensure maxTokens is within valid range
+    const validatedMaxTokens = Math.min(
+      model.settings.maxTokens.default,
+      model.settings.maxTokens.max,
+      model.outputTokenLimit
+    );
+    
     settings.value.settings = {
       temperature: model.settings.temperature.default,
-      maxTokens: model.settings.maxTokens.default,
+      maxTokens: validatedMaxTokens,
       topP: undefined,
       topK: undefined,
       modelSpecific: modelSpecificDefaults,
