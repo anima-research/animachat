@@ -3590,7 +3590,7 @@ export class Database {
         maxTokens: Math.min(resolvedSettings.maxTokens, modelData.outputTokenLimit)
       };
     }
-    
+
     const model: UserDefinedModel = {
       id: uuidv4(),
       userId,

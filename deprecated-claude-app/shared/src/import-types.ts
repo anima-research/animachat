@@ -89,7 +89,7 @@ export const ImportRequestSchema = z.object({
   participantMappings: z.array(ParticipantMappingSchema).optional(),
   conversationFormat: z.enum(['standard', 'prefill']),
   title: z.string().optional(),
-  model: z.string()
+  model: z.string().optional() // Optional for group chats - derived from first assistant participant
 });
 
 export type ImportRequest = z.infer<typeof ImportRequestSchema>;

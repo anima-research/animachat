@@ -377,12 +377,12 @@ const userDialog = ref(false);
 const selectedUser = ref<UserWithStats | null>(null);
 const capabilityLoading = ref(false);
 const grantAmount = ref<number>(100);
-const grantCurrency = ref('sonnets');
+const grantCurrency = ref('old_sonnets');
 const grantingCredits = ref(false);
 const reloadingUser = ref(false);
 
 const allCapabilities = ['admin', 'mint', 'send', 'overspend', 'researcher'];
-const currencies = ['credit', 'sonnets', 'opus', 'haiku', 'gemini'];
+const currencies = ['credit', 'old_sonnets', 'claude3opus', 'haiku', 'gemini'];
 const verifyingLegacyUsers = ref(false);
 
 const tableHeaders = [
