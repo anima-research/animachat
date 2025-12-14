@@ -1562,6 +1562,12 @@ onMounted(async () => {
         if (data.conversationId === currentConversation.value?.id) {
           activeAiRequest.value = null;
           isAiRequestQueued.value = false;
+          // Also clear streaming state - this is a backup in case stream complete event was missed
+          if (isStreaming.value) {
+            console.log('[Room] Clearing streaming state from ai_finished event');
+            isStreaming.value = false;
+            streamingMessageId.value = null;
+          }
         }
       });
       
@@ -1619,10 +1625,18 @@ onBeforeUnmount(() => {
   }
 });
 
+// Store drafts per conversation
+const conversationDrafts = ref<Map<string, string>>(new Map());
+
 // Watch route changes
 watch(() => route.params.id, async (newId, oldId) => {
   if (isMobile.value) {
     mobilePanel.value = newId ? 'conversation' : 'sidebar';
+  }
+  
+  // Save current draft before switching
+  if (oldId && messageInput.value.trim()) {
+    conversationDrafts.value.set(oldId as string, messageInput.value);
   }
   
   // Leave old room
@@ -1633,7 +1647,15 @@ watch(() => route.params.id, async (newId, oldId) => {
     activeAiRequest.value = null;
   }
   
+  // Reset streaming state when switching conversations
+  isStreaming.value = false;
+  streamingMessageId.value = null;
+  streamingError.value = null;
+  
   if (newId) {
+    // Restore draft for this conversation or clear input
+    messageInput.value = conversationDrafts.value.get(newId as string) || '';
+    
     // Clear selected branch when switching conversations
     if (selectedBranchForParent.value) {
       cancelBranchSelection();
@@ -1654,6 +1676,9 @@ watch(() => route.params.id, async (newId, oldId) => {
     setTimeout(() => {
       scrollToBottom();
     }, 100);
+  } else {
+    // Navigating away from a conversation - clear input
+    messageInput.value = '';
   }
 });
 
@@ -1881,6 +1906,11 @@ async function sendMessage() {
     // Clear selection after successful send
     if (selectedBranchForParent.value) {
       selectedBranchForParent.value = null;
+    }
+    
+    // Clear draft for this conversation since message was sent successfully
+    if (currentConversation.value) {
+      conversationDrafts.value.delete(currentConversation.value.id);
     }
   } catch (error) {
     console.error('Failed to send message:', error);

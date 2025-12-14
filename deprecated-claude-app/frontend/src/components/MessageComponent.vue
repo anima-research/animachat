@@ -640,9 +640,11 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Message, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
+import { renderLatex, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
 import DebugMessageDialog from './DebugMessageDialog.vue';
+import 'katex/dist/katex.min.css'; // KaTeX styles
 
 const store = useStore();
 
@@ -1038,6 +1040,9 @@ const renderedContent = computed(() => {
     html = ''; // Fallback, but this shouldn't happen with sync parse
   }
   
+  // Render LaTeX after markdown (so LaTeX in code blocks is protected)
+  html = renderLatex(html as string);
+  
   // Convert leading/trailing spaces to non-breaking spaces to preserve them
   const leadingNbsp = leadingSpaces.replace(/ /g, '&nbsp;').replace(/\n/g, '<br>');
   const trailingNbsp = trailingSpaces.replace(/ /g, '&nbsp;').replace(/\n/g, '<br>');
@@ -1051,15 +1056,16 @@ const renderedContent = computed(() => {
   }
   
   return DOMPurify.sanitize(html, {
-    // Allow only safe HTML tags that markdown generates
+    // Allow safe HTML tags from markdown plus KaTeX
     ALLOWED_TAGS: [
       'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
       'blockquote', 'ul', 'ol', 'li', 'a', 'img',
       'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
       'table', 'thead', 'tbody', 'tr', 'th', 'td',
-      'hr', 'sup', 'sub', 'del', 'ins'
+      'hr', 'sup', 'sub', 'del', 'ins',
+      ...KATEX_ALLOWED_TAGS
     ],
-    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel']
+    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel', ...KATEX_ALLOWED_ATTRS]
   });
 });
 

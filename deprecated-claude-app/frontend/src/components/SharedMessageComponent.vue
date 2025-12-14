@@ -85,7 +85,9 @@ import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { getModelColor } from '@/utils/modelColors';
+import { renderLatex, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import { api } from '@/services/api';
+import 'katex/dist/katex.min.css';
 
 const props = defineProps<{
   message: any;
@@ -163,18 +165,21 @@ const renderedContent = computed(() => {
     gfm: true      // GitHub Flavored Markdown
   });
   
-  // Simple markdown rendering
+  // Markdown + LaTeX rendering
   try {
-    const html = marked.parse ? marked.parse(content) : (marked as any)(content);
+    let html = marked.parse ? marked.parse(content) : (marked as any)(content);
+    // Render LaTeX after markdown
+    html = renderLatex(html as string);
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: [
         'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
         'blockquote', 'ul', 'ol', 'li', 'a', 'img',
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
         'table', 'thead', 'tbody', 'tr', 'th', 'td',
-        'hr', 'sup', 'sub', 'del', 'ins'
+        'hr', 'sup', 'sub', 'del', 'ins',
+        ...KATEX_ALLOWED_TAGS
       ],
-      ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel']
+      ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel', ...KATEX_ALLOWED_ATTRS]
     });
   } catch (e) {
     // Fallback to plain text with line breaks
