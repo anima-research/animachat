@@ -14,8 +14,8 @@
           {{ participantName || (currentBranch.role === 'user' ? 'User' : 'Assistant') }}
         </div>
         
-        <div v-if="showModelInfo && currentBranch.model" class="text-caption ml-2 text-grey">
-          ({{ currentBranch.model }})
+        <div v-if="showModelInfo && modelDisplayName" class="text-caption ml-2 text-grey">
+          ({{ modelDisplayName }})
         </div>
         
         <div v-if="showTimestamps && currentBranch.createdAt" class="text-caption ml-2 text-grey">
@@ -110,17 +110,48 @@ const currentBranch = computed(() => {
   return props.message.branches[currentBranchIndex.value] || props.message.branches[0];
 });
 
-const participantName = computed(() => {
+// Find the participant for this message
+const currentParticipant = computed(() => {
   if (!props.participants || !currentBranch.value.participantId) {
     return null;
   }
-  const participant = props.participants.find(p => p.id === currentBranch.value.participantId);
-  return participant?.name || null;
+  return props.participants.find(p => p.id === currentBranch.value.participantId) || null;
+});
+
+const participantName = computed(() => {
+  if (currentParticipant.value) {
+    return currentParticipant.value.name || null;
+  }
+  return null;
+});
+
+// Get the model display name - prefer participant's modelDisplayName, then model ID
+const modelDisplayName = computed(() => {
+  // First try to use the pre-resolved display name from the backend
+  if (currentParticipant.value?.modelDisplayName) {
+    return currentParticipant.value.modelDisplayName;
+  }
+  
+  const branchModel = currentBranch.value.model;
+  const isUuid = branchModel && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(branchModel);
+  
+  // If branch.model looks like a UUID (participant ID), try to use participant's model instead
+  if (isUuid) {
+    // Try to get model from the participant
+    if (currentParticipant.value?.model) {
+      return currentParticipant.value.model;
+    }
+    // If we can't find the participant, don't show the UUID - return null
+    return null;
+  }
+  return branchModel;
 });
 
 const modelColor = computed(() => {
-  if (!currentBranch.value.model) return 'grey';
-  return getModelColor(currentBranch.value.model);
+  // Use the participant's model for color, or fall back to branch model
+  const model = currentParticipant.value?.model || currentBranch.value.model;
+  if (!model) return 'grey';
+  return getModelColor(model);
 });
 
 const renderedContent = computed(() => {
