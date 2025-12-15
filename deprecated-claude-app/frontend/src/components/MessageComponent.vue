@@ -59,7 +59,7 @@
           @click="$emit('regenerate', message.id, currentBranch.id)"
         />
       </span>
-      <span class="hover-tooltip" data-tooltip="Edit">
+      <span class="hover-tooltip" data-tooltip="Edit and Branch">
         <v-btn
           icon="mdi-pencil"
           size="x-small"
@@ -77,14 +77,13 @@
           @click="copyContent"
         />
       </span>
-      <span class="hover-tooltip" data-tooltip="Branch">
+      <span v-if="!isLastMessage" class="hover-tooltip" data-tooltip="Branch Mode">
         <v-btn
           :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
           :color="isSelectedParent ? 'info' : undefined"
           size="x-small"
           variant="text"
           density="compact"
-          :disabled="isLastMessage"
           @click="$emit('select-as-parent', message.id, currentBranch.id)"
         />
       </span>
@@ -200,7 +199,7 @@
             @click="$emit('post-hoc-unhide', message.id, currentBranch.id)"
           />
         </span>
-        <span v-else class="hover-tooltip" data-tooltip="Hide">
+        <span v-else class="hover-tooltip" data-tooltip="Hide from AI">
           <v-btn
             icon="mdi-eye-off-outline"
             size="x-small"
@@ -209,7 +208,7 @@
             @click="$emit('post-hoc-hide', message.id, currentBranch.id)"
           />
         </span>
-        <span class="hover-tooltip" data-tooltip="Context edit">
+        <span class="hover-tooltip" data-tooltip="Edit in place">
           <v-btn
             icon="mdi-pencil-off-outline"
             size="x-small"
@@ -218,7 +217,7 @@
             @click="startPostHocEdit"
           />
         </span>
-        <span class="hover-tooltip" data-tooltip="Hide before">
+        <span class="hover-tooltip" data-tooltip="Hide all before">
           <v-btn
             icon="mdi-arrow-collapse-up"
             size="x-small"

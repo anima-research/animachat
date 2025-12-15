@@ -13,15 +13,16 @@
       <div class="d-flex flex-column h-100">
         <!-- Fixed header section -->
         <div class="sidebar-header">
-          <v-list>
+          <v-list density="compact">
             <v-list-item
               :title="store.state.user?.name"
               :subtitle="store.state.user?.email"
               nav
+              class="sidebar-user-item"
             >
               <template v-slot:prepend>
-                <div class="mr-3">
-                  <ArcLogo :size="40" />
+                <div class="mr-2">
+                  <ArcLogo :size="32" />
                 </div>
               </template>
               <template v-slot:append v-if="isMobile">
@@ -37,25 +38,28 @@
 
           <v-divider />
 
-          <v-list density="compact" nav>
-            <v-list-item
+          <!-- Compact action buttons -->
+          <div class="sidebar-actions d-flex gap-2 pa-2">
+            <v-btn
+              color="primary"
+              variant="tonal"
+              size="small"
+              class="flex-grow-1"
               prepend-icon="mdi-plus"
-              title="New Conversation"
               @click="createNewConversation"
-            />
-            
-            <v-list-item
+            >
+              New
+            </v-btn>
+            <v-btn
+              variant="tonal"
+              size="small"
+              class="flex-grow-1"
               prepend-icon="mdi-import"
-              title="Import Conversation"
               @click="importDialog = true"
-            />
-            
-            <v-list-item
-              prepend-icon="mdi-share-variant"
-              title="Manage Public Links"
-              @click="manageSharesDialog = true"
-            />
-          </v-list>
+            >
+              Import
+            </v-btn>
+          </div>
 
           <v-divider />
         </div>
@@ -163,43 +167,80 @@
           </v-list>
         </div>
 
-        <!-- Fixed footer section -->
+        <!-- Fixed footer section - compact -->
         <div class="sidebar-footer">
           <v-divider />
-          <v-list density="compact" nav>
-            <v-list-item
-              prepend-icon="mdi-help-circle"
-              title="Getting Started"
-              @click="welcomeDialog = true"
-            />
-            <v-list-item
-              prepend-icon="mdi-information"
-              title="About The Arc"
-              @click="$router.push('/about')"
-            />
-            <v-list-item
-              prepend-icon="mdi-cog"
-              title="Settings"
-              @click="settingsDialog = true"
-            />
-            <v-list-item
-              v-if="isResearcher"
-              prepend-icon="mdi-account-multiple-outline"
-              title="Personas"
-              @click="$router.push('/personas')"
-            />
-            <v-list-item
-              v-if="isAdmin"
-              prepend-icon="mdi-shield-crown"
-              title="Admin"
-              @click="$router.push('/admin')"
-            />
-            <v-list-item
-              prepend-icon="mdi-logout"
-              title="Logout"
-              @click="logout"
-            />
-          </v-list>
+          <div class="d-flex flex-column pa-2 gap-1">
+            <!-- Help & About row -->
+            <div class="d-flex align-center gap-1">
+              <v-btn
+                variant="text"
+                size="small"
+                class="sidebar-footer-btn flex-grow-1"
+                @click="welcomeDialog = true"
+                title="Getting Started"
+              >
+                <v-icon size="18">mdi-help-circle</v-icon>
+                <span class="ml-1 text-caption">Help</span>
+              </v-btn>
+              <v-btn
+                variant="text"
+                size="small"
+                class="sidebar-footer-btn flex-grow-1"
+                @click="$router.push('/about')"
+                title="About The Arc"
+              >
+                <v-icon size="18">mdi-information</v-icon>
+                <span class="ml-1 text-caption">About</span>
+              </v-btn>
+            </div>
+            <!-- Settings & More row -->
+            <div class="d-flex align-center gap-1">
+              <v-btn
+                variant="text"
+                size="small"
+                class="sidebar-footer-btn flex-grow-1"
+                @click="settingsDialog = true"
+                title="Settings"
+              >
+                <v-icon size="18">mdi-cog</v-icon>
+                <span class="ml-1 text-caption">Settings</span>
+              </v-btn>
+              <!-- Overflow menu for less common actions -->
+              <v-menu location="top">
+              <template v-slot:activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  variant="text"
+                  size="small"
+                  icon="mdi-dots-horizontal"
+                  class="sidebar-footer-btn"
+                  title="More options"
+                />
+              </template>
+              <v-list density="compact" class="sidebar-overflow-menu">
+                <v-list-item
+                  v-if="isResearcher"
+                  prepend-icon="mdi-account-multiple-outline"
+                  title="Personas"
+                  @click="$router.push('/personas')"
+                />
+                <v-list-item
+                  v-if="isAdmin"
+                  prepend-icon="mdi-shield-crown"
+                  title="Admin"
+                  @click="$router.push('/admin')"
+                />
+                <v-divider v-if="isResearcher || isAdmin" class="my-1" />
+                <v-list-item
+                  prepend-icon="mdi-logout"
+                  title="Logout"
+                  @click="logout"
+                />
+              </v-list>
+            </v-menu>
+            </div>
+          </div>
         </div>
       </div>
     </v-navigation-drawer>
@@ -688,6 +729,7 @@
     
     <SettingsDialog
       v-model="settingsDialog"
+      @open-manage-shares="manageSharesDialog = true"
     />
     
     <ConversationSettingsDialog
@@ -3548,6 +3590,59 @@ function formatDate(date: Date | string): string {
 .sidebar-footer {
   flex-shrink: 0;
   margin-top: auto;
+}
+
+.sidebar-footer-btn {
+  min-width: 0 !important;
+  padding: 0 6px !important;
+}
+
+.sidebar-footer-btn .text-caption {
+  font-size: 0.7rem !important;
+}
+
+/* Compact sidebar list items */
+.sidebar-header :deep(.v-list-item) {
+  min-height: 36px !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+.sidebar-header :deep(.v-list-item-title) {
+  font-size: 0.875rem !important;
+}
+
+.sidebar-conversations :deep(.v-list-item) {
+  min-height: 48px !important;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+
+.sidebar-conversations :deep(.v-list-subheader) {
+  min-height: 28px !important;
+  font-size: 0.7rem !important;
+}
+
+.sidebar-overflow-menu .v-list-item {
+  min-height: 32px !important;
+}
+
+.sidebar-user-item {
+  min-height: 48px !important;
+  padding: 8px 12px !important;
+}
+
+.sidebar-user-item :deep(.v-list-item-title) {
+  font-size: 0.875rem !important;
+  font-weight: 500;
+}
+
+.sidebar-user-item :deep(.v-list-item-subtitle) {
+  font-size: 0.75rem !important;
+}
+
+.sidebar-actions {
+  padding: 6px 8px !important;
 }
 
 .sidebar-drawer--mobile {

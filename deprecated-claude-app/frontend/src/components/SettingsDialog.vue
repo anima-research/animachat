@@ -9,11 +9,12 @@
         Settings
       </v-card-title>
 
-      <v-tabs v-model="tab">
+      <v-tabs v-model="tab" density="compact">
         <v-tab value="api-keys">API Keys</v-tab>
         <v-tab value="grants">Grants</v-tab>
-        <v-tab value="custom-models">Custom Models</v-tab>
-        <v-tab value="appearance">Appearance</v-tab>
+        <v-tab value="custom-models">Models</v-tab>
+        <v-tab value="sharing">Sharing</v-tab>
+        <v-tab value="appearance">Display</v-tab>
         <v-tab value="about">About</v-tab>
       </v-tabs>
 
@@ -194,6 +195,25 @@
           <CustomModelsTab />
         </v-window-item>
         
+        <!-- Sharing Tab -->
+        <v-window-item value="sharing">
+          <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
+            <h4 class="text-h6 mb-2">Conversation Sharing</h4>
+            <p class="text-body-2 mb-4">
+              Manage public share links for your conversations. Share links allow anyone with the link to view the conversation.
+            </p>
+            
+            <v-btn
+              color="primary"
+              variant="tonal"
+              prepend-icon="mdi-share-variant"
+              @click="openManageShares"
+            >
+              Manage Public Links
+            </v-btn>
+          </v-card-text>
+        </v-window-item>
+
         <!-- Appearance Tab -->
         <v-window-item value="appearance">
           <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
@@ -287,7 +307,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
+  'open-manage-shares': [];
 }>();
+
+function openManageShares() {
+  emit('open-manage-shares');
+  emit('update:modelValue', false); // Close settings dialog
+}
 
 const store = useStore();
 const theme = useTheme();
