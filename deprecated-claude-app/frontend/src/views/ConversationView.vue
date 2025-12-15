@@ -39,25 +39,25 @@
           <v-divider />
 
           <!-- Compact action buttons -->
-          <div class="sidebar-actions d-flex gap-2 pa-2">
+          <div class="sidebar-header-grid">
             <v-btn
               color="primary"
               variant="tonal"
               size="small"
-              class="flex-grow-1"
-              prepend-icon="mdi-plus"
+              class="sidebar-action-btn"
               @click="createNewConversation"
             >
-              New
+              <v-icon size="18">mdi-plus</v-icon>
+              <span class="ml-1">New</span>
             </v-btn>
             <v-btn
               variant="tonal"
               size="small"
-              class="flex-grow-1"
-              prepend-icon="mdi-import"
+              class="sidebar-action-btn"
               @click="importDialog = true"
             >
-              Import
+              <v-icon size="18">mdi-import</v-icon>
+              <span class="ml-1">Import</span>
             </v-btn>
           </div>
 
@@ -170,53 +170,50 @@
         <!-- Fixed footer section - compact -->
         <div class="sidebar-footer">
           <v-divider />
-          <div class="d-flex flex-column pa-2 gap-1">
-            <!-- Help & About row -->
-            <div class="d-flex align-center gap-1">
-              <v-btn
-                variant="text"
-                size="small"
-                class="sidebar-footer-btn flex-grow-1"
-                @click="welcomeDialog = true"
-                title="Getting Started"
-              >
-                <v-icon size="18">mdi-help-circle</v-icon>
-                <span class="ml-1 text-caption">Help</span>
-              </v-btn>
-              <v-btn
-                variant="text"
-                size="small"
-                class="sidebar-footer-btn flex-grow-1"
-                @click="$router.push('/about')"
-                title="About The Arc"
-              >
-                <v-icon size="18">mdi-information</v-icon>
-                <span class="ml-1 text-caption">About</span>
-              </v-btn>
-            </div>
-            <!-- Settings & More row -->
-            <div class="d-flex align-center gap-1">
-              <v-btn
-                variant="text"
-                size="small"
-                class="sidebar-footer-btn flex-grow-1"
-                @click="settingsDialog = true"
-                title="Settings"
-              >
-                <v-icon size="18">mdi-cog</v-icon>
-                <span class="ml-1 text-caption">Settings</span>
-              </v-btn>
-              <!-- Overflow menu for less common actions -->
-              <v-menu location="top">
+          <div class="sidebar-footer-grid">
+            <v-btn
+              variant="text"
+              size="small"
+              class="sidebar-footer-btn"
+              @click="welcomeDialog = true"
+              title="Getting Started"
+            >
+              <v-icon size="18">mdi-help-circle</v-icon>
+              <span class="ml-1 text-caption">Help</span>
+            </v-btn>
+            <v-btn
+              variant="text"
+              size="small"
+              class="sidebar-footer-btn"
+              @click="$router.push('/about')"
+              title="About The Arc"
+            >
+              <v-icon size="18">mdi-information</v-icon>
+              <span class="ml-1 text-caption">About</span>
+            </v-btn>
+            <v-btn
+              variant="text"
+              size="small"
+              class="sidebar-footer-btn"
+              @click="settingsDialog = true"
+              title="Settings"
+            >
+              <v-icon size="18">mdi-cog</v-icon>
+              <span class="ml-1 text-caption">Settings</span>
+            </v-btn>
+            <!-- Overflow menu for less common actions -->
+            <v-menu location="top">
               <template v-slot:activator="{ props }">
                 <v-btn
                   v-bind="props"
                   variant="text"
                   size="small"
-                  icon="mdi-dots-horizontal"
                   class="sidebar-footer-btn"
                   title="More options"
-                />
+                >
+                  <v-icon size="18">mdi-dots-horizontal</v-icon>
+                  <span class="ml-1 text-caption">More</span>
+                </v-btn>
               </template>
               <v-list density="compact" class="sidebar-overflow-menu">
                 <v-list-item
@@ -239,7 +236,6 @@
                 />
               </v-list>
             </v-menu>
-            </div>
           </div>
         </div>
       </div>
@@ -3592,13 +3588,53 @@ function formatDate(date: Date | string): string {
   margin-top: auto;
 }
 
+.sidebar-header-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+}
+
+.sidebar-action-btn {
+  min-width: 0 !important;
+  padding: 10px 12px !important;
+  border-radius: 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+}
+
+.sidebar-footer-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+}
+
 .sidebar-footer-btn {
   min-width: 0 !important;
-  padding: 0 6px !important;
+  padding: 10px 12px !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  transition: all 0.15s ease !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.sidebar-footer-btn:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
 }
 
 .sidebar-footer-btn .text-caption {
-  font-size: 0.7rem !important;
+  font-size: 0.75rem !important;
+  font-weight: 500;
 }
 
 /* Compact sidebar list items */
@@ -3641,9 +3677,6 @@ function formatDate(date: Date | string): string {
   font-size: 0.75rem !important;
 }
 
-.sidebar-actions {
-  padding: 6px 8px !important;
-}
 
 .sidebar-drawer--mobile {
   width: 100% !important;
