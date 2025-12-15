@@ -273,17 +273,25 @@ function formatTimestamp(timestamp: string | Date): string {
 }
 
 .message-content :deep(pre) {
-  background: rgba(var(--v-theme-surface-variant), 0.5);
+  background: rgba(0, 0, 0, 0.3);
   padding: 12px;
-  border-radius: 4px;
+  border-radius: 6px;
   overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.85em;
 }
 
 .message-content :deep(code) {
-  background: rgba(var(--v-theme-surface-variant), 0.5);
-  padding: 2px 4px;
-  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 2px 6px;
+  border-radius: 4px;
   font-size: 0.9em;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.message-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
 }
 
 .message-content :deep(blockquote) {

@@ -2701,7 +2701,7 @@ async function handleDeletePostHocOperation(messageId: string) {
   if (!currentConversation.value) return;
   
   const confirmed = confirm(
-    'Delete this post-hoc operation?\n\n' +
+    'Delete this operation?\n\n' +
     'This will also delete all messages that come after it in this branch ' +
     '(including any AI responses that were generated with this operation in effect).'
   );

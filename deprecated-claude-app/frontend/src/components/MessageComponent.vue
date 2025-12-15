@@ -1173,31 +1173,38 @@ async function saveAsImage() {
   try {
     const html2canvas = (await import('html2canvas')).default;
     
-    // Find the message content element
-    const contentEl = messageCard.value.querySelector('.message-content') as HTMLElement;
-    if (!contentEl) {
-      console.error('No message content element found');
-      return;
-    }
+    // Clone the entire message card (including header)
+    const clone = messageCard.value.cloneNode(true) as HTMLElement;
     
-    // Create a clone for rendering (to avoid visual glitches)
-    const clone = contentEl.cloneNode(true) as HTMLElement;
-    clone.style.padding = '20px';
-    clone.style.background = 'rgb(30, 30, 30)';
-    clone.style.color = '#e0e0e0';
-    clone.style.fontFamily = isMonospace.value 
-      ? "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
-      : 'system-ui, -apple-system, sans-serif';
-    clone.style.fontSize = isMonospace.value ? '14px' : '15px';
-    clone.style.lineHeight = '1.5';
-    clone.style.whiteSpace = isMonospace.value ? 'pre-wrap' : 'normal';
-    clone.style.width = 'max-content';
-    clone.style.maxWidth = '1200px';
-    clone.style.borderRadius = '8px';
+    // Remove the hover-actions bar from the clone
+    const hoverActions = clone.querySelector('.hover-actions');
+    if (hoverActions) hoverActions.remove();
     
-    // Temporarily append to body (hidden)
+    // Remove branch navigation from clone
+    const branchNav = clone.querySelector('.branch-nav-row');
+    if (branchNav) branchNav.remove();
+    
+    // Style the clone for clean rendering
     clone.style.position = 'absolute';
     clone.style.left = '-9999px';
+    clone.style.width = 'max-content';
+    clone.style.maxWidth = '1200px';
+    clone.style.minWidth = '400px';
+    clone.style.margin = '0';
+    clone.style.borderRadius = '8px';
+    clone.style.boxShadow = 'none';
+    
+    // If monospace mode, apply it to the content
+    if (isMonospace.value) {
+      const content = clone.querySelector('.message-content') as HTMLElement;
+      if (content) {
+        content.style.fontFamily = "'JetBrains Mono', 'Fira Code', 'Consolas', monospace";
+        content.style.fontSize = '13px';
+        content.style.whiteSpace = 'pre-wrap';
+      }
+    }
+    
+    // Temporarily append to body
     document.body.appendChild(clone);
     
     const canvas = await html2canvas(clone, {
@@ -1208,6 +1215,31 @@ async function saveAsImage() {
     
     // Clean up
     document.body.removeChild(clone);
+    
+    // Add Arc watermark in upper right corner
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const padding = 24;
+      const text = 'Arc';
+      
+      // Draw background pill
+      ctx.font = 'bold 24px system-ui, -apple-system, sans-serif';
+      const textWidth = ctx.measureText(text).width;
+      const pillWidth = textWidth + 24;
+      const pillHeight = 32;
+      const pillX = canvas.width - pillWidth - padding;
+      const pillY = padding;
+      
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.beginPath();
+      ctx.roundRect(pillX, pillY, pillWidth, pillHeight, 16);
+      ctx.fill();
+      
+      // Draw arc symbol (⌒) and text
+      ctx.fillStyle = '#a5d6a7';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, pillX + 12, pillY + pillHeight / 2 + 1);
+    }
     
     // Download the image
     const link = document.createElement('a');
@@ -1460,13 +1492,19 @@ watch(() => currentBranch.value.id, async () => {
 
 /* Messages affected by post-hoc hide operations */
 .post-hoc-hidden {
-  opacity: 0.5;
-  background: rgba(128, 128, 128, 0.1);
+  opacity: 0.6;
+  background: rgba(128, 128, 128, 0.08) !important;
 }
 
 .post-hoc-hidden .message-content {
   text-decoration: line-through;
-  color: rgb(var(--v-theme-on-surface-variant));
+  text-decoration-color: rgba(128, 128, 128, 0.5);
+  color: rgba(var(--v-theme-on-surface), 0.5) !important;
+}
+
+.post-hoc-hidden .message-header,
+.post-hoc-hidden .message-meta {
+  opacity: 0.6;
 }
 
 /* Messages affected by post-hoc edit operations */

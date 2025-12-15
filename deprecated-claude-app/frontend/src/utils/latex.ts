@@ -94,3 +94,4 @@ export const KATEX_ALLOWED_ATTRS = [
   'd', 'x', 'y', 'x1', 'x2', 'y1', 'y2'
 ];
 
+
