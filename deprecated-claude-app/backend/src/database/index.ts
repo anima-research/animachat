@@ -1816,7 +1816,8 @@ export class Database {
       if (modelConfig) {
         resolvedSettings = getValidatedModelDefaults(modelConfig);
       } else {
-        // Fallback for unknown models
+        // Fallback for unknown models - log warning as this might indicate a problem
+        console.warn(`⚠️ MODEL WARNING: Model "${model}" not found in config. Using generic defaults (temperature: 1.0, maxTokens: 4096). This may cause issues with pricing or model-specific features.`);
         resolvedSettings = { temperature: 1.0, maxTokens: 4096 };
       }
     }

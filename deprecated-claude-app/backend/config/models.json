@@ -720,7 +720,7 @@
       "provider": "google",
       "hidden": false,
       "contextWindow": 1000000,
-      "outputTokenLimit": 65536,
+      "outputTokenLimit": 4000,
       "supportsThinking": true,
       "capabilities": {
         "imageInput": true,
@@ -782,7 +782,7 @@
       "provider": "google",
       "hidden": false,
       "contextWindow": 1000000,
-      "outputTokenLimit": 65536,
+      "outputTokenLimit": 4000,
       "supportsThinking": true,
       "capabilities": {
         "imageInput": true,
@@ -845,7 +845,7 @@
       "provider": "google",
       "hidden": false,
       "contextWindow": 32768,
-      "outputTokenLimit": 65536,
+      "outputTokenLimit": 4000,
       "supportsThinking": true,
       "capabilities": {
         "imageInput": true,
@@ -958,7 +958,7 @@
       "provider": "google",
       "hidden": false,
       "contextWindow": 32768,
-      "outputTokenLimit": 65536,
+      "outputTokenLimit": 4000,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
@@ -1070,7 +1070,7 @@
       "provider": "google",
       "hidden": false,
       "contextWindow": 1000000,
-      "outputTokenLimit": 65536,
+      "outputTokenLimit": 4000,
       "supportsThinking": true,
       "thinkingDefaultEnabled": true,
       "capabilities": {
@@ -1206,7 +1206,7 @@
       "provider": "google",
       "hidden": false,
       "contextWindow": 32768,
-      "outputTokenLimit": 65536,
+      "outputTokenLimit": 4000,
       "supportsThinking": true,
       "thinkingDefaultEnabled": true,
       "capabilities": {

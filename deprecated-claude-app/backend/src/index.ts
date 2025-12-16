@@ -29,6 +29,8 @@ import { personaRouter } from './routes/personas.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
 import { authenticateToken } from './middleware/auth.js';
+import { OpenRouterService } from './services/openrouter.js';
+import { updateOpenRouterModelsCache } from './services/pricing-cache.js';
 
 dotenv.config();
 
@@ -124,6 +126,20 @@ async function startServer() {
     const modelLoader = ModelLoader.getInstance();
     modelLoader.setDatabase(db);
     console.log('ModelLoader initialized with database');
+    
+    // Pre-populate OpenRouter pricing cache
+    try {
+      console.log('Pre-populating OpenRouter pricing cache...');
+      const openRouterService = new OpenRouterService(db);
+      const openRouterModels = await openRouterService.listModels();
+      updateOpenRouterModelsCache(openRouterModels);
+      console.log(`✅ OpenRouter pricing cache ready with ${openRouterModels.length} models`);
+    } catch (error: any) {
+      console.error('⚠️ PRICING WARNING: Failed to pre-populate OpenRouter pricing cache.');
+      console.error('   OpenRouter models will show $0 cost until the cache is populated.');
+      console.error('   This usually means OPENROUTER_API_KEY is not set or invalid.');
+      console.error('   Error:', error?.message || error);
+    }
     
     const listenPort = Number(USE_HTTPS ? HTTPS_PORT : PORT);
     const protocol = USE_HTTPS ? 'HTTPS' : 'HTTP';

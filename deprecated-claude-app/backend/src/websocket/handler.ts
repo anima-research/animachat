@@ -4,12 +4,13 @@ import { WsMessageSchema, WsMessage, Message, Participant } from '@deprecated-cl
 import { Database } from '../database/index.js';
 import { verifyToken } from '../middleware/auth.js';
 import { InferenceService } from '../services/inference.js';
-import { EnhancedInferenceService } from '../services/enhanced-inference.js';
+import { EnhancedInferenceService, validatePricingAvailable, PricingNotConfiguredError } from '../services/enhanced-inference.js';
 import { ContextManager } from '../services/context-manager.js';
 import { Logger } from '../utils/logger.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { roomManager } from './room-manager.js';
+import { USER_FACING_ERRORS } from '../utils/error-messages.js';
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -760,6 +761,20 @@ async function handleChatMessage(
       throw new Error(`Model ${inferenceModel} not found`);
     }
     
+    // Validate pricing is configured BEFORE making inference call
+    const pricingCheck = await validatePricingAvailable(modelConfig);
+    if (!pricingCheck.valid) {
+      console.error(`[Chat] Pricing validation failed for model ${inferenceModel}:`, pricingCheck.error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: USER_FACING_ERRORS.PRICING_NOT_CONFIGURED.message,
+        details: pricingCheck.error
+      }));
+      // Delete the empty assistant message we created
+      await db.deleteMessage(assistantMessage.id, message.conversationId, conversation.userId);
+      return;
+    }
+    
     // Apply backroom prompt for early group chats if conditions are met
     inferenceSystemPrompt = applyBackroomPromptIfNeeded({
       conversationFormat: conversation.format,
@@ -1027,43 +1042,51 @@ async function handleChatMessage(
     
     console.error('Inference streaming error:', error);
     
-    // Parse error for user-friendly messages
+    // Parse error for user-friendly messages (using centralized error messages)
     const errorMsg = error instanceof Error ? error.message : String(error);
-    let friendlyError = 'Failed to generate response';
-    let suggestion = '';
+    let friendlyError = USER_FACING_ERRORS.GENERIC_ERROR.message;
+    let suggestion = USER_FACING_ERRORS.GENERIC_ERROR.suggestion;
     
     if (errorMsg.includes('Model') && errorMsg.includes('not found')) {
-      friendlyError = 'Model not found';
-      suggestion = 'The selected model may have been removed or is unavailable.';
+      friendlyError = USER_FACING_ERRORS.MODEL_NOT_FOUND.message;
+      suggestion = USER_FACING_ERRORS.MODEL_NOT_FOUND.suggestion;
     } else if (errorMsg.includes('No API key')) {
-      friendlyError = 'No API key configured';
-      suggestion = 'Add an API key in Settings → API Keys for this provider.';
-    } else if (errorMsg.includes('Rate limit')) {
-      friendlyError = 'Rate limit exceeded';
-      suggestion = 'Wait a moment and try again, or switch to a different model.';
+      friendlyError = USER_FACING_ERRORS.NO_API_KEY.message;
+      suggestion = USER_FACING_ERRORS.NO_API_KEY.suggestion;
+    } else if (errorMsg.includes('Rate limit') || errorMsg.includes('rate_limit') || errorMsg.includes('429')) {
+      friendlyError = USER_FACING_ERRORS.RATE_LIMIT.message;
+      suggestion = USER_FACING_ERRORS.RATE_LIMIT.suggestion;
+    } else if (errorMsg.includes('overloaded') || errorMsg.includes('503')) {
+      friendlyError = USER_FACING_ERRORS.OVERLOADED.message;
+      suggestion = USER_FACING_ERRORS.OVERLOADED.suggestion;
     } else if (errorMsg.includes('Insufficient credits')) {
-      friendlyError = 'Insufficient credits';
-      suggestion = 'Add more credits or contact an admin for a top-up.';
-    } else if (errorMsg.includes('404')) {
-      friendlyError = 'Endpoint not found';
-      suggestion = 'Check your custom model configuration - the URL may be incorrect.';
+      friendlyError = USER_FACING_ERRORS.INSUFFICIENT_CREDITS.message;
+      suggestion = USER_FACING_ERRORS.INSUFFICIENT_CREDITS.suggestion;
     } else if (errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('Authentication')) {
-      friendlyError = 'Authentication failed';
-      suggestion = 'Check that your API key is valid and has not expired.';
+      friendlyError = USER_FACING_ERRORS.AUTHENTICATION_FAILED.message;
+      suggestion = USER_FACING_ERRORS.AUTHENTICATION_FAILED.suggestion;
     } else if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('fetch failed')) {
-      friendlyError = 'Could not connect to model server';
-      suggestion = 'Make sure the model server is running and reachable.';
+      friendlyError = USER_FACING_ERRORS.CONNECTION_ERROR.message;
+      suggestion = USER_FACING_ERRORS.CONNECTION_ERROR.suggestion;
+    } else if (errorMsg.includes('context') || errorMsg.includes('too long') || errorMsg.includes('maximum')) {
+      friendlyError = USER_FACING_ERRORS.CONTEXT_TOO_LONG.message;
+      suggestion = USER_FACING_ERRORS.CONTEXT_TOO_LONG.suggestion;
+    } else if (errorMsg.includes('content') && (errorMsg.includes('filter') || errorMsg.includes('flag') || errorMsg.includes('policy'))) {
+      friendlyError = USER_FACING_ERRORS.CONTENT_FILTERED.message;
+      suggestion = USER_FACING_ERRORS.CONTENT_FILTERED.suggestion;
     } else if (errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT')) {
-      friendlyError = 'Request timed out';
-      suggestion = 'The model server took too long to respond. Try again or use a different model.';
+      friendlyError = USER_FACING_ERRORS.REQUEST_TIMEOUT.message;
+      suggestion = USER_FACING_ERRORS.REQUEST_TIMEOUT.suggestion;
     } else if (errorMsg.includes('500') || errorMsg.includes('Internal')) {
-      friendlyError = 'Model server error';
-      suggestion = 'The model server encountered an error. Try again or check the model ID.';
-    } else if (errorMsg.includes('context') || errorMsg.includes('token')) {
-      friendlyError = errorMsg; // Pass through token/context errors as-is
+      friendlyError = USER_FACING_ERRORS.SERVER_ERROR.message;
+      suggestion = USER_FACING_ERRORS.SERVER_ERROR.suggestion;
+    } else if (errorMsg.includes('404')) {
+      friendlyError = USER_FACING_ERRORS.ENDPOINT_NOT_FOUND.message;
+      suggestion = USER_FACING_ERRORS.ENDPOINT_NOT_FOUND.suggestion;
     } else if (errorMsg.length < 100) {
       // Short error messages are usually informative, pass them through
       friendlyError = errorMsg;
+      suggestion = USER_FACING_ERRORS.GENERIC_ERROR.suggestion;
     }
     
     ws.send(JSON.stringify({
@@ -1227,6 +1250,18 @@ async function handleRegenerate(
     const modelConfig = await modelLoader.getModelById(responderModel, conversation.userId);
     if (!modelConfig) {
       throw new Error(`Model ${responderModel} not found`);
+    }
+    
+    // Validate pricing is configured BEFORE making inference call
+    const pricingCheck = await validatePricingAvailable(modelConfig);
+    if (!pricingCheck.valid) {
+      console.error(`[Regenerate] Pricing validation failed for model ${responderModel}:`, pricingCheck.error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: USER_FACING_ERRORS.PRICING_NOT_CONFIGURED.message,
+        details: pricingCheck.error
+      }));
+      return;
     }
     
     // Apply backroom prompt for early group chats if conditions are met
@@ -1626,6 +1661,18 @@ async function handleEdit(
         throw new Error(`Model ${responderModel} not found`);
       }
       
+      // Validate pricing is configured BEFORE making inference call
+      const pricingCheck = await validatePricingAvailable(modelConfig);
+      if (!pricingCheck.valid) {
+        console.error(`[Edit] Pricing validation failed for model ${responderModel}:`, pricingCheck.error);
+        ws.send(JSON.stringify({
+          type: 'error',
+          error: USER_FACING_ERRORS.PRICING_NOT_CONFIGURED.message,
+          details: pricingCheck.error
+        }));
+        return;
+      }
+      
       // Apply backroom prompt for early group chats if conditions are met
       const responderParticipantEdit = responderId ? participants.find(p => p.id === responderId) : undefined;
       responderSystemPrompt = applyBackroomPromptIfNeeded({
@@ -1973,6 +2020,20 @@ async function handleContinue(
       throw new Error(`Model ${modelId} not found`);
     }
     
+    // Validate pricing is configured BEFORE making inference call
+    const pricingCheck = await validatePricingAvailable(modelConfig);
+    if (!pricingCheck.valid) {
+      console.error(`[Continue] Pricing validation failed for model ${modelId}:`, pricingCheck.error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: USER_FACING_ERRORS.PRICING_NOT_CONFIGURED.message,
+        details: pricingCheck.error
+      }));
+      // Delete the empty assistant message we created
+      await db.deleteMessage(assistantMessage.id, conversationId, conversation.userId);
+      return;
+    }
+    
     // Create abort controller for this generation
     const abortController = startGeneration(conversation.userId, conversationId);
     
@@ -1984,10 +2045,12 @@ async function handleContinue(
       ? conversation.settings || { temperature: 1.0, maxTokens: 4096 }
         : {
             temperature: responder.settings?.temperature ?? conversation.settings?.temperature ?? 1.0,
-          maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 4096,
+            maxTokens: responder.settings?.maxTokens ?? conversation.settings?.maxTokens ?? 4096,
             topP: responder.settings?.topP ?? conversation.settings?.topP,
             topK: responder.settings?.topK ?? conversation.settings?.topK,
-            thinking: conversation.settings?.thinking
+            thinking: conversation.settings?.thinking,
+            // Include model-specific settings (e.g., image resolution, response modalities)
+            modelSpecific: responder.settings?.modelSpecific ?? conversation.settings?.modelSpecific
         };
     
     try {
