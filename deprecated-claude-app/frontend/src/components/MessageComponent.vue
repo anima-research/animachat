@@ -313,9 +313,10 @@
             <v-btn
               v-bind="props"
               icon="mdi-dots-vertical"
-              size="x-small"
-              variant="text"
-              density="compact"
+              size="small"
+              variant="tonal"
+              density="comfortable"
+              class="touch-actions-btn"
             />
           </template>
           <v-list density="compact" class="py-1">
@@ -351,6 +352,11 @@
             <v-list-item density="compact" @click="startPostHocEdit">
               <template v-slot:prepend><v-icon size="small">mdi-pencil-off-outline</v-icon></template>
               <v-list-item-title>Edit for AI</v-list-item-title>
+            </v-list-item>
+            <v-divider class="my-1" />
+            <v-list-item density="compact" @click="$emit('delete', message.id, currentBranch.id)">
+              <template v-slot:prepend><v-icon size="small" color="error">mdi-delete-outline</v-icon></template>
+              <v-list-item-title>Delete</v-list-item-title>
             </v-list-item>
           </v-list>
         </v-menu>
@@ -777,9 +783,12 @@ const isMonospace = ref(false); // Toggle monospace display for entire message
 const moreMenuOpen = ref(false); // Track more menu state for debugging
 const isTouchDevice = ref(false); // Detect touch devices to disable hover bar
 
-// Detect touch device on mount
+// Detect touch device on mount - use multiple detection methods for reliability
 onMounted(() => {
-  isTouchDevice.value = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  isTouchDevice.value = 
+    'ontouchstart' in window || 
+    navigator.maxTouchPoints > 0 ||
+    (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
 });
 const bookmarkDialog = ref(false);
 const bookmarkInput = ref('');
@@ -1899,6 +1908,12 @@ watch(() => currentBranch.value.id, async () => {
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* Touch-friendly actions button */
+.touch-actions-btn {
+  min-width: 36px !important;
+  height: 36px !important;
 }
 </style>
 
