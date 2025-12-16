@@ -375,6 +375,46 @@ router.delete('/packs/:packId/avatars/:canonicalId', async (req: Request, res) =
   }
 });
 
+// PUT /avatars/packs/:packId/colors/:canonicalId - Set color for a model in a pack
+router.put('/packs/:packId/colors/:canonicalId', async (req: Request, res) => {
+  try {
+    const userId = (req as any).userId;
+    const { packId, canonicalId } = req.params;
+    const { color } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const packPath = path.join(USER_PACKS_PATH, userId, packId);
+    const pack = await readPackJson(packPath);
+
+    if (!pack) {
+      return res.status(404).json({ error: 'Pack not found' });
+    }
+
+    // Initialize colors object if it doesn't exist
+    if (!pack.colors) {
+      pack.colors = {};
+    }
+
+    if (color) {
+      // Set or update color
+      pack.colors[canonicalId] = color;
+    } else {
+      // Remove color if empty/null
+      delete pack.colors[canonicalId];
+    }
+
+    await writePackJson(packPath, pack);
+
+    res.json({ success: true, color: pack.colors[canonicalId] });
+  } catch (error) {
+    console.error('Error updating avatar color:', error);
+    res.status(500).json({ error: 'Failed to update avatar color' });
+  }
+});
+
 // DELETE /avatars/packs/:packId - Delete an entire pack
 router.delete('/packs/:packId', async (req: Request, res) => {
   try {

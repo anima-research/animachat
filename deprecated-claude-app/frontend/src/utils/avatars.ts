@@ -59,6 +59,18 @@ export function getAvatarUrl(canonicalId: string | undefined): string | null {
 }
 
 /**
+ * Get nickname color for a model by its canonicalId
+ */
+export function getAvatarColor(canonicalId: string | undefined): string | null {
+  if (!canonicalId) return null;
+  
+  const pack = getActivePack();
+  if (!pack || !pack.colors) return null;
+  
+  return pack.colors[canonicalId] || null;
+}
+
+/**
  * Get avatar URL for a model object
  */
 export function getModelAvatarUrl(model: Model | { canonicalId?: string; id?: string; providerModelId?: string } | null | undefined): string | null {
@@ -113,6 +125,45 @@ export function getParticipantAvatarUrl(
   
   const model = models.find(m => m.id === modelId);
   return getModelAvatarUrl(model);
+}
+
+/**
+ * Get nickname color for a participant based on their model's canonicalId
+ */
+export function getParticipantColor(
+  participant: { 
+    colorOverride?: string; 
+    model?: string; 
+    type?: string;
+  } | null | undefined,
+  models: Model[],
+  persona?: { colorOverride?: string; model?: string } | null
+): string | null {
+  if (!participant) return null;
+  
+  // Check participant override
+  if ((participant as any).colorOverride) {
+    return (participant as any).colorOverride;
+  }
+  
+  // Check persona override
+  if ((persona as any)?.colorOverride) {
+    return (persona as any).colorOverride;
+  }
+  
+  // For user participants, no color
+  if (participant.type === 'user') {
+    return null;
+  }
+  
+  // Look up model
+  const modelId = persona?.model || participant.model;
+  if (!modelId) return null;
+  
+  const model = models.find(m => m.id === modelId);
+  if (!model?.canonicalId) return null;
+  
+  return getAvatarColor(model.canonicalId);
 }
 
 /**

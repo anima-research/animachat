@@ -298,21 +298,6 @@
 
         <v-spacer class="breadcrumb-spacer"/>
         
-        <v-chip 
-          class="mr-2 clickable-chip" 
-          size="small"
-          variant="outlined"
-          :color="currentConversation?.format === 'standard' ? getModelColor(currentConversation?.model) : 'info'"
-          @click="conversationSettingsDialog = true"
-        >
-          <v-icon v-if="currentConversation?.format !== 'standard'" class="mr-2">mdi-account-group</v-icon>
-          {{ currentConversation?.format !== 'standard' ? 'Group Chat' : currentModel?.displayName || 'Select Model' }}
-          <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
-          <v-tooltip activator="parent" location="bottom">
-            Click to change model and settings
-          </v-tooltip>
-        </v-chip>
-        
         <!-- Metrics Display -->
         <MetricsDisplay 
           v-if="currentConversation"

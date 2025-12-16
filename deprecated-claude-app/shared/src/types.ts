@@ -151,6 +151,7 @@ export const AvatarPackSchema = z.object({
   history: z.string().optional(), // Background/origin story
   isSystem: z.boolean().default(false), // System packs are read-only
   avatars: z.record(z.string(), z.string()), // canonicalId -> filename mapping
+  colors: z.record(z.string(), z.string()).optional(), // canonicalId -> hex color for nickname
 });
 
 export type AvatarPack = z.infer<typeof AvatarPackSchema>;

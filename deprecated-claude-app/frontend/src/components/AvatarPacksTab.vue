@@ -122,6 +122,7 @@
             <th style="width: 60px;"></th>
             <th>Canonical ID</th>
             <th>Filename</th>
+            <th style="width: 100px;">Color</th>
             <th v-if="!selectedPack.isSystem" style="width: 50px;"></th>
           </tr>
         </thead>
@@ -138,6 +139,26 @@
             </td>
             <td class="text-body-2" style="font-family: monospace;">{{ canonicalId }}</td>
             <td class="text-caption text-grey">{{ filename }}</td>
+            <td>
+              <div class="d-flex align-center gap-1">
+                <input
+                  type="color"
+                  :value="selectedPack.colors?.[canonicalId as string] || '#9E9E9E'"
+                  class="color-picker-input"
+                  :disabled="selectedPack.isSystem"
+                  @change="updateAvatarColor(canonicalId as string, ($event.target as HTMLInputElement).value)"
+                />
+                <v-btn
+                  v-if="selectedPack.colors?.[canonicalId as string] && !selectedPack.isSystem"
+                  icon="mdi-close"
+                  size="x-small"
+                  variant="text"
+                  density="compact"
+                  @click="updateAvatarColor(canonicalId as string, '')"
+                  title="Clear color"
+                />
+              </div>
+            </td>
             <td v-if="!selectedPack.isSystem">
               <v-btn
                 icon="mdi-delete"
@@ -149,7 +170,7 @@
             </td>
           </tr>
           <tr v-if="Object.keys(selectedPack.avatars || {}).length === 0">
-            <td colspan="4" class="text-center text-grey py-4">No avatars in this pack</td>
+            <td colspan="5" class="text-center text-grey py-4">No avatars in this pack</td>
           </tr>
         </tbody>
       </v-table>
@@ -460,6 +481,19 @@ async function deleteAvatar(canonicalId: string) {
   }
 }
 
+async function updateAvatarColor(canonicalId: string, color: string) {
+  if (!selectedPack.value || selectedPack.value.isSystem) return;
+  
+  try {
+    await api.put(`/avatars/packs/${selectedPack.value.id}/colors/${canonicalId}`, { color });
+    await loadPacks();
+    const updatedPack = packs.value.find(p => p.id === selectedPack.value?.id);
+    if (updatedPack) selectedPack.value = updatedPack;
+  } catch (e: any) {
+    error.value = e.response?.data?.error || 'Failed to update color';
+  }
+}
+
 function openCloneDialog(pack: AvatarPack) {
   cloneSourcePack.value = pack;
   cloneNewId.value = `${pack.id}-copy`;
@@ -530,6 +564,28 @@ async function deletePack() {
 .avatar-clickable:hover {
   transform: scale(1.1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Color picker input */
+.color-picker-input {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+  padding: 0;
+}
+.color-picker-input::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.color-picker-input::-webkit-color-swatch {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+.color-picker-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>
 

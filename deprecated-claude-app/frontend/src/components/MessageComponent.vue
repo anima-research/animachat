@@ -227,7 +227,8 @@
         variant="text"
         density="compact"
         class="ml-1"
-        @click="touchActionsOpen = false"
+        @click.stop.prevent="touchActionsOpen = false"
+        @touchend.stop.prevent="touchActionsOpen = false"
       />
     </div>
 
@@ -243,7 +244,12 @@
       <!-- Left: name + meta -->
       <div class="d-flex align-center flex-wrap" style="gap: 4px;">
         <!-- Avatar or fallback icon -->
-        <v-avatar v-if="avatarUrl" size="32" class="message-avatar">
+        <v-avatar 
+          v-if="avatarUrl" 
+          size="32" 
+          class="message-avatar clickable-avatar"
+          @click="showAvatarPreview = true"
+        >
           <v-img :src="avatarUrl" :alt="participantDisplayName || 'Avatar'" />
         </v-avatar>
         <v-icon
@@ -696,6 +702,25 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+    
+    <!-- Avatar Preview Dialog -->
+    <v-dialog v-model="showAvatarPreview" max-width="400">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <span>{{ participantDisplayName }}</span>
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="showAvatarPreview = false" />
+        </v-card-title>
+        <v-card-text class="text-center pa-6">
+          <v-img 
+            :src="avatarUrl" 
+            max-height="300"
+            contain
+            class="mx-auto rounded-lg"
+          />
+        </v-card-text>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -708,7 +733,7 @@ import { getModelColor } from '@/utils/modelColors';
 import { renderLatex, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
-import { getParticipantAvatarUrl, loadAvatarPacks } from '@/utils/avatars';
+import { getParticipantAvatarUrl, getAvatarColor, loadAvatarPacks } from '@/utils/avatars';
 import DebugMessageDialog from './DebugMessageDialog.vue';
 import 'katex/dist/katex.min.css'; // KaTeX styles
 
@@ -801,6 +826,7 @@ const previewImageSrc = ref('');
 const previewImageAlt = ref('');
 const showDebugDialog = ref(false);
 const showMetadataDialog = ref(false);
+const showAvatarPreview = ref(false);
 
 // Check if user is researcher or admin (can see metadata)
 const canViewMetadata = computed(() => {
@@ -1000,6 +1026,7 @@ const participantColor = computed(() => {
   
   // Try to get model from participant or branch
   let model: string | undefined;
+  let modelObj: any = null;
   
   if (props.participants && branch.participantId) {
     const participant = props.participants.find(p => p.id === branch.participantId);
@@ -1011,6 +1038,20 @@ const participantColor = computed(() => {
     model = branch.model;
   }
   
+  // Look up model object to get canonicalId
+  if (model) {
+    modelObj = store.state.models?.find((m: any) => m.id === model);
+  }
+  
+  // First try avatar pack color
+  if (modelObj?.canonicalId) {
+    const avatarColor = getAvatarColor(modelObj.canonicalId);
+    if (avatarColor) {
+      return avatarColor;
+    }
+  }
+  
+  // Fall back to default model colors
   return getModelColor(model);
 });
 
@@ -1768,6 +1809,16 @@ watch(() => currentBranch.value.id, async () => {
 .message-avatar {
   flex-shrink: 0;
   border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Clickable avatar */
+.message-avatar.clickable-avatar {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.message-avatar.clickable-avatar:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 /* Name matches message font size */
