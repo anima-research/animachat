@@ -35,7 +35,8 @@
       message.branches[branchIndex].role === 'user' ? 'user-message' : 'assistant-message',
       isSelectedParent ? 'selected-parent' : '',
       postHocAffected?.hidden ? 'post-hoc-hidden' : '',
-      postHocAffected?.edited ? 'post-hoc-edited' : ''
+      postHocAffected?.edited ? 'post-hoc-edited' : '',
+      (isHovered || touchActionsOpen) ? 'action-bar-visible' : ''
     ]"
     :style="{
       borderLeft: isSelectedParent ? '3px solid rgb(var(--v-theme-info))' : undefined,
@@ -44,10 +45,10 @@
     @mouseenter="isHovered = true"
     @mouseleave="handleMouseLeave"
   >
-    <!-- Hover action bar (Discord-style) - hidden on touch devices -->
+    <!-- Action bar - appears on hover (desktop) or tap (mobile), positioned at bottom -->
     <div 
-      v-if="(isHovered || moreMenuOpen) && !isEditing && !isStreaming && !isTouchDevice" 
-      class="hover-actions"
+      v-if="(isHovered || moreMenuOpen || touchActionsOpen) && !isEditing && !isStreaming" 
+      class="action-bar"
     >
       <!-- Primary actions -->
       <span v-if="message.branches[branchIndex].role === 'assistant'" class="hover-tooltip" data-tooltip="Regenerate">
@@ -217,6 +218,17 @@
         </v-list>
         </v-menu>
       </div>
+      
+      <!-- Close button for touch devices (inside hover bar) -->
+      <v-btn
+        v-if="isTouchDevice"
+        icon="mdi-close"
+        size="x-small"
+        variant="text"
+        density="compact"
+        class="ml-1"
+        @click="touchActionsOpen = false"
+      />
     </div>
 
     <!-- Branch navigation (separate row on narrow, inline on wide) -->
@@ -306,62 +318,20 @@
       </div>
       <div v-else class="branch-nav-inline"></div>
       
-      <!-- Right: Touch-friendly actions menu (mobile only) -->
-      <div class="branch-nav-inline d-flex justify-end">
-        <v-menu v-if="isTouchDevice && !isEditing && !isStreaming" location="bottom end">
-          <template v-slot:activator="{ props }">
-            <v-btn
-              v-bind="props"
-              icon="mdi-dots-vertical"
-              size="small"
-              variant="tonal"
-              density="comfortable"
-              class="touch-actions-btn"
-            />
-          </template>
-          <v-list density="compact" class="py-1">
-            <v-list-item v-if="message.branches[branchIndex].role === 'assistant'" density="compact" @click="$emit('regenerate', message.id, currentBranch.id)">
-              <template v-slot:prepend><v-icon size="small">mdi-refresh</v-icon></template>
-              <v-list-item-title>Regenerate</v-list-item-title>
-            </v-list-item>
-            <v-list-item density="compact" @click="startEdit">
-              <template v-slot:prepend><v-icon size="small">mdi-pencil</v-icon></template>
-              <v-list-item-title>Edit</v-list-item-title>
-            </v-list-item>
-            <v-list-item density="compact" @click="copyContent">
-              <template v-slot:prepend><v-icon size="small">mdi-content-copy</v-icon></template>
-              <v-list-item-title>Copy</v-list-item-title>
-            </v-list-item>
-            <v-list-item v-if="!isLastMessage" density="compact" @click="$emit('select-as-parent', message.id, currentBranch.id)">
-              <template v-slot:prepend><v-icon size="small">mdi-source-branch</v-icon></template>
-              <v-list-item-title>Branch from here</v-list-item-title>
-            </v-list-item>
-            <v-list-item density="compact" @click="toggleBookmark">
-              <template v-slot:prepend><v-icon size="small">{{ hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline' }}</v-icon></template>
-              <v-list-item-title>{{ hasBookmark ? 'Remove bookmark' : 'Bookmark' }}</v-list-item-title>
-            </v-list-item>
-            <v-divider class="my-1" />
-            <v-list-item v-if="postHocAffected?.hidden" density="compact" @click="$emit('post-hoc-unhide', message.id, currentBranch.id)">
-              <template v-slot:prepend><v-icon size="small" color="success">mdi-eye-outline</v-icon></template>
-              <v-list-item-title>Unhide</v-list-item-title>
-            </v-list-item>
-            <v-list-item v-else density="compact" @click="$emit('post-hoc-hide', message.id, currentBranch.id)">
-              <template v-slot:prepend><v-icon size="small">mdi-eye-off-outline</v-icon></template>
-              <v-list-item-title>Hide from AI</v-list-item-title>
-            </v-list-item>
-            <v-list-item density="compact" @click="startPostHocEdit">
-              <template v-slot:prepend><v-icon size="small">mdi-pencil-off-outline</v-icon></template>
-              <v-list-item-title>Edit for AI</v-list-item-title>
-            </v-list-item>
-            <v-divider class="my-1" />
-            <v-list-item density="compact" @click="$emit('delete', message.id, currentBranch.id)">
-              <template v-slot:prepend><v-icon size="small" color="error">mdi-delete-outline</v-icon></template>
-              <v-list-item-title>Delete</v-list-item-title>
-            </v-list-item>
-          </v-list>
-        </v-menu>
-      </div>
+      <!-- Right: empty for balance (desktop) -->
+      <div class="branch-nav-inline"></div>
     </div>
+    
+    <!-- Touch action toggle button - fixed in corner on mobile (only show when bar is closed) -->
+    <v-btn
+      v-if="isTouchDevice && !isEditing && !isStreaming && !touchActionsOpen"
+      icon="mdi-dots-horizontal"
+      size="x-small"
+      variant="text"
+      density="compact"
+      class="touch-toggle-btn"
+      @click="toggleTouchActions"
+    />
       
       <!-- Thinking blocks (if present) -->
       <div v-if="thinkingBlocks.length > 0 && !isEditing" class="thinking-section mb-1">
@@ -782,6 +752,7 @@ const isHovered = ref(false);
 const isMonospace = ref(false); // Toggle monospace display for entire message
 const moreMenuOpen = ref(false); // Track more menu state for debugging
 const isTouchDevice = ref(false); // Detect touch devices to disable hover bar
+const touchActionsOpen = ref(false); // Toggle for action bar on touch devices
 
 // Detect touch device on mount - use multiple detection methods for reliability
 onMounted(() => {
@@ -789,6 +760,36 @@ onMounted(() => {
     'ontouchstart' in window || 
     navigator.maxTouchPoints > 0 ||
     (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+});
+
+// Toggle action bar on touch devices
+function toggleTouchActions() {
+  touchActionsOpen.value = !touchActionsOpen.value;
+}
+
+// Close touch actions when clicking outside
+function handleClickOutside(event: MouseEvent) {
+  if (!touchActionsOpen.value) return;
+  
+  const target = event.target as HTMLElement;
+  const card = messageCard.value;
+  
+  // If click is outside this message card, close the actions
+  if (card && !card.contains(target)) {
+    touchActionsOpen.value = false;
+  }
+}
+
+// Add/remove click outside listener
+watch(touchActionsOpen, (isOpen) => {
+  if (isOpen) {
+    // Delay to avoid immediate close from the toggle click
+    setTimeout(() => {
+      document.addEventListener('click', handleClickOutside);
+    }, 10);
+  } else {
+    document.removeEventListener('click', handleClickOutside);
+  }
 });
 const bookmarkDialog = ref(false);
 const bookmarkInput = ref('');
@@ -1253,8 +1254,8 @@ async function saveAsImage() {
     // Clone the entire message card (including header)
     const clone = messageCard.value.cloneNode(true) as HTMLElement;
     
-    // Remove the hover-actions bar from the clone
-    const hoverActions = clone.querySelector('.hover-actions');
+    // Remove the action bar from the clone
+    const hoverActions = clone.querySelector('.action-bar');
     if (hoverActions) hoverActions.remove();
     
     // Remove branch navigation from clone
@@ -1683,7 +1684,7 @@ watch(() => currentBranch.value.id, async () => {
   transition: background-color 0.15s ease;
   margin-bottom: 10px;
   max-width: 100%;
-  overflow: visible; /* Allow hover bar to extend outside */
+  overflow: visible;
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
@@ -1716,6 +1717,12 @@ watch(() => currentBranch.value.id, async () => {
 
 .message-container:hover {
   filter: brightness(1.05);
+}
+
+/* When action bar is visible, lift the message above siblings */
+.message-container.action-bar-visible {
+  z-index: 50;
+  position: relative;
 }
 
 /* Branch nav: separate row on narrow screens */
@@ -1825,9 +1832,10 @@ watch(() => currentBranch.value.id, async () => {
 }
 
 /* Discord-style hover action bar */
-.hover-actions {
+/* Action bar - floating at bottom-right of message */
+.action-bar {
   position: absolute;
-  top: -8px;
+  bottom: -36px;
   right: 12px;
   display: flex;
   align-items: center;
@@ -1837,8 +1845,7 @@ watch(() => currentBranch.value.id, async () => {
   border: 1px solid rgba(var(--v-theme-on-surface), 0.15);
   border-radius: 6px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  z-index: 10;
-  overflow: visible;
+  z-index: 100;
 }
 
 /* Instant CSS tooltips for hover bar */
@@ -1892,12 +1899,12 @@ watch(() => currentBranch.value.id, async () => {
   display: inline-flex;
 }
 
-.hover-actions .v-btn {
-  opacity: 0.6;
+.action-bar .v-btn {
+  opacity: 0.7;
   min-width: 28px;
 }
 
-.hover-actions .v-btn:hover {
+.action-bar .v-btn:hover {
   opacity: 1;
 }
 
@@ -1910,10 +1917,18 @@ watch(() => currentBranch.value.id, async () => {
   word-break: break-all;
 }
 
-/* Touch-friendly actions button */
-.touch-actions-btn {
-  min-width: 36px !important;
-  height: 36px !important;
+/* Touch toggle button - fixed in bottom-right corner on touch devices */
+.touch-toggle-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  opacity: 0.5;
+  z-index: 5;
+}
+
+.touch-toggle-btn:hover,
+.touch-toggle-btn:focus {
+  opacity: 0.8;
 }
 </style>
 
