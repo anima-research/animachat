@@ -39,8 +39,7 @@
       (isHovered || touchActionsOpen) ? 'action-bar-visible' : ''
     ]"
     :style="{
-      borderLeft: isSelectedParent ? '3px solid rgb(var(--v-theme-info))' : undefined,
-      padding: '12px 12px 8px 12px'
+      borderLeft: isSelectedParent ? '3px solid rgb(var(--v-theme-info))' : undefined
     }"
     @mouseenter="isHovered = true"
     @mouseleave="handleMouseLeave"
@@ -1728,6 +1727,11 @@ watch(() => currentBranch.value.id, async () => {
   overflow: visible;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  /* Padding: top, left/right, and bottom. Bottom padding reserves space for the action bar
+     to prevent layout shift/flicker when hovering near the last message.
+     The action bar may slightly overlap content, but its semi-transparent background
+     keeps text readable. */
+  padding: 12px 12px 28px 12px;
 }
 
 /* Desktop: left-right offsets */
@@ -1883,19 +1887,21 @@ watch(() => currentBranch.value.id, async () => {
 }
 
 /* Discord-style hover action bar */
-/* Action bar - floating at bottom-right of message */
+/* Action bar - floating at bottom-right corner, flush with message edges.
+   Positioned inside message bounds to prevent layout shifts on last message.
+   Semi-transparent so message text can be seen through it if overlapping. */
 .action-bar {
   position: absolute;
-  bottom: -36px;
-  right: 12px;
+  bottom: 0;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 4px 8px;
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.15);
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px 0 6px 0; /* Round only top-left and bottom-right to fit corner */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
   z-index: 100;
 }
 
@@ -1951,12 +1957,17 @@ watch(() => currentBranch.value.id, async () => {
 }
 
 .action-bar .v-btn {
-  opacity: 0.7;
-  min-width: 28px;
+  opacity: 0.75;
+  min-width: 24px;
+  height: 24px;
 }
 
 .action-bar .v-btn:hover {
   opacity: 1;
+}
+
+.action-bar .v-divider {
+  height: 14px !important;
 }
 
 /* Metadata dialog debug JSON */
