@@ -10,8 +10,13 @@ export class AnthropicService {
   constructor(db: Database, apiKey?: string) {
     this.db = db;
     
+    const resolvedKey = apiKey || process.env.ANTHROPIC_API_KEY;
+    if (!resolvedKey) {
+      console.error('⚠️ API KEY ERROR: No Anthropic API key provided. Set ANTHROPIC_API_KEY environment variable or configure user API keys. API calls will fail.');
+    }
+    
     this.client = new Anthropic({
-      apiKey: apiKey || process.env.ANTHROPIC_API_KEY || 'demo-key'
+      apiKey: resolvedKey || 'missing-api-key'
     });
   }
 

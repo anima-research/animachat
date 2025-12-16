@@ -764,6 +764,23 @@
       :default-model-id="addParticipantDefaultModelId"
       @add="handleAddParticipant"
     />
+    
+    <!-- Error snackbar for non-streaming errors (pricing validation, etc.) -->
+    <v-snackbar
+      v-model="errorSnackbar"
+      :timeout="8000"
+      color="error"
+      location="top"
+      multi-line
+    >
+      <div class="d-flex flex-column">
+        <strong>{{ errorSnackbarMessage }}</strong>
+        <span v-if="errorSnackbarDetails" class="text-caption mt-1">{{ errorSnackbarDetails }}</span>
+      </div>
+      <template v-slot:actions>
+        <v-btn variant="text" @click="errorSnackbar = false">Close</v-btn>
+      </template>
+    </v-snackbar>
   </v-layout>
 </template>
 
@@ -824,6 +841,11 @@ const streamingMessageId = ref<string | null>(null);
 const autoScrollEnabled = ref(true);
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
+
+// General error snackbar (for non-streaming errors like pricing validation)
+const errorSnackbar = ref(false);
+const errorSnackbarMessage = ref('');
+const errorSnackbarDetails = ref('');
 
 // Multi-user room state
 const roomUsers = ref<Array<{ userId: string; joinedAt: Date }>>([]);
@@ -1527,7 +1549,7 @@ onMounted(async () => {
         // Handle streaming errors
         console.error('WebSocket error:', data);
         
-        // If we're currently streaming, mark it as failed
+        // If we're currently streaming, mark it as failed on the message
         if (isStreaming.value && streamingMessageId.value) {
           streamingError.value = {
             messageId: streamingMessageId.value,
@@ -1536,6 +1558,11 @@ onMounted(async () => {
           };
           isStreaming.value = false;
           // Don't clear streamingMessageId so we can show the error on the right message
+        } else {
+          // Not streaming - show error in snackbar (e.g., pricing validation failed)
+          errorSnackbarMessage.value = data.error || 'An error occurred';
+          errorSnackbarDetails.value = data.details || data.suggestion || '';
+          errorSnackbar.value = true;
         }
       });
       
@@ -3149,8 +3176,8 @@ async function updateParticipants(updatedParticipants: Participant[]) {
         console.log('  hasChanges:', hasChanges);
         
         if (hasChanges) {
-          // Participant was updated
-          const updateData = UpdateParticipantSchema.parse({
+          // Participant was updated - use safeParse to catch validation errors
+          const parseResult = UpdateParticipantSchema.safeParse({
             name: updated.name,
             model: updated.model,
             systemPrompt: updated.systemPrompt,
@@ -3159,6 +3186,14 @@ async function updateParticipants(updatedParticipants: Participant[]) {
             conversationMode: updated.conversationMode
           });
           
+          if (!parseResult.success) {
+            console.error('[updateParticipants] ❌ Schema validation failed for participant:', existing.id);
+            console.error('  Validation errors:', parseResult.error.errors);
+            console.error('  Input data:', { settings: updated.settings });
+            throw new Error(`Participant settings validation failed: ${parseResult.error.errors.map(e => e.message).join(', ')}`);
+          }
+          
+          const updateData = parseResult.data;
           console.log('[updateParticipants] ✅ Updating participant:', existing.id, updateData);
           
           try {
@@ -3214,8 +3249,11 @@ async function updateParticipants(updatedParticipants: Participant[]) {
     console.log('[updateParticipants] All updates complete, reloading participants...');
     await loadParticipants();
     console.log('[updateParticipants] ✅ Participants reloaded');
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to update participants:', error);
+    // Show error to user - this is important! Silent failures here cause settings to not be saved
+    const errorMessage = error?.response?.data?.error || error?.message || 'Unknown error';
+    alert(`Failed to save participant settings: ${errorMessage}\n\nCheck browser console for details.`);
   }
 }
 

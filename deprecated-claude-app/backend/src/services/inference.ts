@@ -490,12 +490,16 @@ export class InferenceService {
       // Pass model-specific settings - merge with model defaults
       const userModelSpecific = (effectiveSettings as any).modelSpecific || {};
       
+      // DEBUG: Log what was passed in vs defaults
+      console.log(`[Gemini] User modelSpecific from settings:`, JSON.stringify(userModelSpecific, null, 2));
+      
       // Apply defaults from model's configurableSettings if not set by user
       const modelDefaults: Record<string, any> = {};
       if ((model as any).configurableSettings) {
         for (const setting of (model as any).configurableSettings) {
           if (userModelSpecific[setting.key] === undefined) {
             modelDefaults[setting.key] = setting.default;
+            console.log(`[Gemini] Using default for ${setting.key}: ${setting.default}`);
           }
         }
       }
@@ -505,7 +509,7 @@ export class InferenceService {
         modelSpecific: { ...modelDefaults, ...userModelSpecific },
       };
       
-      console.log(`[Gemini] Model-specific settings:`, JSON.stringify(geminiSettings.modelSpecific, null, 2));
+      console.log(`[Gemini] Final model-specific settings:`, JSON.stringify(geminiSettings.modelSpecific, null, 2));
       
       // Auto-truncate context if enabled (check user setting first, then model capability)
       let messagesToSend = formattedMessages;
