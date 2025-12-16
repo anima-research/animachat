@@ -35,151 +35,201 @@
       message.branches[branchIndex].role === 'user' ? 'user-message' : 'assistant-message',
       isSelectedParent ? 'selected-parent' : '',
       postHocAffected?.hidden ? 'post-hoc-hidden' : '',
-      postHocAffected?.edited ? 'post-hoc-edited' : ''
+      postHocAffected?.edited ? 'post-hoc-edited' : '',
+      (isHovered || touchActionsOpen) ? 'action-bar-visible' : ''
     ]"
     :style="{
       borderLeft: isSelectedParent ? '3px solid rgb(var(--v-theme-info))' : undefined,
       padding: '12px 12px 8px 12px'
     }"
     @mouseenter="isHovered = true"
-    @mouseleave="isHovered = false"
+    @mouseleave="handleMouseLeave"
   >
-    <!-- Hover action bar (Discord-style) -->
+    <!-- Action bar - appears on hover (desktop) or tap (mobile), positioned at bottom -->
     <div 
-      v-if="isHovered && !isEditing && !isStreaming" 
-      class="hover-actions"
+      v-if="(isHovered || moreMenuOpen || touchActionsOpen) && !isEditing && !isStreaming" 
+      class="action-bar"
     >
-      <v-btn
-        v-if="message.branches[branchIndex].role === 'assistant'"
-        icon="mdi-refresh"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Regenerate"
-        @click="$emit('regenerate', message.id, currentBranch.id)"
-      />
-      <v-btn
-        icon="mdi-pencil"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Edit"
-        @click="startEdit"
-      />
-      <v-btn
-        icon="mdi-content-copy"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Copy"
-        @click="copyContent"
-      />
-      <v-btn
-        :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
-        :color="isSelectedParent ? 'info' : undefined"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Branch from here"
-        :disabled="isLastMessage"
-        @click="$emit('select-as-parent', message.id, currentBranch.id)"
-      />
-      <v-btn
-        ref="bookmarkButtonRef"
-        :icon="hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline'"
-        :color="hasBookmark ? participantColor : undefined"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Bookmark"
-        @click="toggleBookmark"
-      />
-      <v-btn
-        icon="mdi-code-json"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Download prompt"
-        @click="downloadPrompt"
-      />
-      <v-btn
-        v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)"
-        icon="mdi-bug"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="Debug: View LLM request/response"
-        @click="showDebugDialog = true"
-      />
-      <v-btn
-        v-if="canViewMetadata"
-        icon="mdi-information-outline"
-        size="x-small"
-        variant="text"
-        density="compact"
-        title="View message metadata (IDs, branches, debug data)"
-        @click="showMetadataDialog = true"
-      />
+      <!-- Primary actions -->
+      <span v-if="message.branches[branchIndex].role === 'assistant'" class="hover-tooltip" data-tooltip="Regenerate">
+        <v-btn
+          icon="mdi-refresh"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="$emit('regenerate', message.id, currentBranch.id)"
+        />
+      </span>
+      <span class="hover-tooltip" data-tooltip="Edit and Branch">
+        <v-btn
+          icon="mdi-pencil"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="startEdit"
+        />
+      </span>
+      <span class="hover-tooltip" data-tooltip="Copy">
+        <v-btn
+          icon="mdi-content-copy"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="copyContent"
+        />
+      </span>
+      <span v-if="!isLastMessage" class="hover-tooltip" data-tooltip="Branch Mode">
+        <v-btn
+          :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
+          :color="isSelectedParent ? 'info' : undefined"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="$emit('select-as-parent', message.id, currentBranch.id)"
+        />
+      </span>
+      <span class="hover-tooltip" data-tooltip="Bookmark">
+        <v-btn
+          ref="bookmarkButtonRef"
+          :icon="hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline'"
+          :color="hasBookmark ? participantColor : undefined"
+          size="x-small"
+          variant="text"
+          density="compact"
+          @click="toggleBookmark"
+        />
+      </span>
+      
       <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
+      
+      <span class="hover-tooltip" data-tooltip="Delete">
+        <v-btn
+          icon="mdi-delete-outline"
+          size="x-small"
+          variant="text"
+          density="compact"
+          color="error"
+          @click="$emit('delete', message.id, currentBranch.id)"
+        />
+      </span>
+      
+      <!-- More actions menu -->
+      <div class="more-menu-wrapper" @mouseenter.stop @mouseleave.stop>
+        <v-menu 
+          v-model="moreMenuOpen"
+          location="bottom" 
+          :offset="8"
+          :close-on-content-click="true"
+        >
+          <template v-slot:activator="{ props }">
+            <v-btn
+              v-bind="props"
+              icon="mdi-dots-horizontal"
+              size="x-small"
+              variant="text"
+              density="compact"
+              title="More actions"
+            />
+          </template>
+          <v-list 
+            density="compact" 
+            class="more-menu py-0" 
+            min-width="140"
+          >
+          <v-list-item density="compact" @click="isMonospace = !isMonospace">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-code-tags" />
+            </template>
+            <v-list-item-title class="text-caption">{{ isMonospace ? 'Normal text' : 'Monospace' }}</v-list-item-title>
+            <template v-slot:append>
+              <v-icon v-if="isMonospace" icon="mdi-check" size="14" color="info" />
+            </template>
+          </v-list-item>
+          <v-list-item density="compact" @click="saveAsImage">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-camera" />
+            </template>
+            <v-list-item-title class="text-caption">Save as image</v-list-item-title>
+          </v-list-item>
+          <v-list-item density="compact" @click="downloadPrompt">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-code-json" />
+            </template>
+            <v-list-item-title class="text-caption">Download JSON</v-list-item-title>
+          </v-list-item>
+          <v-divider v-if="(message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)) || canViewMetadata" class="my-0" />
+          <v-list-item
+            v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)"
+            density="compact"
+            @click="showDebugDialog = true"
+          >
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-bug" />
+            </template>
+            <v-list-item-title class="text-caption">Debug data</v-list-item-title>
+          </v-list-item>
+          <v-list-item v-if="canViewMetadata" density="compact" @click="showMetadataDialog = true">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-information-outline" />
+            </template>
+            <v-list-item-title class="text-caption">Metadata</v-list-item-title>
+          </v-list-item>
+          <!-- Post-hoc context operations in menu -->
+          <template v-if="!isPostHocOperation">
+            <v-divider class="my-0" />
+            <v-list-item v-if="postHocAffected?.hidden" density="compact" @click="$emit('post-hoc-unhide', message.id, currentBranch.id)">
+              <template v-slot:prepend>
+                <v-icon size="16" icon="mdi-eye-outline" color="success" />
+              </template>
+              <v-list-item-title class="text-caption">Unhide from AI</v-list-item-title>
+            </v-list-item>
+            <v-list-item v-else density="compact" @click="$emit('post-hoc-hide', message.id, currentBranch.id)">
+              <template v-slot:prepend>
+                <v-icon size="16" icon="mdi-eye-off-outline" />
+              </template>
+              <v-list-item-title class="text-caption">Hide from AI</v-list-item-title>
+            </v-list-item>
+            <v-list-item density="compact" @click="startPostHocEdit">
+              <template v-slot:prepend>
+                <v-icon size="16" icon="mdi-pencil-off-outline" />
+              </template>
+              <v-list-item-title class="text-caption">Edit in place</v-list-item-title>
+            </v-list-item>
+            <v-list-item density="compact" @click="$emit('post-hoc-hide-before', message.id, currentBranch.id)">
+              <template v-slot:prepend>
+                <v-icon size="16" icon="mdi-arrow-collapse-up" />
+              </template>
+              <v-list-item-title class="text-caption">Hide all before</v-list-item-title>
+            </v-list-item>
+          </template>
+          <v-divider class="my-0" />
+          <v-list-item density="compact" @click="$emit('delete', message.id, currentBranch.id)">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-delete-outline" color="error" />
+            </template>
+            <v-list-item-title class="text-caption">Delete branch</v-list-item-title>
+          </v-list-item>
+          <v-list-item v-if="message.branches.length > 1" density="compact" @click="$emit('delete-all-branches', message.id)">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-delete-sweep-outline" color="error" />
+            </template>
+            <v-list-item-title class="text-caption">Delete all branches</v-list-item-title>
+          </v-list-item>
+        </v-list>
+        </v-menu>
+      </div>
+      
+      <!-- Close button for touch devices (inside hover bar) -->
       <v-btn
-        icon="mdi-delete-outline"
+        v-if="isTouchDevice"
+        icon="mdi-close"
         size="x-small"
         variant="text"
         density="compact"
-        color="error"
-        title="Delete this branch"
-        @click="$emit('delete', message.id, currentBranch.id)"
+        class="ml-1"
+        @click.stop.prevent="touchActionsOpen = false"
+        @touchend.stop.prevent="touchActionsOpen = false"
       />
-      <v-btn
-        v-if="message.branches.length > 1"
-        icon="mdi-delete-sweep-outline"
-        size="x-small"
-        variant="text"
-        density="compact"
-        color="error"
-        title="Delete all branches of this message"
-        @click="$emit('delete-all-branches', message.id)"
-      />
-      <!-- Post-hoc context operations -->
-      <template v-if="!isPostHocOperation">
-        <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
-        <!-- Show Unhide button if message is hidden, otherwise show Hide button -->
-        <v-btn
-          v-if="postHocAffected?.hidden"
-          icon="mdi-eye-outline"
-          size="x-small"
-          variant="text"
-          density="compact"
-          color="success"
-          title="Unhide from future context"
-          @click="$emit('post-hoc-unhide', message.id, currentBranch.id)"
-        />
-        <v-btn
-          v-else
-          icon="mdi-eye-off-outline"
-          size="x-small"
-          variant="text"
-          density="compact"
-          title="Hide from future context"
-          @click="$emit('post-hoc-hide', message.id, currentBranch.id)"
-        />
-        <v-btn
-          icon="mdi-pencil-off-outline"
-          size="x-small"
-          variant="text"
-          density="compact"
-          title="Edit for future context (no regeneration)"
-          @click="startPostHocEdit"
-        />
-        <v-btn
-          icon="mdi-arrow-collapse-up"
-          size="x-small"
-          variant="text"
-          density="compact"
-          title="Hide all messages before this"
-          @click="$emit('post-hoc-hide-before', message.id, currentBranch.id)"
-        />
-      </template>
     </div>
 
     <!-- Branch navigation (separate row on narrow, inline on wide) -->
@@ -193,7 +243,17 @@
     <div class="info-row">
       <!-- Left: name + meta -->
       <div class="d-flex align-center flex-wrap" style="gap: 4px;">
+        <!-- Avatar or fallback icon -->
+        <v-avatar 
+          v-if="avatarUrl" 
+          size="32" 
+          class="message-avatar clickable-avatar"
+          @click="showAvatarPreview = true"
+        >
+          <v-img :src="avatarUrl" :alt="participantDisplayName || 'Avatar'" />
+        </v-avatar>
         <v-icon
+          v-else
           :icon="message.branches[branchIndex].role === 'user' ? 'mdi-account' : 'mdi-robot'"
           :color="participantColor"
           size="small"
@@ -264,9 +324,20 @@
       </div>
       <div v-else class="branch-nav-inline"></div>
       
-      <!-- Right: empty for balance -->
+      <!-- Right: empty for balance (desktop) -->
       <div class="branch-nav-inline"></div>
     </div>
+    
+    <!-- Touch action toggle button - fixed in corner on mobile (only show when bar is closed) -->
+    <v-btn
+      v-if="isTouchDevice && !isEditing && !isStreaming && !touchActionsOpen"
+      icon="mdi-dots-horizontal"
+      size="x-small"
+      variant="text"
+      density="compact"
+      class="touch-toggle-btn"
+      @click="toggleTouchActions"
+    />
       
       <!-- Thinking blocks (if present) -->
       <div v-if="thinkingBlocks.length > 0 && !isEditing" class="thinking-section mb-1">
@@ -292,7 +363,7 @@
       </div>
       
       <!-- Message content or edit mode -->
-      <div v-if="!isEditing" class="message-content" v-html="renderedContent" />
+      <div v-if="!isEditing" :class="['message-content', { 'monospace-mode': isMonospace }]" v-html="renderedContent" />
       
       <v-textarea
         v-else
@@ -631,6 +702,25 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+    
+    <!-- Avatar Preview Dialog -->
+    <v-dialog v-model="showAvatarPreview" max-width="400">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <span>{{ participantDisplayName }}</span>
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="showAvatarPreview = false" />
+        </v-card-title>
+        <v-card-text class="text-center pa-6">
+          <v-img 
+            :src="avatarUrl" 
+            max-height="300"
+            contain
+            class="mx-auto rounded-lg"
+          />
+        </v-card-text>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -640,9 +730,12 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Message, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
+import { renderLatex, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
+import { getParticipantAvatarUrl, getAvatarColor, loadAvatarPacks } from '@/utils/avatars';
 import DebugMessageDialog from './DebugMessageDialog.vue';
+import 'katex/dist/katex.min.css'; // KaTeX styles
 
 const store = useStore();
 
@@ -681,6 +774,48 @@ const editContent = ref('');
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
 const isHovered = ref(false);
+const isMonospace = ref(false); // Toggle monospace display for entire message
+const moreMenuOpen = ref(false); // Track more menu state for debugging
+const isTouchDevice = ref(false); // Detect touch devices to disable hover bar
+const touchActionsOpen = ref(false); // Toggle for action bar on touch devices
+
+// Detect touch device on mount - use multiple detection methods for reliability
+onMounted(() => {
+  isTouchDevice.value = 
+    'ontouchstart' in window || 
+    navigator.maxTouchPoints > 0 ||
+    (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+});
+
+// Toggle action bar on touch devices
+function toggleTouchActions() {
+  touchActionsOpen.value = !touchActionsOpen.value;
+}
+
+// Close touch actions when clicking outside
+function handleClickOutside(event: MouseEvent) {
+  if (!touchActionsOpen.value) return;
+  
+  const target = event.target as HTMLElement;
+  const card = messageCard.value;
+  
+  // If click is outside this message card, close the actions
+  if (card && !card.contains(target)) {
+    touchActionsOpen.value = false;
+  }
+}
+
+// Add/remove click outside listener
+watch(touchActionsOpen, (isOpen) => {
+  if (isOpen) {
+    // Delay to avoid immediate close from the toggle click
+    setTimeout(() => {
+      document.addEventListener('click', handleClickOutside);
+    }, 10);
+  } else {
+    document.removeEventListener('click', handleClickOutside);
+  }
+});
 const bookmarkDialog = ref(false);
 const bookmarkInput = ref('');
 const bookmarkLabel = ref<string | null>(null);
@@ -691,6 +826,7 @@ const previewImageSrc = ref('');
 const previewImageAlt = ref('');
 const showDebugDialog = ref(false);
 const showMetadataDialog = ref(false);
+const showAvatarPreview = ref(false);
 
 // Check if user is researcher or admin (can see metadata)
 const canViewMetadata = computed(() => {
@@ -798,6 +934,8 @@ const hasBookmark = computed(() => {
 onMounted(async () => {
   checkMessageHeight();
   await loadBookmark();
+  // Load avatar packs (cached, only loads once)
+  await loadAvatarPacks();
 });
 
 onUpdated(() => {
@@ -888,6 +1026,7 @@ const participantColor = computed(() => {
   
   // Try to get model from participant or branch
   let model: string | undefined;
+  let modelObj: any = null;
   
   if (props.participants && branch.participantId) {
     const participant = props.participants.find(p => p.id === branch.participantId);
@@ -899,7 +1038,39 @@ const participantColor = computed(() => {
     model = branch.model;
   }
   
+  // Look up model object to get canonicalId
+  if (model) {
+    modelObj = store.state.models?.find((m: any) => m.id === model);
+  }
+  
+  // First try avatar pack color
+  if (modelObj?.canonicalId) {
+    const avatarColor = getAvatarColor(modelObj.canonicalId);
+    if (avatarColor) {
+      return avatarColor;
+    }
+  }
+  
+  // Fall back to default model colors
   return getModelColor(model);
+});
+
+// Avatar URL for the participant
+const avatarUrl = computed(() => {
+  const branch = currentBranch.value;
+  
+  // Find participant
+  let participant = null;
+  if (props.participants && branch.participantId) {
+    participant = props.participants.find(p => p.id === branch.participantId);
+  }
+  
+  // For now, pass null for persona (could be extended later)
+  return getParticipantAvatarUrl(
+    participant || { type: branch.role === 'user' ? 'user' : 'assistant', model: branch.model },
+    store.state.models,
+    null
+  );
 });
 
 // Get all sibling branches (branches that share the same parent)
@@ -1038,6 +1209,9 @@ const renderedContent = computed(() => {
     html = ''; // Fallback, but this shouldn't happen with sync parse
   }
   
+  // Render LaTeX after markdown (so LaTeX in code blocks is protected)
+  html = renderLatex(html as string);
+  
   // Convert leading/trailing spaces to non-breaking spaces to preserve them
   const leadingNbsp = leadingSpaces.replace(/ /g, '&nbsp;').replace(/\n/g, '<br>');
   const trailingNbsp = trailingSpaces.replace(/ /g, '&nbsp;').replace(/\n/g, '<br>');
@@ -1051,15 +1225,16 @@ const renderedContent = computed(() => {
   }
   
   return DOMPurify.sanitize(html, {
-    // Allow only safe HTML tags that markdown generates
+    // Allow safe HTML tags from markdown plus KaTeX
     ALLOWED_TAGS: [
       'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
       'blockquote', 'ul', 'ol', 'li', 'a', 'img',
       'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
       'table', 'thead', 'tbody', 'tr', 'th', 'td',
-      'hr', 'sup', 'sub', 'del', 'ins'
+      'hr', 'sup', 'sub', 'del', 'ins',
+      ...KATEX_ALLOWED_TAGS
     ],
-    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel']
+    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel', ...KATEX_ALLOWED_ATTRS]
   });
 });
 
@@ -1102,6 +1277,98 @@ function saveEdit() {
 
 function copyContent() {
   navigator.clipboard.writeText(currentBranch.value.content);
+}
+
+function handleMouseLeave() {
+  // Don't hide hover bar if the more menu is open (user is interacting with menu popup)
+  if (!moreMenuOpen.value) {
+    isHovered.value = false;
+  }
+}
+
+async function saveAsImage() {
+  if (!messageCard.value) return;
+  
+  try {
+    const html2canvas = (await import('html2canvas')).default;
+    
+    // Clone the entire message card (including header)
+    const clone = messageCard.value.cloneNode(true) as HTMLElement;
+    
+    // Remove the action bar from the clone
+    const hoverActions = clone.querySelector('.action-bar');
+    if (hoverActions) hoverActions.remove();
+    
+    // Remove branch navigation from clone
+    const branchNav = clone.querySelector('.branch-nav-row');
+    if (branchNav) branchNav.remove();
+    
+    // Style the clone for clean rendering
+    clone.style.position = 'absolute';
+    clone.style.left = '-9999px';
+    clone.style.width = 'max-content';
+    clone.style.maxWidth = '1200px';
+    clone.style.minWidth = '400px';
+    clone.style.margin = '0';
+    clone.style.borderRadius = '8px';
+    clone.style.boxShadow = 'none';
+    
+    // If monospace mode, apply it to the content
+    if (isMonospace.value) {
+      const content = clone.querySelector('.message-content') as HTMLElement;
+      if (content) {
+        content.style.fontFamily = "'JetBrains Mono', 'Fira Code', 'Consolas', monospace";
+        content.style.fontSize = '13px';
+        content.style.whiteSpace = 'pre-wrap';
+      }
+    }
+    
+    // Temporarily append to body
+    document.body.appendChild(clone);
+    
+    const canvas = await html2canvas(clone, {
+      backgroundColor: '#1e1e1e',
+      scale: 2, // Higher resolution
+      logging: false,
+    });
+    
+    // Clean up
+    document.body.removeChild(clone);
+    
+    // Add Arc watermark in upper right corner
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const padding = 24;
+      const text = 'Arc';
+      
+      // Draw background pill
+      ctx.font = 'bold 24px system-ui, -apple-system, sans-serif';
+      const textWidth = ctx.measureText(text).width;
+      const pillWidth = textWidth + 24;
+      const pillHeight = 32;
+      const pillX = canvas.width - pillWidth - padding;
+      const pillY = padding;
+      
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.beginPath();
+      ctx.roundRect(pillX, pillY, pillWidth, pillHeight, 16);
+      ctx.fill();
+      
+      // Draw arc symbol (⌒) and text
+      ctx.fillStyle = '#a5d6a7';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, pillX + 12, pillY + pillHeight / 2 + 1);
+    }
+    
+    // Download the image
+    const link = document.createElement('a');
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
+    link.download = `message-${props.message.id.slice(0, 8)}-${timestamp}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  } catch (error) {
+    console.error('Failed to save as image:', error);
+  }
 }
 
 function navigateBranch(direction: number) {
@@ -1344,13 +1611,19 @@ watch(() => currentBranch.value.id, async () => {
 
 /* Messages affected by post-hoc hide operations */
 .post-hoc-hidden {
-  opacity: 0.5;
-  background: rgba(128, 128, 128, 0.1);
+  opacity: 0.6;
+  background: rgba(128, 128, 128, 0.08) !important;
 }
 
 .post-hoc-hidden .message-content {
   text-decoration: line-through;
-  color: rgb(var(--v-theme-on-surface-variant));
+  text-decoration-color: rgba(128, 128, 128, 0.5);
+  color: rgba(var(--v-theme-on-surface), 0.5) !important;
+}
+
+.post-hoc-hidden .message-header,
+.post-hoc-hidden .message-meta {
+  opacity: 0.6;
 }
 
 /* Messages affected by post-hoc edit operations */
@@ -1452,7 +1725,7 @@ watch(() => currentBranch.value.id, async () => {
   transition: background-color 0.15s ease;
   margin-bottom: 10px;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow: visible;
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
@@ -1485,6 +1758,12 @@ watch(() => currentBranch.value.id, async () => {
 
 .message-container:hover {
   filter: brightness(1.05);
+}
+
+/* When action bar is visible, lift the message above siblings */
+.message-container.action-bar-visible {
+  z-index: 50;
+  position: relative;
 }
 
 /* Branch nav: separate row on narrow screens */
@@ -1526,6 +1805,22 @@ watch(() => currentBranch.value.id, async () => {
   }
 }
 
+/* Message avatar */
+.message-avatar {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Clickable avatar */
+.message-avatar.clickable-avatar {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.message-avatar.clickable-avatar:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
 /* Name matches message font size */
 .message-name {
   font-size: 0.875rem;
@@ -1560,28 +1855,107 @@ watch(() => currentBranch.value.id, async () => {
   margin-bottom: 0;
 }
 
+/* Monospace mode for message content */
+.message-content.monospace-mode {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  background-color: rgba(var(--v-theme-surface-variant), 0.3);
+  padding: 12px;
+  border-radius: 6px;
+  margin-top: 8px;
+}
+
+.message-content.monospace-mode :deep(p) {
+  margin-bottom: 0.25em;
+}
+
+.message-content.monospace-mode :deep(code) {
+  background: transparent;
+  padding: 0;
+}
+
+.message-content.monospace-mode :deep(pre) {
+  background: transparent;
+  padding: 0;
+  margin: 0;
+}
+
 /* Discord-style hover action bar */
-.hover-actions {
+/* Action bar - floating at bottom-right of message */
+.action-bar {
   position: absolute;
-  top: -8px;
+  bottom: -36px;
   right: 12px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   padding: 4px 8px;
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-on-surface), 0.15);
   border-radius: 6px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  z-index: 10;
+  z-index: 100;
 }
 
-.hover-actions .v-btn {
-  opacity: 0.6;
+/* Instant CSS tooltips for hover bar */
+.hover-tooltip {
+  position: relative;
+  display: inline-flex;
+}
+
+.hover-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background: rgba(20, 20, 20, 0.95);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  border-radius: 4px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.08s ease;
+  pointer-events: none;
+  z-index: 1000;
+  margin-top: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.hover-tooltip:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Compact more menu */
+.more-menu .v-list-item {
+  min-height: 28px !important;
+  padding: 4px 10px !important;
+}
+
+.more-menu .v-list-item__prepend {
+  margin-right: 8px !important;
+}
+
+.more-menu .v-list-item__append {
+  margin-left: 8px !important;
+}
+
+.more-menu-wrapper {
+  display: inline-flex;
+}
+
+.action-bar .v-btn {
+  opacity: 0.7;
   min-width: 28px;
 }
 
-.hover-actions .v-btn:hover {
+.action-bar .v-btn:hover {
   opacity: 1;
 }
 
@@ -1592,6 +1966,20 @@ watch(() => currentBranch.value.id, async () => {
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* Touch toggle button - fixed in bottom-right corner on touch devices */
+.touch-toggle-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  opacity: 0.5;
+  z-index: 5;
+}
+
+.touch-toggle-btn:hover,
+.touch-toggle-btn:focus {
+  opacity: 0.8;
 }
 </style>
 

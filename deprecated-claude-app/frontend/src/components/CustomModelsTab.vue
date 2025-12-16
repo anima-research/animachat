@@ -268,6 +268,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useStore } from '@/store';
 import type { UserDefinedModel, CreateUserModel, OpenRouterModel } from '@deprecated-claude/shared';
+import { deriveCanonicalId } from '@deprecated-claude/shared';
 import OpenRouterModelAutocomplete from './OpenRouterModelAutocomplete.vue';
 
 const store = useStore();
@@ -301,7 +302,8 @@ const formData = ref({
   contextWindow: 100000,
   outputTokenLimit: 4096,
   supportsThinking: false,
-  supportsPrefill: false
+  supportsPrefill: false,
+  canonicalId: '' as string | undefined
 });
 
 const customEndpointData = ref({
@@ -379,7 +381,8 @@ function resetForm() {
     contextWindow: 100000,
     outputTokenLimit: 4096,
     supportsThinking: false,
-    supportsPrefill: false
+    supportsPrefill: false,
+    canonicalId: undefined
   };
   
   customEndpointData.value = {
@@ -396,6 +399,8 @@ function onOpenRouterModelSelected(model: OpenRouterModel) {
   formData.value.providerModelId = model.id;
   formData.value.contextWindow = model.context_length || 100000;
   formData.value.outputTokenLimit = model.top_provider?.max_completion_tokens || 4096;
+  // Auto-derive canonicalId for avatar lookup
+  formData.value.canonicalId = deriveCanonicalId(model.id, model.name);
 }
 
 function extractShortName(name: string): string {
@@ -409,8 +414,15 @@ async function saveModel() {
   error.value = '';
   
   try {
+    // Auto-derive canonicalId if not already set
+    let canonicalId = formData.value.canonicalId;
+    if (!canonicalId) {
+      canonicalId = deriveCanonicalId(formData.value.providerModelId, formData.value.displayName);
+    }
+    
     const modelData: CreateUserModel = {
       ...formData.value,
+      canonicalId,
       provider: selectedProvider.value,
       customEndpoint: selectedProvider.value === 'openai-compatible' 
         ? {

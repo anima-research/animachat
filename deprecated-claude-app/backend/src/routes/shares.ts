@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { ModelLoader } from '../config/model-loader.js';
 
 const router = Router();
 
@@ -120,10 +121,14 @@ export function createShareRouter(db: Database): Router {
       // Get messages
       const messages = await db.getConversationMessages(share.conversationId, conversation.userId);
       
-      // Get participants if it's a multi-participant conversation
+      // Always try to get participants - even standard conversations may have them
+      // (from conversion or from newer creation logic)
       let participants: any[] = [];
-      if (conversation.format === 'prefill') {
+      try {
         participants = await db.getConversationParticipants(share.conversationId, conversation.userId);
+      } catch (e) {
+        console.log(`[Shares] Could not load participants for ${share.conversationId}: ${e}`);
+        participants = [];
       }
       
       // Filter messages if sharing only a branch
@@ -177,12 +182,24 @@ export function createShareRouter(db: Database): Router {
         settings: share.settings.showModelInfo ? conversation.settings : undefined
       };
       
-      // Sanitize participants - remove IDs and other sensitive data
-      const sanitizedParticipants = participants.map(p => ({
-        name: p.name,
-        type: p.type,
-        model: share.settings.showModelInfo ? p.model : undefined,
-        isActive: p.isActive
+      // Sanitize participants - keep ID for message attribution, remove sensitive data
+      // Also look up model display names for better UX
+      const modelLoader = ModelLoader.getInstance();
+      const sanitizedParticipants = await Promise.all(participants.map(async (p) => {
+        let modelDisplayName: string | undefined;
+        if (share.settings.showModelInfo && p.model) {
+          // Try to get model display name (works for both built-in and custom models)
+          const modelConfig = await modelLoader.getModelById(p.model, conversation.userId);
+          modelDisplayName = modelConfig?.displayName || modelConfig?.shortName || p.model;
+        }
+        return {
+          id: p.id, // Needed to match branch.participantId for display
+          name: p.name,
+          type: p.type,
+          model: share.settings.showModelInfo ? p.model : undefined,
+          modelDisplayName: share.settings.showModelInfo ? modelDisplayName : undefined,
+          isActive: p.isActive
+        };
       }));
       
       // Sanitize messages - optionally remove timestamps

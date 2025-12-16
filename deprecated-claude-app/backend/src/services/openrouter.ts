@@ -213,7 +213,7 @@ export class OpenRouterService {
           effectiveMaxTokens = minMaxTokens;
         }
       }
-
+      
       const requestBody: any = {
         model: modelId,
         messages: openRouterMessages,

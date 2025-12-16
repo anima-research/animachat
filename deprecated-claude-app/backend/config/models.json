@@ -3,6 +3,7 @@
     {
       "id": "claude-opus-4.5",
       "providerModelId": "claude-opus-4-5-20251101",
+      "canonicalId": "claude-opus-4.5",
       "displayName": "Claude Opus 4.5",
       "shortName": "Opus 4.5",
       "provider": "anthropic",
@@ -78,7 +79,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-haiku-4.5"
     },
     {
       "id": "claude-sonnet-4.5",
@@ -118,7 +120,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-sonnet-4.5"
     },
     {
       "id": "claude-opus-4.1",
@@ -157,7 +160,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-opus-4.1"
     },
     {
       "id": "claude-opus-4",
@@ -196,7 +200,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-opus-4"
     },
     {
       "id": "claude-sonnet-4",
@@ -236,7 +241,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-sonnet-4"
     },
     {
       "id": "claude-3.7-sonnet",
@@ -276,7 +282,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-3.7-sonnet"
     },
     {
       "id": "claude-3.5-haiku",
@@ -314,7 +321,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-3.5-haiku"
     },
     {
       "id": "claude-3.6-sonnet",
@@ -352,7 +360,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-3.6-sonnet"
     },
     {
       "id": "claude-3.5-sonnet",
@@ -390,7 +399,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-3.5-sonnet"
     },
     {
       "id": "claude-3-opus",
@@ -428,7 +438,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-3-opus"
     },
     {
       "id": "claude-3.5-sonnet-bedrock",
@@ -466,7 +477,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-3.5-sonnet"
     },
     {
       "id": "claude-3.6-sonnet-bedrock",
@@ -504,7 +516,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-3.6-sonnet"
     },
     {
       "id": "claude-3-sonnet-bedrock",
@@ -542,7 +555,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-3-sonnet"
     },
     {
       "id": "claude-3-haiku-bedrock",
@@ -580,7 +594,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "claude-3-haiku"
     },
     {
       "id": "claude-3.6-sonnet-openrouter",
@@ -612,7 +627,8 @@
           "default": 0.9,
           "step": 0.01
         }
-      }
+      },
+      "canonicalId": "claude-3.6-sonnet"
     },
     {
       "id": "claude-3-opus-openrouter",
@@ -644,7 +660,8 @@
           "default": 0.9,
           "step": 0.01
         }
-      }
+      },
+      "canonicalId": "claude-3-opus"
     },
     {
       "id": "claude-opus-4.5-openrouter",
@@ -677,7 +694,8 @@
           "default": 0.9,
           "step": 0.01
         }
-      }
+      },
+      "canonicalId": "claude-opus-4.5"
     },
     {
       "id": "gpt-4-turbo-openrouter",
@@ -710,11 +728,12 @@
           "default": 0.9,
           "step": 0.01
         }
-      }
+      },
+      "canonicalId": "gpt-4-turbo"
     },
     {
       "id": "gemini-2.5-flash-text",
-      "providerModelId": "gemini-2.5-flash-preview-05-20",
+      "providerModelId": "gemini-2.5-flash",
       "displayName": "Gemini 2.5 Flash",
       "shortName": "Flash 2.5",
       "provider": "google",
@@ -772,11 +791,12 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "gemini-2.5-flash"
     },
     {
       "id": "gemini-2.5-pro-text",
-      "providerModelId": "gemini-2.5-pro-preview-05-06",
+      "providerModelId": "gemini-2.5-pro",
       "displayName": "Gemini 2.5 Pro",
       "shortName": "Pro 2.5",
       "provider": "google",
@@ -835,7 +855,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "gemini-2.5-pro"
     },
     {
       "id": "gemini-2.5-flash-multimodal",
@@ -847,6 +868,7 @@
       "contextWindow": 32768,
       "outputTokenLimit": 4000,
       "supportsThinking": true,
+      "supportsPrefill": false,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
@@ -948,7 +970,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "gemini-2.5-flash"
     },
     {
       "id": "gemini-2.5-flash-imagegen",
@@ -958,7 +981,8 @@
       "provider": "google",
       "hidden": false,
       "contextWindow": 32768,
-      "outputTokenLimit": 4000,
+      "outputTokenLimit": 65536,
+      "supportsPrefill": false,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
@@ -1060,7 +1084,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "gemini-2.5-flash"
     },
     {
       "id": "gemini-3-pro-text",
@@ -1196,7 +1221,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "gemini-3-pro"
     },
     {
       "id": "gemini-3-pro-imagegen",
@@ -1209,6 +1235,7 @@
       "outputTokenLimit": 4000,
       "supportsThinking": true,
       "thinkingDefaultEnabled": true,
+      "supportsPrefill": false,
       "capabilities": {
         "imageInput": true,
         "pdfInput": true,
@@ -1332,7 +1359,8 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "canonicalId": "gemini-3-pro"
     }
   ]
 }

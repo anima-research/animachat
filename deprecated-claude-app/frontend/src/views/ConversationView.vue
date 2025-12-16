@@ -13,15 +13,16 @@
       <div class="d-flex flex-column h-100">
         <!-- Fixed header section -->
         <div class="sidebar-header">
-          <v-list>
+          <v-list density="compact">
             <v-list-item
               :title="store.state.user?.name"
               :subtitle="store.state.user?.email"
               nav
+              class="sidebar-user-item"
             >
               <template v-slot:prepend>
-                <div class="mr-3">
-                  <ArcLogo :size="40" />
+                <div class="mr-2">
+                  <ArcLogo :size="32" />
                 </div>
               </template>
               <template v-slot:append v-if="isMobile">
@@ -37,25 +38,28 @@
 
           <v-divider />
 
-          <v-list density="compact" nav>
-            <v-list-item
-              prepend-icon="mdi-plus"
-              title="New Conversation"
+          <!-- Compact action buttons -->
+          <div class="sidebar-header-grid">
+            <v-btn
+              color="primary"
+              variant="tonal"
+              size="small"
+              class="sidebar-action-btn"
               @click="createNewConversation"
-            />
-            
-            <v-list-item
-              prepend-icon="mdi-import"
-              title="Import Conversation"
+            >
+              <v-icon size="18">mdi-plus</v-icon>
+              <span class="ml-1">New</span>
+            </v-btn>
+            <v-btn
+              variant="tonal"
+              size="small"
+              class="sidebar-action-btn"
               @click="importDialog = true"
-            />
-            
-            <v-list-item
-              prepend-icon="mdi-share-variant"
-              title="Manage Public Links"
-              @click="manageSharesDialog = true"
-            />
-          </v-list>
+            >
+              <v-icon size="18">mdi-import</v-icon>
+              <span class="ml-1">Import</span>
+            </v-btn>
+          </div>
 
           <v-divider />
         </div>
@@ -142,6 +146,7 @@
               :to="`/conversation/${share.conversationId}`"
               class="conversation-list-item"
               :lines="'three'"
+              @click="handleConversationClick(share.conversationId)"
             >
               <template v-slot:title>
                 <div class="d-flex align-center">
@@ -163,43 +168,76 @@
           </v-list>
         </div>
 
-        <!-- Fixed footer section -->
+        <!-- Fixed footer section - compact -->
         <div class="sidebar-footer">
           <v-divider />
-          <v-list density="compact" nav>
-            <v-list-item
-              prepend-icon="mdi-help-circle"
-              title="Getting Started"
+          <div class="sidebar-footer-grid">
+            <v-btn
+              variant="text"
+              size="small"
+              class="sidebar-footer-btn"
               @click="welcomeDialog = true"
-            />
-            <v-list-item
-              prepend-icon="mdi-information"
-              title="About The Arc"
+              title="Getting Started"
+            >
+              <v-icon size="18">mdi-help-circle</v-icon>
+              <span class="ml-1 text-caption">Help</span>
+            </v-btn>
+            <v-btn
+              variant="text"
+              size="small"
+              class="sidebar-footer-btn"
               @click="$router.push('/about')"
-            />
-            <v-list-item
-              prepend-icon="mdi-cog"
-              title="Settings"
+              title="About The Arc"
+            >
+              <v-icon size="18">mdi-information</v-icon>
+              <span class="ml-1 text-caption">About</span>
+            </v-btn>
+            <v-btn
+              variant="text"
+              size="small"
+              class="sidebar-footer-btn"
               @click="settingsDialog = true"
-            />
-            <v-list-item
-              v-if="isResearcher"
-              prepend-icon="mdi-account-multiple-outline"
-              title="Personas"
-              @click="$router.push('/personas')"
-            />
-            <v-list-item
-              v-if="isAdmin"
-              prepend-icon="mdi-shield-crown"
-              title="Admin"
-              @click="$router.push('/admin')"
-            />
-            <v-list-item
-              prepend-icon="mdi-logout"
-              title="Logout"
-              @click="logout"
-            />
-          </v-list>
+              title="Settings"
+            >
+              <v-icon size="18">mdi-cog</v-icon>
+              <span class="ml-1 text-caption">Settings</span>
+            </v-btn>
+            <!-- Overflow menu for less common actions -->
+            <v-menu location="top">
+              <template v-slot:activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  variant="text"
+                  size="small"
+                  class="sidebar-footer-btn"
+                  title="More options"
+                >
+                  <v-icon size="18">mdi-dots-horizontal</v-icon>
+                  <span class="ml-1 text-caption">More</span>
+                </v-btn>
+              </template>
+              <v-list density="compact" class="sidebar-overflow-menu">
+                <v-list-item
+                  v-if="isResearcher"
+                  prepend-icon="mdi-account-multiple-outline"
+                  title="Personas"
+                  @click="$router.push('/personas')"
+                />
+                <v-list-item
+                  v-if="isAdmin"
+                  prepend-icon="mdi-shield-crown"
+                  title="Admin"
+                  @click="$router.push('/admin')"
+                />
+                <v-divider v-if="isResearcher || isAdmin" class="my-1" />
+                <v-list-item
+                  prepend-icon="mdi-logout"
+                  title="Logout"
+                  @click="logout"
+                />
+              </v-list>
+            </v-menu>
+          </div>
         </div>
       </div>
     </v-navigation-drawer>
@@ -259,21 +297,6 @@
         </div>
 
         <v-spacer class="breadcrumb-spacer"/>
-        
-        <v-chip 
-          class="mr-2 clickable-chip" 
-          size="small"
-          variant="outlined"
-          :color="currentConversation?.format === 'standard' ? getModelColor(currentConversation?.model) : 'info'"
-          @click="conversationSettingsDialog = true"
-        >
-          <v-icon v-if="currentConversation?.format !== 'standard'" class="mr-2">mdi-account-group</v-icon>
-          {{ currentConversation?.format !== 'standard' ? 'Group Chat' : currentModel?.displayName || 'Select Model' }}
-          <v-icon size="small" class="ml-1">mdi-cog-outline</v-icon>
-          <v-tooltip activator="parent" location="bottom">
-            Click to change model and settings
-          </v-tooltip>
-        </v-chip>
         
         <!-- Metrics Display -->
         <MetricsDisplay 
@@ -688,6 +711,7 @@
     
     <SettingsDialog
       v-model="settingsDialog"
+      @open-manage-shares="manageSharesDialog = true"
     />
     
     <ConversationSettingsDialog
@@ -1589,6 +1613,12 @@ onMounted(async () => {
         if (data.conversationId === currentConversation.value?.id) {
           activeAiRequest.value = null;
           isAiRequestQueued.value = false;
+          // Also clear streaming state - this is a backup in case stream complete event was missed
+          if (isStreaming.value) {
+            console.log('[Room] Clearing streaming state from ai_finished event');
+            isStreaming.value = false;
+            streamingMessageId.value = null;
+          }
         }
       });
       
@@ -1646,10 +1676,18 @@ onBeforeUnmount(() => {
   }
 });
 
+// Store drafts per conversation
+const conversationDrafts = ref<Map<string, string>>(new Map());
+
 // Watch route changes
 watch(() => route.params.id, async (newId, oldId) => {
   if (isMobile.value) {
     mobilePanel.value = newId ? 'conversation' : 'sidebar';
+  }
+  
+  // Save current draft before switching
+  if (oldId && messageInput.value.trim()) {
+    conversationDrafts.value.set(oldId as string, messageInput.value);
   }
   
   // Leave old room
@@ -1660,7 +1698,15 @@ watch(() => route.params.id, async (newId, oldId) => {
     activeAiRequest.value = null;
   }
   
+  // Reset streaming state when switching conversations
+  isStreaming.value = false;
+  streamingMessageId.value = null;
+  streamingError.value = null;
+  
   if (newId) {
+    // Restore draft for this conversation or clear input
+    messageInput.value = conversationDrafts.value.get(newId as string) || '';
+    
     // Clear selected branch when switching conversations
     if (selectedBranchForParent.value) {
       cancelBranchSelection();
@@ -1681,6 +1727,9 @@ watch(() => route.params.id, async (newId, oldId) => {
     setTimeout(() => {
       scrollToBottom();
     }, 100);
+  } else {
+    // Navigating away from a conversation - clear input
+    messageInput.value = '';
   }
 });
 
@@ -1908,6 +1957,11 @@ async function sendMessage() {
     // Clear selection after successful send
     if (selectedBranchForParent.value) {
       selectedBranchForParent.value = null;
+    }
+    
+    // Clear draft for this conversation since message was sent successfully
+    if (currentConversation.value) {
+      conversationDrafts.value.delete(currentConversation.value.id);
     }
   } catch (error) {
     console.error('Failed to send message:', error);
@@ -2698,7 +2752,7 @@ async function handleDeletePostHocOperation(messageId: string) {
   if (!currentConversation.value) return;
   
   const confirmed = confirm(
-    'Delete this post-hoc operation?\n\n' +
+    'Delete this operation?\n\n' +
     'This will also delete all messages that come after it in this branch ' +
     '(including any AI responses that were generated with this operation in effect).'
   );
@@ -3557,6 +3611,96 @@ function formatDate(date: Date | string): string {
   flex-shrink: 0;
   margin-top: auto;
 }
+
+.sidebar-header-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+}
+
+.sidebar-action-btn {
+  min-width: 0 !important;
+  padding: 10px 12px !important;
+  border-radius: 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+}
+
+.sidebar-footer-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+}
+
+.sidebar-footer-btn {
+  min-width: 0 !important;
+  padding: 10px 12px !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  transition: all 0.15s ease !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.sidebar-footer-btn:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.sidebar-footer-btn .text-caption {
+  font-size: 0.75rem !important;
+  font-weight: 500;
+}
+
+/* Compact sidebar list items */
+.sidebar-header :deep(.v-list-item) {
+  min-height: 36px !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+.sidebar-header :deep(.v-list-item-title) {
+  font-size: 0.875rem !important;
+}
+
+.sidebar-conversations :deep(.v-list-item) {
+  min-height: 48px !important;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+
+.sidebar-conversations :deep(.v-list-subheader) {
+  min-height: 28px !important;
+  font-size: 0.7rem !important;
+}
+
+.sidebar-overflow-menu .v-list-item {
+  min-height: 32px !important;
+}
+
+.sidebar-user-item {
+  min-height: 48px !important;
+  padding: 8px 12px !important;
+}
+
+.sidebar-user-item :deep(.v-list-item-title) {
+  font-size: 0.875rem !important;
+  font-weight: 500;
+}
+
+.sidebar-user-item :deep(.v-list-item-subtitle) {
+  font-size: 0.75rem !important;
+}
+
 
 .sidebar-drawer--mobile {
   width: 100% !important;

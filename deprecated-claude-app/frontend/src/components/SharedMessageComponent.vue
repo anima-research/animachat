@@ -14,8 +14,8 @@
           {{ participantName || (currentBranch.role === 'user' ? 'User' : 'Assistant') }}
         </div>
         
-        <div v-if="showModelInfo && currentBranch.model" class="text-caption ml-2 text-grey">
-          ({{ currentBranch.model }})
+        <div v-if="showModelInfo && modelDisplayName" class="text-caption ml-2 text-grey">
+          ({{ modelDisplayName }})
         </div>
         
         <div v-if="showTimestamps && currentBranch.createdAt" class="text-caption ml-2 text-grey">
@@ -85,7 +85,9 @@ import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { getModelColor } from '@/utils/modelColors';
+import { renderLatex, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import { api } from '@/services/api';
+import 'katex/dist/katex.min.css';
 
 const props = defineProps<{
   message: any;
@@ -110,17 +112,48 @@ const currentBranch = computed(() => {
   return props.message.branches[currentBranchIndex.value] || props.message.branches[0];
 });
 
-const participantName = computed(() => {
+// Find the participant for this message
+const currentParticipant = computed(() => {
   if (!props.participants || !currentBranch.value.participantId) {
     return null;
   }
-  const participant = props.participants.find(p => p.id === currentBranch.value.participantId);
-  return participant?.name || null;
+  return props.participants.find(p => p.id === currentBranch.value.participantId) || null;
+});
+
+const participantName = computed(() => {
+  if (currentParticipant.value) {
+    return currentParticipant.value.name || null;
+  }
+  return null;
+});
+
+// Get the model display name - prefer participant's modelDisplayName, then model ID
+const modelDisplayName = computed(() => {
+  // First try to use the pre-resolved display name from the backend
+  if (currentParticipant.value?.modelDisplayName) {
+    return currentParticipant.value.modelDisplayName;
+  }
+  
+  const branchModel = currentBranch.value.model;
+  const isUuid = branchModel && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(branchModel);
+  
+  // If branch.model looks like a UUID (participant ID), try to use participant's model instead
+  if (isUuid) {
+    // Try to get model from the participant
+    if (currentParticipant.value?.model) {
+      return currentParticipant.value.model;
+    }
+    // If we can't find the participant, don't show the UUID - return null
+    return null;
+  }
+  return branchModel;
 });
 
 const modelColor = computed(() => {
-  if (!currentBranch.value.model) return 'grey';
-  return getModelColor(currentBranch.value.model);
+  // Use the participant's model for color, or fall back to branch model
+  const model = currentParticipant.value?.model || currentBranch.value.model;
+  if (!model) return 'grey';
+  return getModelColor(model);
 });
 
 const renderedContent = computed(() => {
@@ -132,18 +165,21 @@ const renderedContent = computed(() => {
     gfm: true      // GitHub Flavored Markdown
   });
   
-  // Simple markdown rendering
+  // Markdown + LaTeX rendering
   try {
-    const html = marked.parse ? marked.parse(content) : (marked as any)(content);
+    let html = marked.parse ? marked.parse(content) : (marked as any)(content);
+    // Render LaTeX after markdown
+    html = renderLatex(html as string);
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: [
         'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
         'blockquote', 'ul', 'ol', 'li', 'a', 'img',
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
         'table', 'thead', 'tbody', 'tr', 'th', 'td',
-        'hr', 'sup', 'sub', 'del', 'ins'
+        'hr', 'sup', 'sub', 'del', 'ins',
+        ...KATEX_ALLOWED_TAGS
       ],
-      ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel']
+      ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel', ...KATEX_ALLOWED_ATTRS]
     });
   } catch (e) {
     // Fallback to plain text with line breaks
@@ -237,17 +273,25 @@ function formatTimestamp(timestamp: string | Date): string {
 }
 
 .message-content :deep(pre) {
-  background: rgba(var(--v-theme-surface-variant), 0.5);
+  background: rgba(0, 0, 0, 0.3);
   padding: 12px;
-  border-radius: 4px;
+  border-radius: 6px;
   overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.85em;
 }
 
 .message-content :deep(code) {
-  background: rgba(var(--v-theme-surface-variant), 0.5);
-  padding: 2px 4px;
-  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 2px 6px;
+  border-radius: 4px;
   font-size: 0.9em;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.message-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
 }
 
 .message-content :deep(blockquote) {
