@@ -45,6 +45,10 @@ export class OpenRouterService {
   constructor(db: Database, apiKey?: string) {
     this.db = db;
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
+    
+    if (!this.apiKey) {
+      console.error('⚠️ API KEY ERROR: No OpenRouter API key provided. Set OPENROUTER_API_KEY environment variable or configure user API keys. OpenRouter API calls will fail.');
+    }
   }
   
   /**

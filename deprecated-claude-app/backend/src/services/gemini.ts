@@ -84,6 +84,10 @@ export class GeminiService {
     this.db = db;
     this.apiKey = apiKey || process.env.GEMINI_API_KEY || '';
     this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+    
+    if (!this.apiKey) {
+      console.error('⚠️ API KEY ERROR: No Gemini API key provided. Set GEMINI_API_KEY environment variable or configure user API keys. Gemini API calls will fail.');
+    }
   }
 
   async streamCompletion(

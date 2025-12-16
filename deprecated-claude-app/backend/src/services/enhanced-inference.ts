@@ -6,6 +6,14 @@ import { Logger } from '../utils/logger.js';
 import { ConfigLoader } from '../config/loader.js';
 import { getOpenRouterPricing } from './pricing-cache.js';
 
+// Custom error type for pricing issues
+export class PricingNotConfiguredError extends Error {
+  constructor(public modelId: string, public provider: string, public providerModelId?: string) {
+    super(`Pricing not configured for model "${modelId}" (provider: ${provider}, providerModelId: ${providerModelId || 'none'})`);
+    this.name = 'PricingNotConfiguredError';
+  }
+}
+
 interface CacheMetrics {
   conversationId: string;
   participantId?: string;
@@ -81,6 +89,34 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-haiku-bedrock': 0.25,
   'claude-3.5-sonnet-bedrock': 3.00,
   'claude-3.5-haiku-bedrock': 0.80,
+  
+  // OpenRouter model IDs (anthropic/*)
+  'anthropic/claude-opus-4.5': 5.00,
+  'anthropic/claude-sonnet-4': 3.00,
+  'anthropic/claude-3.5-sonnet': 3.00,
+  'anthropic/claude-3.5-sonnet:beta': 3.00,
+  'anthropic/claude-3-opus': 15.00,
+  'anthropic/claude-3-sonnet': 3.00,
+  'anthropic/claude-3-haiku': 0.25,
+  
+  // Google Gemini models (direct API) - pricing as of Dec 2025
+  // Gemini 2.5 Flash
+  'gemini-2.5-flash-preview-05-20': 0.15,
+  'gemini-2.5-flash': 0.15,
+  'gemini-2.5-flash-image': 0.15, // Image-capable variant
+  
+  // Gemini 2.5 Pro
+  'gemini-2.5-pro-preview-05-06': 1.25,
+  'gemini-2.5-pro': 1.25,
+  
+  // Gemini 3 Pro (preview pricing, may change)
+  'gemini-3-pro-preview': 1.25,
+  'gemini-3-pro-image-preview': 1.25,
+  
+  // Shorthand Gemini IDs
+  'gemini-2.5-flash-imagegen': 0.15,
+  'gemini-2.5-flash-image-imagegen': 0.15,
+  'gemini-3-pro-imagegen': 1.25,
 };
 
 const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
@@ -121,9 +157,87 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-haiku-bedrock': 1.25,
   'claude-3.5-sonnet-bedrock': 15.00,
   'claude-3.5-haiku-bedrock': 4.00,
+  
+  // OpenRouter model IDs (anthropic/*)
+  'anthropic/claude-opus-4.5': 25.00,
+  'anthropic/claude-sonnet-4': 15.00,
+  'anthropic/claude-3.5-sonnet': 15.00,
+  'anthropic/claude-3.5-sonnet:beta': 15.00,
+  'anthropic/claude-3-opus': 75.00,
+  'anthropic/claude-3-sonnet': 15.00,
+  'anthropic/claude-3-haiku': 1.25,
+  
+  // Google Gemini models (direct API) - pricing as of Dec 2025
+  // Gemini 2.5 Flash (text output: $0.60/M, image output: $0.0315/image)
+  'gemini-2.5-flash-preview-05-20': 0.60,
+  'gemini-2.5-flash': 0.60,
+  'gemini-2.5-flash-image': 0.60,
+  
+  // Gemini 2.5 Pro (text output: $10/M for >200k context, $5/M for <200k)
+  'gemini-2.5-pro-preview-05-06': 5.00,
+  'gemini-2.5-pro': 5.00,
+  
+  // Gemini 3 Pro (preview pricing)
+  'gemini-3-pro-preview': 5.00,
+  'gemini-3-pro-image-preview': 5.00,
+  
+  // Shorthand Gemini IDs
+  'gemini-2.5-flash-imagegen': 0.60,
+  'gemini-2.5-flash-image-imagegen': 0.60,
+  'gemini-3-pro-imagegen': 5.00,
 };
 
 const CACHE_DISCOUNT = 0.9;
+
+/**
+ * Validate that pricing is available for a model BEFORE making inference calls.
+ * Call this to prevent sending requests to models without cost tracking.
+ * 
+ * @param model The model to check pricing for
+ * @param db Database instance for admin-configured pricing lookup
+ * @returns { valid: true } if pricing is available, or { valid: false, error: string } if not
+ */
+export async function validatePricingAvailable(
+  model: Model,
+  db?: { getAdminPricingConfig?: (provider: string, modelId: string, providerModelId?: string) => Promise<any> }
+): Promise<{ valid: true } | { valid: false; error: string }> {
+  
+  // 1. Check admin-configured pricing
+  if (db?.getAdminPricingConfig) {
+    try {
+      const configPricing = await db.getAdminPricingConfig(model.provider, model.id, model.providerModelId);
+      if (configPricing) {
+        return { valid: true };
+      }
+    } catch (e) {
+      // Admin config lookup failed, continue to other sources
+    }
+  }
+  
+  // 2. For OpenRouter models, check the cached pricing
+  if (model.provider === 'openrouter' && model.providerModelId) {
+    const orPricing = getOpenRouterPricing(model.providerModelId);
+    if (orPricing) {
+      return { valid: true };
+    }
+  }
+  
+  // 3. Check hardcoded pricing table
+  const inputPrice = INPUT_PRICING_PER_MILLION[model.providerModelId || ''] 
+    ?? INPUT_PRICING_PER_MILLION[model.id];
+  const outputPrice = OUTPUT_PRICING_PER_MILLION[model.providerModelId || ''] 
+    ?? OUTPUT_PRICING_PER_MILLION[model.id];
+  
+  if (inputPrice !== undefined && outputPrice !== undefined) {
+    return { valid: true };
+  }
+  
+  // No pricing found - this is an error
+  return { 
+    valid: false, 
+    error: `Pricing not configured for model "${model.id}" (provider: ${model.provider}). Configure in Admin panel or add to hardcoded pricing table.`
+  };
+}
 
 /**
  * Enhanced inference service that integrates context management
@@ -534,8 +648,8 @@ export class EnhancedInferenceService {
       ?? INPUT_PRICING_PER_MILLION[model.id];
     
     if (price === undefined) {
-      console.error(`⚠️ PRICING ERROR: No input price found for model "${model.id}" (provider: "${model.providerModelId}", type: ${model.provider}). Using $0 - configure in Admin panel, use OpenRouter model list, or add to hardcoded table.`);
-      return 0;
+      // Throw error instead of silently returning $0 - prevents untracked charges
+      throw new PricingNotConfiguredError(model.id, model.provider, model.providerModelId);
     }
     
     return price / 1_000_000;
@@ -561,8 +675,8 @@ export class EnhancedInferenceService {
       ?? OUTPUT_PRICING_PER_MILLION[model.id];
     
     if (price === undefined) {
-      console.error(`⚠️ PRICING ERROR: No output price found for model "${model.id}" (provider: "${model.providerModelId}", type: ${model.provider}). Using $0 - configure in Admin panel, use OpenRouter model list, or add to hardcoded table.`);
-      return 0;
+      // Throw error instead of silently returning $0 - prevents untracked charges
+      throw new PricingNotConfiguredError(model.id, model.provider, model.providerModelId);
     }
     
     return price / 1_000_000;
