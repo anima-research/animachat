@@ -44,9 +44,9 @@
     @mouseenter="isHovered = true"
     @mouseleave="handleMouseLeave"
   >
-    <!-- Hover action bar (Discord-style) -->
+    <!-- Hover action bar (Discord-style) - hidden on touch devices -->
     <div 
-      v-if="(isHovered || moreMenuOpen) && !isEditing && !isStreaming" 
+      v-if="(isHovered || moreMenuOpen) && !isEditing && !isStreaming && !isTouchDevice" 
       class="hover-actions"
     >
       <!-- Primary actions -->
@@ -96,6 +96,19 @@
           variant="text"
           density="compact"
           @click="toggleBookmark"
+        />
+      </span>
+      
+      <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
+      
+      <span class="hover-tooltip" data-tooltip="Delete">
+        <v-btn
+          icon="mdi-delete-outline"
+          size="x-small"
+          variant="text"
+          density="compact"
+          color="error"
+          @click="$emit('delete', message.id, currentBranch.id)"
         />
       </span>
       
@@ -160,73 +173,50 @@
             </template>
             <v-list-item-title class="text-caption">Metadata</v-list-item-title>
           </v-list-item>
+          <!-- Post-hoc context operations in menu -->
+          <template v-if="!isPostHocOperation">
+            <v-divider class="my-0" />
+            <v-list-item v-if="postHocAffected?.hidden" density="compact" @click="$emit('post-hoc-unhide', message.id, currentBranch.id)">
+              <template v-slot:prepend>
+                <v-icon size="16" icon="mdi-eye-outline" color="success" />
+              </template>
+              <v-list-item-title class="text-caption">Unhide from AI</v-list-item-title>
+            </v-list-item>
+            <v-list-item v-else density="compact" @click="$emit('post-hoc-hide', message.id, currentBranch.id)">
+              <template v-slot:prepend>
+                <v-icon size="16" icon="mdi-eye-off-outline" />
+              </template>
+              <v-list-item-title class="text-caption">Hide from AI</v-list-item-title>
+            </v-list-item>
+            <v-list-item density="compact" @click="startPostHocEdit">
+              <template v-slot:prepend>
+                <v-icon size="16" icon="mdi-pencil-off-outline" />
+              </template>
+              <v-list-item-title class="text-caption">Edit in place</v-list-item-title>
+            </v-list-item>
+            <v-list-item density="compact" @click="$emit('post-hoc-hide-before', message.id, currentBranch.id)">
+              <template v-slot:prepend>
+                <v-icon size="16" icon="mdi-arrow-collapse-up" />
+              </template>
+              <v-list-item-title class="text-caption">Hide all before</v-list-item-title>
+            </v-list-item>
+          </template>
+          <v-divider class="my-0" />
+          <v-list-item density="compact" @click="$emit('delete', message.id, currentBranch.id)">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-delete-outline" color="error" />
+            </template>
+            <v-list-item-title class="text-caption">Delete branch</v-list-item-title>
+          </v-list-item>
+          <v-list-item v-if="message.branches.length > 1" density="compact" @click="$emit('delete-all-branches', message.id)">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-delete-sweep-outline" color="error" />
+            </template>
+            <v-list-item-title class="text-caption">Delete all branches</v-list-item-title>
+          </v-list-item>
         </v-list>
         </v-menu>
       </div>
-      
-      <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
-      <span class="hover-tooltip" data-tooltip="Delete">
-        <v-btn
-          icon="mdi-delete-outline"
-          size="x-small"
-          variant="text"
-          density="compact"
-          color="error"
-          @click="$emit('delete', message.id, currentBranch.id)"
-        />
-      </span>
-      <span v-if="message.branches.length > 1" class="hover-tooltip" data-tooltip="Delete all">
-        <v-btn
-          icon="mdi-delete-sweep-outline"
-          size="x-small"
-          variant="text"
-          density="compact"
-          color="error"
-          @click="$emit('delete-all-branches', message.id)"
-        />
-      </span>
-      <!-- Post-hoc context operations -->
-      <template v-if="!isPostHocOperation">
-        <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
-        <!-- Show Unhide button if message is hidden, otherwise show Hide button -->
-        <span v-if="postHocAffected?.hidden" class="hover-tooltip" data-tooltip="Unhide">
-          <v-btn
-            icon="mdi-eye-outline"
-            size="x-small"
-            variant="text"
-            density="compact"
-            color="success"
-            @click="$emit('post-hoc-unhide', message.id, currentBranch.id)"
-          />
-        </span>
-        <span v-else class="hover-tooltip" data-tooltip="Hide from AI">
-          <v-btn
-            icon="mdi-eye-off-outline"
-            size="x-small"
-            variant="text"
-            density="compact"
-            @click="$emit('post-hoc-hide', message.id, currentBranch.id)"
-          />
-        </span>
-        <span class="hover-tooltip" data-tooltip="Edit in place">
-          <v-btn
-            icon="mdi-pencil-off-outline"
-            size="x-small"
-            variant="text"
-            density="compact"
-            @click="startPostHocEdit"
-          />
-        </span>
-        <span class="hover-tooltip" data-tooltip="Hide all before">
-          <v-btn
-            icon="mdi-arrow-collapse-up"
-            size="x-small"
-            variant="text"
-            density="compact"
-            @click="$emit('post-hoc-hide-before', message.id, currentBranch.id)"
-          />
-        </span>
-      </template>
     </div>
 
     <!-- Branch navigation (separate row on narrow, inline on wide) -->
@@ -240,7 +230,12 @@
     <div class="info-row">
       <!-- Left: name + meta -->
       <div class="d-flex align-center flex-wrap" style="gap: 4px;">
+        <!-- Avatar or fallback icon -->
+        <v-avatar v-if="avatarUrl" size="32" class="message-avatar">
+          <v-img :src="avatarUrl" :alt="participantDisplayName || 'Avatar'" />
+        </v-avatar>
         <v-icon
+          v-else
           :icon="message.branches[branchIndex].role === 'user' ? 'mdi-account' : 'mdi-robot'"
           :color="participantColor"
           size="small"
@@ -311,8 +306,55 @@
       </div>
       <div v-else class="branch-nav-inline"></div>
       
-      <!-- Right: empty for balance -->
-      <div class="branch-nav-inline"></div>
+      <!-- Right: Touch-friendly actions menu (mobile only) -->
+      <div class="branch-nav-inline d-flex justify-end">
+        <v-menu v-if="isTouchDevice && !isEditing && !isStreaming" location="bottom end">
+          <template v-slot:activator="{ props }">
+            <v-btn
+              v-bind="props"
+              icon="mdi-dots-vertical"
+              size="x-small"
+              variant="text"
+              density="compact"
+            />
+          </template>
+          <v-list density="compact" class="py-1">
+            <v-list-item v-if="message.branches[branchIndex].role === 'assistant'" density="compact" @click="$emit('regenerate', message.id, currentBranch.id)">
+              <template v-slot:prepend><v-icon size="small">mdi-refresh</v-icon></template>
+              <v-list-item-title>Regenerate</v-list-item-title>
+            </v-list-item>
+            <v-list-item density="compact" @click="startEdit">
+              <template v-slot:prepend><v-icon size="small">mdi-pencil</v-icon></template>
+              <v-list-item-title>Edit</v-list-item-title>
+            </v-list-item>
+            <v-list-item density="compact" @click="copyContent">
+              <template v-slot:prepend><v-icon size="small">mdi-content-copy</v-icon></template>
+              <v-list-item-title>Copy</v-list-item-title>
+            </v-list-item>
+            <v-list-item v-if="!isLastMessage" density="compact" @click="$emit('select-as-parent', message.id, currentBranch.id)">
+              <template v-slot:prepend><v-icon size="small">mdi-source-branch</v-icon></template>
+              <v-list-item-title>Branch from here</v-list-item-title>
+            </v-list-item>
+            <v-list-item density="compact" @click="toggleBookmark">
+              <template v-slot:prepend><v-icon size="small">{{ hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline' }}</v-icon></template>
+              <v-list-item-title>{{ hasBookmark ? 'Remove bookmark' : 'Bookmark' }}</v-list-item-title>
+            </v-list-item>
+            <v-divider class="my-1" />
+            <v-list-item v-if="postHocAffected?.hidden" density="compact" @click="$emit('post-hoc-unhide', message.id, currentBranch.id)">
+              <template v-slot:prepend><v-icon size="small" color="success">mdi-eye-outline</v-icon></template>
+              <v-list-item-title>Unhide</v-list-item-title>
+            </v-list-item>
+            <v-list-item v-else density="compact" @click="$emit('post-hoc-hide', message.id, currentBranch.id)">
+              <template v-slot:prepend><v-icon size="small">mdi-eye-off-outline</v-icon></template>
+              <v-list-item-title>Hide from AI</v-list-item-title>
+            </v-list-item>
+            <v-list-item density="compact" @click="startPostHocEdit">
+              <template v-slot:prepend><v-icon size="small">mdi-pencil-off-outline</v-icon></template>
+              <v-list-item-title>Edit for AI</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+      </div>
     </div>
       
       <!-- Thinking blocks (if present) -->
@@ -690,6 +732,7 @@ import { getModelColor } from '@/utils/modelColors';
 import { renderLatex, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
+import { getParticipantAvatarUrl, loadAvatarPacks } from '@/utils/avatars';
 import DebugMessageDialog from './DebugMessageDialog.vue';
 import 'katex/dist/katex.min.css'; // KaTeX styles
 
@@ -732,6 +775,12 @@ const showScrollToTop = ref(false);
 const isHovered = ref(false);
 const isMonospace = ref(false); // Toggle monospace display for entire message
 const moreMenuOpen = ref(false); // Track more menu state for debugging
+const isTouchDevice = ref(false); // Detect touch devices to disable hover bar
+
+// Detect touch device on mount
+onMounted(() => {
+  isTouchDevice.value = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+});
 const bookmarkDialog = ref(false);
 const bookmarkInput = ref('');
 const bookmarkLabel = ref<string | null>(null);
@@ -849,6 +898,8 @@ const hasBookmark = computed(() => {
 onMounted(async () => {
   checkMessageHeight();
   await loadBookmark();
+  // Load avatar packs (cached, only loads once)
+  await loadAvatarPacks();
 });
 
 onUpdated(() => {
@@ -951,6 +1002,24 @@ const participantColor = computed(() => {
   }
   
   return getModelColor(model);
+});
+
+// Avatar URL for the participant
+const avatarUrl = computed(() => {
+  const branch = currentBranch.value;
+  
+  // Find participant
+  let participant = null;
+  if (props.participants && branch.participantId) {
+    participant = props.participants.find(p => p.id === branch.participantId);
+  }
+  
+  // For now, pass null for persona (could be extended later)
+  return getParticipantAvatarUrl(
+    participant || { type: branch.role === 'user' ? 'user' : 'assistant', model: branch.model },
+    store.state.models,
+    null
+  );
 });
 
 // Get all sibling branches (branches that share the same parent)
@@ -1605,7 +1674,7 @@ watch(() => currentBranch.value.id, async () => {
   transition: background-color 0.15s ease;
   margin-bottom: 10px;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow: visible; /* Allow hover bar to extend outside */
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
@@ -1677,6 +1746,12 @@ watch(() => currentBranch.value.id, async () => {
     flex-wrap: nowrap;
     gap: 8px;
   }
+}
+
+/* Message avatar */
+.message-avatar {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 /* Name matches message font size */

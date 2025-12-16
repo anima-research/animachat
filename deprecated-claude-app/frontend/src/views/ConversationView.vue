@@ -146,6 +146,7 @@
               :to="`/conversation/${share.conversationId}`"
               class="conversation-list-item"
               :lines="'three'"
+              @click="handleConversationClick(share.conversationId)"
             >
               <template v-slot:title>
                 <div class="d-flex align-center">

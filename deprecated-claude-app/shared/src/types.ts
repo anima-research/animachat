@@ -141,12 +141,27 @@ export type Provider = z.infer<typeof ProviderEnum>;
 export const ConversationModeEnum = z.enum(['auto', 'prefill', 'messages', 'completion']);
 export type ConversationMode = z.infer<typeof ConversationModeEnum>;
 
+// Avatar Pack types
+export const AvatarPackSchema = z.object({
+  id: z.string(), // Unique identifier (folder name)
+  name: z.string(), // Display name
+  description: z.string().optional(),
+  version: z.string().optional(),
+  author: z.string().optional(),
+  history: z.string().optional(), // Background/origin story
+  isSystem: z.boolean().default(false), // System packs are read-only
+  avatars: z.record(z.string(), z.string()), // canonicalId -> filename mapping
+});
+
+export type AvatarPack = z.infer<typeof AvatarPackSchema>;
+
 // Model types
 export const ModelSchema = z.object({
   id: z.string(), // Unique identifier for this model configuration
   providerModelId: z.string(), // The actual model ID to send to the provider API
   displayName: z.string(), // User-facing display name
   shortName: z.string(), // Short name for participant display
+  canonicalId: z.string().optional(), // Cross-provider identity for avatar lookup (e.g., "claude-3-opus")
   provider: ProviderEnum,
   hidden: z.boolean(),
   contextWindow: z.number(),
@@ -271,6 +286,7 @@ export const UserDefinedModelSchema = z.object({
   userId: z.string().uuid(),
   displayName: z.string().min(1).max(100),
   shortName: z.string().min(1).max(50),
+  canonicalId: z.string().max(100).optional(), // Cross-provider identity for avatar lookup
   provider: z.enum(['openrouter', 'openai-compatible', 'google']),
   providerModelId: z.string().min(1).max(500),
   contextWindow: z.number().min(1000).max(10000000),
@@ -293,6 +309,7 @@ export type UserDefinedModel = z.infer<typeof UserDefinedModelSchema>;
 export const CreateUserModelSchema = z.object({
   displayName: z.string().min(1).max(100),
   shortName: z.string().min(1).max(50),
+  canonicalId: z.string().max(100).optional(), // Cross-provider identity for avatar lookup
   provider: z.enum(['openrouter', 'openai-compatible', 'google']),
   providerModelId: z.string().min(1).max(500),
   contextWindow: z.number().min(1000).max(10000000),
@@ -880,3 +897,70 @@ export const UpdateShareRequestSchema = z.object({
 });
 
 export type UpdateShareRequest = z.infer<typeof UpdateShareRequestSchema>;
+
+/**
+ * Derives a canonical model ID from model information.
+ * This is used to match models across providers for avatar lookup.
+ * 
+ * Examples:
+ * - "claude-3-opus-20240229" -> "claude-3-opus"
+ * - "anthropic/claude-3-sonnet" -> "claude-3-sonnet"  
+ * - "gpt-4-turbo-2024-04-09" -> "gpt-4-turbo"
+ * - "gemini-1.5-pro-latest" -> "gemini-1.5-pro"
+ */
+export function deriveCanonicalId(modelId: string, displayName?: string): string {
+  let id = modelId.toLowerCase();
+  
+  // Remove provider prefixes (anthropic/, openai/, google/, meta-llama/, etc.)
+  id = id.replace(/^[a-z-]+\//, '');
+  
+  // Remove date suffixes (YYYYMMDD, YYYY-MM-DD, -YYYYMMDD)
+  id = id.replace(/[-:]?\d{4}[-]?\d{2}[-]?\d{2}$/, '');
+  
+  // Remove version suffixes like -v1, -v2, :latest, -latest, -preview
+  id = id.replace(/[-:]?(v\d+|latest|preview|beta|exp|experimental)$/i, '');
+  
+  // Remove trailing hyphens
+  id = id.replace(/-+$/, '');
+  
+  // Normalize common patterns
+  const normalizations: [RegExp, string][] = [
+    // Claude models
+    [/^claude-(\d)-(\d+)-?(opus|sonnet|haiku)/, 'claude-$1-$2-$3'],
+    [/^claude-(opus|sonnet|haiku)-(\d+)-?(\d+)?/, 'claude-$1-$2'],
+    [/^anthropic\.claude-(\d)-(\d+)-(opus|sonnet|haiku)/, 'claude-$1-$2-$3'],
+    // GPT models
+    [/^gpt-?(\d+\.?\d*)-?(turbo|mini)?/, 'gpt-$1$2'],
+    // Gemini models
+    [/^gemini-?(\d+\.?\d*)-?(pro|flash|ultra)?/, 'gemini-$1-$2'],
+    [/^models\/gemini/, 'gemini'],
+    // Llama models
+    [/^(meta-)?llama-?(\d+\.?\d*)-?(\d+b)?/, 'llama-$2'],
+    // Mistral models
+    [/^mistral-?(large|medium|small|tiny)?/, 'mistral-$1'],
+  ];
+  
+  for (const [pattern, replacement] of normalizations) {
+    if (pattern.test(id)) {
+      id = id.replace(pattern, replacement);
+      break;
+    }
+  }
+  
+  // Clean up any double hyphens
+  id = id.replace(/-+/g, '-');
+  
+  // If we still have a complex ID, try using the display name
+  if (displayName && id.length > 30) {
+    const simpleName = displayName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    if (simpleName.length < id.length) {
+      return simpleName;
+    }
+  }
+  
+  return id;
+}

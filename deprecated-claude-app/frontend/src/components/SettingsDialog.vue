@@ -13,6 +13,7 @@
         <v-tab value="api-keys">API Keys</v-tab>
         <v-tab value="grants">Grants</v-tab>
         <v-tab value="custom-models">Models</v-tab>
+        <v-tab value="avatars">Avatars</v-tab>
         <v-tab value="sharing">Sharing</v-tab>
         <v-tab value="appearance">Display</v-tab>
         <v-tab value="about">About</v-tab>
@@ -194,6 +195,11 @@
         <v-window-item value="custom-models">
           <CustomModelsTab />
         </v-window-item>
+
+        <!-- Avatar Packs Tab -->
+        <v-window-item value="avatars">
+          <AvatarPacksTab />
+        </v-window-item>
         
         <!-- Sharing Tab -->
         <v-window-item value="sharing">
@@ -299,6 +305,7 @@ import { useStore } from '@/store';
 import { api } from '@/services/api';
 import { UserGrantSummary } from '@deprecated-claude/shared';
 import CustomModelsTab from './CustomModelsTab.vue';
+import AvatarPacksTab from './AvatarPacksTab.vue';
 import GrantsTab from './GrantsTab.vue';
 
 const props = defineProps<{

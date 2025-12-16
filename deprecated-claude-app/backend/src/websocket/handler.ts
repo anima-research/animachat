@@ -1083,15 +1083,24 @@ async function handleRegenerate(
 ) {
   if (!ws.userId) return;
 
-  const msg = await db.getMessage(message.messageId, message.conversationId, ws.userId);
-  if (!msg) {
-    ws.send(JSON.stringify({ type: 'error', error: 'Message not found' }));
+  // First verify conversation access (handles both owner and collaboration)
+  const conversation = await db.getConversation(message.conversationId, ws.userId);
+  if (!conversation) {
+    ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
+    return;
+  }
+  
+  // Check if user can chat (owner or collaborator/editor)
+  const canChat = await db.canUserChatInConversation(message.conversationId, ws.userId);
+  if (!canChat) {
+    ws.send(JSON.stringify({ type: 'error', error: 'You do not have permission to regenerate in this conversation' }));
     return;
   }
 
-  const conversation = await db.getConversation(msg.conversationId, ws.userId);
-  if (!conversation || conversation.userId !== ws.userId) {
-    ws.send(JSON.stringify({ type: 'error', error: 'Access denied' }));
+  // Use conversation.userId (the owner) to fetch message
+  const msg = await db.getMessage(message.messageId, message.conversationId, conversation.userId);
+  if (!msg) {
+    ws.send(JSON.stringify({ type: 'error', error: 'Message not found' }));
     return;
   }
 
@@ -1421,15 +1430,24 @@ async function handleEdit(
 ) {
   if (!ws.userId) return;
 
-  const msg = await db.getMessage(message.messageId, message.conversationId, ws.userId);
-  if (!msg) {
-    ws.send(JSON.stringify({ type: 'error', error: 'Message not found' }));
+  // First verify conversation access (handles both owner and collaboration)
+  const conversation = await db.getConversation(message.conversationId, ws.userId);
+  if (!conversation) {
+    ws.send(JSON.stringify({ type: 'error', error: 'Conversation not found or access denied' }));
+    return;
+  }
+  
+  // Check if user can chat (owner or collaborator/editor)
+  const canChat = await db.canUserChatInConversation(message.conversationId, ws.userId);
+  if (!canChat) {
+    ws.send(JSON.stringify({ type: 'error', error: 'You do not have permission to edit in this conversation' }));
     return;
   }
 
-  const conversation = await db.getConversation(msg.conversationId, ws.userId);
-  if (!conversation || conversation.userId !== ws.userId) {
-    ws.send(JSON.stringify({ type: 'error', error: 'Access denied' }));
+  // Use conversation.userId (the owner) to fetch message
+  const msg = await db.getMessage(message.messageId, message.conversationId, conversation.userId);
+  if (!msg) {
+    ws.send(JSON.stringify({ type: 'error', error: 'Message not found' }));
     return;
   }
 
