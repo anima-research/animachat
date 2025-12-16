@@ -707,7 +707,14 @@
     <v-dialog v-model="showAvatarPreview" max-width="400">
       <v-card>
         <v-card-title class="d-flex align-center">
-          <span>{{ participantDisplayName }}</span>
+          <div>
+            <div :style="participantColor ? `color: ${participantColor};` : ''">
+              {{ avatarPreviewName }}
+            </div>
+            <div v-if="avatarPreviewModelId" class="text-caption text-grey" style="font-family: monospace;">
+              {{ avatarPreviewModelId }}
+            </div>
+          </div>
           <v-spacer />
           <v-btn icon="mdi-close" variant="text" size="small" @click="showAvatarPreview = false" />
         </v-card-title>
@@ -1071,6 +1078,36 @@ const avatarUrl = computed(() => {
     store.state.models,
     null
   );
+});
+
+// Name to show in avatar preview (use model name if participant name is single letter like 'A')
+const avatarPreviewName = computed(() => {
+  const name = participantDisplayName.value;
+  // If name is a single letter (placeholder), use model display name instead
+  if (name && name.length === 1) {
+    const branch = currentBranch.value;
+    const modelId = branch.model;
+    if (modelId) {
+      const modelObj = store.state.models?.find((m: any) => m.id === modelId);
+      if (modelObj?.displayName) {
+        return modelObj.displayName;
+      }
+    }
+  }
+  return name || 'Assistant';
+});
+
+// Model ID to always show in avatar preview
+const avatarPreviewModelId = computed(() => {
+  const branch = currentBranch.value;
+  if (branch.role !== 'assistant') return null;
+  
+  const modelId = branch.model;
+  if (!modelId) return null;
+  
+  const modelObj = store.state.models?.find((m: any) => m.id === modelId);
+  // Prefer providerModelId as it's the most useful identifier
+  return modelObj?.providerModelId || modelId;
 });
 
 // Get all sibling branches (branches that share the same parent)
