@@ -202,6 +202,16 @@ export async function validatePricingAvailable(
   db?: { getAdminPricingConfig?: (provider: string, modelId: string, providerModelId?: string) => Promise<any> }
 ): Promise<{ valid: true } | { valid: false; error: string }> {
   
+  // 0. User-defined custom models bypass pricing validation
+  // These are models the user created themselves (identified by UUID ID or customEndpoint)
+  // The user accepts responsibility for costs when they set up their own API key/endpoint
+  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(model.id);
+  const hasCustomEndpoint = 'customEndpoint' in model && model.customEndpoint;
+  if (isUUID || hasCustomEndpoint) {
+    console.log(`[Pricing] Bypassing validation for user-defined model "${model.displayName}" (${model.id})`);
+    return { valid: true };
+  }
+  
   // 1. Check admin-configured pricing
   if (db?.getAdminPricingConfig) {
     try {
