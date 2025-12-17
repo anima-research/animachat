@@ -426,7 +426,10 @@ export class EnhancedInferenceService {
             model: model.id,
             timestamp: new Date().toISOString(),
             responseTime: endTime - startTime,
-            details: this.buildUsageDetails(breakdown, inputTokens, outputTokens, cachedTokens)
+            details: this.buildUsageDetails(breakdown, inputTokens, outputTokens, cachedTokens),
+            // Pass through failure info if present
+            ...(actualUsage?.failed && { failed: true }),
+            ...(actualUsage?.error && { error: actualUsage.error })
           });
         }
       }
