@@ -37,6 +37,8 @@ export interface MetricsData {
   timestamp: string;
   responseTime: number;
   details?: GrantUsageDetails;
+  failed?: boolean;  // True if this was a failed request (still costs input tokens)
+  error?: string;    // Error message if failed
 }
 
 // Usage analytics types
