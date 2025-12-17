@@ -406,12 +406,22 @@ export class Database {
     }
   }
 
+  // Migration map for legacy currency names
+  private static readonly CURRENCY_MIGRATIONS: Record<string, string> = {
+    'opus': 'claude3opus',
+    'sonnets': 'old_sonnets',
+  };
+
+  private migrateCurrencyName(currency: string): string {
+    return Database.CURRENCY_MIGRATIONS[currency] || currency;
+  }
+
   private normaliseGrantInfo(grant: GrantInfo): GrantInfo {
     return {
       ...grant,
       time: new Date(grant.time).toISOString(),
       amount: Number(grant.amount),
-      currency: grant.currency || 'credit',
+      currency: this.migrateCurrencyName(grant.currency || 'credit'),
       details: this.normaliseGrantDetails(grant.details)
     };
   }
