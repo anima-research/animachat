@@ -427,7 +427,7 @@ export class EnhancedInferenceService {
             timestamp: new Date().toISOString(),
             responseTime: endTime - startTime,
             details: this.buildUsageDetails(breakdown, inputTokens, outputTokens, cachedTokens),
-            // Pass through failure info if present
+            // Pass through failure info if present (for failed request tracking)
             ...(actualUsage?.failed && { failed: true }),
             ...(actualUsage?.error && { error: actualUsage.error })
           });
