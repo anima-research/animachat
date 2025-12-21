@@ -37,6 +37,8 @@ export interface MetricsData {
   timestamp: string;
   responseTime: number;
   details?: GrantUsageDetails;
+  failed?: boolean;  // True if this was a failed request (still costs input tokens)
+  error?: string;    // Error message if failed
 }
 
 // Usage analytics types
@@ -406,12 +408,22 @@ export class Database {
     }
   }
 
+  // Migration map for legacy currency names
+  private static readonly CURRENCY_MIGRATIONS: Record<string, string> = {
+    'opus': 'claude3opus',
+    'sonnets': 'old_sonnets',
+  };
+
+  private migrateCurrencyName(currency: string): string {
+    return Database.CURRENCY_MIGRATIONS[currency] || currency;
+  }
+
   private normaliseGrantInfo(grant: GrantInfo): GrantInfo {
     return {
       ...grant,
       time: new Date(grant.time).toISOString(),
       amount: Number(grant.amount),
-      currency: grant.currency || 'credit',
+      currency: this.migrateCurrencyName(grant.currency || 'credit'),
       details: this.normaliseGrantDetails(grant.details)
     };
   }
@@ -3156,6 +3168,27 @@ export class Database {
   }
 
   // Metrics methods
+  
+  /**
+   * Sanitize numeric fields in metrics to prevent NaN contamination
+   */
+  private sanitizeMetrics(metrics: MetricsData): MetricsData {
+    const safeNumber = (val: any): number => {
+      const num = Number(val);
+      return Number.isFinite(num) ? num : 0;
+    };
+    
+    return {
+      ...metrics,
+      inputTokens: safeNumber(metrics.inputTokens),
+      outputTokens: safeNumber(metrics.outputTokens),
+      cachedTokens: safeNumber(metrics.cachedTokens),
+      cost: safeNumber(metrics.cost),
+      cacheSavings: safeNumber(metrics.cacheSavings),
+      responseTime: safeNumber(metrics.responseTime),
+    };
+  }
+  
   async addMetrics(conversationId: string, conversationOwnerUserId: string, metrics: MetricsData): Promise<void> {
 
     const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
@@ -3165,11 +3198,14 @@ export class Database {
       this.conversationMetrics.set(conversationId, []);
     }
 
+    // Sanitize metrics to prevent NaN/undefined from corrupting totals
+    const sanitizedMetrics = this.sanitizeMetrics(metrics);
+    
     const convMetrics = this.conversationMetrics.get(conversationId)!;
-    convMetrics.push(metrics);
+    convMetrics.push(sanitizedMetrics);
 
-    // Store event
-    await this.logUserEvent(conversationOwnerUserId, 'metrics_added', { conversationId, metrics });
+    // Store event (with sanitized metrics to prevent NaN in persisted data)
+    await this.logUserEvent(conversationOwnerUserId, 'metrics_added', { conversationId, metrics: sanitizedMetrics });
 
     // Check if user has their own API key for this provider - if so, skip burning credits
     const modelLoader = ModelLoader.getInstance();
@@ -3236,19 +3272,25 @@ export class Database {
       completionCount: metrics.length
     });
     
+    // Helper to safely add numbers (handles NaN/undefined from legacy data)
+    const safeAdd = (a: number, b: any): number => {
+      const num = Number(b);
+      return Number.isFinite(num) ? a + num : a;
+    };
+    
     for (const metric of metrics) {
-      totals.inputTokens += metric.inputTokens;
-      totals.outputTokens += metric.outputTokens;
-      totals.cachedTokens += metric.cachedTokens;
-      totals.totalCost += metric.cost;
-      totals.totalSavings += metric.cacheSavings;
+      totals.inputTokens = safeAdd(totals.inputTokens, metric.inputTokens);
+      totals.outputTokens = safeAdd(totals.outputTokens, metric.outputTokens);
+      totals.cachedTokens = safeAdd(totals.cachedTokens, metric.cachedTokens);
+      totals.totalCost = safeAdd(totals.totalCost, metric.cost);
+      totals.totalSavings = safeAdd(totals.totalSavings, metric.cacheSavings);
       const modelMetrics = perModelMetrics.get(metric.model);
       if (modelMetrics) {
         modelMetrics.lastCompletion = metric;
-        modelMetrics.totals.inputTokens += metric.inputTokens;
-        modelMetrics.totals.outputTokens += metric.outputTokens;
-        modelMetrics.totals.cachedTokens += metric.cachedTokens;
-        modelMetrics.totals.totalCost += metric.cost;
+        modelMetrics.totals.inputTokens = safeAdd(modelMetrics.totals.inputTokens, metric.inputTokens);
+        modelMetrics.totals.outputTokens = safeAdd(modelMetrics.totals.outputTokens, metric.outputTokens);
+        modelMetrics.totals.cachedTokens = safeAdd(modelMetrics.totals.cachedTokens, metric.cachedTokens);
+        modelMetrics.totals.totalCost = safeAdd(modelMetrics.totals.totalCost, metric.cost);
         modelMetrics.totals.completionCount += 1;
       }
     }

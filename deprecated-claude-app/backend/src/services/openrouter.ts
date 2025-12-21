@@ -194,6 +194,7 @@ export class OpenRouterService {
     const requestId = `openrouter-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const startTime = Date.now();
     const chunks: string[] = [];
+    let requestBody: any = null;  // Track for error metrics
 
     try {
       // Determine the provider from the model ID for cache syntax
@@ -214,7 +215,7 @@ export class OpenRouterService {
         }
       }
       
-      const requestBody: any = {
+      requestBody = {
         model: modelId,
         messages: openRouterMessages,
         stream: true,
@@ -624,6 +625,7 @@ export class OpenRouterService {
       return { rawRequest: requestBody }; // No usage data available
     } catch (error) {
       console.error('OpenRouter streaming error:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       
       // Log the error
       const duration = Date.now() - startTime;
@@ -631,9 +633,29 @@ export class OpenRouterService {
         requestId,
         service: 'openrouter' as any,
         model: modelId,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
         duration
       });
+      
+      // Estimate input tokens from request for cost tracking on failures
+      // OpenRouter still charges for failed requests that were processed
+      try {
+        const requestStr = JSON.stringify(requestBody || {});
+        const estimatedInputTokens = Math.ceil(requestStr.length / 4); // Rough estimate
+        
+        await onChunk('', true, undefined, {
+          inputTokens: estimatedInputTokens,
+          outputTokens: 0,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+          failed: true,
+          error: errorMessage
+        });
+        
+        console.log(`[OpenRouter] Recorded failure metrics: ~${estimatedInputTokens} input tokens (estimated)`);
+      } catch (metricsError) {
+        console.error('[OpenRouter] Failed to record failure metrics:', metricsError);
+      }
       
       throw error;
     }

@@ -381,6 +381,7 @@ export class AnthropicService {
       };
     } catch (error) {
       console.error('Anthropic streaming error:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       
       // Log the error
       if (requestId) {
@@ -388,9 +389,29 @@ export class AnthropicService {
           requestId,
           service: 'anthropic',
           model: requestParams?.model || modelId,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
           duration: Date.now() - startTime
         });
+      }
+      
+      // Estimate input tokens from request for cost tracking on failures
+      // Anthropic still charges for failed requests that were processed
+      try {
+        const requestStr = JSON.stringify(requestParams || {});
+        const estimatedInputTokens = Math.ceil(requestStr.length / 4); // Rough estimate
+        
+        await onChunk('', true, undefined, {
+          inputTokens: estimatedInputTokens,
+          outputTokens: 0,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+          failed: true,
+          error: errorMessage
+        });
+        
+        console.log(`[Anthropic] Recorded failure metrics: ~${estimatedInputTokens} input tokens (estimated)`);
+      } catch (metricsError) {
+        console.error('[Anthropic] Failed to record failure metrics:', metricsError);
       }
       
       throw error;

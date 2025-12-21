@@ -106,6 +106,7 @@ export class GeminiService {
   }> {
     let requestId: string | undefined;
     const startTime = Date.now();
+    let requestBody: any = null;  // Track for error metrics
 
     try {
       // Convert messages to Gemini format
@@ -153,7 +154,7 @@ export class GeminiService {
       }
       
       // Build request body
-      const requestBody: any = {
+      requestBody = {
         contents: geminiContents,
         generationConfig,
       };
@@ -392,6 +393,24 @@ export class GeminiService {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const duration = Date.now() - startTime;
       console.error(`[Gemini API] Request ${requestId} failed after ${duration}ms:`, errorMessage);
+      
+      // Estimate input tokens from request for cost tracking on failures
+      // Google still charges for failed requests that were processed
+      try {
+        const requestStr = JSON.stringify(requestBody || {});
+        const estimatedInputTokens = Math.ceil(requestStr.length / 4); // Rough estimate
+        
+        await onChunk('', true, undefined, {
+          inputTokens: estimatedInputTokens,
+          outputTokens: 0,
+          failed: true,
+          error: errorMessage
+        });
+        
+        console.log(`[Gemini API] Recorded failure metrics: ~${estimatedInputTokens} input tokens (estimated)`);
+      } catch (metricsError) {
+        console.error('[Gemini API] Failed to record failure metrics:', metricsError);
+      }
       
       throw error;
     }
