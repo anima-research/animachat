@@ -1,5 +1,6 @@
 import { reactive, inject, InjectionKey, App } from 'vue';
 import type { User, Conversation, Message, Model, OpenRouterModel, UserDefinedModel, CreateUserModel, UpdateUserModel, UserGrantSummary } from '@deprecated-claude/shared';
+import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { api } from '../services/api';
 import { WebSocketService } from '../services/websocket';
 
@@ -311,15 +312,17 @@ export function createStore(): {
     
     async createConversation(model: string, title?: string, format: 'standard' | 'prefill' = 'standard') {
       try {
+        // Look up model to get validated defaults
+        const modelObj = state.models.find(m => m.id === model);
+        const settings = modelObj 
+          ? getValidatedModelDefaults(modelObj)
+          : { temperature: 1.0, maxTokens: 4096 }; // Fallback for unknown models
+        
         const response = await api.post('/conversations', {
           model,
           title: title || 'New Conversation',
           format,
-          settings: {
-            temperature: 1.0,
-            maxTokens: 4096 // Safe default for all models
-            // topP and topK are intentionally omitted to use API defaults
-          }
+          settings
         });
         
         const conversation = response.data;
@@ -662,72 +665,74 @@ export function createStore(): {
         //             'branches:', message.branches.length, 
         //             'activeBranch parentBranchId:', activeBranch?.parentBranchId);
         
-        if (!activeBranch) {
-          console.log('No active branch found for message:', message.id);
-          continue;
-        }
-
-        // First message (parent is 'root' or null)
-        if (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root') {
+        // Case 1: Active branch exists and is a root message
+        if (activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root')) {
           visibleMessages.push(message);
           branchPath.push(activeBranch.id);
           // console.log('Added root message:', message.id);
           continue;
         }
 
-        // Check if this message continues from our current path
-        if (branchPath.includes(activeBranch.parentBranchId)) {
+        // Case 2: Active branch exists and continues from our current path
+        if (activeBranch && branchPath.includes(activeBranch.parentBranchId!)) {
           // This message is a valid continuation
           visibleMessages.push(message);
           
           // Find where in the path this branches from
-          const parentIndex = branchPath.indexOf(activeBranch.parentBranchId);
+          const parentIndex = branchPath.indexOf(activeBranch.parentBranchId!);
           
           // Truncate the path after the parent and add this branch
           branchPath.length = parentIndex + 1;
           branchPath.push(activeBranch.id);
           
           // console.log('Message continues from branch at index', parentIndex, 'added branch:', activeBranch.id, 'branchPath now:', [...branchPath]);
-        } else {
-          // The active branch doesn't continue from our path
-          // Look for branches that do, preferring: 1) stored activeBranchId, 2) chronologically newest
-          
-          // Find all branches that continue from our path
-          const validBranches = message.branches.filter(branch => 
-            branch.parentBranchId && branchPath.includes(branch.parentBranchId)
-          );
-          
-          if (validBranches.length === 0) {
-            // No branch continues from current path - skip this message
-            continue;
+          continue;
+        }
+
+        // Case 3: Active branch is missing (deleted) or doesn't continue from our path
+        // Look for ANY branch that continues from our path
+        const validBranches = message.branches.filter(branch => 
+          branch.parentBranchId && branchPath.includes(branch.parentBranchId)
+        );
+        
+        if (validBranches.length === 0) {
+          // No branch continues from current path - skip this message
+          if (!activeBranch) {
+            console.log('No active branch found for message:', message.id, '(activeBranchId points to deleted branch)');
           }
+          continue;
+        }
+        
+        // Pick the best branch:
+        // 1. Prefer the stored activeBranchId if it's valid and in validBranches
+        // 2. Otherwise pick the chronologically newest (by createdAt)
+        let selectedBranch = validBranches.find(b => b.id === message.activeBranchId);
+        
+        if (!selectedBranch) {
+          // Sort by createdAt descending (newest first) and pick the first
+          selectedBranch = [...validBranches].sort((a, b) => {
+            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return timeB - timeA; // Newest first
+          })[0];
           
-          // Pick the best branch:
-          // 1. Prefer the stored activeBranchId if it's valid
-          // 2. Otherwise pick the chronologically newest (by createdAt)
-          let selectedBranch = validBranches.find(b => b.id === message.activeBranchId);
-          
-          if (!selectedBranch) {
-            // Sort by createdAt descending (newest first) and pick the first
-            selectedBranch = [...validBranches].sort((a, b) => {
-              const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-              const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-              return timeB - timeA; // Newest first
-            })[0];
+          if (!activeBranch) {
+            console.log('Recovered message with deleted active branch:', message.id, 
+                        'using branch:', selectedBranch.id.slice(0, 8));
           }
-          
-          // Create a deep copy with the selected branch as active
+        }
+        
+        // Create a deep copy with the selected branch as active
               const messageCopy = { 
                 ...message, 
-            activeBranchId: selectedBranch.id,
-            branches: [...message.branches]
+          activeBranchId: selectedBranch.id,
+          branches: [...message.branches]
               };
               visibleMessages.push(messageCopy);
               
-          const parentIndex = branchPath.indexOf(selectedBranch.parentBranchId!);
+        const parentIndex = branchPath.indexOf(selectedBranch.parentBranchId!);
               branchPath.length = parentIndex + 1;
-          branchPath.push(selectedBranch.id);
-        }
+        branchPath.push(selectedBranch.id);
       }
       
        console.log('=== GET_VISIBLE_MESSAGES RESULT ===');
@@ -737,7 +742,7 @@ export function createStore(): {
           const last = visibleMessages[visibleMessages.length - 1];
           console.log('Last visible:', last.id.slice(0, 8), 'activeBranch:', last.activeBranchId?.slice(0, 8));
         }
-        return visibleMessages;
+      return visibleMessages;
     },
     
     // Model actions

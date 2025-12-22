@@ -2,7 +2,18 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
 import { AuthRequest } from '../middleware/auth.js';
-import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT } from '@deprecated-claude/shared';
+import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, PostHocOperationSchema, ContentBlockSchema } from '@deprecated-claude/shared';
+
+// Schema for creating a post-hoc operation
+const CreatePostHocOperationSchema = z.object({
+  type: z.enum(['hide', 'hide_before', 'edit', 'hide_attachment', 'unhide']),
+  targetMessageId: z.string().uuid(),
+  targetBranchId: z.string().uuid(),
+  replacementContent: z.array(ContentBlockSchema).optional(),
+  attachmentIndices: z.array(z.number()).optional(),
+  reason: z.string().optional(),
+  parentBranchId: z.string().uuid().optional(), // Parent branch for proper tree integration
+});
 
 export function conversationRouter(db: Database): Router {
   const router = Router();
@@ -359,6 +370,147 @@ export function conversationRouter(db: Database): Router {
       res.json(exportData);
     } catch (error) {
       console.error('Export conversation error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Get conversation archive - all messages with orphan/deleted status for debugging
+  router.get('/:id/archive', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      if (conversation.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const archiveData = await db.getConversationArchive(req.params.id);
+      res.json(archiveData);
+    } catch (error) {
+      console.error('Get conversation archive error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Create a post-hoc operation (hide, edit, etc.)
+  router.post('/:id/post-hoc-operation', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      if (conversation.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const operation = CreatePostHocOperationSchema.parse(req.body);
+
+      // Verify target message exists in this conversation
+      const messages = await db.getConversationMessages(req.params.id, req.userId);
+      const targetMessage = messages.find(m => m.id === operation.targetMessageId);
+      
+      if (!targetMessage) {
+        return res.status(400).json({ error: 'Target message not found in this conversation' });
+      }
+
+      // Verify target branch exists
+      const targetBranch = targetMessage.branches.find(b => b.id === operation.targetBranchId);
+      if (!targetBranch) {
+        return res.status(400).json({ error: 'Target branch not found in target message' });
+      }
+
+      // Create the operation message
+      // The content describes the operation for display purposes
+      let operationDescription = '';
+      switch (operation.type) {
+        case 'hide':
+          operationDescription = `🙈 Hidden message`;
+          break;
+        case 'hide_before':
+          operationDescription = `🙈 Hidden messages before this point`;
+          break;
+        case 'edit':
+          operationDescription = `✏️ Edited message`;
+          break;
+        case 'hide_attachment':
+          operationDescription = `🙈 Hidden attachment(s)`;
+          break;
+        case 'unhide':
+          operationDescription = `👁️ Unhidden message`;
+          break;
+      }
+
+      if (operation.reason) {
+        operationDescription += `: ${operation.reason}`;
+      }
+
+      // Create message with the post-hoc operation
+      const message = await db.createPostHocOperation(
+        req.params.id,
+        req.userId,
+        operationDescription,
+        operation
+      );
+
+      res.json(message);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input', details: error.errors });
+      }
+      console.error('Create post-hoc operation error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Delete a post-hoc operation
+  router.delete('/:id/post-hoc-operation/:messageId', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      if (conversation.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Verify the message is a post-hoc operation
+      const messages = await db.getConversationMessages(req.params.id, req.userId);
+      const operationMessage = messages.find(m => m.id === req.params.messageId);
+      
+      if (!operationMessage) {
+        return res.status(404).json({ error: 'Operation message not found' });
+      }
+
+      const activeBranch = operationMessage.branches.find(b => b.id === operationMessage.activeBranchId);
+      if (!activeBranch?.postHocOperation) {
+        return res.status(400).json({ error: 'Message is not a post-hoc operation' });
+      }
+
+      // Delete the operation message
+      await db.deleteMessage(req.params.messageId, req.params.id, req.userId);
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Delete post-hoc operation error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

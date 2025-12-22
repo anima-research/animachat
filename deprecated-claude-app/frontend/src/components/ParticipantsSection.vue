@@ -135,21 +135,54 @@
           >
             <v-radio label="User" value="user" />
             <v-radio label="Assistant" value="assistant" />
+            <v-radio v-if="canUsePersonas && personaItems.length > 0" label="Persona" value="persona" />
           </v-radio-group>
           
+          <!-- Persona Selector -->
+          <v-select
+            v-if="newParticipant.type === 'persona'"
+            v-model="newParticipant.personaId"
+            :items="personaItems"
+            item-title="name"
+            item-value="id"
+            label="Select Persona"
+            variant="outlined"
+            density="compact"
+            class="mb-4"
+          >
+            <template v-slot:prepend-inner>
+              <v-icon>mdi-account-multiple-outline</v-icon>
+            </template>
+            <template v-slot:item="{ props: itemProps, item }">
+              <v-list-item v-bind="itemProps">
+                <template v-slot:prepend>
+                  <v-avatar :color="getPersonaColor(item.raw)" size="32">
+                    <span class="text-caption">{{ item.raw.name.charAt(0).toUpperCase() }}</span>
+                  </v-avatar>
+                </template>
+                <template v-slot:subtitle>
+                  {{ getModelDisplayName(item.raw.modelId) }}
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
+          
+          <!-- Name field for user/assistant only -->
           <v-text-field
+            v-if="newParticipant.type !== 'persona'"
             v-model="newParticipant.name"
             label="Name"
             :placeholder="newParticipant.name === '' ? '(continue)' : ''"
             variant="outlined"
             density="compact"
             class="mb-4"
+            @input="onNameInput"
           >
             <template v-slot:append-inner v-if="newParticipant.name === ''">
               <v-tooltip location="top">
-                <template v-slot:activator="{ props }">
+                <template v-slot:activator="{ props: tooltipProps }">
                   <v-icon
-                    v-bind="props"
+                    v-bind="tooltipProps"
                     icon="mdi-information-outline"
                     size="small"
                     color="info"
@@ -169,7 +202,6 @@
             density="compact"
             :show-icon="true"
             :show-provider-filter="true"
-            @model-selected="onModelSelected"
           />
         </v-card-text>
         
@@ -184,7 +216,7 @@
           <v-btn
             color="primary"
             variant="elevated"
-            :disabled="newParticipant.name === null || newParticipant.name === undefined"
+            :disabled="!isAddDialogValid"
             @click="confirmAddParticipant"
           >
             Add
@@ -378,6 +410,32 @@
             </div>
           </div>
           
+          <v-divider class="my-4" />
+          
+          <h4 class="text-subtitle-1 mb-3">Conversation Mode</h4>
+          <p class="text-caption text-grey mb-3">
+            How messages are formatted for this participant's model.
+          </p>
+          <v-select
+            :model-value="selectedParticipantConversationMode"
+            @update:model-value="(val) => updateParticipantConversationMode(val)"
+            :items="conversationModeOptions"
+            item-title="title"
+            item-value="value"
+            label="Mode"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+          >
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:subtitle>
+                  {{ item.raw.description }}
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
+          
           <v-alert
             type="info"
             variant="tonal"
@@ -404,7 +462,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, PropType } from 'vue';
-import type { Participant, Model, ConfigurableSetting } from '@deprecated-claude/shared';
+import type { Participant, Model, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
+import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { get as _get, set as _set, cloneDeep, isEqual } from 'lodash-es';
 import ModelSelector from './ModelSelector.vue';
@@ -418,6 +477,14 @@ const props = defineProps({
   models: {
     type: Array as PropType<Model[]>,
     required: true
+  },
+  personas: {
+    type: Array as PropType<Persona[]>,
+    default: () => []
+  },
+  canUsePersonas: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -431,17 +498,46 @@ const participants = computed({
 });
 
 const activeModels = computed(() => {
-  return props.models.filter(m => !m.deprecated);
+  return props.models.filter(m => !m.hidden);
 });
 
 const showAddDialog = ref(false);
 const showSettingsDialog = ref(false);
 const selectedParticipantId = ref<string | null>(null);
-const newParticipant = ref<any>({
+const newParticipant = ref<{
+  type: 'user' | 'assistant' | 'persona';
+  name: string;
+  model: string;
+  personaId: string;
+}>({
   type: 'assistant',
   name: '',
-  model: ''
+  model: '',
+  personaId: ''
 });
+
+// Track if the user has manually edited the name
+const nameManuallyEdited = ref(false);
+const lastAutoName = ref('');
+
+// Color palette for personas
+const personaColors = ['primary', 'secondary', 'success', 'warning', 'info', 'error', 'purple', 'teal', 'orange', 'cyan'];
+
+// Filter out archived personas
+const personaItems = computed(() => {
+  return props.personas.filter(p => !p.archivedAt);
+});
+
+function getPersonaColor(persona: Persona): string {
+  if (!persona || !persona.id) return 'primary';
+  const hash = persona.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return personaColors[hash % personaColors.length];
+}
+
+function getModelDisplayName(modelId: string): string {
+  const model = props.models.find(m => m.id === modelId);
+  return model?.displayName || model?.shortName || modelId;
+}
 
 const defaultContextOverrideAppend = {
   strategy: 'append',
@@ -472,6 +568,30 @@ const contextStrategies = [
     value: 'rolling',
     title: 'Rolling Window',
     description: 'Maintains a sliding window of recent messages'
+  }
+];
+
+// Conversation mode options for per-participant format override
+const conversationModeOptions = [
+  {
+    value: 'auto',
+    title: 'Auto',
+    description: 'Use prefill if model supports it, otherwise messages'
+  },
+  {
+    value: 'prefill',
+    title: 'Prefill',
+    description: 'Conversation log format with participant names (Claude native)'
+  },
+  {
+    value: 'messages',
+    title: 'Messages',
+    description: 'Alternating user/assistant format (OpenAI compatible)'
+  },
+  {
+    value: 'completion',
+    title: 'Completion',
+    description: 'OpenRouter completion mode (prompt field)'
   }
 ];
 
@@ -557,6 +677,20 @@ const selectedParticipantModelSpecific = computed({
   },
 });
 
+// Conversation mode for the selected participant
+const selectedParticipantConversationMode = computed(() => {
+  const participant = participants.value.find(p => p.id === selectedParticipantId.value);
+  return participant?.conversationMode || 'auto';
+});
+
+function updateParticipantConversationMode(mode: string) {
+  const participant = participants.value.find(p => p.id === selectedParticipantId.value);
+  if (participant) {
+    participant.conversationMode = mode as 'auto' | 'prefill' | 'messages' | 'completion';
+    emit('update:participants', [...participants.value]);
+  }
+}
+
 function getParticipantPlaceholder(participant: any) {
   if (participant.name === '') {
     return '(continue)';
@@ -571,8 +705,11 @@ function addParticipant() {
   newParticipant.value = {
     type: 'assistant',
     name: defaultModelName,
-    model: defaultModel?.id || ''
+    model: defaultModel?.id || '',
+    personaId: ''
   };
+  nameManuallyEdited.value = false;
+  lastAutoName.value = defaultModelName;
   showAddDialog.value = true;
 }
 
@@ -588,15 +725,26 @@ function confirmAddParticipant() {
   if (newParticipant.value.type === 'assistant') {
     participant.model = newParticipant.value.model;
     participant.systemPrompt = '';
-    // Use model's outputTokenLimit if available, otherwise safe default
+    // Use validated model defaults
     const selectedModel = activeModels.value.find(m => m.id === newParticipant.value.model);
-    const maxTokensDefault = selectedModel?.outputTokenLimit 
-      ? Math.min(selectedModel.outputTokenLimit, 8192) // Cap at 8192 for thinking models
-      : 4096; // Safe fallback
+    if (selectedModel) {
+      participant.settings = getValidatedModelDefaults(selectedModel);
+    } else {
+      // Fallback for when model not found (shouldn't happen normally)
     participant.settings = {
       temperature: 1.0,
-      maxTokens: maxTokensDefault
-    };
+        maxTokens: 4096
+      };
+    }
+  } else if (newParticipant.value.type === 'persona') {
+    // For persona, get the model and name from the persona
+    const persona = props.personas.find(p => p.id === newParticipant.value.personaId);
+    if (persona) {
+      participant.name = persona.name;
+      participant.model = persona.modelId;
+      participant.personaId = newParticipant.value.personaId;
+      participant.type = 'assistant'; // Personas are assistant type
+    }
   }
   
   const updated = [...participants.value, participant];
@@ -606,7 +754,8 @@ function confirmAddParticipant() {
   newParticipant.value = {
     type: 'assistant',
     name: '',
-    model: ''
+    model: '',
+    personaId: ''
   };
 }
 
@@ -615,9 +764,45 @@ function cancelAddParticipant() {
   newParticipant.value = {
     type: 'assistant',
     name: '',
-    model: ''
+    model: '',
+    personaId: ''
   };
+  nameManuallyEdited.value = false;
+  lastAutoName.value = '';
 }
+
+// Track manual name edits
+function onNameInput() {
+  if (newParticipant.value.name !== lastAutoName.value) {
+    nameManuallyEdited.value = true;
+  }
+}
+
+// Auto-populate name when model is selected
+watch(() => newParticipant.value.model, (modelId) => {
+  if (modelId && newParticipant.value.type === 'assistant') {
+    const model = props.models.find(m => m.id === modelId);
+    if (model) {
+      const suggestedName = model.shortName || model.displayName?.split(':').pop()?.trim() || '';
+      if (!nameManuallyEdited.value || newParticipant.value.name === lastAutoName.value) {
+        newParticipant.value.name = suggestedName;
+        lastAutoName.value = suggestedName;
+        nameManuallyEdited.value = false;
+      }
+    }
+  }
+});
+
+// Validation for add dialog
+const isAddDialogValid = computed(() => {
+  if (newParticipant.value.type === 'assistant') {
+    return newParticipant.value.model !== '';
+  }
+  if (newParticipant.value.type === 'persona') {
+    return newParticipant.value.personaId !== '';
+  }
+  return true; // user type is always valid
+});
 
 function removeParticipant(id: string) {
   const updated = participants.value.filter(p => p.id !== id);
@@ -733,30 +918,6 @@ function updateParticipantName(participant: any, newName: string) {
   emit('update:modelValue', updated);
 }
 
-function onModelSelected(model: Model) {
-  // Auto-fill the name with the model's shortName or displayName
-  // This is triggered when a model is selected in the "Add Participant" dialog
-    if (model) {
-    // Check if the current name is empty or matches the previous model's name
-    const currentName = newParticipant.value.name;
-    const previousModelId = newParticipant.value.model;
-    const previousModel = props.models.find(m => m.id === previousModelId);
-    const previousModelNames = [
-      previousModel?.shortName,
-      previousModel?.displayName,
-      previousModel?.name
-    ].filter(Boolean);
-    
-    const shouldAutoFillName = 
-      !currentName || 
-      currentName === '' ||
-      previousModelNames.includes(currentName);
-    
-    if (shouldAutoFillName) {
-      newParticipant.value.name = model.shortName || model.displayName;
-    }
-  }
-}
 </script>
 
 <style scoped>

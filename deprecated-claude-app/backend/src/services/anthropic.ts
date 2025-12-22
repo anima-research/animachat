@@ -10,8 +10,13 @@ export class AnthropicService {
   constructor(db: Database, apiKey?: string) {
     this.db = db;
     
+    const resolvedKey = apiKey || process.env.ANTHROPIC_API_KEY;
+    if (!resolvedKey) {
+      console.error('⚠️ API KEY ERROR: No Anthropic API key provided. Set ANTHROPIC_API_KEY environment variable or configure user API keys. API calls will fail.');
+    }
+    
     this.client = new Anthropic({
-      apiKey: apiKey || process.env.ANTHROPIC_API_KEY || 'demo-key'
+      apiKey: resolvedKey || 'missing-api-key'
     });
   }
 
@@ -102,12 +107,16 @@ export class AnthropicService {
         }
       }
       
+      // Anthropic API doesn't allow both temperature AND top_p/top_k together
+      // If temperature is set, don't send top_p/top_k
+      const useTemperature = settings.temperature !== undefined;
+      
       requestParams = {
         model: modelId,
         max_tokens: effectiveMaxTokens,
         temperature: settings.temperature,
-        ...(settings.topP !== undefined && { top_p: settings.topP }),
-        ...(settings.topK !== undefined && { top_k: settings.topK }),
+        ...(!useTemperature && settings.topP !== undefined && { top_p: settings.topP }),
+        ...(!useTemperature && settings.topK !== undefined && { top_k: settings.topK }),
         ...(systemContent && { system: systemContent }),
         ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences }),
         ...(settings.thinking && settings.thinking.enabled && {
@@ -372,6 +381,7 @@ export class AnthropicService {
       };
     } catch (error) {
       console.error('Anthropic streaming error:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       
       // Log the error
       if (requestId) {
@@ -379,9 +389,29 @@ export class AnthropicService {
           requestId,
           service: 'anthropic',
           model: requestParams?.model || modelId,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
           duration: Date.now() - startTime
         });
+      }
+      
+      // Estimate input tokens from request for cost tracking on failures
+      // Anthropic still charges for failed requests that were processed
+      try {
+        const requestStr = JSON.stringify(requestParams || {});
+        const estimatedInputTokens = Math.ceil(requestStr.length / 4); // Rough estimate
+        
+        await onChunk('', true, undefined, {
+          inputTokens: estimatedInputTokens,
+          outputTokens: 0,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+          failed: true,
+          error: errorMessage
+        });
+        
+        console.log(`[Anthropic] Recorded failure metrics: ~${estimatedInputTokens} input tokens (estimated)`);
+      } catch (metricsError) {
+        console.error('[Anthropic] Failed to record failure metrics:', metricsError);
       }
       
       throw error;

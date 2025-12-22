@@ -1,4 +1,4 @@
-import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite } from '@deprecated-claude/shared';
+import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -37,6 +37,8 @@ export interface MetricsData {
   timestamp: string;
   responseTime: number;
   details?: GrantUsageDetails;
+  failed?: boolean;  // True if this was a failed request (still costs input tokens)
+  error?: string;    // Error message if failed
 }
 
 // Usage analytics types
@@ -406,12 +408,22 @@ export class Database {
     }
   }
 
+  // Migration map for legacy currency names
+  private static readonly CURRENCY_MIGRATIONS: Record<string, string> = {
+    'opus': 'claude3opus',
+    'sonnets': 'old_sonnets',
+  };
+
+  private migrateCurrencyName(currency: string): string {
+    return Database.CURRENCY_MIGRATIONS[currency] || currency;
+  }
+
   private normaliseGrantInfo(grant: GrantInfo): GrantInfo {
     return {
       ...grant,
       time: new Date(grant.time).toISOString(),
       amount: Number(grant.amount),
-      currency: grant.currency || 'credit',
+      currency: this.migrateCurrencyName(grant.currency || 'credit'),
       details: this.normaliseGrantDetails(grant.details)
     };
   }
@@ -848,8 +860,8 @@ export class Database {
         const message = this.messages.get(messageId);
         if (message) {
           // Create new message object with updated content and contentBlocks
-          const updatedBranches = message.branches.map(branch =>
-            branch.id === branchId
+          const updatedBranches = message.branches.map(branch => 
+            branch.id === branchId 
               ? { ...branch, content, ...(contentBlocks && Array.isArray(contentBlocks) ? { contentBlocks } : {}) }
               : branch
           );
@@ -874,7 +886,7 @@ export class Database {
         }
         break;
       }
-
+      
       case 'message_deleted': {
         const { messageId, conversationId } = event.data;
         this.messages.delete(messageId);
@@ -903,24 +915,17 @@ export class Database {
         const message = this.messages.get(messageId);
         if (message) {
           const updatedBranches = message.branches.filter(b => b.id !== branchId);
-          if (updatedBranches.length > 0) {
+          // Always keep the message - a new branch might be added later
+          // If all branches are deleted, keep the message with empty branches
+          // and a placeholder activeBranchId that will be fixed when a new branch is added
             const updated = {
               ...message,
               branches: updatedBranches,
-              activeBranchId: message.activeBranchId === branchId ? updatedBranches[0].id : message.activeBranchId
+            activeBranchId: message.activeBranchId === branchId 
+              ? (updatedBranches[0]?.id || message.activeBranchId) // Keep old ID as placeholder if no branches left
+              : message.activeBranchId
             };
             this.messages.set(messageId, updated);
-          } else {
-            // Should not happen, but handle gracefully
-            this.messages.delete(messageId);
-            const convMessages = this.conversationMessages.get(conversationId);
-            if (convMessages) {
-              const index = convMessages.indexOf(messageId);
-              if (index > -1) {
-                convMessages.splice(index, 1);
-              }
-            }
-          }
         }
         break;
       }
@@ -1815,6 +1820,20 @@ export class Database {
 
   // Conversation methods
   async createConversation(userId: string, title: string, model: string, systemPrompt?: string, settings?: any, format?: 'standard' | 'prefill', contextManagement?: any): Promise<Conversation> {
+    // If no settings provided, try to get validated defaults from model config
+    let resolvedSettings = settings;
+    if (!resolvedSettings) {
+      const modelLoader = ModelLoader.getInstance();
+      const modelConfig = await modelLoader.getModelById(model, userId);
+      if (modelConfig) {
+        resolvedSettings = getValidatedModelDefaults(modelConfig);
+      } else {
+        // Fallback for unknown models - log warning as this might indicate a problem
+        console.warn(`⚠️ MODEL WARNING: Model "${model}" not found in config. Using generic defaults (temperature: 1.0, maxTokens: 4096). This may cause issues with pricing or model-specific features.`);
+        resolvedSettings = { temperature: 1.0, maxTokens: 4096 };
+      }
+    }
+    
     const conversation: Conversation = {
       id: uuidv4(),
       userId,
@@ -1825,11 +1844,7 @@ export class Database {
       createdAt: new Date(),
       updatedAt: new Date(),
       archived: false,
-      settings: settings || {
-        temperature: 1.0,
-        maxTokens: 4096 // Safe default for all models
-        // topP and topK are intentionally omitted to use API defaults
-      },
+      settings: resolvedSettings,
       contextManagement
     };
 
@@ -1849,19 +1864,23 @@ export class Database {
 
     await this.logUserEvent(conversation.userId, 'conversation_created', conversation);
     
+    // Get user's first name for the user participant
+    const user = await this.getUserById(userId);
+    const userFirstName = user?.name?.split(' ')[0] || 'User';
+    
     // Create default participants
+    // For standard format, use generic "A" since user might switch models during conversation
+    // For prefill (group chat), use the model's actual name
     if (format === 'standard' || !format) {
-      // Standard format: fixed User and Assistant
-      await this.createParticipant(conversation.id, userId, 'H', 'user');
+      await this.createParticipant(conversation.id, userId, userFirstName, 'user');
       await this.createParticipant(conversation.id, userId, 'A', 'assistant', model, systemPrompt, settings);
     } else {
-      // Prefill format: starts with default participants but can add more
-      // Get model display name for assistant participant
+      // Group chat format - use proper model name
       const modelLoader = ModelLoader.getInstance();
       const modelConfig = await modelLoader.getModelById(model);
-      const assistantName = modelConfig?.displayName || 'A';
+      const assistantName = modelConfig?.shortName || modelConfig?.displayName || 'Assistant';
       
-      await this.createParticipant(conversation.id, userId, 'H', 'user');
+      await this.createParticipant(conversation.id, userId, userFirstName, 'user');
       await this.createParticipant(conversation.id, userId, assistantName, 'assistant', model, systemPrompt, settings);
     }
 
@@ -1909,7 +1928,7 @@ export class Database {
       
       if (conversation) {
         console.log(`[Database] User ${requestingUserId} accessing shared conversation ${conversationId} with permission: ${permission}`);
-        return conversation;
+    return conversation;
       }
     }
     
@@ -2327,6 +2346,74 @@ export class Database {
     return message;
   }
 
+  /**
+   * Create a post-hoc operation message.
+   * Post-hoc operations are special messages that modify how previous messages
+   * appear in context without actually changing them.
+   */
+  async createPostHocOperation(
+    conversationId: string,
+    conversationOwnerUserId: string,
+    content: string,
+    operation: {
+      type: 'hide' | 'hide_before' | 'edit' | 'hide_attachment' | 'unhide';
+      targetMessageId: string;
+      targetBranchId: string;
+      replacementContent?: any[];
+      attachmentIndices?: number[];
+      reason?: string;
+      parentBranchId?: string; // Parent branch passed from frontend for correct tree integration
+    }
+  ): Promise<Message> {
+    const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
+    if (!conversation) throw new Error("Conversation not found");
+    
+    // Use provided parentBranchId if available, otherwise find from existing messages
+    let parentBranchId = operation.parentBranchId;
+    
+    if (!parentBranchId) {
+      // Fallback: Get existing messages to determine parent branch
+      const existingMessages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
+      if (existingMessages.length > 0) {
+        const lastMessage = existingMessages[existingMessages.length - 1];
+        parentBranchId = lastMessage.activeBranchId;
+      }
+    }
+    
+    const message: Message = {
+      id: uuidv4(),
+      conversationId,
+      branches: [{
+        id: uuidv4(),
+        content,
+        role: 'system' as const, // Operations are system-level
+        createdAt: new Date(),
+        parentBranchId,
+        postHocOperation: operation
+      }],
+      activeBranchId: '',
+      order: 0
+    };
+    
+    message.activeBranchId = message.branches[0].id;
+    
+    // Get current message count for ordering
+    let convMessages = this.conversationMessages.get(conversationId);
+    if (!convMessages) {
+      convMessages = [];
+      this.conversationMessages.set(conversationId, convMessages);
+    }
+    message.order = convMessages.length;
+    
+    this.messages.set(message.id, message);
+    convMessages.push(message.id);
+    
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    await this.logConversationEvent(conversationId, 'message_created', message);
+
+    return message;
+  }
+
   private async tryLoadAndVerifyMessage(messageId: string, conversationId: string, conversationOwnerUserId: string) : Promise<Message | null> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
@@ -2537,11 +2624,12 @@ export class Database {
     const updated = { ...message, branches: updatedBranches };
     this.messages.set(messageId, updated);
 
-    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates: Object.keys(updates) });
+    // Log the actual updates, not just the keys - needed for event replay to restore debug data
+    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates });
 
     return true;
   }
-
+  
   async deleteMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string): Promise<string[] | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
@@ -2733,11 +2821,11 @@ export class Database {
     const messageIds = this.conversationMessages.get(conversationId) || [];
     const messages = messageIds
       .map(id => this.messages.get(id))
-      .filter((msg): msg is Message => msg !== undefined);
+      .filter((msg): msg is Message => msg !== undefined && msg.branches.length > 0); // Filter out messages with no branches
     
     // Only log if there's a potential issue
     if (messageIds.length !== messages.length) {
-      console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found`);
+      console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found (some may have no branches)`);
     }
     
     // Sort by tree order (parents before children) instead of order field
@@ -2747,6 +2835,206 @@ export class Database {
 
   async getMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<Message | null> {
     return await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
+  }
+
+  // Get conversation archive with all branches and orphan/deleted status for debugging
+  async getConversationArchive(conversationId: string): Promise<{
+    messages: Array<{
+      id: string;
+      order: number;
+      branches: Array<{
+        id: string;
+        parentBranchId: string | null;
+        content: string;
+        role: string;
+        createdAt: string;
+        isActive: boolean;
+        isOrphan: boolean;
+        isDeleted: boolean;
+        model?: string;
+      }>;
+    }>;
+    stats: {
+      totalMessages: number;
+      totalBranches: number;
+      orphanedBranches: number;
+      deletedBranches: number;
+      rootBranches: number;
+    };
+  }> {
+    // Load raw events from the conversation event store
+    const events = await this.conversationEventStore.loadEvents(conversationId);
+    
+    // Process events to build complete picture
+    const messagesMap = new Map<string, {
+      id: string;
+      order: number;
+      activeBranchId: string;
+      branches: Map<string, {
+        id: string;
+        parentBranchId: string | null;
+        content: string;
+        role: string;
+        createdAt: string;
+        model?: string;
+        isDeleted: boolean;
+      }>;
+      isDeleted: boolean;
+    }>();
+    
+    const deletedBranchIds = new Set<string>();
+    const deletedMessageIds = new Set<string>();
+    
+    for (const event of events) {
+      const data = event.data as any;
+      
+      if (event.type === 'message_created') {
+        const branches = new Map();
+        for (const b of data.branches || []) {
+          branches.set(b.id, {
+            id: b.id,
+            parentBranchId: b.parentBranchId || null,
+            content: b.content || '',
+            role: b.role,
+            createdAt: b.createdAt,
+            model: b.model,
+            isDeleted: false,
+          });
+        }
+        messagesMap.set(data.id, {
+          id: data.id,
+          order: data.order ?? 0,
+          activeBranchId: data.activeBranchId,
+          branches,
+          isDeleted: false,
+        });
+      } else if (event.type === 'message_branch_added') {
+        const msg = messagesMap.get(data.messageId);
+        if (msg && data.branch) {
+          msg.branches.set(data.branch.id, {
+            id: data.branch.id,
+            parentBranchId: data.branch.parentBranchId || null,
+            content: data.branch.content || '',
+            role: data.branch.role,
+            createdAt: data.branch.createdAt,
+            model: data.branch.model,
+            isDeleted: false,
+          });
+        }
+      } else if (event.type === 'active_branch_changed') {
+        const msg = messagesMap.get(data.messageId);
+        if (msg) {
+          msg.activeBranchId = data.branchId;
+        }
+      } else if (event.type === 'message_deleted') {
+        deletedMessageIds.add(data.messageId);
+        const msg = messagesMap.get(data.messageId);
+        if (msg) {
+          msg.isDeleted = true;
+          for (const [bid] of msg.branches) {
+            deletedBranchIds.add(bid);
+          }
+        }
+      } else if (event.type === 'message_branch_deleted') {
+        deletedBranchIds.add(data.branchId);
+        const msg = messagesMap.get(data.messageId);
+        if (msg) {
+          const branch = msg.branches.get(data.branchId);
+          if (branch) {
+            branch.isDeleted = true;
+          }
+        }
+      } else if (event.type === 'message_content_updated') {
+        const msg = messagesMap.get(data.messageId);
+        if (msg) {
+          const branch = msg.branches.get(data.branchId);
+          if (branch) {
+            branch.content = data.content;
+          }
+        }
+      }
+    }
+    
+    // Build set of all existing (non-deleted) branch IDs
+    const existingBranchIds = new Set<string>();
+    for (const [, msg] of messagesMap) {
+      if (!msg.isDeleted) {
+        for (const [bid, branch] of msg.branches) {
+          if (!branch.isDeleted) {
+            existingBranchIds.add(bid);
+          }
+        }
+      }
+    }
+    
+    // Build result with orphan status
+    const result: Array<{
+      id: string;
+      order: number;
+      branches: Array<{
+        id: string;
+        parentBranchId: string | null;
+        content: string;
+        role: string;
+        createdAt: string;
+        isActive: boolean;
+        isOrphan: boolean;
+        isDeleted: boolean;
+        model?: string;
+      }>;
+    }> = [];
+    
+    let orphanedCount = 0;
+    let deletedCount = 0;
+    let rootCount = 0;
+    let totalBranches = 0;
+    
+    for (const [, msg] of messagesMap) {
+      const branchesArray = [];
+      for (const [bid, branch] of msg.branches) {
+        totalBranches++;
+        
+        // Check if orphan: parent exists but is deleted or doesn't exist
+        const isOrphan = branch.parentBranchId !== null && 
+          !existingBranchIds.has(branch.parentBranchId);
+        
+        if (isOrphan) orphanedCount++;
+        if (branch.isDeleted) deletedCount++;
+        if (branch.parentBranchId === null) rootCount++;
+        
+        branchesArray.push({
+          id: bid,
+          parentBranchId: branch.parentBranchId,
+          content: branch.content,
+          role: branch.role,
+          createdAt: branch.createdAt,
+          isActive: bid === msg.activeBranchId,
+          isOrphan,
+          isDeleted: branch.isDeleted || msg.isDeleted,
+          model: branch.model,
+        });
+      }
+      
+      result.push({
+        id: msg.id,
+        order: msg.order,
+        branches: branchesArray,
+      });
+    }
+    
+    // Sort by order
+    result.sort((a, b) => a.order - b.order);
+    
+    return {
+      messages: result,
+      stats: {
+        totalMessages: result.length,
+        totalBranches,
+        orphanedBranches: orphanedCount,
+        deletedBranches: deletedCount,
+        rootBranches: rootCount,
+      },
+    };
   }
 
   async tryLoadAndVerifyParticipant(participantId: string, conversationOwnerUserId: string) : Promise<Participant | null> {
@@ -2880,6 +3168,27 @@ export class Database {
   }
 
   // Metrics methods
+  
+  /**
+   * Sanitize numeric fields in metrics to prevent NaN contamination
+   */
+  private sanitizeMetrics(metrics: MetricsData): MetricsData {
+    const safeNumber = (val: any): number => {
+      const num = Number(val);
+      return Number.isFinite(num) ? num : 0;
+    };
+    
+    return {
+      ...metrics,
+      inputTokens: safeNumber(metrics.inputTokens),
+      outputTokens: safeNumber(metrics.outputTokens),
+      cachedTokens: safeNumber(metrics.cachedTokens),
+      cost: safeNumber(metrics.cost),
+      cacheSavings: safeNumber(metrics.cacheSavings),
+      responseTime: safeNumber(metrics.responseTime),
+    };
+  }
+  
   async addMetrics(conversationId: string, conversationOwnerUserId: string, metrics: MetricsData): Promise<void> {
 
     const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
@@ -2889,11 +3198,14 @@ export class Database {
       this.conversationMetrics.set(conversationId, []);
     }
 
+    // Sanitize metrics to prevent NaN/undefined from corrupting totals
+    const sanitizedMetrics = this.sanitizeMetrics(metrics);
+    
     const convMetrics = this.conversationMetrics.get(conversationId)!;
-    convMetrics.push(metrics);
+    convMetrics.push(sanitizedMetrics);
 
-    // Store event
-    await this.logUserEvent(conversationOwnerUserId, 'metrics_added', { conversationId, metrics });
+    // Store event (with sanitized metrics to prevent NaN in persisted data)
+    await this.logUserEvent(conversationOwnerUserId, 'metrics_added', { conversationId, metrics: sanitizedMetrics });
 
     // Check if user has their own API key for this provider - if so, skip burning credits
     const modelLoader = ModelLoader.getInstance();
@@ -2960,19 +3272,25 @@ export class Database {
       completionCount: metrics.length
     });
     
+    // Helper to safely add numbers (handles NaN/undefined from legacy data)
+    const safeAdd = (a: number, b: any): number => {
+      const num = Number(b);
+      return Number.isFinite(num) ? a + num : a;
+    };
+    
     for (const metric of metrics) {
-      totals.inputTokens += metric.inputTokens;
-      totals.outputTokens += metric.outputTokens;
-      totals.cachedTokens += metric.cachedTokens;
-      totals.totalCost += metric.cost;
-      totals.totalSavings += metric.cacheSavings;
+      totals.inputTokens = safeAdd(totals.inputTokens, metric.inputTokens);
+      totals.outputTokens = safeAdd(totals.outputTokens, metric.outputTokens);
+      totals.cachedTokens = safeAdd(totals.cachedTokens, metric.cachedTokens);
+      totals.totalCost = safeAdd(totals.totalCost, metric.cost);
+      totals.totalSavings = safeAdd(totals.totalSavings, metric.cacheSavings);
       const modelMetrics = perModelMetrics.get(metric.model);
       if (modelMetrics) {
         modelMetrics.lastCompletion = metric;
-        modelMetrics.totals.inputTokens += metric.inputTokens;
-        modelMetrics.totals.outputTokens += metric.outputTokens;
-        modelMetrics.totals.cachedTokens += metric.cachedTokens;
-        modelMetrics.totals.totalCost += metric.cost;
+        modelMetrics.totals.inputTokens = safeAdd(modelMetrics.totals.inputTokens, metric.inputTokens);
+        modelMetrics.totals.outputTokens = safeAdd(modelMetrics.totals.outputTokens, metric.outputTokens);
+        modelMetrics.totals.cachedTokens = safeAdd(modelMetrics.totals.cachedTokens, metric.cachedTokens);
+        modelMetrics.totals.totalCost = safeAdd(modelMetrics.totals.totalCost, metric.cost);
         modelMetrics.totals.completionCount += 1;
       }
     }
@@ -3300,16 +3618,30 @@ export class Database {
       throw new Error('Maximum number of custom models (20) reached');
     }
 
+    // Resolve settings with validation
+    let resolvedSettings = modelData.settings;
+    if (!resolvedSettings) {
+      // Default settings for user models - cap maxTokens at outputTokenLimit
+      resolvedSettings = {
+        temperature: 1.0,
+        maxTokens: Math.min(4096, modelData.outputTokenLimit)
+      };
+    } else {
+      // Validate provided maxTokens doesn't exceed outputTokenLimit
+      resolvedSettings = {
+        ...resolvedSettings,
+        maxTokens: Math.min(resolvedSettings.maxTokens, modelData.outputTokenLimit)
+      };
+    }
+
     const model: UserDefinedModel = {
       id: uuidv4(),
       userId,
       ...modelData,
       supportsThinking: modelData.supportsThinking || false,
-      deprecated: false,
-      settings: modelData.settings || {
-        temperature: 1.0,
-        maxTokens: 4096
-      },
+      supportsPrefill: modelData.supportsPrefill ?? false,
+      hidden: false,
+      settings: resolvedSettings,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -3330,7 +3662,7 @@ export class Database {
     const modelIds = this.userModelsByUser.get(userId) || new Set();
     return Array.from(modelIds)
       .map(id => this.userModels.get(id))
-      .filter((model): model is UserDefinedModel => model !== undefined && !model.deprecated);
+      .filter((model): model is UserDefinedModel => model !== undefined && !model.hidden);
   }
 
   async getUserModel(modelId: string, userId: string): Promise<UserDefinedModel | null> {
@@ -3368,7 +3700,7 @@ export class Database {
     }
 
     this.userModels.delete(modelId);
-
+    
     const userModelIds = this.userModelsByUser.get(userId);
     if (userModelIds) {
       userModelIds.delete(modelId);

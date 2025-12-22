@@ -49,6 +49,11 @@ export class Logger {
     console.error(...args);
   }
   
+  static warn(...args: any[]) {
+    // Always log warnings
+    console.warn(...args);
+  }
+  
   static info(...args: any[]) {
     // Always log important info
     console.log(...args);

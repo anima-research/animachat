@@ -42,6 +42,17 @@ async function grantTestCapabilities() {
   });
   console.log('✅ Granted admin capability');
   
+  // Grant researcher capability (enables Personas)
+  await db.recordGrantCapability({
+    id: uuidv4(),
+    time: new Date().toISOString(),
+    userId: testUserId,
+    action: 'granted',
+    capability: 'researcher',
+    grantedByUserId: testUserId
+  });
+  console.log('✅ Granted researcher capability');
+  
   // Grant some initial credits too
   await db.recordGrantInfo({
     id: uuidv4(),

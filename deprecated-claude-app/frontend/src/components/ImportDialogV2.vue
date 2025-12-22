@@ -252,7 +252,10 @@
                 </template>
               </v-select>
 
+              <!-- Only show model selector for standard (1-on-1) format -->
+              <!-- Group chats get models from participant mappings -->
               <v-select
+                v-if="conversationFormat === 'standard'"
                 v-model="selectedModel"
                 :items="activeModels"
                 item-title="displayName"
@@ -269,7 +272,7 @@
                 density="compact"
                 class="mt-4"
               >
-                Group chat conversation detected. The group chat format is recommended for better support.
+                Group chat detected. Participant models will be preserved from the import.
               </v-alert>
             </v-card-text>
 
@@ -289,7 +292,7 @@
               </v-btn>
               <v-btn
                 :loading="loading"
-                :disabled="!selectedModel"
+                :disabled="conversationFormat === 'standard' && !selectedModel"
                 color="primary"
                 variant="elevated"
                 @click="executeImport"
@@ -415,7 +418,7 @@ const conversationFormatOptions = [
 const models = computed(() => store.state.models);
 
 const activeModels = computed(() => {
-  return models.value.filter(m => !m.deprecated);
+  return models.value.filter(m => !m.hidden);
 });
 
 const isTextFormat = computed(() => 
@@ -558,7 +561,8 @@ async function executeImport() {
       participantMappings: Object.values(participantMappings.value),
       conversationFormat: conversationFormat.value,
       title: conversationTitle.value,
-      model: selectedModel.value
+      // Only include model for standard format - group chats derive from participants
+      ...(conversationFormat.value === 'standard' && selectedModel.value && { model: selectedModel.value })
     });
     
     // Reload conversations to include the new one

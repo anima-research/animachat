@@ -1,3 +1,4 @@
+Connectome - long‑lived agents, hot‑loadable capabilities, collaborative spaces
 Arc Chat - milti-model conversations, loom, Bedrock and OpenRouter integration
 Common Research - a platform for crowd-upload and crowd-tagging, cross-evaluating conversations for excluding individual human bias in analysis expressed AI preferences etc 
 Anima Discord Server, Cyborgism Discord Server - community servers where humans and bots (models) coexist, play and discuss things together; also serves as a dataset building

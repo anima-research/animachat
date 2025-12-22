@@ -27,6 +27,9 @@
           variant="outlined"
           density="compact"
           class="mt-4"
+          :disabled="isAlreadyGroupChat"
+          :hint="isAlreadyGroupChat ? 'Group chats cannot be converted back to one-on-one' : ''"
+          :persistent-hint="isAlreadyGroupChat"
         >
           <template v-slot:item="{ props, item }">
             <v-list-item v-bind="props">
@@ -75,6 +78,8 @@
           <ParticipantsSection
             v-model="localParticipants"
             :models="activeModels"
+            :personas="personas || []"
+            :can-use-personas="canUsePersonas || false"
           />
           
           <v-divider class="my-4" />
@@ -491,12 +496,22 @@
         
         <v-divider class="my-4" />
         
+        <div class="d-flex gap-2">
         <v-btn
           variant="text"
           @click="resetToDefaults"
         >
           Reset to Defaults
         </v-btn>
+          <v-btn
+            variant="text"
+            color="info"
+            @click="openArchive"
+          >
+            <v-icon start size="small">mdi-archive-outline</v-icon>
+            View Archive
+          </v-btn>
+        </div>
       </v-card-text>
       
       <v-card-actions>
@@ -521,12 +536,16 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import type { Conversation, Model, Participant, ConfigurableSetting } from '@deprecated-claude/shared';
+import { useRouter } from 'vue-router';
+import type { Conversation, Model, Participant, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
+import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
 import ModelSelector from './ModelSelector.vue';
 import ModelSpecificSettings from './ModelSpecificSettings.vue';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
+
+const router = useRouter();
 
 const store = useStore();
 
@@ -544,6 +563,8 @@ const props = defineProps<{
   conversation: Conversation | null;
   models: Model[];
   messageCount?: number;
+  personas?: Persona[];
+  canUsePersonas?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -578,6 +599,11 @@ const formatOptions = [
     description: 'Supports multiple participants with custom names'
   }
 ];
+
+// Prevent conversion from group chat back to one-on-one
+const isAlreadyGroupChat = computed(() => {
+  return props.conversation?.format === 'prefill';
+});
 
 // Show warning when switching to group chat with fewer than 6 messages
 const showGroupChatWarning = computed(() => {
@@ -631,7 +657,7 @@ const modelSpecificValues = computed({
 const localParticipants = ref<Participant[]>([]);
 
 const activeModels = computed(() => {
-  return props.models.filter(m => !m.deprecated);
+  return props.models.filter(m => !m.hidden);
 });
 
 const selectedModel = computed(() => {
@@ -743,6 +769,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
       
       // If no participants exist, create defaults
       if (localParticipants.value.length === 0) {
+        const currentModel = props.models.find(m => m.id === settings.value.model);
         localParticipants.value = [
           {
             id: 'temp-user',
@@ -758,10 +785,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
             name: modelName,
             model: settings.value.model,
             isActive: true,
-            settings: {
-              temperature: 1.0,
-              maxTokens: 4096
-            }
+            settings: currentModel ? getValidatedModelDefaults(currentModel) : { temperature: 1.0, maxTokens: 4096 }
           }
         ];
       } else {
@@ -783,6 +807,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
     } catch (error) {
       console.error('Failed to load participants:', error);
       // Create default participants
+      const currentModel = props.models.find(m => m.id === settings.value.model);
       localParticipants.value = [
         {
           id: 'temp-user',
@@ -798,10 +823,7 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
           name: modelName,
           model: settings.value.model,
           isActive: true,
-          settings: {
-            temperature: 1.0,
-            maxTokens: 4096
-          }
+          settings: currentModel ? getValidatedModelDefaults(currentModel) : { temperature: 1.0, maxTokens: 4096 }
         }
       ];
     }
@@ -820,9 +842,16 @@ watch(() => settings.value.model, (modelId) => {
       }
     }
     
+    // Ensure maxTokens is within valid range
+    const validatedMaxTokens = Math.min(
+      model.settings.maxTokens.default,
+      model.settings.maxTokens.max,
+      model.outputTokenLimit
+    );
+    
     settings.value.settings = {
       temperature: model.settings.temperature.default,
-      maxTokens: model.settings.maxTokens.default,
+      maxTokens: validatedMaxTokens,
       topP: undefined,
       topK: undefined,
       modelSpecific: modelSpecificDefaults,
@@ -880,6 +909,13 @@ function resetToDefaults() {
 
 function cancel() {
   emit('update:modelValue', false);
+}
+
+function openArchive() {
+  if (props.conversation) {
+    emit('update:modelValue', false);
+    router.push(`/conversation/${props.conversation.id}/archive`);
+  }
 }
 
 function save() {

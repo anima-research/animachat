@@ -133,18 +133,43 @@ export type TextSetting = z.infer<typeof TextSettingSchema>;
 export const ProviderEnum = z.enum(['bedrock', 'anthropic', 'openrouter', 'openai-compatible', 'google']);
 export type Provider = z.infer<typeof ProviderEnum>;
 
+// Conversation mode - how messages are formatted for inference
+// - 'auto': Use provider default (prefill for anthropic/bedrock, messages for others)
+// - 'prefill': Force prefill format (conversation log with participant names)
+// - 'messages': Force messages format (alternating user/assistant)
+// - 'completion': OpenRouter completion mode (prompt field instead of messages)
+export const ConversationModeEnum = z.enum(['auto', 'prefill', 'messages', 'completion']);
+export type ConversationMode = z.infer<typeof ConversationModeEnum>;
+
+// Avatar Pack types
+export const AvatarPackSchema = z.object({
+  id: z.string(), // Unique identifier (folder name)
+  name: z.string(), // Display name
+  description: z.string().optional(),
+  version: z.string().optional(),
+  author: z.string().optional(),
+  history: z.string().optional(), // Background/origin story
+  isSystem: z.boolean().default(false), // System packs are read-only
+  avatars: z.record(z.string(), z.string()), // canonicalId -> filename mapping
+  colors: z.record(z.string(), z.string()).optional(), // canonicalId -> hex color for nickname
+});
+
+export type AvatarPack = z.infer<typeof AvatarPackSchema>;
+
 // Model types
 export const ModelSchema = z.object({
   id: z.string(), // Unique identifier for this model configuration
   providerModelId: z.string(), // The actual model ID to send to the provider API
   displayName: z.string(), // User-facing display name
   shortName: z.string(), // Short name for participant display
+  canonicalId: z.string().optional(), // Cross-provider identity for avatar lookup (e.g., "claude-3-opus")
   provider: ProviderEnum,
-  deprecated: z.boolean(),
+  hidden: z.boolean(),
   contextWindow: z.number(),
   outputTokenLimit: z.number(),
   supportsThinking: z.boolean().optional(), // Whether the model supports extended thinking
   thinkingDefaultEnabled: z.boolean().optional(), // Whether thinking should be enabled by default for this model
+  supportsPrefill: z.boolean().optional(), // Whether model supports prefill/completion mode (defaults based on provider)
   capabilities: ModelCapabilitiesSchema.optional(), // Multimodal capabilities
   currencies: z.record(z.boolean()).optional(),
   
@@ -198,18 +223,78 @@ export const ModelSettingsSchema = z.object({
 
 export type ModelSettings = z.infer<typeof ModelSettingsSchema>;
 
+/**
+ * Get validated default settings for a model.
+ * This ensures defaults are within valid ranges and includes all necessary settings.
+ * Use this everywhere participant settings are initialized.
+ */
+export function getValidatedModelDefaults(model: Model): ModelSettings {
+  // Ensure maxTokens default is within valid range
+  const maxTokensDefault = Math.min(
+    model.settings.maxTokens.default,
+    model.settings.maxTokens.max,
+    model.outputTokenLimit
+  );
+  
+  // Build modelSpecific defaults from configurableSettings
+  const modelSpecific: Record<string, unknown> = {};
+  if (model.configurableSettings) {
+    for (const setting of model.configurableSettings) {
+      if (setting.default !== undefined) {
+        modelSpecific[setting.key] = setting.default;
+      }
+    }
+  }
+  
+  const settings: ModelSettings = {
+    temperature: model.settings.temperature.default,
+    maxTokens: maxTokensDefault,
+  };
+  
+  // Anthropic API doesn't allow both temperature AND topP/topK together
+  // Only include topP/topK for non-Anthropic providers
+  const isAnthropic = model.provider === 'anthropic' || model.provider === 'bedrock';
+  
+  if (!isAnthropic) {
+    if (model.settings.topP) {
+      settings.topP = model.settings.topP.default;
+    }
+    
+    if (model.settings.topK) {
+      settings.topK = model.settings.topK.default;
+    }
+  }
+  
+  // Include thinking settings for models that support it
+  if (model.supportsThinking) {
+    settings.thinking = {
+      enabled: model.thinkingDefaultEnabled ?? false,
+      budgetTokens: 8000 // Default thinking budget
+    };
+  }
+  
+  // Include modelSpecific if there are any configurable settings
+  if (Object.keys(modelSpecific).length > 0) {
+    settings.modelSpecific = modelSpecific;
+  }
+  
+  return settings;
+}
+
 // User-defined model types
 export const UserDefinedModelSchema = z.object({
   id: z.string().uuid(),
   userId: z.string().uuid(),
   displayName: z.string().min(1).max(100),
   shortName: z.string().min(1).max(50),
+  canonicalId: z.string().max(100).optional(), // Cross-provider identity for avatar lookup
   provider: z.enum(['openrouter', 'openai-compatible', 'google']),
   providerModelId: z.string().min(1).max(500),
   contextWindow: z.number().min(1000).max(10000000),
   outputTokenLimit: z.number().min(100).max(1000000),
   supportsThinking: z.boolean().default(false),
-  deprecated: z.boolean().default(false),
+  supportsPrefill: z.boolean().default(false), // Whether model supports prefill/completion mode
+  hidden: z.boolean().default(false),
   settings: ModelSettingsSchema,
   createdAt: z.date(),
   updatedAt: z.date(),
@@ -225,11 +310,13 @@ export type UserDefinedModel = z.infer<typeof UserDefinedModelSchema>;
 export const CreateUserModelSchema = z.object({
   displayName: z.string().min(1).max(100),
   shortName: z.string().min(1).max(50),
+  canonicalId: z.string().max(100).optional(), // Cross-provider identity for avatar lookup
   provider: z.enum(['openrouter', 'openai-compatible', 'google']),
   providerModelId: z.string().min(1).max(500),
   contextWindow: z.number().min(1000).max(10000000),
   outputTokenLimit: z.number().min(100).max(1000000),
   supportsThinking: z.boolean().optional(),
+  supportsPrefill: z.boolean().optional(), // Whether model supports prefill/completion mode
   settings: ModelSettingsSchema.optional(),
   customEndpoint: z.object({
     baseUrl: z.string().url(),
@@ -272,6 +359,7 @@ export const ParticipantSchema = z.object({
   systemPrompt: z.string().optional(), // Only for assistant participants
   settings: ModelSettingsSchema.optional(), // Only for assistant participants
   contextManagement: ContextManagementSchema.optional(), // Only for assistant participants
+  conversationMode: ConversationModeEnum.optional(), // Per-participant format override (auto, prefill, messages, completion)
   isActive: z.boolean().default(true),
 
   // Persona system fields
@@ -287,6 +375,7 @@ export const UpdateParticipantSchema = z.object({
   systemPrompt: z.string().optional(),
   settings: ModelSettingsSchema.optional(),
   contextManagement: ContextManagementSchema.optional(),
+  conversationMode: ConversationModeEnum.optional(), // Per-participant format override
   isActive: z.boolean().optional(),
   // Persona system fields
   personaId: z.string().uuid().optional(),
@@ -386,6 +475,24 @@ export type ThinkingContentBlock = z.infer<typeof ThinkingContentBlockSchema>;
 export type ImageContentBlock = z.infer<typeof ImageContentBlockSchema>;
 export type AudioContentBlock = z.infer<typeof AudioContentBlockSchema>;
 
+// Post-hoc operations - modify how previous messages appear in future contexts
+export const PostHocOperationTypeSchema = z.enum(['hide', 'hide_before', 'edit', 'hide_attachment', 'unhide']);
+export type PostHocOperationType = z.infer<typeof PostHocOperationTypeSchema>;
+
+export const PostHocOperationSchema = z.object({
+  type: PostHocOperationTypeSchema,
+  targetMessageId: z.string().uuid(),
+  targetBranchId: z.string().uuid(),
+  // For edits - the replacement content
+  replacementContent: z.array(ContentBlockSchema).optional(),
+  // For attachment hiding - which attachments to hide (by index)
+  attachmentIndices: z.array(z.number()).optional(),
+  // User-provided reason for the operation
+  reason: z.string().optional(),
+});
+
+export type PostHocOperation = z.infer<typeof PostHocOperationSchema>;
+
 // Message types
 export const MessageBranchSchema = z.object({
   id: z.string().uuid(),
@@ -402,7 +509,9 @@ export const MessageBranchSchema = z.object({
   bookmark: BookmarkSchema.optional(), // Optional bookmark for this branch
   hiddenFromAi: z.boolean().optional(), // If true, this message is visible to humans but excluded from AI context
   debugRequest: z.any().optional(), // Raw LLM request for debugging (researchers/admins only)
-  debugResponse: z.any().optional() // Raw LLM response for debugging (researchers/admins only)
+  debugResponse: z.any().optional(), // Raw LLM response for debugging (researchers/admins only)
+  // Post-hoc operation - if present, this message is an operation that affects a previous message
+  postHocOperation: PostHocOperationSchema.optional()
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;
@@ -789,3 +898,70 @@ export const UpdateShareRequestSchema = z.object({
 });
 
 export type UpdateShareRequest = z.infer<typeof UpdateShareRequestSchema>;
+
+/**
+ * Derives a canonical model ID from model information.
+ * This is used to match models across providers for avatar lookup.
+ * 
+ * Examples:
+ * - "claude-3-opus-20240229" -> "claude-3-opus"
+ * - "anthropic/claude-3-sonnet" -> "claude-3-sonnet"  
+ * - "gpt-4-turbo-2024-04-09" -> "gpt-4-turbo"
+ * - "gemini-1.5-pro-latest" -> "gemini-1.5-pro"
+ */
+export function deriveCanonicalId(modelId: string, displayName?: string): string {
+  let id = modelId.toLowerCase();
+  
+  // Remove provider prefixes (anthropic/, openai/, google/, meta-llama/, etc.)
+  id = id.replace(/^[a-z-]+\//, '');
+  
+  // Remove date suffixes (YYYYMMDD, YYYY-MM-DD, -YYYYMMDD)
+  id = id.replace(/[-:]?\d{4}[-]?\d{2}[-]?\d{2}$/, '');
+  
+  // Remove version suffixes like -v1, -v2, :latest, -latest, -preview
+  id = id.replace(/[-:]?(v\d+|latest|preview|beta|exp|experimental)$/i, '');
+  
+  // Remove trailing hyphens
+  id = id.replace(/-+$/, '');
+  
+  // Normalize common patterns
+  const normalizations: [RegExp, string][] = [
+    // Claude models
+    [/^claude-(\d)-(\d+)-?(opus|sonnet|haiku)/, 'claude-$1-$2-$3'],
+    [/^claude-(opus|sonnet|haiku)-(\d+)-?(\d+)?/, 'claude-$1-$2'],
+    [/^anthropic\.claude-(\d)-(\d+)-(opus|sonnet|haiku)/, 'claude-$1-$2-$3'],
+    // GPT models
+    [/^gpt-?(\d+\.?\d*)-?(turbo|mini)?/, 'gpt-$1$2'],
+    // Gemini models
+    [/^gemini-?(\d+\.?\d*)-?(pro|flash|ultra)?/, 'gemini-$1-$2'],
+    [/^models\/gemini/, 'gemini'],
+    // Llama models
+    [/^(meta-)?llama-?(\d+\.?\d*)-?(\d+b)?/, 'llama-$2'],
+    // Mistral models
+    [/^mistral-?(large|medium|small|tiny)?/, 'mistral-$1'],
+  ];
+  
+  for (const [pattern, replacement] of normalizations) {
+    if (pattern.test(id)) {
+      id = id.replace(pattern, replacement);
+      break;
+    }
+  }
+  
+  // Clean up any double hyphens
+  id = id.replace(/-+/g, '-');
+  
+  // If we still have a complex ID, try using the display name
+  if (displayName && id.length > 30) {
+    const simpleName = displayName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    if (simpleName.length < id.length) {
+      return simpleName;
+    }
+  }
+  
+  return id;
+}

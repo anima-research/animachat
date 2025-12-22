@@ -177,6 +177,26 @@
       class="mb-3"
     />
     
+    <v-checkbox
+      v-model="formData.supportsPrefill"
+      label="Supports Prefill / Completion Mode"
+      density="compact"
+      hide-details
+      class="mb-3"
+    >
+      <template v-slot:label>
+        <div class="d-flex align-center">
+          <span>Supports Prefill / Completion Mode</span>
+          <v-tooltip location="top" max-width="300">
+            <template v-slot:activator="{ props }">
+              <v-icon v-bind="props" size="small" class="ml-1" style="opacity: 0.6">mdi-help-circle-outline</v-icon>
+            </template>
+            Enable for Anthropic models on OpenRouter or other models that support starting assistant responses with content (prefill). Also enables completion mode for OpenRouter.
+          </v-tooltip>
+        </div>
+      </template>
+    </v-checkbox>
+    
     <v-btn
       color="primary"
       variant="elevated"
@@ -248,6 +268,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useStore } from '@/store';
 import type { UserDefinedModel, CreateUserModel, OpenRouterModel } from '@deprecated-claude/shared';
+import { deriveCanonicalId } from '@deprecated-claude/shared';
 import OpenRouterModelAutocomplete from './OpenRouterModelAutocomplete.vue';
 
 const store = useStore();
@@ -280,7 +301,9 @@ const formData = ref({
   providerModelId: '',
   contextWindow: 100000,
   outputTokenLimit: 4096,
-  supportsThinking: false
+  supportsThinking: false,
+  supportsPrefill: false,
+  canonicalId: '' as string | undefined
 });
 
 const customEndpointData = ref({
@@ -329,7 +352,8 @@ function openEditDialog(model: UserDefinedModel) {
     providerModelId: model.providerModelId,
     contextWindow: model.contextWindow,
     outputTokenLimit: model.outputTokenLimit,
-    supportsThinking: model.supportsThinking || false
+    supportsThinking: model.supportsThinking || false,
+    supportsPrefill: model.supportsPrefill || false
   };
   
   selectedProvider.value = model.provider;
@@ -356,7 +380,9 @@ function resetForm() {
     providerModelId: '',
     contextWindow: 100000,
     outputTokenLimit: 4096,
-    supportsThinking: false
+    supportsThinking: false,
+    supportsPrefill: false,
+    canonicalId: undefined
   };
   
   customEndpointData.value = {
@@ -373,6 +399,8 @@ function onOpenRouterModelSelected(model: OpenRouterModel) {
   formData.value.providerModelId = model.id;
   formData.value.contextWindow = model.context_length || 100000;
   formData.value.outputTokenLimit = model.top_provider?.max_completion_tokens || 4096;
+  // Auto-derive canonicalId for avatar lookup
+  formData.value.canonicalId = deriveCanonicalId(model.id, model.name);
 }
 
 function extractShortName(name: string): string {
@@ -386,8 +414,15 @@ async function saveModel() {
   error.value = '';
   
   try {
+    // Auto-derive canonicalId if not already set
+    let canonicalId = formData.value.canonicalId;
+    if (!canonicalId) {
+      canonicalId = deriveCanonicalId(formData.value.providerModelId, formData.value.displayName);
+    }
+    
     const modelData: CreateUserModel = {
       ...formData.value,
+      canonicalId,
       provider: selectedProvider.value,
       customEndpoint: selectedProvider.value === 'openai-compatible' 
         ? {

@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ModelSettings, Participant, ApiKey, TokenUsage, Conversation } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, TokenUsage, Conversation, Model, PostHocOperation, MessageBranch, ContentBlock } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
@@ -10,8 +10,12 @@ import { ModelLoader } from '../config/model-loader.js';
 import { Logger } from '../utils/logger.js';
 import { ContextManager } from './context-manager.js';
 
-// Internal format type that includes 'messages' mode
-type InternalConversationFormat = ConversationFormat | 'messages';
+// Internal format type that includes 'messages' and 'completion' modes
+// - 'standard': Traditional alternating user/assistant (no participant names)
+// - 'prefill': Conversation log format with participant names
+// - 'messages': Like prefill but without actual prefill support (fallback)
+// - 'completion': OpenRouter completion mode (prompt field instead of messages)
+type InternalConversationFormat = ConversationFormat | 'messages' | 'completion';
 
 export class InferenceService {
   private bedrockService: BedrockService;
@@ -52,12 +56,8 @@ export class InferenceService {
     }
 
     // Determine the actual format to use
-    let actualFormat: InternalConversationFormat = format;
-    if (format === 'prefill') {
-      if (!this.providerSupportsPrefill(model.provider)) {
-        actualFormat = 'messages';
-      }
-    }
+    const responderForFormat = participants.find(p => p.id === responderId);
+    let actualFormat: InternalConversationFormat = this.determineActualFormat(format, model, responderForFormat?.conversationMode);
 
     // Check if responder is a persona-linked participant and build accumulated context
     let contextMessages = messages;
@@ -81,8 +81,11 @@ export class InferenceService {
       }
     }
 
+    // Apply post-hoc operations (hide, edit, etc.)
+    const processedMessages = this.applyPostHocOperations(contextMessages);
+    
     // Format messages based on conversation format
-    const formattedMessages = this.formatMessagesForConversation(contextMessages, actualFormat, participants, responderId, model.provider, conversation);
+    const formattedMessages = this.formatMessagesForConversation(processedMessages, actualFormat, participants, responderId, model.provider, conversation);
     
     // Now format for the specific provider
     let apiMessages: any[];
@@ -171,16 +174,13 @@ export class InferenceService {
     }
     Logger.inference(`[InferenceService] Found model: provider=${model.provider}, providerModelId=${model.providerModelId}`)
     
-    // Determine the actual format to use
-    let actualFormat: InternalConversationFormat = format;
-    if (format === 'prefill') {
-      // Only switch to messages mode if the provider doesn't support prefill
-      // Otherwise, always respect the user's choice of prefill format
-      if (!this.providerSupportsPrefill(model.provider)) {
-        console.log(`[InferenceService] Provider ${model.provider} doesn't support prefill, switching to messages mode`);
-        actualFormat = 'messages';
-      }
-    }
+    // Determine the actual format to use based on:
+    // 1. Participant's conversationMode override (if specified)
+    // 2. Conversation format (prefill vs standard)
+    // 3. Model's prefill support
+    const responder = participants.find(p => p.id === responderId);
+    let actualFormat: InternalConversationFormat = this.determineActualFormat(format, model, responder?.conversationMode);
+    Logger.inference(`[InferenceService] Format: conversation=${format}, participant=${responder?.conversationMode || 'auto'}, actual=${actualFormat}`);
 
     // Check if responder is a persona-linked participant and build accumulated context
     let contextMessages = messages;
@@ -204,13 +204,16 @@ export class InferenceService {
       }
     }
 
+    // Apply post-hoc operations (hide, edit, etc.)
+    const processedMessages = this.applyPostHocOperations(contextMessages);
+    
     // Format messages based on conversation format
     // For prefill format with Anthropic direct, pass cache marker indices to insert breakpoints
     const shouldInsertCacheBreakpoints = actualFormat === 'prefill' && model.provider === 'anthropic';
     // Trigger thinking via <think> tag in prefill mode if thinking was enabled AND model supports it
     const shouldTriggerPrefillThinking = actualFormat === 'prefill' && settings.thinking?.enabled && model.supportsThinking;
     const formattedMessages = this.formatMessagesForConversation(
-      contextMessages,
+      processedMessages,
       actualFormat,
       participants,
       responderId,
@@ -219,6 +222,27 @@ export class InferenceService {
       shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined,
       shouldTriggerPrefillThinking
     );
+
+    // For messages mode, provide a default system prompt if none is provided
+    // This helps the model understand its role in a multi-participant chat
+    // If user provides a custom prompt, use it as-is (full override)
+    let effectiveSystemPrompt = systemPrompt;
+    if (actualFormat === 'messages' && responderId) {
+      const responder = participants.find(p => p.id === responderId);
+      if (responder && (!effectiveSystemPrompt || effectiveSystemPrompt.trim() === '')) {
+        const responderName = responder.name || 'Assistant';
+        // Check if this provider supports prefill (we'll be prefilling with the name)
+        const supportsPrefill = this.providerSupportsPrefill(model.provider);
+        if (supportsPrefill && responderName !== 'Assistant') {
+          // With prefill: the response is already prefilled with "Name: ", so just continue
+          effectiveSystemPrompt = `You are ${responderName}, a participant in a multi-user chat.`;
+        } else {
+          // Without prefill: model should not add its name
+          effectiveSystemPrompt = `You are ${responderName}, a participant in a multi-user chat. Other participants' messages are shown with their names prefixed. Don't prefix your responses with your name.`;
+        }
+        Logger.inference(`[InferenceService] Using default messages-mode system prompt for ${responderName} (prefill: ${supportsPrefill})`);
+      }
+    }
 
     // Build stop sequences for prefill/messages formats
     let stopSequences: string[] | undefined;
@@ -374,25 +398,20 @@ export class InferenceService {
       usageResult = await anthropicService.streamCompletion(
         model.providerModelId,
         formattedMessages,
-        systemPrompt,
+        effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
         stopSequences
       );
-
-      // Store the raw request for debugging
-      if (usageResult.rawRequest) {
-        this.lastRawRequest = usageResult.rawRequest;
-      }
     } else if (model.provider === 'bedrock') {
       if (!selectedKey) {
         throw new Error('No API key available for Bedrock');
       }
       const bedrockService = new BedrockService(this.db, selectedKey.credentials);
-      await bedrockService.streamCompletion(
+      usageResult = await bedrockService.streamCompletion(
         model.providerModelId,
         formattedMessages,
-        systemPrompt,
+        effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
         stopSequences
@@ -414,7 +433,7 @@ export class InferenceService {
         usageResult = await openRouterService.streamCompletionExactTest(
           model.providerModelId,
           formattedMessages,
-          systemPrompt,
+          effectiveSystemPrompt,
           effectiveSettings,
           finalOnChunk,
           stopSequences
@@ -423,7 +442,7 @@ export class InferenceService {
         usageResult = await openRouterService.streamCompletion(
         model.providerModelId,
         formattedMessages,
-        systemPrompt,
+        effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
         stopSequences
@@ -451,10 +470,10 @@ export class InferenceService {
         modelPrefix
       );
       
-      await openAIService.streamCompletion(
+      usageResult = await openAIService.streamCompletion(
         model.providerModelId,
         formattedMessages,
-        systemPrompt,
+        effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
         stopSequences
@@ -471,12 +490,16 @@ export class InferenceService {
       // Pass model-specific settings - merge with model defaults
       const userModelSpecific = (effectiveSettings as any).modelSpecific || {};
       
+      // DEBUG: Log what was passed in vs defaults
+      console.log(`[Gemini] User modelSpecific from settings:`, JSON.stringify(userModelSpecific, null, 2));
+      
       // Apply defaults from model's configurableSettings if not set by user
       const modelDefaults: Record<string, any> = {};
       if ((model as any).configurableSettings) {
         for (const setting of (model as any).configurableSettings) {
           if (userModelSpecific[setting.key] === undefined) {
             modelDefaults[setting.key] = setting.default;
+            console.log(`[Gemini] Using default for ${setting.key}: ${setting.default}`);
           }
         }
       }
@@ -486,7 +509,7 @@ export class InferenceService {
         modelSpecific: { ...modelDefaults, ...userModelSpecific },
       };
       
-      console.log(`[Gemini] Model-specific settings:`, JSON.stringify(geminiSettings.modelSpecific, null, 2));
+      console.log(`[Gemini] Final model-specific settings:`, JSON.stringify(geminiSettings.modelSpecific, null, 2));
       
       // Auto-truncate context if enabled (check user setting first, then model capability)
       let messagesToSend = formattedMessages;
@@ -498,20 +521,25 @@ export class InferenceService {
       console.log(`[Gemini] autoTruncateContext: user=${userAutoTruncate}, model=${modelAutoTruncate}, effective=${shouldAutoTruncate}, contextWindow: ${model.contextWindow}`);
       if (shouldAutoTruncate && model.contextWindow) {
         console.log(`[Gemini] Truncating context to fit ${model.contextWindow} tokens...`);
-        messagesToSend = this.truncateMessagesToFit(formattedMessages, model.contextWindow, systemPrompt);
+        messagesToSend = this.truncateMessagesToFit(formattedMessages, model.contextWindow, effectiveSystemPrompt);
         console.log(`[Gemini] After truncation: ${messagesToSend.length} messages (was ${formattedMessages.length})`);
       }
       
       usageResult = await geminiService.streamCompletion(
         model.providerModelId,
         messagesToSend,
-        systemPrompt,
+        effectiveSystemPrompt,
         geminiSettings,
         finalOnChunk,
         stopSequences
       );
     } else {
       throw new Error(`Unsupported provider: ${model.provider}`);
+    }
+
+    // Store raw request for debugging if provider returned it
+    if (usageResult.rawRequest) {
+      this.lastRawRequest = usageResult.rawRequest;
     }
 
     // Use actual usage from provider if available, otherwise estimate
@@ -770,18 +798,11 @@ export class InferenceService {
         // Build the message content with attachments
         let messageContent = '';
         
-        // For assistant messages with thinking blocks, convert to <think> tags (prefill format)
-        if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
-          for (const block of activeBranch.contentBlocks) {
-            if (block.type === 'thinking') {
-              messageContent += `<think>\n${block.thinking}\n</think>\n\n`;
-            } else if (block.type === 'redacted_thinking') {
-              messageContent += `<think>[Redacted for safety]</think>\n\n`;
-            }
-          }
-        }
+        // NOTE: Thinking blocks are NOT included in context for other participants
+        // Reasoning/thinking is private to each model and should not be shared
+        // This prevents models from seeing each other's internal reasoning
         
-        // Add the main content
+        // Add the main content only (no thinking blocks)
         messageContent += activeBranch.content;
         
         // Append attachments for user messages
@@ -973,6 +994,28 @@ export class InferenceService {
         return this.consolidateConsecutiveMessages(messagesFormatted);
       }
       
+      // For providers that support prefill, add a prefilled assistant message with the responder's name
+      // This helps guide the model to respond as the correct participant
+      if (provider && this.providerSupportsPrefill(provider) && responderName && responderName !== '' && responderName !== 'Assistant') {
+        const prefillBranchId = `prefill-name-branch-${Date.now()}`;
+        const prefillMessage: Message = {
+          id: `prefill-name-${Date.now()}`,
+          conversationId: messages[0]?.conversationId || '',
+          branches: [{
+            id: prefillBranchId,
+            content: `${responderName}: `,
+            role: 'assistant',
+            createdAt: new Date(),
+            isActive: true,
+            parentBranchId: messagesFormatted[messagesFormatted.length - 1]?.branches[0]?.id
+          }],
+          activeBranchId: prefillBranchId,
+          order: messagesFormatted.length
+        };
+        messagesFormatted.push(prefillMessage);
+        console.log(`[Messages Mode] Added prefill with responder name: "${responderName}: "`);
+      }
+      
       return messagesFormatted;
     }
     
@@ -1046,9 +1089,237 @@ export class InferenceService {
     return consolidated;
   }
   
+  /**
+   * Check if a model supports prefill mode.
+   * - If model has explicit supportsPrefill flag, use that (allows opt-out for image gen models)
+   * - Anthropic, Bedrock, and Google (Gemini) default to supporting prefill
+   * - Other providers: check model.supportsPrefill flag (for custom models)
+   */
+  private modelSupportsPrefill(model: Model): boolean {
+    // If the model has an explicit supportsPrefill flag set to false, respect that
+    // This allows image generation models to opt out of prefill
+    if (model.supportsPrefill === false) {
+      return false;
+    }
+    
+    // Anthropic, Bedrock (Claude models), and Google (Gemini) support prefill by default
+    if (model.provider === 'anthropic' || model.provider === 'bedrock' || model.provider === 'google') {
+      return true;
+    }
+    // For other providers, check the model's explicit supportsPrefill flag
+    // This allows custom OpenRouter models to opt-in to prefill
+    return model.supportsPrefill === true;
+  }
+  
+  /**
+   * @deprecated Use modelSupportsPrefill instead
+   */
   private providerSupportsPrefill(provider: string): boolean {
-    // Only Anthropic and Bedrock (Claude models) reliably support prefill
-    return provider === 'anthropic' || provider === 'bedrock';
+    // Anthropic, Bedrock (Claude models), and Google (Gemini) support prefill
+    return provider === 'anthropic' || provider === 'bedrock' || provider === 'google';
+  }
+  
+  /**
+   * Determine the actual format to use for inference based on:
+   * 1. Participant's conversationMode override (if specified and not 'auto')
+   * 2. Conversation format (prefill vs standard)
+   * 3. Model's prefill support
+   */
+  private determineActualFormat(
+    conversationFormat: ConversationFormat,
+    model: Model,
+    participantMode?: ConversationMode
+  ): InternalConversationFormat {
+    // If conversation is standard, always use standard (no group chat)
+    if (conversationFormat === 'standard') {
+      return 'standard';
+    }
+    
+    // For prefill conversations, check participant override
+    if (participantMode && participantMode !== 'auto') {
+      // Participant has an explicit preference
+      switch (participantMode) {
+        case 'prefill':
+          // Force prefill - but only if model supports it
+          if (this.modelSupportsPrefill(model)) {
+            return 'prefill';
+          }
+          Logger.warn(`[InferenceService] Participant requested prefill but model ${model.id} doesn't support it, using messages`);
+          return 'messages';
+          
+        case 'messages':
+          // Force messages mode (no prefill)
+          return 'messages';
+          
+        case 'completion':
+          // OpenRouter completion mode - only valid for openrouter provider
+          if (model.provider === 'openrouter') {
+            return 'completion';
+          }
+          Logger.warn(`[InferenceService] Completion mode only works with OpenRouter, using messages`);
+          return 'messages';
+      }
+    }
+    
+    // Default behavior: use prefill if model supports it, otherwise messages
+    if (this.modelSupportsPrefill(model)) {
+      return 'prefill';
+    }
+    
+    Logger.inference(`[InferenceService] Model ${model.id} doesn't support prefill, using messages mode`);
+    return 'messages';
+  }
+  
+  /**
+   * Apply post-hoc operations to messages for context building.
+   * Operations are processed in message order - later operations override earlier ones.
+   * 
+   * Post-hoc operations allow retroactively modifying how previous messages appear
+   * in context without actually changing the original data:
+   * - 'hide': Exclude a specific message from context
+   * - 'hide_before': Exclude all messages before a target message
+   * - 'edit': Replace the content of a target message
+   * - 'hide_attachment': Remove specific attachments from a target message
+   */
+  private applyPostHocOperations(messages: Message[]): Message[] {
+    // First pass: collect all operations with their message order
+    const operations: Array<{ order: number; op: PostHocOperation }> = [];
+    
+    Logger.info(`[PostHoc] Processing ${messages.length} messages for post-hoc operations`);
+    
+    for (const msg of messages) {
+      const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+      if (activeBranch?.postHocOperation) {
+        operations.push({ order: msg.order, op: activeBranch.postHocOperation });
+        Logger.info(`[PostHoc] Found operation: ${activeBranch.postHocOperation.type} targeting ${activeBranch.postHocOperation.targetMessageId}`);
+      }
+    }
+    
+    if (operations.length === 0) {
+      Logger.info(`[PostHoc] No operations found in message history`);
+      return messages; // No operations to apply
+    }
+    
+    Logger.inference(`[InferenceService] Applying ${operations.length} post-hoc operation(s)`);
+    
+    // Build lookup maps for quick access
+    const messageById = new Map<string, Message>();
+    const messageOrderById = new Map<string, number>();
+    for (const msg of messages) {
+      messageById.set(msg.id, msg);
+      messageOrderById.set(msg.id, msg.order);
+    }
+    
+    // Track which messages are hidden and which have edits/attachment hides
+    const hiddenMessageIds = new Set<string>();
+    const messageEdits = new Map<string, ContentBlock[]>(); // messageId -> replacement content
+    const attachmentHides = new Map<string, Set<number>>(); // messageId -> set of hidden indices
+    
+    // Process operations in order
+    for (const { order, op } of operations.sort((a, b) => a.order - b.order)) {
+      switch (op.type) {
+        case 'hide':
+          hiddenMessageIds.add(op.targetMessageId);
+          Logger.inference(`[PostHoc] Hiding message ${op.targetMessageId}`);
+          break;
+          
+        case 'hide_before': {
+          const targetOrder = messageOrderById.get(op.targetMessageId);
+          if (targetOrder !== undefined) {
+            for (const msg of messages) {
+              if (msg.order < targetOrder) {
+                hiddenMessageIds.add(msg.id);
+              }
+            }
+            Logger.inference(`[PostHoc] Hiding all messages before order ${targetOrder}`);
+          }
+          break;
+        }
+          
+        case 'edit':
+          if (op.replacementContent) {
+            messageEdits.set(op.targetMessageId, op.replacementContent);
+            Logger.inference(`[PostHoc] Editing message ${op.targetMessageId}`);
+          }
+          break;
+          
+        case 'hide_attachment':
+          if (op.attachmentIndices && op.attachmentIndices.length > 0) {
+            const existing = attachmentHides.get(op.targetMessageId) || new Set();
+            for (const idx of op.attachmentIndices) {
+              existing.add(idx);
+            }
+            attachmentHides.set(op.targetMessageId, existing);
+            Logger.inference(`[PostHoc] Hiding attachments ${op.attachmentIndices.join(', ')} from message ${op.targetMessageId}`);
+          }
+          break;
+          
+        case 'unhide':
+          // Remove message from hidden set (reverses a previous hide)
+          hiddenMessageIds.delete(op.targetMessageId);
+          Logger.inference(`[PostHoc] Unhiding message ${op.targetMessageId}`);
+          break;
+      }
+    }
+    
+    // Second pass: build the modified messages list
+    const result: Message[] = [];
+    
+    for (const msg of messages) {
+      const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+      
+      // Skip operation messages themselves (they're meta, not content)
+      if (activeBranch?.postHocOperation) {
+        continue;
+      }
+      
+      // Skip hidden messages
+      if (hiddenMessageIds.has(msg.id)) {
+        continue;
+      }
+      
+      // Apply edits and attachment hides if needed
+      const edit = messageEdits.get(msg.id);
+      const hiddenAttachments = attachmentHides.get(msg.id);
+      
+      if (edit || hiddenAttachments) {
+        // Need to modify this message
+        const modifiedBranches = msg.branches.map(branch => {
+          if (branch.id !== msg.activeBranchId) {
+            return branch; // Only modify active branch
+          }
+          
+          const modifiedBranch: MessageBranch = { ...branch };
+          
+          // Apply content edit
+          if (edit) {
+            modifiedBranch.contentBlocks = edit;
+            // Also update plain content for compatibility
+            const textBlocks = edit.filter(b => b.type === 'text');
+            modifiedBranch.content = textBlocks.map(b => (b as any).text).join('\n\n');
+          }
+          
+          // Apply attachment hides
+          if (hiddenAttachments && modifiedBranch.attachments) {
+            modifiedBranch.attachments = modifiedBranch.attachments.filter(
+              (_, idx) => !hiddenAttachments.has(idx)
+            );
+          }
+          
+          return modifiedBranch;
+        });
+        
+        result.push({
+          ...msg,
+          branches: modifiedBranches
+        });
+      } else {
+        result.push(msg);
+      }
+    }
+    
+    Logger.inference(`[PostHoc] Result: ${result.length} messages (original: ${messages.length})`);
+    return result;
   }
   
   /**

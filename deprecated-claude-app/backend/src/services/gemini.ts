@@ -84,6 +84,10 @@ export class GeminiService {
     this.db = db;
     this.apiKey = apiKey || process.env.GEMINI_API_KEY || '';
     this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+    
+    if (!this.apiKey) {
+      console.error('⚠️ API KEY ERROR: No Gemini API key provided. Set GEMINI_API_KEY environment variable or configure user API keys. Gemini API calls will fail.');
+    }
   }
 
   async streamCompletion(
@@ -97,10 +101,12 @@ export class GeminiService {
     usage?: {
       inputTokens: number;
       outputTokens: number;
-    }
+    };
+    rawRequest?: any;
   }> {
     let requestId: string | undefined;
     const startTime = Date.now();
+    let requestBody: any = null;  // Track for error metrics
 
     try {
       // Convert messages to Gemini format
@@ -148,7 +154,7 @@ export class GeminiService {
       }
       
       // Build request body
-      const requestBody: any = {
+      requestBody = {
         contents: geminiContents,
         generationConfig,
       };
@@ -381,12 +387,30 @@ export class GeminiService {
       const duration = Date.now() - startTime;
       console.log(`[Gemini API] Request ${requestId} completed in ${duration}ms, tokens: ${usage?.inputTokens || 0} in / ${usage?.outputTokens || 0} out`);
       
-      return { usage };
+      return { usage, rawRequest: requestBody };
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const duration = Date.now() - startTime;
       console.error(`[Gemini API] Request ${requestId} failed after ${duration}ms:`, errorMessage);
+      
+      // Estimate input tokens from request for cost tracking on failures
+      // Google still charges for failed requests that were processed
+      try {
+        const requestStr = JSON.stringify(requestBody || {});
+        const estimatedInputTokens = Math.ceil(requestStr.length / 4); // Rough estimate
+        
+        await onChunk('', true, undefined, {
+          inputTokens: estimatedInputTokens,
+          outputTokens: 0,
+          failed: true,
+          error: errorMessage
+        });
+        
+        console.log(`[Gemini API] Recorded failure metrics: ~${estimatedInputTokens} input tokens (estimated)`);
+      } catch (metricsError) {
+        console.error('[Gemini API] Failed to record failure metrics:', metricsError);
+      }
       
       throw error;
     }

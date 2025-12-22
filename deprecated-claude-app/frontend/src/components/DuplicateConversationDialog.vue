@@ -174,7 +174,7 @@ async function duplicate() {
   duplicating.value = true;
   try {
     const payload: any = {
-      title: options.value.title,
+      newTitle: options.value.title,
       includeSystemPrompt: options.value.includeSystemPrompt,
       includeSettings: options.value.includeSettings,
     };

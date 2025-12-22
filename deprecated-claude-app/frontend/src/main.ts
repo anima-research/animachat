@@ -26,6 +26,7 @@ import AdminView from './views/AdminView.vue';
 import PersonasView from './views/PersonasView.vue';
 import VerifyEmailView from './views/VerifyEmailView.vue';
 import ResetPasswordView from './views/ResetPasswordView.vue';
+import ArchiveView from './views/ArchiveView.vue';
 
 const vuetify = createVuetify({
   components,
@@ -117,6 +118,12 @@ const router = createRouter({
       path: '/conversation/:id?',
       name: 'conversation',
       component: ConversationView,
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/conversation/:id/archive',
+      name: 'archive',
+      component: ArchiveView,
       meta: { requiresAuth: true },
     },
   ],
