@@ -808,51 +808,21 @@ export class InferenceService {
           Array.from(cacheBreakpointIndices).sort((a, b) => a - b));
       }
       
-      // Collect all image attachments from user messages
-      // These need to be preserved as actual image blocks, not just text references
-      const collectedImageAttachments: any[] = [];
-      for (const message of messages) {
-        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
-        if (activeBranch?.role === 'user' && activeBranch.attachments) {
-          for (const attachment of activeBranch.attachments) {
-            const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-            const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
-            const isImage = imageExtensions.includes(fileExtension);
-            if (isImage && attachment.content) {
-              collectedImageAttachments.push(attachment);
-            }
-          }
-        }
-      }
-      
-      if (collectedImageAttachments.length > 0) {
-        console.log(`[PREFILL] Collected ${collectedImageAttachments.length} image attachments for initial user message`);
-      }
-      
       // Add initial user message if configured
       const prefillSettings = conversation?.prefillUserMessage || { enabled: true, content: '<cmd>cat untitled.log</cmd>' };
       
       if (prefillSettings.enabled) {
-        const cmdBranch: any = {
-          id: 'prefill-cmd-branch',
-          content: prefillSettings.content,
-          role: 'user',
-          createdAt: new Date(),
-          isActive: true,
-          parentBranchId: 'root'
-        };
-        
-        // Add collected image attachments to the initial user message
-        // This preserves actual image data for Anthropic API
-        if (collectedImageAttachments.length > 0) {
-          cmdBranch.attachments = collectedImageAttachments;
-          console.log(`[PREFILL] Added ${collectedImageAttachments.length} image attachments to initial user message`);
-        }
-        
         const cmdMessage: Message = {
           id: 'prefill-cmd',
           conversationId: messages[0]?.conversationId || '',
-          branches: [cmdBranch],
+          branches: [{
+            id: 'prefill-cmd-branch',
+            content: prefillSettings.content,
+            role: 'user',
+            createdAt: new Date(),
+            isActive: true,
+            parentBranchId: 'root'
+          }],
           activeBranchId: 'prefill-cmd-branch',
           order: 0
         };
@@ -860,10 +830,51 @@ export class InferenceService {
       }
       
       // Build the conversation content with participant names
+      // When we encounter images, we need to:
+      // 1. Close the current assistant message with content so far
+      // 2. Insert a user message with the image and its text
+      // 3. Start a new assistant segment for content after
+      
       let conversationContent = '';
       let lastMessageWasEmptyAssistant = false;
       let lastAssistantName = 'Assistant';
       let messageIndex = 0;  // Track index for cache breakpoints
+      let messageOrder = 1;  // For ordering output messages
+      
+      // Helper to check if an attachment is an image
+      const isImageAttachment = (attachment: any): boolean => {
+        const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+        const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
+        return imageExtensions.includes(fileExtension) && !!attachment.content;
+      };
+      
+      // Helper to flush current conversation content as an assistant message
+      const flushAssistantContent = () => {
+        if (conversationContent.trim()) {
+          const assistantBranch: any = {
+            id: `prefill-assistant-branch-${messageOrder}`,
+            content: conversationContent.trim(),
+            role: 'assistant',
+            createdAt: new Date(),
+            isActive: true,
+            parentBranchId: 'prefill-cmd-branch'
+          };
+          
+          // Flag cache breakpoints if present
+          if (hasCacheMarkers && conversationContent.includes('<|cache_breakpoint|>')) {
+            assistantBranch._hasCacheBreakpoints = true;
+          }
+          
+          prefillMessages.push({
+            id: `prefill-assistant-${messageOrder}`,
+            conversationId: messages[0]?.conversationId || '',
+            branches: [assistantBranch],
+            activeBranchId: `prefill-assistant-branch-${messageOrder}`,
+            order: messageOrder++
+          });
+          conversationContent = '';
+        }
+      };
       
       for (const message of messages) {
         const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
@@ -886,47 +897,66 @@ export class InferenceService {
           continue; // Skip empty assistant messages
         }
         
-        // Build the message content with attachments
-        let messageContent = '';
+        // Check if this message has image attachments
+        const imageAttachments = (activeBranch.attachments || []).filter(isImageAttachment);
+        const hasImages = imageAttachments.length > 0;
         
-        // NOTE: Thinking blocks are NOT included in context for other participants
-        // Reasoning/thinking is private to each model and should not be shared
-        // This prevents models from seeing each other's internal reasoning
+        // Build the message content with text attachments
+        let messageContent = activeBranch.content;
         
-        // Add the main content only (no thinking blocks)
-        messageContent += activeBranch.content;
-        
-        // Append attachments for user messages
-        if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
-          console.log(`[PREFILL] Appending ${activeBranch.attachments.length} attachments to ${participantName}'s message`);
+        // Handle non-image attachments (add inline)
+        if (activeBranch.attachments && activeBranch.attachments.length > 0) {
           for (const attachment of activeBranch.attachments) {
-            // Check if it's an image
-            const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-            const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
-            const isImage = imageExtensions.includes(fileExtension);
-            
-            if (isImage) {
-              // For prefill format, we can't use image blocks, so describe it
-              messageContent += `\n\n[Image attachment: ${attachment.fileName}]`;
-              console.log(`[PREFILL] Added image reference: ${attachment.fileName}`);
-            } else {
-              // Add text attachments inline
+            if (!isImageAttachment(attachment)) {
+              // Add text/PDF attachments inline
               messageContent += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
-              console.log(`[PREFILL] Added text attachment: ${attachment.fileName} (${attachment.content.length} chars)`);
+              console.log(`[PREFILL] Added text attachment: ${attachment.fileName}`);
             }
           }
         }
         
-        // If participant has no name (raw continuation), don't add prefix
-        if (participantName === '') {
-          conversationContent += `${messageContent}`;
+        if (hasImages) {
+          // Message has images - we need to insert it as a real user message
+          console.log(`[PREFILL] Message has ${imageAttachments.length} images, inserting as user message`);
+          
+          // First, flush any accumulated assistant content
+          flushAssistantContent();
+          
+          // Format the message text with participant name
+          const formattedText = participantName === '' 
+            ? messageContent 
+            : `${participantName}: ${messageContent}`;
+          
+          // Create user message with the text and actual image attachments
+          const userBranch: any = {
+            id: `prefill-image-user-branch-${messageOrder}`,
+            content: formattedText,
+            role: 'user',
+            createdAt: new Date(),
+            isActive: true,
+            parentBranchId: 'root',
+            attachments: imageAttachments
+          };
+          
+          prefillMessages.push({
+            id: `prefill-image-user-${messageOrder}`,
+            conversationId: messages[0]?.conversationId || '',
+            branches: [userBranch],
+            activeBranchId: `prefill-image-user-branch-${messageOrder}`,
+            order: messageOrder++
+          });
+          
+          console.log(`[PREFILL] Inserted user message with ${imageAttachments.length} image(s) at order ${messageOrder - 1}`);
         } else {
-          // Use participant name format: "Name: content"
-          conversationContent += `${participantName}: ${messageContent}\n\n`;
+          // No images - add to conversation content as usual
+          if (participantName === '') {
+            conversationContent += `${messageContent}`;
+          } else {
+            conversationContent += `${participantName}: ${messageContent}\n\n`;
+          }
         }
         
-        // Insert cache breakpoint marker AFTER this message if it's a cache boundary
-        // Cache breakpoints go after the message at that index (so content before is cached)
+        // Insert cache breakpoint marker if needed
         if (cacheBreakpointIndices.has(messageIndex)) {
           conversationContent += '<|cache_breakpoint|>';
           console.log(`[PREFILL] 📍 Inserted cache breakpoint after message ${messageIndex} (${participantName})`);
@@ -935,23 +965,18 @@ export class InferenceService {
         messageIndex++;
       }
       
-      // If the last message was an empty assistant, append that assistant's name
-      // Add opening <think> tag if thinking is triggered in prefill mode
-      // Note: No trailing whitespace allowed by Anthropic API
+      // Add final assistant segment with responder name
       const thinkingPrefix = triggerThinking ? ' <think>' : '';
       
       if (lastMessageWasEmptyAssistant) {
-        // If the assistant has no name (raw continuation), don't add any prefix
         if (lastAssistantName === '') {
           conversationContent = conversationContent.trim() + thinkingPrefix;
         } else {
           conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:${thinkingPrefix}`;
         }
       } else if (responderId && participants.length > 0) {
-        // Otherwise, if we have a responder, append their name with a colon (no newline)
         const responder = participants.find(p => p.id === responderId);
         if (responder) {
-          // If responder has no name (raw continuation), don't add any prefix
           if (responder.name === '') {
             conversationContent = conversationContent.trim() + thinkingPrefix;
           } else {
@@ -960,32 +985,32 @@ export class InferenceService {
         }
       }
       
-      
-      // Create assistant message with the conversation content
-      const assistantBranch: any = {
-        id: 'prefill-assistant-branch',
-        content: conversationContent,
-        role: 'assistant',
-        createdAt: new Date(),
-        isActive: true,
-        parentBranchId: 'prefill-cmd-branch'
-      };
-      
-      // Flag that this content has cache breakpoint markers for Anthropic to process
-      // This uses the Chapter II approach: markers in text, converted to cache_control blocks
-      if (hasCacheMarkers && conversationContent.includes('<|cache_breakpoint|>')) {
-        assistantBranch._hasCacheBreakpoints = true;
-        console.log(`[PREFILL] 📦 Content has ${cacheBreakpointIndices.size} cache breakpoints (${conversationContent.length} chars total)`);
+      // Flush final assistant content
+      if (conversationContent.trim()) {
+        const assistantBranch: any = {
+          id: `prefill-assistant-branch-${messageOrder}`,
+          content: conversationContent.trim(),
+          role: 'assistant',
+          createdAt: new Date(),
+          isActive: true,
+          parentBranchId: 'prefill-cmd-branch'
+        };
+        
+        if (hasCacheMarkers && conversationContent.includes('<|cache_breakpoint|>')) {
+          assistantBranch._hasCacheBreakpoints = true;
+          console.log(`[PREFILL] 📦 Final content has cache breakpoints (${conversationContent.length} chars total)`);
+        }
+        
+        prefillMessages.push({
+          id: `prefill-assistant-${messageOrder}`,
+          conversationId: messages[0]?.conversationId || '',
+          branches: [assistantBranch],
+          activeBranchId: `prefill-assistant-branch-${messageOrder}`,
+          order: messageOrder
+        });
       }
       
-      const assistantMessage: Message = {
-        id: 'prefill-assistant',
-        conversationId: messages[0]?.conversationId || '',
-        branches: [assistantBranch],
-        activeBranchId: 'prefill-assistant-branch',
-        order: 1
-      };
-      prefillMessages.push(assistantMessage);
+      console.log(`[PREFILL] Generated ${prefillMessages.length} messages (with ${prefillMessages.filter(m => (m.branches[0] as any)?.attachments?.length > 0).length} containing images)`);
       
       return prefillMessages;
     }
