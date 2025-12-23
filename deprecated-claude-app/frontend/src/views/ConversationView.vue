@@ -2265,7 +2265,7 @@ function triggerFileInput(event: Event) {
   // Create a new file input and click it immediately
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp,.jpg,.jpeg,.png,.gif,.webp,.svg';
+  input.accept = '.txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp,.jpg,.jpeg,.png,.gif,.webp,.svg,.pdf,application/pdf,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.avi,.mkv,.webm';
   input.multiple = true;
   input.style.display = 'none';
   
