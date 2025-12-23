@@ -2,6 +2,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Message, getActiveBranch, ModelSettings } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
+import sharp from 'sharp';
+
+// Anthropic's image size limit is 5MB, we target 4MB to have margin
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 export class AnthropicService {
   private client: Anthropic;
@@ -57,7 +61,7 @@ export class AnthropicService {
 
     try {
       // Convert messages to Anthropic format
-      const anthropicMessages = this.formatMessagesForAnthropic(messages);
+      const anthropicMessages = await this.formatMessagesForAnthropic(messages);
       
       // Debug logging
       console.log(`Total messages to Anthropic: ${anthropicMessages.length}`);
@@ -418,7 +422,7 @@ export class AnthropicService {
     }
   }
 
-  formatMessagesForAnthropic(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: any }> {
+  async formatMessagesForAnthropic(messages: Message[]): Promise<Array<{ role: 'user' | 'assistant'; content: any }>> {
     const formattedMessages: Array<{ role: 'user' | 'assistant'; content: any }> = [];
 
     for (const message of messages) {
@@ -460,16 +464,21 @@ export class AnthropicService {
             const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
             
             if (isImage) {
+              // Resize image if needed (Anthropic has 5MB limit)
+              const resizedContent = await this.resizeImageIfNeeded(attachment.content, attachment.fileName);
+              // After resize, always use JPEG media type since we convert during resize
+              const resizedMediaType = resizedContent !== attachment.content ? 'image/jpeg' : mediaType;
+              
               // Add image as a separate content block for Claude API
               contentParts.push({
                 type: 'image',
                 source: {
                   type: 'base64',
-                  media_type: mediaType,
-                  data: attachment.content
+                  media_type: resizedMediaType,
+                  data: resizedContent
                 }
               });
-              console.log(`Added image attachment: ${attachment.fileName} (${mediaType})`);
+              console.log(`Added image attachment: ${attachment.fileName} (${resizedMediaType})`);
             } else if (isPdf) {
               // Add PDF as a document content block for Claude API
               // Claude supports PDFs natively via the document type
@@ -618,9 +627,61 @@ export class AnthropicService {
   }
   
   private isImageAttachment(fileName: string): boolean {
-    const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    // Note: GIF excluded - Anthropic API has issues with some GIF formats
+    const imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
     const extension = fileName.split('.').pop()?.toLowerCase() || '';
     return imageExtensions.includes(extension);
+  }
+  
+  /**
+   * Resize an image if it exceeds the max size limit (4MB to stay under Anthropic's 5MB limit)
+   * Returns the resized base64 string, or the original if already small enough
+   */
+  private async resizeImageIfNeeded(base64Data: string, fileName: string): Promise<string> {
+    // Calculate size of base64 data (base64 is ~4/3 of binary size)
+    const estimatedBytes = Math.ceil(base64Data.length * 0.75);
+    
+    if (estimatedBytes <= MAX_IMAGE_BYTES) {
+      return base64Data; // Already small enough
+    }
+    
+    console.log(`[Anthropic] Image ${fileName} is ${(estimatedBytes / 1024 / 1024).toFixed(2)}MB, resizing...`);
+    
+    try {
+      // Decode base64 to buffer
+      const inputBuffer = Buffer.from(base64Data, 'base64');
+      
+      // Get image metadata to calculate resize ratio
+      const metadata = await sharp(inputBuffer).metadata();
+      if (!metadata.width || !metadata.height) {
+        console.warn(`[Anthropic] Could not get image dimensions for ${fileName}, using original`);
+        return base64Data;
+      }
+      
+      // Calculate how much we need to shrink (target 80% of max to have margin)
+      const targetBytes = MAX_IMAGE_BYTES * 0.8;
+      const shrinkRatio = Math.sqrt(targetBytes / estimatedBytes);
+      const newWidth = Math.floor(metadata.width * shrinkRatio);
+      const newHeight = Math.floor(metadata.height * shrinkRatio);
+      
+      console.log(`[Anthropic] Resizing from ${metadata.width}x${metadata.height} to ${newWidth}x${newHeight}`);
+      
+      // Resize and convert to JPEG for better compression
+      const resizedBuffer = await sharp(inputBuffer)
+        .resize(newWidth, newHeight, { fit: 'inside' })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+      
+      const resizedBase64 = resizedBuffer.toString('base64');
+      const newSize = Math.ceil(resizedBase64.length * 0.75);
+      
+      console.log(`[Anthropic] Resized ${fileName}: ${(estimatedBytes / 1024 / 1024).toFixed(2)}MB -> ${(newSize / 1024 / 1024).toFixed(2)}MB`);
+      
+      return resizedBase64;
+    } catch (error) {
+      console.error(`[Anthropic] Failed to resize image ${fileName}:`, error);
+      return base64Data; // Return original on error
+    }
   }
   
   private isPdfAttachment(fileName: string): boolean {

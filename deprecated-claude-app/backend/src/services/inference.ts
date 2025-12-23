@@ -93,7 +93,7 @@ export class InferenceService {
     
     switch (model.provider) {
       case 'anthropic':
-        apiMessages = this.anthropicService.formatMessagesForAnthropic(formattedMessages);
+        apiMessages = await this.anthropicService.formatMessagesForAnthropic(formattedMessages);
         break;
       case 'bedrock':
         apiMessages = this.bedrockService.formatMessagesForClaude(formattedMessages);
@@ -843,7 +843,8 @@ export class InferenceService {
       
       // Helper to check if an attachment is an image
       const isImageAttachment = (attachment: any): boolean => {
-        const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+        // Note: GIF excluded - Anthropic API has issues with some GIF formats
+        const imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
         const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
         return imageExtensions.includes(fileExtension) && !!attachment.content;
       };
@@ -1069,7 +1070,8 @@ export class InferenceService {
         // on the branch for providers (like Anthropic) that support multimodal inputs
         if (role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
           for (const attachment of activeBranch.attachments) {
-            const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            // Note: GIF excluded - Anthropic API has issues with some GIF formats
+            const imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
             const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
             const isImage = imageExtensions.includes(fileExtension);
             

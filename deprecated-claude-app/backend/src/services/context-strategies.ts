@@ -42,7 +42,9 @@ function estimateTokens(content: string): number {
 
 function isImageAttachment(fileName?: string): boolean {
   if (!fileName) return false;
-  const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'];
+  // Note: GIF excluded - Anthropic API has issues with some GIF formats
+  // BMP and SVG also excluded - not widely supported by vision APIs
+  const imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
   return imageExtensions.includes(ext);
 }
