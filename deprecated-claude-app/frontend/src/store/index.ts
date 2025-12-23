@@ -23,6 +23,9 @@ interface StoreState {
     groupChatSuggestedModels?: string[];
     defaultModel?: string;
   } | null;
+  // Detached branch mode - allows users to navigate branches independently
+  isDetachedFromMainBranch: boolean;
+  localBranchSelections: Map<string, string>; // messageId -> branchId
 }
 
 export interface Store {
@@ -57,6 +60,12 @@ export interface Store {
   switchBranch(messageId: string, branchId: string): void;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
   getVisibleMessages(): Message[];
+  
+  // Detached branch mode
+  setDetachedMode(detached: boolean): void;
+  setLocalBranchSelection(messageId: string, branchId: string): void;
+  getEffectiveBranchId(message: Message): string; // Returns local selection if detached, else activeBranchId
+  clearLocalBranchSelections(): void;
   
   loadModels(): Promise<void>;
   loadOpenRouterModels(): Promise<void>;
@@ -183,7 +192,10 @@ export function createStore(): {
     wsService: null,
     lastMetricsUpdate: null,
     grantSummary: null,
-    systemConfig: null
+    systemConfig: null,
+    // Detached branch mode
+    isDetachedFromMainBranch: false,
+    localBranchSelections: new Map()
   });
 
   const store: Store = {
@@ -550,39 +562,44 @@ export function createStore(): {
         switchBranch(messageId: string, branchId: string) {
       console.log('=== SWITCH BRANCH CALLED ===');
       console.log('Params:', { messageId, branchId });
-      console.log('All messages count:', state.allMessages.length);
+      console.log('Detached mode:', state.isDetachedFromMainBranch);
       
       const message = state.allMessages.find(m => m.id === messageId);
       if (!message) {
         console.error('switchBranch: Message not found:', messageId);
-        console.log('Available message IDs:', state.allMessages.map(m => m.id));
         return;
       }
       
-      console.log('Message branches:', message.branches.map(b => ({ id: b.id, parentBranchId: b.parentBranchId })));
+      // Get effective current branch
+      const currentBranchId = this.getEffectiveBranchId(message);
       
       // Skip if already on this branch
-      if (message.activeBranchId === branchId) {
+      if (currentBranchId === branchId) {
         console.log('Already on branch:', branchId);
         return;
       }
       
       console.log('=== SWITCHING BRANCH ===');
-      console.log('Message:', messageId, 'from branch:', message.activeBranchId, 'to branch:', branchId);
+      console.log('Message:', messageId, 'from branch:', currentBranchId, 'to branch:', branchId);
       
-      // First, update the local state
-      message.activeBranchId = branchId;
-      
-      // Persist to backend immediately (but don't block on it)
-      if (state.currentConversation) {
-        api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
-          messageId,
-          branchId
-        }).then(() => {
-          console.log('Branch switch persisted to backend');
-        }).catch(error => {
-          console.error('Failed to persist branch switch:', error);
-        });
+      if (state.isDetachedFromMainBranch) {
+        // Detached mode: only update local selection, don't affect main branch
+        this.setLocalBranchSelection(messageId, branchId);
+        console.log('Branch switch saved locally (detached mode)');
+      } else {
+        // Attached mode: update local state AND persist to backend
+        message.activeBranchId = branchId;
+        
+        if (state.currentConversation) {
+          api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
+            messageId,
+            branchId
+          }).then(() => {
+            console.log('Branch switch persisted to backend');
+          }).catch(error => {
+            console.error('Failed to persist branch switch:', error);
+          });
+        }
       }
       
       // Sort messages by tree order to handle out-of-order children
@@ -659,7 +676,9 @@ export function createStore(): {
       
       for (let i = 0; i < sortedMessages.length; i++) {
         const message = sortedMessages[i];
-        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+        // Use effective branch ID (local selection if detached, else server's activeBranchId)
+        const effectiveBranchId = this.getEffectiveBranchId(message);
+        const activeBranch = message.branches.find(b => b.id === effectiveBranchId);
         
         // console.log(`Message ${i}:`, message.id, 'activeBranchId:', message.activeBranchId, 
         //             'branches:', message.branches.length, 
@@ -704,9 +723,9 @@ export function createStore(): {
         }
         
         // Pick the best branch:
-        // 1. Prefer the stored activeBranchId if it's valid and in validBranches
+        // 1. Prefer the effective branchId if it's valid and in validBranches
         // 2. Otherwise pick the chronologically newest (by createdAt)
-        let selectedBranch = validBranches.find(b => b.id === message.activeBranchId);
+        let selectedBranch = validBranches.find(b => b.id === effectiveBranchId);
         
         if (!selectedBranch) {
           // Sort by createdAt descending (newest first) and pick the first
@@ -743,6 +762,45 @@ export function createStore(): {
           console.log('Last visible:', last.id.slice(0, 8), 'activeBranch:', last.activeBranchId?.slice(0, 8));
         }
       return visibleMessages;
+    },
+    
+    // Detached branch mode methods
+    setDetachedMode(detached: boolean) {
+      state.isDetachedFromMainBranch = detached;
+      if (!detached) {
+        // When re-attaching, clear local selections
+        state.localBranchSelections.clear();
+      }
+      // Trigger reactivity
+      state.messagesVersion++;
+      invalidateSortCache();
+      console.log('[Store] Detached mode:', detached);
+    },
+    
+    setLocalBranchSelection(messageId: string, branchId: string) {
+      state.localBranchSelections.set(messageId, branchId);
+      // Trigger reactivity
+      state.messagesVersion++;
+      invalidateSortCache();
+      console.log('[Store] Local branch selection:', messageId.slice(0, 8), '->', branchId.slice(0, 8));
+    },
+    
+    getEffectiveBranchId(message: Message): string {
+      // If detached, use local selection if available
+      if (state.isDetachedFromMainBranch) {
+        const localSelection = state.localBranchSelections.get(message.id);
+        if (localSelection) {
+          return localSelection;
+        }
+      }
+      // Fall back to server's activeBranchId
+      return message.activeBranchId;
+    },
+    
+    clearLocalBranchSelections() {
+      state.localBranchSelections.clear();
+      state.messagesVersion++;
+      invalidateSortCache();
     },
     
     // Model actions

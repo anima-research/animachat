@@ -869,11 +869,18 @@ const samplingBranches = ref(1); // Number of response branches to generate
 
 // Computed: Check if this is a multiuser conversation (shared or has multiple users)
 const isMultiuserConversation = computed(() => {
-  // Show multiuser controls if there are multiple users in the room
-  // or if the conversation has collaborators (even if they're not currently online)
-  return roomUsers.value.length > 1 || sharedConversations.value.some(
-    s => s.conversationId === currentConversation.value?.id
-  );
+  // Show multiuser controls if:
+  // 1. Multiple users currently in room
+  // 2. Conversation was shared with me
+  // 3. I've shared this conversation publicly
+  // 4. This conversation has collaborators
+  const conversationId = currentConversation.value?.id;
+  if (!conversationId) return false;
+  
+  return roomUsers.value.length > 1 || 
+    sharedConversations.value.some(s => s.conversationId === conversationId) ||
+    myCreatedShares.value.some(s => s.conversationId === conversationId) ||
+    currentConversationCollaborators.value.length > 0;
 });
 
 // Computed label for the input field - shows who is typing
@@ -959,12 +966,52 @@ interface SharedConversationEntry {
 }
 const sharedConversations = ref<SharedConversationEntry[]>([]);
 
+// Shares created by the current user (for owner to know their conversation is shared)
+interface MyCreatedShare {
+  conversationId: string;
+  // Add other fields as needed
+}
+const myCreatedShares = ref<MyCreatedShare[]>([]);
+
+// Collaboration shares for the current conversation (user-to-user sharing)
+interface CollaborationShare {
+  id: string;
+  recipientId: string;
+  permission: string;
+}
+const currentConversationCollaborators = ref<CollaborationShare[]>([]);
+
 async function loadSharedConversations() {
   try {
     const response = await api.get('/collaboration/shared-with-me');
     sharedConversations.value = response.data.shares || [];
   } catch (error) {
     console.error('Failed to load shared conversations:', error);
+  }
+}
+
+async function loadMyCreatedShares() {
+  try {
+    const response = await api.get('/shares/my-shares');
+    myCreatedShares.value = response.data || [];
+  } catch (error) {
+    console.error('Failed to load my created shares:', error);
+  }
+}
+
+async function loadCurrentConversationCollaborators() {
+  const conversationId = currentConversation.value?.id;
+  if (!conversationId) {
+    currentConversationCollaborators.value = [];
+    return;
+  }
+  
+  try {
+    const response = await api.get(`/collaboration/conversation/${conversationId}/shares`);
+    currentConversationCollaborators.value = response.data.shares || [];
+  } catch (error) {
+    // User might not have access or conversation doesn't exist
+    currentConversationCollaborators.value = [];
   }
 }
 
@@ -1176,8 +1223,20 @@ async function toggleThinking() {
 const isDetachedFromMainBranch = computed(() => store.state.isDetachedFromMainBranch);
 
 const isCollaborativeConversation = computed(() => {
-  // Show detached toggle for conversations with collaborators
-  return currentConversation.value?.collaborators && currentConversation.value.collaborators.length > 0;
+  // Show detached toggle for multi-user conversations:
+  // 1. Multiple users currently in room (real-time collaboration)
+  // 2. Conversation has been shared with me (I'm a recipient)
+  // 3. I've shared this conversation with others via public link
+  // 4. This conversation has collaborators (user-to-user sharing)
+  const conversationId = currentConversation.value?.id;
+  if (!conversationId) return false;
+  
+  const multipleUsers = roomUsers.value.length > 1;
+  const sharedWithMe = sharedConversations.value.some(s => s.conversationId === conversationId);
+  const iSharedPublic = myCreatedShares.value.some(s => s.conversationId === conversationId);
+  const hasCollaborators = currentConversationCollaborators.value.length > 0;
+  
+  return multipleUsers || sharedWithMe || iSharedPublic || hasCollaborators;
 });
 
 function toggleDetachedMode() {
@@ -1394,6 +1453,7 @@ onMounted(async () => {
   await store.loadSystemConfig();
   await store.loadConversations();
   await loadSharedConversations();
+  await loadMyCreatedShares();
   await loadPersonas();
 
   // Set local systemConfig from store
@@ -1739,6 +1799,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     await store.loadConversation(newId as string);
     await loadParticipants();
     await loadBookmarks();
+    await loadCurrentConversationCollaborators();
     
     // Join the room for multi-user support
     if (store.state.wsService) {

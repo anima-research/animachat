@@ -851,7 +851,9 @@ const canViewMetadata = computed(() => {
 });
 
 const branchIndex = computed(() => {
-  return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;
+  // Use effective branch ID (local selection if detached, else server's activeBranchId)
+  const effectiveBranchId = store.getEffectiveBranchId(props.message);
+  return props.message.branches.findIndex(b => b.id === effectiveBranchId) || 0;
 });
 
 const currentBranch = computed(() => {
@@ -1119,7 +1121,9 @@ const siblingBranches = computed(() => {
 
 // Get index among siblings
 const siblingIndex = computed(() => {
-  return siblingBranches.value.findIndex(b => b.id === props.message.activeBranchId) || 0;
+  // Use effective branch ID (local selection if detached, else server's activeBranchId)
+  const effectiveBranchId = store.getEffectiveBranchId(props.message);
+  return siblingBranches.value.findIndex(b => b.id === effectiveBranchId) || 0;
 });
 
 // Check if branches are navigable (share the same parent)
