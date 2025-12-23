@@ -1872,7 +1872,8 @@ export class Database {
     // For standard format, use generic "A" since user might switch models during conversation
     // For prefill (group chat), use the model's actual name
     if (format === 'standard' || !format) {
-      await this.createParticipant(conversation.id, userId, userFirstName, 'user');
+      // Pass userId for user-type participant so we can identify who "owns" it in collaborative chats
+      await this.createParticipant(conversation.id, userId, userFirstName, 'user', undefined, undefined, undefined, undefined, userId);
       await this.createParticipant(conversation.id, userId, 'A', 'assistant', model, systemPrompt, settings);
     } else {
       // Group chat format - use proper model name
@@ -1880,7 +1881,8 @@ export class Database {
       const modelConfig = await modelLoader.getModelById(model);
       const assistantName = modelConfig?.shortName || modelConfig?.displayName || 'Assistant';
       
-      await this.createParticipant(conversation.id, userId, userFirstName, 'user');
+      // Pass userId for user-type participant so we can identify who "owns" it in collaborative chats
+      await this.createParticipant(conversation.id, userId, userFirstName, 'user', undefined, undefined, undefined, undefined, userId);
       await this.createParticipant(conversation.id, userId, assistantName, 'assistant', model, systemPrompt, settings);
     }
 
@@ -3059,7 +3061,8 @@ export class Database {
     model?: string,
     systemPrompt?: string,
     settings?: any,
-    contextManagement?: any
+    contextManagement?: any,
+    participantUserId?: string // The user who "owns" this participant (for collaborative user participants)
   ): Promise<Participant> {
     await this.loadUser(conversationOwnerUserId);
     const participant: Participant = {
@@ -3067,6 +3070,7 @@ export class Database {
       conversationId,
       name,
       type,
+      userId: participantUserId,
       model,
       systemPrompt,
       settings,
@@ -3423,6 +3427,27 @@ export class Database {
       timestamp: new Date(),
       ...eventData
     });
+    
+    // Create a user participant for the invited user (if they have edit/collaborator permission)
+    if (permission === 'editor' || permission === 'collaborator') {
+      // Get the target user's display name
+      const invitedUserName = targetUser.name || sharedWithEmail.split('@')[0];
+      
+      // Create participant for the invited user - use conversation owner's userId for loading
+      await this.createParticipant(
+        conversationId,
+        conversation.userId, // Load under conversation owner's account
+        invitedUserName,
+        'user',
+        undefined, // model
+        undefined, // systemPrompt
+        undefined, // settings
+        undefined, // contextManagement
+        targetUser.id // participantUserId - the invited user "owns" this participant
+      );
+      
+      console.log(`[Collaboration] Created participant for invited user ${targetUser.id} in conversation ${conversationId}`);
+    }
     
     console.log(`[Collaboration] Shared conversation ${conversationId} with ${sharedWithEmail} (${permission})`);
     return share;

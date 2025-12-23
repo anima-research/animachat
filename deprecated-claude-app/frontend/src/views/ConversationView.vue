@@ -3021,8 +3021,10 @@ async function loadParticipants() {
     console.log('[ConversationView] Using cached participants');
     participants.value = cached;
     
-    // Set default selected participant
-    const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
+    // Set default selected participant - prefer the one that belongs to the current user
+    const currentUserId = store.state.user?.id;
+    const ownParticipant = participants.value.find(p => p.type === 'user' && p.isActive && p.userId === currentUserId);
+    const defaultUser = ownParticipant || participants.value.find(p => p.type === 'user' && p.isActive);
     if (defaultUser) {
       selectedParticipant.value = defaultUser.id;
     }
@@ -3044,8 +3046,10 @@ async function loadParticipants() {
     // Cache the loaded participants
     participantCache.set(currentConversation.value.id, response.data);
     
-    // Set default selected participant
-    const defaultUser = participants.value.find(p => p.type === 'user' && p.isActive);
+    // Set default selected participant - prefer the one that belongs to the current user
+    const currentUserId = store.state.user?.id;
+    const ownParticipant = participants.value.find(p => p.type === 'user' && p.isActive && p.userId === currentUserId);
+    const defaultUser = ownParticipant || participants.value.find(p => p.type === 'user' && p.isActive);
     if (defaultUser) {
       selectedParticipant.value = defaultUser.id;
     }

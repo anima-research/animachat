@@ -355,6 +355,7 @@ export const ParticipantSchema = z.object({
   conversationId: z.string().uuid(),
   name: z.string(),
   type: z.enum(['user', 'assistant']),
+  userId: z.string().uuid().optional(), // The user who "owns" this participant (for user-type participants in collaborative chats)
   model: z.string().optional(), // Only for assistant participants
   systemPrompt: z.string().optional(), // Only for assistant participants
   settings: ModelSettingsSchema.optional(), // Only for assistant participants
