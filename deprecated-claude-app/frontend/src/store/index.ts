@@ -899,6 +899,9 @@ export function createStore(): {
             // Update content blocks if provided
             if (data.contentBlocks) {
               branch.contentBlocks = data.contentBlocks;
+              // Force Vue reactivity for contentBlocks updates (especially during thinking)
+              // Without this, empty content chunks with only contentBlocks won't trigger re-renders
+              state.messagesVersion++;
             }
           }
         }
