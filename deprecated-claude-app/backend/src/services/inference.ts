@@ -245,8 +245,11 @@ export class InferenceService {
     }
 
     // Build stop sequences for prefill/messages formats
+    // IMPORTANT: Don't pass stop sequences to API when prefill thinking is enabled,
+    // because the model might reference participant names like "A:" in its thinking trace.
+    // We'll apply stop sequences post-facto on the response content instead.
     let stopSequences: string[] | undefined;
-    if (actualFormat === 'prefill' || actualFormat === 'messages') {
+    if ((actualFormat === 'prefill' || actualFormat === 'messages') && !shouldTriggerPrefillThinking) {
       // Always include these common stop sequences
       const baseStopSequences = ['User:', 'A:', "Claude:"];
       // Add participant names as stop sequences (excluding empty names and the current responder)
@@ -256,7 +259,21 @@ export class InferenceService {
         .map(p => `${p.name}:`);
       // Combine and deduplicate
       stopSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
+    } else if (shouldTriggerPrefillThinking) {
+      console.log('[InferenceService] Skipping API stop sequences for prefill thinking mode (will apply post-facto)');
     }
+    
+    // Build post-facto stop sequences for prefill thinking mode
+    // Since this is applied in our code, not the API, we can check for ALL participants
+    const postFactoStopSequences = shouldTriggerPrefillThinking ? (() => {
+      const baseStopSequences = ['User:', 'A:', "Claude:"];
+      const participantStopSequences = participants
+        .filter(p => p.name !== '' && p.id !== responderId)
+        .map(p => `${p.name}:`);
+      const allSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
+      console.log(`[InferenceService] Post-facto stop sequences (${allSequences.length}): ${allSequences.slice(0, 5).join(', ')}${allSequences.length > 5 ? '...' : ''}`);
+      return allSequences;
+    })() : [];
 
     // Route to appropriate service based on provider
     // For custom models with embedded endpoints, skip API key manager
@@ -319,13 +336,30 @@ export class InferenceService {
     // - Buffer thinking content until </think> is seen (don't add to content)
     // - Stream thinking updates via contentBlocks only
     // - After </think>, stream actual response text as normal content
+    // - Apply stop sequences post-facto on response content (not during thinking)
     let inThinkingMode = false;
     let thinkingBuffer = '';
     let thinkingComplete = false;
+    let responseHitStopSequence = false;
+    let responseBuffer = ''; // Buffer to detect stop sequences across chunk boundaries
     const currentContentBlocks: any[] = [];
+    
+    // Helper to find stop sequences in text
+    const findStopSequence = (text: string): { index: number; sequence: string } | null => {
+      for (const seq of postFactoStopSequences) {
+        const idx = text.indexOf(seq);
+        if (idx !== -1) {
+          return { index: idx, sequence: seq };
+        }
+      }
+      return null;
+    };
     
     const finalOnChunk = shouldTriggerPrefillThinking 
       ? async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+          // If we already hit a stop sequence, ignore further chunks (except completion)
+          if (responseHitStopSequence && !isComplete) return;
+          
           if (isComplete) {
             // Finalize contentBlocks
             if (thinkingBuffer) {
@@ -368,7 +402,19 @@ export class InferenceService {
               // Start streaming response content (without the tags, trim leading newlines)
               const trimmedAfterTag = afterTag.replace(/^[\n\r]+/, '');
               if (trimmedAfterTag) {
-                await baseOnChunk(trimmedAfterTag, false, currentContentBlocks);
+                // Check for stop sequence in initial response
+                const stopMatch = findStopSequence(trimmedAfterTag);
+                if (stopMatch) {
+                  console.log(`[InferenceService] Stop sequence "${stopMatch.sequence}" found in response, truncating`);
+                  responseHitStopSequence = true;
+                  const truncated = trimmedAfterTag.substring(0, stopMatch.index).trimEnd();
+                  if (truncated) {
+                    await baseOnChunk(truncated, false, currentContentBlocks);
+                  }
+                } else {
+                  responseBuffer = trimmedAfterTag;
+                  await baseOnChunk(trimmedAfterTag, false, currentContentBlocks);
+                }
               }
             } else {
               // Still in thinking mode - buffer thinking, send empty chunk with contentBlocks update
@@ -378,8 +424,23 @@ export class InferenceService {
               await baseOnChunk('', false, currentContentBlocks);
             }
           } else {
-            // After thinking, stream normal response content
-            await baseOnChunk(chunk, false, currentContentBlocks);
+            // After thinking, stream normal response content with stop sequence checking
+            responseBuffer += chunk;
+            
+            // Check for stop sequence in accumulated response
+            const stopMatch = findStopSequence(responseBuffer);
+            if (stopMatch) {
+              console.log(`[InferenceService] Stop sequence "${stopMatch.sequence}" found in response, truncating`);
+              responseHitStopSequence = true;
+              // Calculate how much of this chunk to send
+              const totalBefore = responseBuffer.length - chunk.length;
+              const cutPoint = stopMatch.index - totalBefore;
+              if (cutPoint > 0) {
+                await baseOnChunk(chunk.substring(0, cutPoint).trimEnd(), false, currentContentBlocks);
+              }
+            } else {
+              await baseOnChunk(chunk, false, currentContentBlocks);
+            }
           }
         }
       : baseOnChunk;
