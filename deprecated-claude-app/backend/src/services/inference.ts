@@ -210,8 +210,8 @@ export class InferenceService {
     // Format messages based on conversation format
     // For prefill format with Anthropic direct, pass cache marker indices to insert breakpoints
     const shouldInsertCacheBreakpoints = actualFormat === 'prefill' && model.provider === 'anthropic';
-    // Trigger thinking via <think> tag in prefill mode if thinking was enabled in settings
-    const shouldTriggerPrefillThinking = actualFormat === 'prefill' && settings.thinking?.enabled;
+    // Trigger thinking via <think> tag in prefill mode if thinking was enabled AND model supports it
+    const shouldTriggerPrefillThinking = actualFormat === 'prefill' && settings.thinking?.enabled && model.supportsThinking;
     const formattedMessages = this.formatMessagesForConversation(
       processedMessages,
       actualFormat,

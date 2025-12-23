@@ -22,9 +22,36 @@ export class WebSocketService {
   private eventHandlers: Map<string, Set<EventHandler>> = new Map();
   private messageQueue: WsMessage[] = [];
   private currentRoomId: string | null = null;
+  private visibilityHandler: (() => void) | null = null;
   
   constructor(token: string) {
     this.token = token;
+    this.setupVisibilityHandler();
+  }
+  
+  private setupVisibilityHandler(): void {
+    // Handle tab visibility changes (Safari aggressively suspends background tabs)
+    this.visibilityHandler = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[WS] Tab became visible, checking connection...');
+        // Reset reconnect attempts when tab becomes visible
+        this.reconnectAttempts = 0;
+        
+        // Force reconnect if not connected or connection is stale
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          console.log('[WS] Connection dead after tab resume, reconnecting...');
+          this.connect();
+          
+          // Rejoin room if we were in one
+          if (this.currentRoomId) {
+            const roomId = this.currentRoomId;
+            this.currentRoomId = null; // Clear so joinRoom actually sends the message
+            setTimeout(() => this.joinRoom(roomId), 500); // Give connection time to establish
+          }
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', this.visibilityHandler);
   }
   
   connect(): void {
@@ -88,6 +115,12 @@ export class WebSocketService {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+    }
+    
+    // Clean up visibility handler
+    if (this.visibilityHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
     }
     
     this.eventHandlers.clear();
