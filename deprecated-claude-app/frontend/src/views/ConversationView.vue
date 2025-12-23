@@ -596,6 +596,18 @@
               :title="thinkingEnabled ? 'Disable extended thinking' : 'Enable extended thinking'"
             />
             
+            <!-- Detached branch mode toggle (for multi-user independent browsing) -->
+            <v-btn
+              v-if="isCollaborativeConversation"
+              :icon="isDetachedFromMainBranch ? 'mdi-link-off' : 'mdi-link'"
+              :color="isDetachedFromMainBranch ? 'warning' : 'grey'"
+              size="small"
+              :variant="isDetachedFromMainBranch ? 'tonal' : 'text'"
+              @click.stop="toggleDetachedMode"
+              :title="isDetachedFromMainBranch ? 'Detached: Branch navigation is local-only. Click to follow main branch.' : 'Following main branch. Click to browse independently.'"
+              class="ml-1"
+            />
+            
             <!-- Sampling branches -->
             <v-menu location="top">
               <template v-slot:activator="{ props }">
@@ -1158,6 +1170,18 @@ async function toggleThinking() {
   };
   
   await updateConversationSettings({ settings: newSettings });
+}
+
+// Detached branch mode - for independent branch navigation in multi-user chats
+const isDetachedFromMainBranch = computed(() => store.state.isDetachedFromMainBranch);
+
+const isCollaborativeConversation = computed(() => {
+  // Show detached toggle for conversations with collaborators
+  return currentConversation.value?.collaborators && currentConversation.value.collaborators.length > 0;
+});
+
+function toggleDetachedMode() {
+  store.setDetachedMode(!store.state.isDetachedFromMainBranch);
 }
 
 // Get bookmarks in the order they appear in the active conversation path
