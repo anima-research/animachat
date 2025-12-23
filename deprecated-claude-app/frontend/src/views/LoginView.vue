@@ -311,7 +311,13 @@ async function submit() {
       await store.login(email.value, password.value);
     }
     
-    router.push('/conversation');
+    // Check for pending invite to claim
+    const pendingInvite = localStorage.getItem('pendingInvite');
+    if (pendingInvite) {
+      router.push(`/invite/${pendingInvite}`);
+    } else {
+      router.push('/conversation');
+    }
   } catch (err: any) {
     // Check if it's a verification required error
     if (err.response?.data?.requiresVerification) {

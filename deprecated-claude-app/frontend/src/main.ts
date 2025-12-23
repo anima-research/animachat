@@ -20,6 +20,7 @@ import ConversationView from './views/ConversationView.vue';
 import LoginView from './views/LoginView.vue';
 import AboutView from './views/AboutView.vue';
 import SharedView from './views/SharedView.vue';
+import InviteView from './views/InviteView.vue';
 import ModelTestView from './views/ModelTestView.vue';
 import ModelPricingView from './views/ModelPricingView.vue';
 import AdminView from './views/AdminView.vue';
@@ -92,6 +93,12 @@ const router = createRouter({
       name: 'share',
       component: SharedView,
       // No auth required - public route
+    },
+    {
+      path: '/invite/:token',
+      name: 'invite',
+      component: InviteView,
+      // No auth required - handles both logged in and out
     },
     {
       path: '/models',

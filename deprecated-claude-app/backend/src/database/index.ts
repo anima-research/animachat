@@ -1017,6 +1017,9 @@ export class Database {
       case 'collaboration_share_created':
       case 'collaboration_share_updated':
       case 'collaboration_share_revoked':
+      case 'collaboration_invite_created':
+      case 'collaboration_invite_used':
+      case 'collaboration_invite_deleted':
         this.collaborationStore.replayEvent(event);
         break;
 
@@ -3556,6 +3559,175 @@ export class Database {
     if (!canAccess) return false;
     if (isOwner) return true;
     return permission !== null && canDelete(permission);
+  }
+
+  // ==========================================
+  // Collaboration Invite Link Methods
+  // ==========================================
+
+  /**
+   * Create an invite link for a conversation
+   */
+  async createCollaborationInvite(
+    conversationId: string,
+    createdByUserId: string,
+    permission: SharePermission,
+    options?: {
+      label?: string;
+      expiresInHours?: number;
+      maxUses?: number;
+    }
+  ): Promise<any> {
+    const { invite, eventData } = this.collaborationStore.createInvite(
+      conversationId,
+      createdByUserId,
+      permission,
+      options
+    );
+    
+    await this.eventStore.appendEvent({
+      timestamp: new Date(),
+      ...eventData
+    });
+    
+    console.log(`[Collaboration] Created invite link for conversation ${conversationId}`);
+    return invite;
+  }
+
+  /**
+   * Get invite by token (for claiming)
+   */
+  async getCollaborationInviteByToken(token: string): Promise<any> {
+    return this.collaborationStore.getInviteByToken(token);
+  }
+
+  /**
+   * Get invites for a conversation
+   */
+  async getCollaborationInvitesForConversation(conversationId: string): Promise<any[]> {
+    return this.collaborationStore.getInvitesForConversation(conversationId);
+  }
+
+  /**
+   * Claim an invite (join the conversation)
+   */
+  async claimCollaborationInvite(token: string, userId: string): Promise<{ 
+    success: boolean; 
+    error?: string; 
+    conversationId?: string; 
+    permission?: SharePermission 
+  }> {
+    const invite = this.collaborationStore.getInviteByToken(token);
+    if (!invite) {
+      return { success: false, error: 'Invite not found or expired' };
+    }
+    
+    // Check if user already has access
+    const existingAccess = await this.canUserAccessConversation(invite.conversationId, userId);
+    if (existingAccess.canAccess) {
+      return { success: false, error: 'You already have access to this conversation' };
+    }
+    
+    // Can't claim your own invite
+    if (invite.createdByUserId === userId) {
+      return { success: false, error: 'Cannot claim your own invite' };
+    }
+    
+    // Load the invite creator's data to ensure the conversation is in memory
+    await this.loadUser(invite.createdByUserId);
+    
+    // Get conversation to find owner
+    const conversation = this.conversations.get(invite.conversationId);
+    if (!conversation) {
+      return { success: false, error: 'Conversation not found' };
+    }
+    
+    // Get user info for the share
+    const claimingUser = await this.getUserById(userId);
+    if (!claimingUser) {
+      return { success: false, error: 'User not found' };
+    }
+    
+    // Create collaboration share for the user
+    const { share, eventData } = this.collaborationStore.createShare(
+      invite.conversationId,
+      userId,
+      claimingUser.email || '',
+      invite.createdByUserId,
+      invite.permission
+    );
+    
+    await this.eventStore.appendEvent({
+      timestamp: new Date(),
+      ...eventData
+    });
+    
+    // Create user participant for the claiming user (if they have edit/collaborator permission)
+    if (invite.permission === 'editor' || invite.permission === 'collaborator') {
+      const userName = claimingUser.name || claimingUser.email?.split('@')[0] || 'User';
+      
+      await this.createParticipant(
+        invite.conversationId,
+        conversation.userId,
+        userName,
+        'user',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        userId
+      );
+    }
+    
+    // Increment invite use count
+    const { eventData: useEventData } = this.collaborationStore.useInvite(invite.id);
+    if (useEventData) {
+      await this.eventStore.appendEvent({
+        timestamp: new Date(),
+        ...useEventData
+      });
+    }
+    
+    console.log(`[Collaboration] User ${userId} claimed invite for conversation ${invite.conversationId}`);
+    
+    return {
+      success: true,
+      conversationId: invite.conversationId,
+      permission: invite.permission
+    };
+  }
+
+  /**
+   * Delete an invite
+   */
+  async deleteCollaborationInvite(inviteId: string, deletedByUserId: string): Promise<boolean> {
+    const { success, eventData } = this.collaborationStore.deleteInvite(inviteId, deletedByUserId);
+    
+    if (success && eventData) {
+      await this.eventStore.appendEvent({
+        timestamp: new Date(),
+        ...eventData
+      });
+    }
+    
+    return success;
+  }
+
+  /**
+   * Get public info about a conversation (limited data for invite pages)
+   */
+  async getConversationPublicInfo(conversationId: string): Promise<{ title: string } | null> {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return null;
+    return { title: conversation.title };
+  }
+
+  /**
+   * Get user display name
+   */
+  async getUserDisplayName(userId: string): Promise<string> {
+    const user = await this.getUserById(userId);
+    return user?.name || 'Unknown User';
   }
 
   // Bookmark methods

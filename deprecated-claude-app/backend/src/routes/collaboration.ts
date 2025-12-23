@@ -6,7 +6,41 @@ import { SharePermission } from '@deprecated-claude/shared';
 export function collaborationRouter(db: Database): Router {
   const router = Router();
 
-  // All routes require authentication
+  // ==========================================
+  // Public routes (no authentication required)
+  // ==========================================
+
+  /**
+   * Get invite details by token (public - for redemption page)
+   * GET /api/collaboration/invites/token/:token
+   */
+  router.get('/invites/token/:token', async (req, res) => {
+    try {
+      const { token } = req.params;
+      
+      const invite = await db.getCollaborationInviteByToken(token);
+      if (!invite) {
+        return res.status(404).json({ error: 'Invite not found or expired' });
+      }
+
+      // Get conversation details (limited info for public view)
+      const conversation = await db.getConversationPublicInfo(invite.conversationId);
+
+      res.json({
+        permission: invite.permission,
+        label: invite.label,
+        conversationTitle: conversation?.title || 'Untitled Conversation',
+        createdByName: await db.getUserDisplayName(invite.createdByUserId)
+      });
+    } catch (error) {
+      console.error('Error getting invite:', error);
+      res.status(500).json({ error: 'Failed to get invite' });
+    }
+  });
+
+  // ==========================================
+  // Authenticated routes
+  // ==========================================
   router.use(authenticateToken);
 
   /**
@@ -200,6 +234,135 @@ export function collaborationRouter(db: Database): Router {
     } catch (error) {
       console.error('Error checking permission:', error);
       res.status(500).json({ error: 'Failed to check permission' });
+    }
+  });
+
+  // ==========================================
+  // Invite Link Routes
+  // ==========================================
+
+  /**
+   * Create an invite link for a conversation
+   * POST /api/collaboration/invites
+   * Body: { conversationId, permission, label?, expiresInHours?, maxUses? }
+   */
+  router.post('/invites', async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const { conversationId, permission, label, expiresInHours, maxUses } = req.body;
+
+      if (!conversationId || !permission) {
+        return res.status(400).json({ error: 'Missing required fields: conversationId, permission' });
+      }
+
+      if (!['viewer', 'collaborator', 'editor'].includes(permission)) {
+        return res.status(400).json({ error: 'Invalid permission' });
+      }
+
+      // Verify user has access to this conversation (must be owner or editor)
+      const access = await db.canUserAccessConversation(conversationId, userId);
+      if (!access.isOwner && access.permission !== 'editor') {
+        return res.status(403).json({ error: 'Only owners and editors can create invite links' });
+      }
+
+      const invite = await db.createCollaborationInvite(
+        conversationId,
+        userId,
+        permission as SharePermission,
+        { label, expiresInHours, maxUses }
+      );
+
+      // Build the full invite URL
+      const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const inviteUrl = `${baseUrl}/invite/${invite.inviteToken}`;
+
+      res.json({
+        ...invite,
+        inviteUrl
+      });
+    } catch (error) {
+      console.error('Error creating invite:', error);
+      res.status(500).json({ error: 'Failed to create invite' });
+    }
+  });
+
+  /**
+   * Claim an invite (join the conversation)
+   * POST /api/collaboration/invites/token/:token/claim
+   * Requires authentication
+   */
+  router.post('/invites/token/:token/claim', async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const { token } = req.params;
+
+      const result = await db.claimCollaborationInvite(token, userId);
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+
+      res.json({
+        success: true,
+        conversationId: result.conversationId,
+        permission: result.permission
+      });
+    } catch (error) {
+      console.error('Error claiming invite:', error);
+      res.status(500).json({ error: 'Failed to claim invite' });
+    }
+  });
+
+  /**
+   * Get invites for a conversation
+   * GET /api/collaboration/conversation/:conversationId/invites
+   */
+  router.get('/conversation/:conversationId/invites', async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const { conversationId } = req.params;
+
+      // Verify user has access
+      const access = await db.canUserAccessConversation(conversationId, userId);
+      if (!access.isOwner && access.permission !== 'editor') {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const invites = await db.getCollaborationInvitesForConversation(conversationId);
+      
+      // Add full URLs
+      const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const invitesWithUrls = invites.map(invite => ({
+        ...invite,
+        inviteUrl: `${baseUrl}/invite/${invite.inviteToken}`
+      }));
+
+      res.json({ invites: invitesWithUrls });
+    } catch (error) {
+      console.error('Error getting invites:', error);
+      res.status(500).json({ error: 'Failed to get invites' });
+    }
+  });
+
+  /**
+   * Delete an invite
+   * DELETE /api/collaboration/invites/:inviteId
+   */
+  router.delete('/invites/:inviteId', async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const { inviteId } = req.params;
+
+      const success = await db.deleteCollaborationInvite(inviteId, userId);
+      
+      if (!success) {
+        return res.status(404).json({ error: 'Invite not found or unauthorized' });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error deleting invite:', error);
+      res.status(500).json({ error: 'Failed to delete invite' });
     }
   });
 

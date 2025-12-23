@@ -1728,6 +1728,7 @@ onMounted(async () => {
     await store.loadConversation(route.params.id as string);
     await loadParticipants();
     await loadBookmarks();
+    await loadCurrentConversationCollaborators();
     
     // Join the room for multi-user support
     if (store.state.wsService) {
@@ -1746,7 +1747,9 @@ onMounted(async () => {
       drawer.value = false;
     }
   }
-
+  
+  // Mark initialization as complete so route watcher can take over
+  isInitialized.value = true;
 });
 
 onBeforeUnmount(() => {
@@ -1763,8 +1766,14 @@ onBeforeUnmount(() => {
 // Store drafts per conversation
 const conversationDrafts = ref<Map<string, string>>(new Map());
 
+// Track if initial setup is complete
+const isInitialized = ref(false);
+
 // Watch route changes
 watch(() => route.params.id, async (newId, oldId) => {
+  // Skip if not yet initialized (will be handled by onMounted -> loadInitialConversation)
+  if (!isInitialized.value) return;
+  
   if (isMobile.value) {
     mobilePanel.value = newId ? 'conversation' : 'sidebar';
   }

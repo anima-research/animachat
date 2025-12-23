@@ -30,7 +30,8 @@
               :items="permissionOptions"
               variant="outlined"
               density="compact"
-              style="max-width: 150px;"
+              hide-details
+              style="width: 140px; flex-shrink: 0;"
             />
             <v-btn
               color="primary"
@@ -42,6 +43,118 @@
               Add
             </v-btn>
           </div>
+        </div>
+        
+        <v-divider class="my-4" />
+        
+        <!-- Invite Link Section -->
+        <div class="mb-4">
+          <h4 class="text-subtitle-2 mb-2">
+            <v-icon size="small" class="mr-1">mdi-link-variant</v-icon>
+            Invite link
+          </h4>
+          
+          <div v-if="inviteLinks.length === 0" class="d-flex gap-2 align-center">
+            <v-select
+              v-model="inviteLinkPermission"
+              :items="permissionOptions"
+              variant="outlined"
+              density="compact"
+              hide-details
+              style="width: 140px; flex-shrink: 0;"
+            />
+            <v-btn
+              color="secondary"
+              variant="tonal"
+              :loading="isCreatingLink"
+              @click="createInviteLink"
+            >
+              <v-icon start>mdi-link-plus</v-icon>
+              Create Link
+            </v-btn>
+          </div>
+          
+          <div v-else>
+            <v-list density="compact" class="bg-transparent">
+              <v-list-item
+                v-for="link in inviteLinks"
+                :key="link.id"
+                class="px-0"
+              >
+                <template #prepend>
+                  <v-icon class="mr-2">mdi-link-variant</v-icon>
+                </template>
+                
+                <v-list-item-title class="text-caption font-weight-medium">
+                  {{ link.label || `${getPermissionLabel(link.permission)} invite` }}
+                </v-list-item-title>
+                <v-list-item-subtitle class="text-caption">
+                  Used {{ link.useCount }} time{{ link.useCount !== 1 ? 's' : '' }}
+                  <template v-if="link.maxUses"> / {{ link.maxUses }}</template>
+                </v-list-item-subtitle>
+                
+                <template #append>
+                  <v-btn
+                    icon="mdi-content-copy"
+                    size="small"
+                    variant="text"
+                    @click="copyInviteLink(link)"
+                    :title="'Copy invite link'"
+                  />
+                  <v-btn
+                    icon="mdi-delete"
+                    size="small"
+                    variant="text"
+                    color="error"
+                    @click="deleteInviteLink(link.id)"
+                  />
+                </template>
+              </v-list-item>
+            </v-list>
+            
+            <v-btn
+              variant="text"
+              size="small"
+              color="primary"
+              class="mt-1"
+              @click="showCreateLink = true"
+              v-if="!showCreateLink"
+            >
+              <v-icon start size="small">mdi-plus</v-icon>
+              Create another link
+            </v-btn>
+            
+            <div v-if="showCreateLink" class="d-flex gap-2 align-center mt-2">
+              <v-select
+                v-model="inviteLinkPermission"
+                :items="permissionOptions"
+                variant="outlined"
+                density="compact"
+                hide-details
+                style="width: 140px; flex-shrink: 0;"
+              />
+              <v-btn
+                color="secondary"
+                variant="tonal"
+                size="small"
+                :loading="isCreatingLink"
+                @click="createInviteLink"
+              >
+                Create
+              </v-btn>
+              <v-btn
+                variant="text"
+                size="small"
+                @click="showCreateLink = false"
+              >
+                Cancel
+              </v-btn>
+            </div>
+          </div>
+          
+          <v-snackbar v-model="linkCopied" :timeout="2000" color="success">
+            Invite link copied to clipboard!
+          </v-snackbar>
         </div>
         
         <v-divider class="my-4" />
@@ -158,16 +271,35 @@ const isAdding = ref(false);
 const collaborators = ref<Collaborator[]>([]);
 const isLoading = ref(false);
 
+// Invite links
+interface InviteLink {
+  id: string;
+  inviteToken: string;
+  inviteUrl: string;
+  permission: 'viewer' | 'collaborator' | 'editor';
+  label?: string;
+  useCount: number;
+  maxUses?: number;
+  expiresAt?: string;
+}
+
+const inviteLinks = ref<InviteLink[]>([]);
+const inviteLinkPermission = ref<'viewer' | 'collaborator' | 'editor'>('collaborator');
+const isCreatingLink = ref(false);
+const showCreateLink = ref(false);
+const linkCopied = ref(false);
+
 const permissionOptions = [
   { title: 'Viewer', value: 'viewer' },
   { title: 'Collaborator', value: 'collaborator' },
   { title: 'Editor', value: 'editor' }
 ];
 
-// Load collaborators when dialog opens
+// Load collaborators and invite links when dialog opens
 watch(() => props.modelValue, async (isOpen) => {
   if (isOpen && props.conversation) {
-    await loadCollaborators();
+    await Promise.all([loadCollaborators(), loadInviteLinks()]);
+    showCreateLink.value = false;
   }
 });
 
@@ -257,6 +389,67 @@ function formatDate(dateString: string): string {
     return `${diffDays} days ago`;
   } else {
     return date.toLocaleDateString();
+  }
+}
+
+// Invite link functions
+async function loadInviteLinks() {
+  if (!props.conversation) return;
+  
+  try {
+    const response = await api.get(`/collaboration/conversation/${props.conversation.id}/invites`);
+    inviteLinks.value = response.data.invites || [];
+  } catch (error) {
+    console.error('Failed to load invite links:', error);
+  }
+}
+
+async function createInviteLink() {
+  if (!props.conversation) return;
+  
+  isCreatingLink.value = true;
+  try {
+    const response = await api.post('/collaboration/invites', {
+      conversationId: props.conversation.id,
+      permission: inviteLinkPermission.value
+    });
+    
+    inviteLinks.value.push(response.data);
+    showCreateLink.value = false;
+    
+    // Auto-copy to clipboard
+    await copyInviteLink(response.data);
+  } catch (error) {
+    console.error('Failed to create invite link:', error);
+  } finally {
+    isCreatingLink.value = false;
+  }
+}
+
+async function copyInviteLink(link: InviteLink) {
+  try {
+    await navigator.clipboard.writeText(link.inviteUrl);
+    linkCopied.value = true;
+  } catch (error) {
+    console.error('Failed to copy link:', error);
+  }
+}
+
+async function deleteInviteLink(inviteId: string) {
+  try {
+    await api.delete(`/collaboration/invites/${inviteId}`);
+    inviteLinks.value = inviteLinks.value.filter(l => l.id !== inviteId);
+  } catch (error) {
+    console.error('Failed to delete invite link:', error);
+  }
+}
+
+function getPermissionLabel(permission: string): string {
+  switch (permission) {
+    case 'editor': return 'Editor';
+    case 'collaborator': return 'Collaborator';
+    case 'viewer': return 'Viewer';
+    default: return permission;
   }
 }
 
