@@ -808,21 +808,51 @@ export class InferenceService {
           Array.from(cacheBreakpointIndices).sort((a, b) => a - b));
       }
       
+      // Collect all image attachments from user messages
+      // These need to be preserved as actual image blocks, not just text references
+      const collectedImageAttachments: any[] = [];
+      for (const message of messages) {
+        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+        if (activeBranch?.role === 'user' && activeBranch.attachments) {
+          for (const attachment of activeBranch.attachments) {
+            const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
+            const isImage = imageExtensions.includes(fileExtension);
+            if (isImage && attachment.content) {
+              collectedImageAttachments.push(attachment);
+            }
+          }
+        }
+      }
+      
+      if (collectedImageAttachments.length > 0) {
+        console.log(`[PREFILL] Collected ${collectedImageAttachments.length} image attachments for initial user message`);
+      }
+      
       // Add initial user message if configured
       const prefillSettings = conversation?.prefillUserMessage || { enabled: true, content: '<cmd>cat untitled.log</cmd>' };
       
       if (prefillSettings.enabled) {
+        const cmdBranch: any = {
+          id: 'prefill-cmd-branch',
+          content: prefillSettings.content,
+          role: 'user',
+          createdAt: new Date(),
+          isActive: true,
+          parentBranchId: 'root'
+        };
+        
+        // Add collected image attachments to the initial user message
+        // This preserves actual image data for Anthropic API
+        if (collectedImageAttachments.length > 0) {
+          cmdBranch.attachments = collectedImageAttachments;
+          console.log(`[PREFILL] Added ${collectedImageAttachments.length} image attachments to initial user message`);
+        }
+        
         const cmdMessage: Message = {
           id: 'prefill-cmd',
           conversationId: messages[0]?.conversationId || '',
-          branches: [{
-            id: 'prefill-cmd-branch',
-            content: prefillSettings.content,
-            role: 'user',
-            createdAt: new Date(),
-            isActive: true,
-            parentBranchId: 'root'
-          }],
+          branches: [cmdBranch],
           activeBranchId: 'prefill-cmd-branch',
           order: 0
         };
@@ -1009,6 +1039,9 @@ export class InferenceService {
         }
         
         // Handle attachments for non-responder messages
+        // Note: We add text references AND preserve the actual attachments
+        // Text references go in the transcript, but actual image/PDF data is preserved
+        // on the branch for providers (like Anthropic) that support multimodal inputs
         if (role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
           for (const attachment of activeBranch.attachments) {
             const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
@@ -1033,6 +1066,11 @@ export class InferenceService {
           parentBranchId: activeBranch.parentBranchId,
           participantId: activeBranch.participantId
         };
+        
+        // Preserve attachments for providers that support multimodal inputs
+        if (role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
+          formattedBranch.attachments = activeBranch.attachments;
+        }
         
         // Preserve cache control metadata for providers that support it
         if ((activeBranch as any)._cacheControl) {
