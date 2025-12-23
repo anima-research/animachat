@@ -165,6 +165,33 @@ export function conversationRouter(db: Database): Router {
     }
   });
 
+  // Get conversation event history
+  router.get('/:id/events', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Check access (owner or collaborator)
+      const access = await db.canUserAccessConversation(req.params.id, req.userId);
+      if (!access.canAccess) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Get the conversation to find owner
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const events = await db.getConversationEvents(req.params.id, conversation.userId);
+      res.json(events);
+    } catch (error) {
+      console.error('Get conversation events error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Get messages for conversation
   router.get('/:id/messages', async (req: AuthRequest, res) => {
     try {

@@ -657,7 +657,8 @@ async function handleChatMessage(
       userBranch?.id,
       responder.model || conversation.model,
       responder.id,
-      undefined // no attachments for assistant
+      undefined, // no attachments for assistant
+      ws.userId  // user who triggered the generation
     );
   } else {
     // No siblings exist yet, create a new message
@@ -668,7 +669,9 @@ async function handleChatMessage(
       'assistant',
       responder.model || conversation.model,
       userBranch?.id,
-      responder.id
+      responder.id,
+      undefined, // no attachments for assistant
+      ws.userId  // user who triggered the generation
     );
   }
   
@@ -810,7 +813,8 @@ async function handleChatMessage(
           userBranch?.id, // same parent as first branch
           responder.model || conversation.model,
           responder.id,
-          undefined // no attachments
+          undefined, // no attachments
+          ws.userId  // user who triggered the generation
         );
         
         if (newBranchMessage) {
@@ -1174,7 +1178,9 @@ async function handleRegenerate(
     'assistant',
     correctParentBranchId,
     regenerateModel,
-    participantId
+    participantId,
+    undefined, // no attachments
+    ws.userId  // user who triggered the regeneration
   );
 
   if (!updatedMessage) {
@@ -1503,7 +1509,9 @@ async function handleEdit(
     branch.role,
     branch.parentBranchId, // Use the same parent as the original branch
     branch.model,
-    branch.participantId // Keep the same participant
+    branch.participantId, // Keep the same participant
+    undefined, // no attachments
+    ws.userId  // user who made the edit
   );
 
   if (!updatedMessage) {
@@ -1574,7 +1582,9 @@ async function handleEdit(
         'assistant',
         updatedMessage.activeBranchId, // Parent is the edited user message's active branch
         responderModel,  // Use responder's model, not conversation model
-        responderId // Assistant participant ID
+        responderId, // Assistant participant ID
+        undefined, // no attachments
+        ws.userId  // user who triggered the generation
       );
       
       if (!newBranch) {
@@ -1603,7 +1613,9 @@ async function handleEdit(
         'assistant',
         responderModel,  // Use responder's model, not conversation model
         updatedMessage.activeBranchId, // Parent is the edited user message's active branch
-        responderId // Assistant participant ID
+        responderId, // Assistant participant ID
+        undefined,   // no attachments
+        ws.userId    // user who triggered the generation
       );
       
       // Send assistant message to frontend
@@ -1848,7 +1860,7 @@ async function handleDelete(
     }
     
     // Delete the message branch and all its descendants
-    const deleted = await db.deleteMessageBranch(messageId, conversationId, conversation.userId, branchId);
+    const deleted = await db.deleteMessageBranch(messageId, conversationId, conversation.userId, branchId, ws.userId);
     
     if (deleted) {
       const deleteEvent = {
@@ -1956,7 +1968,8 @@ async function handleContinue(
           parentBranchId,
           responderModelId,
           responder.id,
-          undefined // no attachments
+          undefined, // no attachments
+          ws.userId  // user who triggered the generation
         );
       } else {
         // No siblings exist yet, create a new message
@@ -1968,7 +1981,9 @@ async function handleContinue(
           'assistant',
           responderModelId,
           parentBranchId,
-          responder.id
+          responder.id,
+          undefined, // no attachments
+          ws.userId  // user who triggered the generation
         );
       }
     } else {
@@ -1980,7 +1995,9 @@ async function handleContinue(
         'assistant',
         responderModelId,
         undefined,
-        responder.id
+        responder.id,
+        undefined, // no attachments
+        ws.userId  // user who triggered the generation
       );
     }
 
@@ -2089,7 +2106,8 @@ async function handleContinue(
           parentBranchId,
           responder.model || conversation.model,
           responder.id,
-          undefined
+          undefined, // no attachments
+          ws.userId  // user who triggered the generation
         );
         
         if (newBranchMessage) {

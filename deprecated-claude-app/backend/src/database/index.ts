@@ -376,11 +376,17 @@ export class Database {
     await this.eventStore.appendEvent(event);
   }
 
-  private async logConversationEvent(conversationId: string, type: string, data: any): Promise<void> {
+  private async logConversationEvent(conversationId: string, type: string, data: any, actionUserId?: string): Promise<void> {
+    // Ensure userId is always included in event data
+    const eventData = JSON.parse(JSON.stringify(data)); // Deep clone to avoid mutations
+    if (actionUserId && !eventData.userId && !eventData.sentByUserId && !eventData.deletedByUserId && !eventData.editedByUserId) {
+      eventData.userId = actionUserId;
+    }
+    
     const event: Event = {
       timestamp: new Date(),
       type,
-      data: JSON.parse(JSON.stringify(data)) // Deep clone to avoid mutations
+      data: eventData
     };
     
     await this.conversationEventStore.appendEvent(conversationId, event);
@@ -2475,12 +2481,16 @@ export class Database {
     this.messages.set(messageId, updatedMessage);
 
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'message_branch_added', { messageId, branch: newBranch });
+    await this.logConversationEvent(conversationId, 'message_branch_added', { 
+      messageId, 
+      branch: newBranch,
+      userId: sentByUserId || conversationOwnerUserId
+    });
 
     return updatedMessage;
   }
 
-  async setActiveBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string): Promise<boolean> {
+  async setActiveBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string, changedByUserId?: string): Promise<boolean> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
     
@@ -2492,24 +2502,32 @@ export class Database {
     this.messages.set(messageId, updated);
 
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'active_branch_changed', { messageId, branchId });
+    await this.logConversationEvent(conversationId, 'active_branch_changed', { 
+      messageId, 
+      branchId,
+      userId: changedByUserId || conversationOwnerUserId
+    });
 
     return true;
   }
   
-  async updateMessage(messageId: string, conversationId: string, conversationOwnerUserId: string, message: Message): Promise<boolean> {
+  async updateMessage(messageId: string, conversationId: string, conversationOwnerUserId: string, message: Message, updatedByUserId?: string): Promise<boolean> {
     const oldMessage = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!oldMessage) return false;
     
     this.messages.set(messageId, message);
     
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'message_updated', { messageId, message });
+    await this.logConversationEvent(conversationId, 'message_updated', { 
+      messageId, 
+      message,
+      userId: updatedByUserId || conversationOwnerUserId
+    });
     
     return true;
   }
   
-  async deleteMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<boolean> {
+  async deleteMessage(messageId: string, conversationId: string, conversationOwnerUserId: string, deletedByUserId?: string): Promise<boolean> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
     
@@ -2526,7 +2544,11 @@ export class Database {
     }
     
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'message_deleted', { messageId, conversationId });
+    await this.logConversationEvent(conversationId, 'message_deleted', { 
+      messageId, 
+      conversationId,
+      deletedByUserId: deletedByUserId || conversationOwnerUserId
+    });
 
     return true;
   }
@@ -2635,7 +2657,7 @@ export class Database {
     return true;
   }
   
-  async deleteMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string): Promise<string[] | null> {
+  async deleteMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string, deletedByUserId?: string): Promise<string[] | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
     
@@ -2643,6 +2665,7 @@ export class Database {
     if (!branch) return null;
 
     const deletedMessageIds: string[] = [];
+    const actionUserId = deletedByUserId || conversationOwnerUserId;
     
     // If this is the only branch, delete the entire message and cascade
     if (message.branches.length === 1) {
@@ -2665,7 +2688,8 @@ export class Database {
           
           await this.logConversationEvent(conversationId, 'message_deleted', { 
             messageId: msgId,
-            conversationId
+            conversationId,
+            deletedByUserId: actionUserId
           });
         }
       }
@@ -2682,7 +2706,8 @@ export class Database {
       
       await this.logConversationEvent(conversationId, 'message_deleted', { 
         messageId,
-        conversationId
+        conversationId,
+        deletedByUserId: actionUserId
       });
     } else {
       // Just remove this branch
@@ -2700,7 +2725,8 @@ export class Database {
       await this.logConversationEvent(conversationId, 'message_branch_deleted', { 
         messageId,
         branchId,
-        conversationId
+        conversationId,
+        deletedByUserId: actionUserId
       });
       
       // Still need to cascade delete messages that reply to this specific branch
@@ -2721,7 +2747,8 @@ export class Database {
           
           await this.logConversationEvent(conversationId, 'message_deleted', { 
             messageId: msgId,
-            conversationId
+            conversationId,
+            deletedByUserId: actionUserId
           });
         }
       }
@@ -2840,6 +2867,73 @@ export class Database {
 
   async getMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<Message | null> {
     return await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
+  }
+
+  /**
+   * Get event history for a conversation
+   */
+  async getConversationEvents(conversationId: string, conversationOwnerUserId: string): Promise<any[]> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
+    
+    // Load events from the conversation event store
+    const events = await this.conversationEventStore.loadEvents(conversationId);
+    
+    // Enrich events with user info where available
+    const enrichedEvents = await Promise.all(events.map(async (event: any) => {
+      const enriched: any = {
+        type: event.type,
+        timestamp: event.timestamp,
+        data: event.data
+      };
+      
+      // Try to get user info from various possible fields
+      // Check both top-level and nested in branches[0] for message_created events
+      // Also check branch.sentByUserId for message_branch_added events
+      const userId = event.data?.sentByUserId || 
+                     event.data?.deletedByUserId || 
+                     event.data?.editedByUserId ||
+                     event.data?.userId ||
+                     event.data?.triggeredByUserId ||
+                     event.data?.branches?.[0]?.sentByUserId ||
+                     event.data?.branch?.sentByUserId;
+      if (userId) {
+        const user = await this.getUserById(userId);
+        enriched.userName = user?.name || 'Unknown';
+        enriched.userId = userId;
+      }
+      
+      // For message_created events, include message role, branch, and participant info
+      if (event.type === 'message_created' && event.data?.branches?.[0]) {
+        enriched.role = event.data.branches[0].role;
+        enriched.messageId = event.data.id;
+        enriched.branchId = event.data.branches[0].id;
+        if (event.data.branches[0].participantId) {
+          const participant = this.participants.get(event.data.branches[0].participantId);
+          enriched.participantName = participant?.name;
+        }
+      }
+      
+      // For message_branch_added events, include branch info
+      if (event.type === 'message_branch_added' && event.data?.branch) {
+        enriched.messageId = event.data.messageId;
+        enriched.branchId = event.data.branch.id;
+        enriched.role = event.data.branch.role;
+        if (event.data.branch.participantId) {
+          const participant = this.participants.get(event.data.branch.participantId);
+          enriched.participantName = participant?.name;
+        }
+      }
+      
+      // For message_deleted events, include the message ID
+      if (event.type === 'message_deleted') {
+        enriched.messageId = event.data?.messageId || event.data?.id;
+      }
+      
+      return enriched;
+    }));
+    
+    return enrichedEvents;
   }
 
   // Get conversation archive with all branches and orphan/deleted status for debugging

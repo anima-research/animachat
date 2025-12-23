@@ -328,51 +328,71 @@
           @click="treeDrawer = !treeDrawer"
           title="Toggle conversation tree"
         />
+        
+        <v-btn
+          v-if="currentConversation"
+          :icon="showEventHistory ? 'mdi-history' : 'mdi-history'"
+          :color="showEventHistory ? 'primary' : undefined"
+          variant="text"
+          @click.stop="showEventHistory = !showEventHistory"
+          title="Event history"
+        />
       </v-app-bar>
 
-      <!-- Messages Area -->
-      <v-container
-        ref="messagesContainer"
-        class="flex-grow-1 overflow-y-auto messages-container"
-        style="max-height: calc(100vh - 160px);"
-      >
-        <div v-if="!currentConversation" class="text-center mt-12">
-          <v-icon size="64" color="grey">mdi-message-text-outline</v-icon>
-          <h2 class="text-h5 mt-4 text-grey">Select or create a conversation to start</h2>
-        </div>
+      <!-- Messages Area with Event History Panel -->
+      <div class="d-flex flex-grow-1 overflow-hidden">
+        <v-container
+          ref="messagesContainer"
+          class="flex-grow-1 overflow-y-auto messages-container"
+          style="max-height: calc(100vh - 160px);"
+        >
+          <div v-if="!currentConversation" class="text-center mt-12">
+            <v-icon size="64" color="grey">mdi-message-text-outline</v-icon>
+            <h2 class="text-h5 mt-4 text-grey">Select or create a conversation to start</h2>
+          </div>
+          
+          <div v-else>
+            <MessageComponent
+              v-for="(message, index) in messages"
+              :id="`message-${message.id}`"
+              :key="message.id"
+              :message="message"
+              :participants="participants"
+              :is-selected-parent="selectedBranchForParent?.messageId === message.id &&
+                                   selectedBranchForParent?.branchId === message.activeBranchId"
+              :is-last-message="index === messages.length - 1"
+              :is-streaming="isStreaming && message.id === streamingMessageId"
+              :has-error="streamingError?.messageId === message.id"
+              :error-message="streamingError?.messageId === message.id ? streamingError.error : undefined"
+              :error-suggestion="streamingError?.messageId === message.id ? streamingError.suggestion : undefined"
+              :post-hoc-affected="postHocAffectedMessages.get(message.id)"
+              @regenerate="regenerateMessage"
+              @edit="editMessage"
+              @switch-branch="switchBranch"
+              @delete="deleteMessage"
+              @delete-all-branches="deleteAllBranches"
+              @select-as-parent="selectBranchAsParent"
+              @stop-auto-scroll="stopAutoScroll"
+              @bookmark-changed="handleBookmarkChanged"
+              @post-hoc-hide="handlePostHocHide"
+              @post-hoc-edit="handlePostHocEdit"
+              @post-hoc-edit-content="handlePostHocEditContent"
+              @post-hoc-hide-before="handlePostHocHideBefore"
+              @post-hoc-unhide="handlePostHocUnhide"
+              @delete-post-hoc-operation="handleDeletePostHocOperation"
+            />
+          </div>
+        </v-container>
         
-        <div v-else>
-          <MessageComponent
-            v-for="(message, index) in messages"
-            :id="`message-${message.id}`"
-            :key="message.id"
-            :message="message"
-            :participants="participants"
-            :is-selected-parent="selectedBranchForParent?.messageId === message.id &&
-                                 selectedBranchForParent?.branchId === message.activeBranchId"
-            :is-last-message="index === messages.length - 1"
-            :is-streaming="isStreaming && message.id === streamingMessageId"
-            :has-error="streamingError?.messageId === message.id"
-            :error-message="streamingError?.messageId === message.id ? streamingError.error : undefined"
-            :error-suggestion="streamingError?.messageId === message.id ? streamingError.suggestion : undefined"
-            :post-hoc-affected="postHocAffectedMessages.get(message.id)"
-            @regenerate="regenerateMessage"
-            @edit="editMessage"
-            @switch-branch="switchBranch"
-            @delete="deleteMessage"
-            @delete-all-branches="deleteAllBranches"
-            @select-as-parent="selectBranchAsParent"
-            @stop-auto-scroll="stopAutoScroll"
-            @bookmark-changed="handleBookmarkChanged"
-            @post-hoc-hide="handlePostHocHide"
-            @post-hoc-edit="handlePostHocEdit"
-            @post-hoc-edit-content="handlePostHocEditContent"
-            @post-hoc-hide-before="handlePostHocHideBefore"
-            @post-hoc-unhide="handlePostHocUnhide"
-            @delete-post-hoc-operation="handleDeletePostHocOperation"
-          />
-        </div>
-      </v-container>
+        <!-- Event History Panel -->
+        <EventHistoryPanel
+          v-if="showEventHistory && currentConversation"
+          :conversation-id="currentConversation.id"
+          :is-mobile="isMobile"
+          @close="showEventHistory = false"
+          @navigate-to-message="handleEventNavigate"
+        />
+      </div>
 
       <!-- Input Area -->
       <v-container v-if="currentConversation" class="pa-4" style="padding-top: 0 !important">
@@ -810,6 +830,7 @@ import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
 import ShareDialog from '@/components/ShareDialog.vue';
 import CollaborationShareDialog from '@/components/CollaborationShareDialog.vue';
+import EventHistoryPanel from '@/components/EventHistoryPanel.vue';
 import ManageSharesDialog from '@/components/ManageSharesDialog.vue';
 import DuplicateConversationDialog from '@/components/DuplicateConversationDialog.vue';
 import ArcLogo from '@/components/ArcLogo.vue';
@@ -866,6 +887,7 @@ const activeAiRequest = ref<{ userId: string; messageId: string } | null>(null);
 const isAiRequestQueued = ref(false); // True if our request was queued because AI is already generating
 const hiddenFromAi = ref(false); // Toggle for sending messages hidden from AI
 const samplingBranches = ref(1); // Number of response branches to generate
+const showEventHistory = ref(false); // Toggle for event history panel
 
 // Computed: Check if this is a multiuser conversation (shared or has multiple users)
 const isMultiuserConversation = computed(() => {
@@ -2902,8 +2924,77 @@ async function handleBookmarkChanged() {
 function scrollToMessage(messageId: string) {
   const element = document.getElementById(`message-${messageId}`);
   if (element) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    
+    // Add a brief highlight effect
+    element.classList.add('highlight-flash');
+    setTimeout(() => {
+      element.classList.remove('highlight-flash');
+    }, 1500);
+  } else {
+    console.warn(`[scrollToMessage] Element not found for message: ${messageId}`);
   }
+}
+
+async function handleEventNavigate(messageId: string, branchId?: string) {
+  console.log(`[handleEventNavigate] messageId: ${messageId}, branchId: ${branchId}`);
+  
+  // Find the message in the store
+  const message = store.state.allMessages.find(m => m.id === messageId);
+  
+  if (!message) {
+    console.warn(`[handleEventNavigate] Message not found in allMessages: ${messageId}`);
+    return;
+  }
+  
+  // Get the target branch (either specified or current active)
+  const targetBranchId = branchId || message.activeBranchId;
+  const targetBranch = message.branches.find(b => b.id === targetBranchId);
+  
+  if (!targetBranch) {
+    console.warn(`[handleEventNavigate] Branch not found: ${targetBranchId}`);
+    return;
+  }
+  
+  // Build the ancestry chain: trace back through parentBranchId to find all branches we need to activate
+  const branchesToActivate: Array<{ messageId: string; branchId: string }> = [];
+  
+  // Add the target message's branch
+  if (message.activeBranchId !== targetBranchId) {
+    branchesToActivate.push({ messageId: message.id, branchId: targetBranchId });
+  }
+  
+  // Trace back through parent branches
+  let currentParentBranchId = targetBranch.parentBranchId;
+  while (currentParentBranchId) {
+    // Find the message that contains this branch
+    const parentMessage = store.state.allMessages.find(m => 
+      m.branches.some(b => b.id === currentParentBranchId)
+    );
+    
+    if (!parentMessage) break;
+    
+    // If parent message isn't on this branch, we need to switch it
+    if (parentMessage.activeBranchId !== currentParentBranchId) {
+      branchesToActivate.unshift({ messageId: parentMessage.id, branchId: currentParentBranchId });
+    }
+    
+    // Continue up the chain
+    const parentBranch = parentMessage.branches.find(b => b.id === currentParentBranchId);
+    currentParentBranchId = parentBranch?.parentBranchId || null;
+  }
+  
+  // Switch branches in order (from root to target)
+  for (const { messageId: msgId, branchId: bId } of branchesToActivate) {
+    console.log(`[handleEventNavigate] Switching message ${msgId} to branch ${bId}`);
+    await switchBranch(msgId, bId);
+  }
+  
+  // Wait for DOM to update
+  await nextTick();
+  
+  // Then scroll to the message
+  scrollToMessage(messageId);
 }
 
 function scrollToTop() {
@@ -3946,5 +4037,21 @@ function formatDate(date: Date | string): string {
   justify-content: center;
   z-index: 10;
   pointer-events: none;
+}
+
+/* Message highlight animation for event history navigation */
+.highlight-flash {
+  animation: highlightPulse 1.5s ease-out;
+}
+
+@keyframes highlightPulse {
+  0% {
+    background-color: rgba(var(--v-theme-primary), 0.3);
+    box-shadow: 0 0 20px rgba(var(--v-theme-primary), 0.5);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
 }
 </style>
