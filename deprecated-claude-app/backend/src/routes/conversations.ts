@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { roomManager } from '../websocket/room-manager.js';
 import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, PostHocOperationSchema, ContentBlockSchema } from '@deprecated-claude/shared';
 
 // Schema for creating a post-hoc operation
@@ -538,6 +539,89 @@ export function conversationRouter(db: Database): Router {
       res.json({ success: true });
     } catch (error) {
       console.error('Delete post-hoc operation error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Restore a deleted message
+  router.post('/:id/messages/restore', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { message } = req.body;
+      if (!message) {
+        return res.status(400).json({ error: 'Message data required' });
+      }
+
+      // Check access (owner or editor)
+      const canChat = await db.canUserChatInConversation(req.params.id, req.userId);
+      if (!canChat) {
+        return res.status(403).json({ error: 'You do not have permission to restore messages in this conversation' });
+      }
+
+      // Get the conversation owner for proper message restoration
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Restore the message
+      const restoredMessage = await db.restoreMessage(req.params.id, conversation.userId, message, req.userId);
+      
+      // Broadcast to conversation room
+      roomManager.broadcastToRoom(req.params.id, {
+        type: 'message_restored',
+        conversationId: req.params.id,
+        message: restoredMessage
+      });
+      
+      res.json({ success: true, message: restoredMessage });
+    } catch (error) {
+      console.error('Restore message error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Restore a deleted branch
+  router.post('/:id/branches/restore', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { messageId, branch } = req.body;
+      if (!messageId || !branch) {
+        return res.status(400).json({ error: 'messageId and branch data required' });
+      }
+
+      // Check access (owner or editor)
+      const canChat = await db.canUserChatInConversation(req.params.id, req.userId);
+      if (!canChat) {
+        return res.status(403).json({ error: 'You do not have permission to restore branches in this conversation' });
+      }
+
+      // Get the conversation owner
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Restore the branch
+      const restoredMessage = await db.restoreBranch(req.params.id, conversation.userId, messageId, branch, req.userId);
+      
+      // Broadcast to conversation room
+      roomManager.broadcastToRoom(req.params.id, {
+        type: 'message_branch_restored',
+        conversationId: req.params.id,
+        message: restoredMessage,
+        branchId: branch.id
+      });
+      
+      res.json({ success: true, message: restoredMessage });
+    } catch (error) {
+      console.error('Restore branch error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

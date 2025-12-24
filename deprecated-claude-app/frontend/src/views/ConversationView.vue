@@ -1747,14 +1747,47 @@ onMounted(async () => {
   
   // Load conversation from route
   if (route.params.id) {
-    await store.loadConversation(route.params.id as string);
-    await loadParticipants();
-    await loadBookmarks();
-    await loadCurrentConversationCollaborators();
+    console.log(`[ConversationView] Route has conversation ID: ${route.params.id}`);
+    console.log(`[ConversationView] Starting conversation load...`);
+    const loadStart = Date.now();
+    
+    try {
+      await store.loadConversation(route.params.id as string);
+      console.log(`[ConversationView] ✓ store.loadConversation completed in ${Date.now() - loadStart}ms`);
+      console.log(`[ConversationView] allMessages.length: ${store.state.allMessages.length}`);
+    } catch (error) {
+      console.error(`[ConversationView] ✗ store.loadConversation failed:`, error);
+    }
+    
+    try {
+      await loadParticipants();
+      console.log(`[ConversationView] ✓ loadParticipants completed`);
+    } catch (error) {
+      console.error(`[ConversationView] ✗ loadParticipants failed:`, error);
+    }
+    
+    try {
+      await loadBookmarks();
+      console.log(`[ConversationView] ✓ loadBookmarks completed`);
+    } catch (error) {
+      console.error(`[ConversationView] ✗ loadBookmarks failed:`, error);
+    }
+    
+    try {
+      await loadCurrentConversationCollaborators();
+      console.log(`[ConversationView] ✓ loadCurrentConversationCollaborators completed`);
+    } catch (error) {
+      console.error(`[ConversationView] ✗ loadCurrentConversationCollaborators failed:`, error);
+    }
+    
+    console.log(`[ConversationView] Total load time: ${Date.now() - loadStart}ms`);
     
     // Join the room for multi-user support
     if (store.state.wsService) {
+      console.log(`[ConversationView] Joining WebSocket room: ${route.params.id}`);
       store.state.wsService.joinRoom(route.params.id as string);
+    } else {
+      console.warn(`[ConversationView] ⚠ wsService not available for room join`);
     }
     
     // Scroll to bottom after messages load
@@ -1768,6 +1801,8 @@ onMounted(async () => {
       mobilePanel.value = 'conversation';
       drawer.value = false;
     }
+  } else {
+    console.log(`[ConversationView] No conversation ID in route`);
   }
   
   // Mark initialization as complete so route watcher can take over
@@ -1819,6 +1854,9 @@ watch(() => route.params.id, async (newId, oldId) => {
   streamingError.value = null;
   
   if (newId) {
+    console.log(`[ConversationView:watch] Route changed to: ${newId}`);
+    const loadStart = Date.now();
+    
     // Restore draft for this conversation or clear input
     messageInput.value = conversationDrafts.value.get(newId as string) || '';
     
@@ -1827,10 +1865,18 @@ watch(() => route.params.id, async (newId, oldId) => {
       cancelBranchSelection();
     }
 
-    await store.loadConversation(newId as string);
+    try {
+      await store.loadConversation(newId as string);
+      console.log(`[ConversationView:watch] ✓ Conversation loaded in ${Date.now() - loadStart}ms, messages: ${store.state.allMessages.length}`);
+    } catch (error) {
+      console.error(`[ConversationView:watch] ✗ Failed to load conversation:`, error);
+    }
+    
     await loadParticipants();
     await loadBookmarks();
     await loadCurrentConversationCollaborators();
+    
+    console.log(`[ConversationView:watch] Total load time: ${Date.now() - loadStart}ms`);
     
     // Join the room for multi-user support
     if (store.state.wsService) {

@@ -2553,6 +2553,134 @@ export class Database {
     return true;
   }
   
+  async restoreMessage(conversationId: string, conversationOwnerUserId: string, messageData: any, restoredByUserId?: string): Promise<any> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
+    
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) {
+      throw new Error('Conversation not found');
+    }
+    
+    // Ensure dates are proper Date objects
+    const message = {
+      ...messageData,
+      createdAt: new Date(messageData.createdAt || Date.now()),
+      updatedAt: new Date(),
+      branches: messageData.branches.map((b: any) => ({
+        ...b,
+        createdAt: new Date(b.createdAt || Date.now())
+      }))
+    };
+    
+    // Add to messages map
+    this.messages.set(message.id, message);
+    
+    // Add to conversation's message list in the correct order
+    let convMessages = this.conversationMessages.get(conversationId);
+    if (!convMessages) {
+      convMessages = [];
+      this.conversationMessages.set(conversationId, convMessages);
+    }
+    
+    // Insert at the correct position based on order
+    const insertIndex = convMessages.findIndex((id) => {
+      const m = this.messages.get(id);
+      return m && m.order > message.order;
+    });
+    
+    if (insertIndex === -1) {
+      convMessages.push(message.id);
+    } else {
+      convMessages.splice(insertIndex, 0, message.id);
+    }
+    
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    await this.logConversationEvent(conversationId, 'message_restored', { 
+      messageId: message.id,
+      conversationId,
+      restoredByUserId: restoredByUserId || conversationOwnerUserId,
+      message
+    });
+    
+    return message;
+  }
+  
+  async restoreBranch(conversationId: string, conversationOwnerUserId: string, messageId: string, branchData: any, restoredByUserId?: string): Promise<any> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
+    
+    let message = this.messages.get(messageId);
+    
+    // Ensure dates are proper Date objects
+    const branch = {
+      ...branchData,
+      createdAt: new Date(branchData.createdAt || Date.now())
+    };
+    
+    let updatedMessage;
+    
+    if (!message) {
+      // Parent message was deleted (this happens when deleting the only branch on a message)
+      // We need to look up the original message from the event history
+      const events = await this.conversationEventStore.loadEvents(conversationId);
+      const originalCreateEvent = events.find((e: any) => 
+        e.type === 'message_created' && e.data?.id === messageId
+      );
+      
+      if (!originalCreateEvent || !originalCreateEvent.data) {
+        throw new Error('Original message not found in event history - cannot restore branch');
+      }
+      
+      // Recreate the message container with the restored branch
+      const originalMessage = originalCreateEvent.data;
+      updatedMessage = {
+        ...originalMessage,
+        branches: [branch],
+        createdAt: new Date(originalMessage.createdAt || Date.now())
+      };
+      
+      this.messages.set(messageId, updatedMessage);
+      
+      // Also re-add to conversation's message list
+      let convMessages = this.conversationMessages.get(conversationId);
+      if (!convMessages) {
+        convMessages = [];
+        this.conversationMessages.set(conversationId, convMessages);
+      }
+      if (!convMessages.includes(messageId)) {
+        // Insert at original order position
+        const insertIndex = originalMessage.order !== undefined && originalMessage.order < convMessages.length
+          ? originalMessage.order
+          : convMessages.length;
+        convMessages.splice(insertIndex, 0, messageId);
+      }
+    } else {
+      // Message exists, just add the branch
+      if (message.branches.some(b => b.id === branchData.id)) {
+        throw new Error('Branch already exists');
+      }
+      
+      updatedMessage = {
+        ...message,
+        branches: [...message.branches, branch]
+      };
+      
+      this.messages.set(messageId, updatedMessage);
+    }
+    
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    await this.logConversationEvent(conversationId, 'message_branch_restored', { 
+      messageId,
+      branchId: branch.id,
+      conversationId,
+      restoredByUserId: restoredByUserId || conversationOwnerUserId,
+      branch
+    });
+    
+    return updatedMessage;
+  }
+  
   async importRawMessage(conversationId: string, conversationOwnerUserId: string, messageData: any): Promise<void> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
@@ -2879,6 +3007,25 @@ export class Database {
     // Load events from the conversation event store
     const events = await this.conversationEventStore.loadEvents(conversationId);
     
+    // Build index of message_created events by messageId for looking up deleted message data
+    const messageCreatedByIdMap = new Map<string, any>();
+    // Also track branches by branchId for looking up deleted branches
+    const branchByIdMap = new Map<string, { messageId: string; branch: any }>();
+    
+    for (const event of events) {
+      if (event.type === 'message_created' && event.data?.id) {
+        messageCreatedByIdMap.set(event.data.id, event.data);
+        // Index branches from message_created
+        for (const branch of event.data.branches || []) {
+          branchByIdMap.set(branch.id, { messageId: event.data.id, branch });
+        }
+      }
+      if (event.type === 'message_branch_added' && event.data?.branch) {
+        // Index branches from message_branch_added
+        branchByIdMap.set(event.data.branch.id, { messageId: event.data.messageId, branch: event.data.branch });
+      }
+    }
+    
     // Enrich events with user info where available
     const enrichedEvents = await Promise.all(events.map(async (event: any) => {
       const enriched: any = {
@@ -2925,9 +3072,29 @@ export class Database {
         }
       }
       
-      // For message_deleted events, include the message ID
+      // For message_deleted events, include the message ID and original message data
       if (event.type === 'message_deleted') {
-        enriched.messageId = event.data?.messageId || event.data?.id;
+        const messageId = event.data?.messageId || event.data?.id;
+        enriched.messageId = messageId;
+        
+        // Look up original message from message_created event
+        const originalMessage = messageCreatedByIdMap.get(messageId);
+        if (originalMessage) {
+          enriched.originalMessage = originalMessage;
+        }
+      }
+      
+      // For message_branch_deleted events, include the original branch data
+      if (event.type === 'message_branch_deleted') {
+        const branchId = event.data?.branchId;
+        enriched.messageId = event.data?.messageId;
+        enriched.branchId = branchId;
+        
+        // Look up original branch
+        const branchInfo = branchByIdMap.get(branchId);
+        if (branchInfo) {
+          enriched.originalBranch = branchInfo.branch;
+        }
       }
       
       return enriched;

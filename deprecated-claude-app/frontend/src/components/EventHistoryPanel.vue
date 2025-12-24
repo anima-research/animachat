@@ -46,6 +46,18 @@
             </div>
             <div class="event-meta">
               <span class="event-time">{{ formatTime(event.timestamp) }}</span>
+              <v-btn
+                v-if="canRestore(event)"
+                size="x-small"
+                variant="text"
+                color="warning"
+                class="restore-btn"
+                @click.stop="handleRestore(event)"
+                :loading="restoringEventId === getEventId(event)"
+              >
+                <v-icon size="12" class="mr-1">mdi-undo</v-icon>
+                Restore
+              </v-btn>
             </div>
           </div>
         </div>
@@ -112,6 +124,8 @@ function getEventIcon(type: string): string {
   switch (type) {
     case 'message_created': return 'mdi-message-plus';
     case 'message_deleted': return 'mdi-message-minus';
+    case 'message_restored': return 'mdi-message-plus-outline';
+    case 'message_branch_restored': return 'mdi-source-branch-plus';
     case 'message_updated': return 'mdi-message-draw';
     case 'message_content_updated': return 'mdi-message-processing';
     case 'message_branch_added': return 'mdi-source-branch-plus';
@@ -126,7 +140,9 @@ function getEventColor(type: string): string {
   switch (type) {
     case 'message_created': return 'success';
     case 'message_deleted': return 'error';
+    case 'message_restored': return 'warning';
     case 'message_branch_deleted': return 'error';
+    case 'message_branch_restored': return 'warning';
     case 'message_updated': return 'warning';
     case 'message_content_updated': return 'info';
     case 'message_branch_added': return 'primary';
@@ -150,6 +166,8 @@ function getEventDescription(event: ConversationEvent): string {
       }
     case 'message_deleted':
       return `Message deleted${byUser}`;
+    case 'message_restored':
+      return `Message restored${byUser}`;
     case 'message_updated':
       return `Message updated${byUser}`;
     case 'message_content_updated':
@@ -166,6 +184,8 @@ function getEventDescription(event: ConversationEvent): string {
       return `New branch added${byUser}`;
     case 'message_branch_deleted':
       return `Branch deleted${byUser}`;
+    case 'message_branch_restored':
+      return `Branch restored${byUser}`;
     case 'message_branch_updated':
       return 'Branch updated';
     case 'active_branch_changed':
@@ -204,6 +224,14 @@ function getMessagePreview(event: ConversationEvent): string | null {
     content = event.data?.branches?.[0]?.content;
   } else if (event.type === 'message_branch_added') {
     content = event.data?.branch?.content;
+  } else if (event.type === 'message_deleted') {
+    // Get content from original message (looked up from message_created event)
+    content = (event as any).originalMessage?.branches?.[0]?.content;
+  } else if (event.type === 'message_branch_deleted') {
+    // Get content from original branch (looked up from event history)
+    content = (event as any).originalBranch?.content;
+  } else if (event.type === 'message_restored') {
+    content = event.data?.message?.branches?.[0]?.content;
   }
   
   if (!content) return null;
@@ -235,6 +263,52 @@ function handleEventClick(event: ConversationEvent) {
   }
 }
 
+// Restore functionality
+const restoringEventId = ref<string | null>(null);
+
+function canRestore(event: ConversationEvent): boolean {
+  // Can restore message if we have original message data
+  if (event.type === 'message_deleted' && (event as any).originalMessage) {
+    return true;
+  }
+  // Can restore branch if we have original branch data
+  if (event.type === 'message_branch_deleted' && (event as any).originalBranch) {
+    return true;
+  }
+  return false;
+}
+
+function getEventId(event: ConversationEvent): string {
+  return `${event.type}-${event.timestamp}-${event.data?.messageId || ''}-${event.data?.branchId || ''}`;
+}
+
+async function handleRestore(event: ConversationEvent) {
+  const eventId = getEventId(event);
+  restoringEventId.value = eventId;
+  
+  try {
+    if (event.type === 'message_deleted' && (event as any).originalMessage) {
+      // Restore full message
+      await api.post(`/conversations/${props.conversationId}/messages/restore`, {
+        message: (event as any).originalMessage
+      });
+    } else if (event.type === 'message_branch_deleted' && (event as any).originalBranch) {
+      // Restore branch
+      await api.post(`/conversations/${props.conversationId}/branches/restore`, {
+        messageId: event.data?.messageId,
+        branch: (event as any).originalBranch
+      });
+    }
+    
+    // Reload events to update the list
+    await loadEvents();
+  } catch (error) {
+    console.error('Failed to restore:', error);
+  } finally {
+    restoringEventId.value = null;
+  }
+}
+
 watch(() => props.conversationId, () => {
   loadEvents();
 });
@@ -252,6 +326,8 @@ onMounted(() => {
     store.state.wsService.on('message_created', handleWsMessage);
     store.state.wsService.on('message_edited', handleWsMessage);
     store.state.wsService.on('message_deleted', handleWsMessage);
+    store.state.wsService.on('message_restored', handleWsMessage);
+    store.state.wsService.on('message_branch_restored', handleWsMessage);
   }
 });
 
@@ -260,6 +336,8 @@ onUnmounted(() => {
     store.state.wsService.off('message_created', handleWsMessage);
     store.state.wsService.off('message_edited', handleWsMessage);
     store.state.wsService.off('message_deleted', handleWsMessage);
+    store.state.wsService.off('message_restored', handleWsMessage);
+    store.state.wsService.off('message_branch_restored', handleWsMessage);
   }
 });
 </script>
@@ -380,10 +458,18 @@ onUnmounted(() => {
 
 .event-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-top: 4px;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.4);
+}
+
+.restore-btn {
+  margin-left: auto;
+  font-size: 10px !important;
+  height: 20px !important;
+  padding: 0 6px !important;
 }
 </style>
 

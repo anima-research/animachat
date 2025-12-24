@@ -311,13 +311,50 @@ export function createStore(): {
       }
     },
     
-    async loadConversation(id: string) {
+    async loadConversation(id: string, retryCount = 0) {
+      const maxRetries = 3;
+      const retryDelay = 1000;
+      const startTime = Date.now();
+      
       try {
+        console.log(`[loadConversation] Loading ${id}... (attempt ${retryCount + 1}/${maxRetries})`);
+        console.log(`[loadConversation] API base URL: ${api.defaults.baseURL}`);
+        
         const response = await api.get(`/conversations/${id}`);
+        const fetchTime = Date.now() - startTime;
+        console.log(`[loadConversation] Conversation data received in ${fetchTime}ms`);
+        console.log(`[loadConversation] Response status: ${response.status}, has data: ${!!response.data}`);
+        
         state.currentConversation = response.data;
+        console.log(`[loadConversation] Set currentConversation, now loading messages...`);
+        
         await this.loadMessages(id);
-      } catch (error) {
-        console.error('Failed to load conversation:', error);
+        
+        const totalTime = Date.now() - startTime;
+        console.log(`[loadConversation] ✓ Successfully loaded conversation ${id} in ${totalTime}ms`);
+      } catch (error: any) {
+        const elapsed = Date.now() - startTime;
+        console.error(`[loadConversation] ✗ Failed after ${elapsed}ms (attempt ${retryCount + 1}/${maxRetries})`);
+        console.error(`[loadConversation] Error code: ${error?.code}`);
+        console.error(`[loadConversation] Error message: ${error?.message}`);
+        console.error(`[loadConversation] Error response status: ${error?.response?.status}`);
+        console.error(`[loadConversation] Error response data:`, error?.response?.data);
+        console.error(`[loadConversation] Full error:`, error);
+        
+        // Retry on network errors
+        if (retryCount < maxRetries - 1 && (
+          error?.code === 'ERR_NETWORK' || 
+          error?.code === 'ECONNABORTED' ||
+          error?.message?.includes('timeout') ||
+          error?.message?.includes('Network Error')
+        )) {
+          const delay = retryDelay * (retryCount + 1);
+          console.log(`[loadConversation] Will retry in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.loadConversation(id, retryCount + 1);
+        }
+        
+        console.error(`[loadConversation] No more retries, giving up`);
         throw error;
       }
     },
@@ -410,20 +447,62 @@ export function createStore(): {
     },
     
     // Message actions
-    async loadMessages(conversationId: string) {
+    async loadMessages(conversationId: string, retryCount = 0) {
+      const maxRetries = 3;
+      const retryDelay = 1000;
+      const startTime = Date.now();
+      
       try {
+        console.log(`[loadMessages] Loading messages for ${conversationId}... (attempt ${retryCount + 1}/${maxRetries})`);
+        
         const response = await api.get(`/conversations/${conversationId}/messages`);
-        state.allMessages = response.data;
+        const fetchTime = Date.now() - startTime;
+        
+        console.log(`[loadMessages] Response received in ${fetchTime}ms`);
+        console.log(`[loadMessages] Response status: ${response.status}`);
+        console.log(`[loadMessages] Response data is array: ${Array.isArray(response.data)}, length: ${response.data?.length || 0}`);
+        
+        if (!response.data) {
+          console.warn(`[loadMessages] ⚠ Response data is null/undefined!`);
+        }
+        
+        state.allMessages = response.data || [];
         state.messagesVersion++;
         invalidateSortCache();
-        console.log(`Loaded ${state.allMessages.length} messages for conversation ${conversationId}`);
+        
+        console.log(`[loadMessages] ✓ Loaded ${state.allMessages.length} messages, messagesVersion: ${state.messagesVersion}`);
+        
+        // Log branch info for debugging
+        const totalBranches = state.allMessages.reduce((acc, m) => acc + (m.branches?.length || 0), 0);
+        console.log(`[loadMessages] Total branches across all messages: ${totalBranches}`);
         
         // Log if this is multi-participant
         if (state.currentConversation?.format !== 'standard') {
-          console.log('Multi-participant conversation format:', state.currentConversation?.format);
+          console.log(`[loadMessages] Multi-participant conversation format: ${state.currentConversation?.format}`);
         }
-      } catch (error) {
-        console.error('Failed to load messages:', error);
+      } catch (error: any) {
+        const elapsed = Date.now() - startTime;
+        console.error(`[loadMessages] ✗ Failed after ${elapsed}ms (attempt ${retryCount + 1}/${maxRetries})`);
+        console.error(`[loadMessages] Error code: ${error?.code}`);
+        console.error(`[loadMessages] Error message: ${error?.message}`);
+        console.error(`[loadMessages] Error response status: ${error?.response?.status}`);
+        console.error(`[loadMessages] Error response data:`, error?.response?.data);
+        console.error(`[loadMessages] Full error:`, error);
+        
+        // Retry on network errors or timeouts
+        if (retryCount < maxRetries - 1 && (
+          error?.code === 'ERR_NETWORK' || 
+          error?.code === 'ECONNABORTED' ||
+          error?.message?.includes('timeout') ||
+          error?.message?.includes('Network Error')
+        )) {
+          const delay = retryDelay * (retryCount + 1);
+          console.log(`[loadMessages] Will retry in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.loadMessages(conversationId, retryCount + 1);
+        }
+        
+        console.error(`[loadMessages] No more retries, giving up`);
         throw error;
       }
     },
@@ -927,10 +1006,16 @@ export function createStore(): {
     
     // WebSocket actions
     connectWebSocket() {
+      console.log(`[Store] connectWebSocket called`);
       const token = localStorage.getItem('token');
-      if (!token) return;
+      if (!token) {
+        console.warn(`[Store] No token found, skipping WebSocket connection`);
+        return;
+      }
       
+      console.log(`[Store] Creating WebSocketService...`);
       state.wsService = new WebSocketService(token);
+      console.log(`[Store] WebSocketService created, setting up handlers...`);
       
       state.wsService.on('message_created', (data: any) => {
         // console.log('Store handling message_created:', data);
@@ -1027,12 +1112,55 @@ export function createStore(): {
         }
       });
       
+      state.wsService.on('message_restored', (data: any) => {
+        console.log('Store handling message_restored:', data);
+        const { message } = data;
+        if (message) {
+          // Add the restored message back to allMessages
+          const existingIndex = state.allMessages.findIndex(m => m.id === message.id);
+          if (existingIndex === -1) {
+            // Insert at proper order position
+            const insertIndex = message.order !== undefined && message.order < state.allMessages.length
+              ? message.order
+              : state.allMessages.length;
+            state.allMessages.splice(insertIndex, 0, message);
+          } else {
+            // Update existing message
+            state.allMessages[existingIndex] = message;
+          }
+          state.messagesVersion++;
+          invalidateSortCache();
+        }
+      });
+      
+      state.wsService.on('message_branch_restored', (data: any) => {
+        console.log('Store handling message_branch_restored:', data);
+        const { message } = data;
+        if (message) {
+          // Update the message with restored branch
+          const index = state.allMessages.findIndex(m => m.id === message.id);
+          if (index !== -1) {
+            state.allMessages[index] = message;
+          } else {
+            // Message was also restored (was deleted when only branch was deleted)
+            const insertIndex = message.order !== undefined && message.order < state.allMessages.length
+              ? message.order
+              : state.allMessages.length;
+            state.allMessages.splice(insertIndex, 0, message);
+          }
+          state.messagesVersion++;
+          invalidateSortCache();
+        }
+      });
+      
       state.wsService.on('generation_aborted', (data: any) => {
         console.log('Store handling generation_aborted:', data);
         // The ConversationView will handle resetting isStreaming via the stream event with aborted flag
       });
       
+      console.log(`[Store] All WebSocket handlers set up, calling connect()...`);
       state.wsService.connect();
+      console.log(`[Store] WebSocket connect() called`);
     },
     
     disconnectWebSocket() {
