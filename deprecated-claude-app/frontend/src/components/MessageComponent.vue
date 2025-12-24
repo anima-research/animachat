@@ -260,7 +260,7 @@
         <span v-if="participantDisplayName" class="message-name font-weight-medium" :style="participantColor ? `color: ${participantColor};` : ''">
           {{ participantDisplayName }}
         </span>
-        <span v-if="senderDisplayName && senderDisplayName !== participantDisplayName" class="text-caption meta-text">
+        <span v-if="senderDisplayName && senderDisplayName !== participantDisplayName && participantDisplayName !== '(continue)'" class="text-caption meta-text">
           ({{ senderDisplayName }})
         </span>
         <span v-if="modelIndicator" class="text-caption meta-text">
@@ -984,7 +984,7 @@ function scrollToTopOfMessage() {
   }
 }
 
-// Get participant display name (shown in UI - empty for empty-name participants)
+// Get participant display name (shown in UI)
 const participantDisplayName = computed(() => {
   const branch = currentBranch.value;
   
@@ -996,8 +996,9 @@ const participantDisplayName = computed(() => {
   // Find the participant by ID
   const participant = props.participants.find(p => p.id === branch.participantId);
   if (participant && participant.name === '') {
-    // Return empty string for empty-name participants (no name shown)
-    return '';
+    // Empty-name participants are "continuation" participants - their messages
+    // don't have a username header in the log (raw continuations)
+    return '(continue)';
   } else if (participant) {
     return participant.name;
   }
@@ -1571,6 +1572,9 @@ async function loadBookmark() {
 
     if (bookmark) {
       bookmarkLabel.value = bookmark.label;
+    } else {
+      // Clear bookmark label if no bookmark exists for this branch
+      bookmarkLabel.value = null;
     }
   } catch (error) {
     console.error('Failed to load bookmark:', error);
