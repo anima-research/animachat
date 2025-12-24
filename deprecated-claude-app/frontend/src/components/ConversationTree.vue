@@ -36,6 +36,22 @@
         @click="toggleCompactMode"
         :title="compactMode ? 'Show all nodes' : 'Compact view'"
       />
+      <v-btn
+        :icon="alignActivePath ? 'mdi-format-align-center' : 'mdi-format-align-left'"
+        size="small"
+        variant="text"
+        @click="toggleAlignActivePath"
+        :title="alignActivePath ? 'Default layout' : 'Align active path'"
+        :color="alignActivePath ? 'primary' : undefined"
+      />
+      <v-btn
+        :icon="collapseNonActive ? 'mdi-eye-off' : 'mdi-eye'"
+        size="small"
+        variant="text"
+        @click="toggleCollapseNonActive"
+        :title="collapseNonActive ? 'Show all branches' : 'Hide non-active branches'"
+        :color="collapseNonActive ? 'primary' : undefined"
+      />
     </div>
     <svg ref="svgRef" class="tree-svg"></svg>
     <div v-if="hoveredNode" class="node-tooltip" :style="tooltipStyle">
@@ -87,6 +103,8 @@ const hoveredNode = ref<TreeNode | null>(null);
 const tooltipStyle = ref({ left: '0px', top: '0px' });
 const compactMode = ref(false);
 const compactModeManuallySet = ref(false); // Track if user manually toggled
+const alignActivePath = ref(false); // Align active path ancestors vertically
+const collapseNonActive = ref(false); // Hide nodes not on active path or immediate children of it
 const store = useStore();
 const bookmarks = ref<Bookmark[]>([]);
 
@@ -263,6 +281,68 @@ function filterCompactNodes(originalRoot: d3.HierarchyNode<TreeNode>): d3.Hierar
   return d3.hierarchy(simplifiedTree);
 }
 
+// Filter nodes to only show active path and immediate children of active path nodes
+function filterToActivePath(originalRoot: d3.HierarchyNode<TreeNode>): d3.HierarchyNode<TreeNode> {
+  // First, build the active path set by tracing from current node to root
+  const activePathIds = new Set<string>();
+  
+  function findActivePath(node: d3.HierarchyNode<TreeNode>): boolean {
+    const nodeId = `${node.data.messageId}-${node.data.branchId}`;
+    
+    // Check if this is the current node
+    if (node.data.messageId === props.currentMessageId && 
+        node.data.branchId === props.currentBranchId) {
+      activePathIds.add(nodeId);
+      return true;
+    }
+    
+    // Check children
+    if (node.children) {
+      for (const child of node.children) {
+        if (findActivePath(child)) {
+          activePathIds.add(nodeId);
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+  
+  findActivePath(originalRoot);
+  
+  // Now filter the tree
+  function filterNode(node: d3.HierarchyNode<TreeNode>, parentOnActivePath: boolean): TreeNode | null {
+    const nodeId = `${node.data.messageId}-${node.data.branchId}`;
+    const isOnActivePath = activePathIds.has(nodeId);
+    
+    // Keep if: on active path OR immediate child of active path node
+    if (isOnActivePath || parentOnActivePath) {
+      // For children: only recurse if this node is on active path
+      // (immediate children of active path are kept but their descendants are not)
+      const filteredChildren = node.children 
+        ? node.children
+            .map(c => filterNode(c, isOnActivePath))
+            .filter(c => c !== null) as TreeNode[]
+        : [];
+      
+      return {
+        ...node.data,
+        children: filteredChildren
+      };
+    }
+    
+    return null;
+  }
+  
+  const filteredTree = filterNode(originalRoot, false);
+  if (!filteredTree) {
+    return originalRoot;
+  }
+  
+  return d3.hierarchy(filteredTree);
+}
+
 function initializeTree() {
   if (!svgRef.value || !treeData.value) return;
   
@@ -352,6 +432,11 @@ function renderTree() {
     root = filterCompactNodes(originalRoot);
   }
   
+  // Apply collapse non-active filtering if enabled
+  if (collapseNonActive.value) {
+    root = filterToActivePath(root);
+  }
+  
   // Count total nodes to determine sizing
   const nodeCount = root.descendants().length;
   
@@ -363,7 +448,7 @@ function renderTree() {
     .size([width - 100, height - 100])
     .nodeSize([baseNodeRadius * 3, baseNodeRadius * 4]); // Dynamic spacing
   
-  const treeNodes = treeLayout(root);
+  let treeNodes = treeLayout(root);
   
   // Clear previous render
   g.selectAll('*').remove();
@@ -379,6 +464,99 @@ function renderTree() {
   while (currentNode) {
     activePath.add(`${currentNode.data.messageId}-${currentNode.data.branchId}`);
     currentNode = currentNode.parent;
+  }
+  
+  // Apply custom layout if active path alignment is enabled
+  if (alignActivePath.value && activePath.size > 0) {
+    // Custom layout: position active path vertically aligned, then position other subtrees around it
+    const nodeSpacing = baseNodeRadius * 3;
+    const targetX = 0; // Center the active path at x=0
+    
+    // First, calculate subtree widths for all nodes (number of leaf descendants or 1 if leaf)
+    const subtreeWidths = new Map<d3.HierarchyPointNode<TreeNode>, number>();
+    
+    function calculateSubtreeWidth(node: d3.HierarchyPointNode<TreeNode>): number {
+      if (!node.children || node.children.length === 0) {
+        subtreeWidths.set(node, 1);
+        return 1;
+      }
+      const width = node.children.reduce((sum, child) => sum + calculateSubtreeWidth(child), 0);
+      subtreeWidths.set(node, width);
+      return width;
+    }
+    
+    calculateSubtreeWidth(treeNodes);
+    
+    // Now position nodes with active path aligned
+    function positionNode(node: d3.HierarchyPointNode<TreeNode>, x: number, depth: number) {
+      node.x = x;
+      node.y = depth * baseNodeRadius * 4;
+      
+      if (!node.children || node.children.length === 0) return;
+      
+      // Find which child (if any) is on the active path
+      const activeChild = node.children.find(child => {
+        const childId = `${child.data.messageId}-${child.data.branchId}`;
+        return activePath.has(childId);
+      });
+      
+      if (activeChild) {
+        // Active child stays at the same x position (aligned)
+        // Other children are distributed on either side
+        const leftChildren: d3.HierarchyPointNode<TreeNode>[] = [];
+        const rightChildren: d3.HierarchyPointNode<TreeNode>[] = [];
+        
+        let foundActive = false;
+        for (const child of node.children) {
+          if (child === activeChild) {
+            foundActive = true;
+          } else if (!foundActive) {
+            leftChildren.push(child);
+          } else {
+            rightChildren.push(child);
+          }
+        }
+        
+        // Position active child at same x
+        positionNode(activeChild, x, depth + 1);
+        
+        // Get the active child's subtree width to know where to start positioning siblings
+        const activeChildWidth = subtreeWidths.get(activeChild) || 1;
+        
+        // Position left children to the left (starting from the left edge of active subtree)
+        let leftX = x - (activeChildWidth * nodeSpacing) / 2;
+        for (let i = leftChildren.length - 1; i >= 0; i--) {
+          const child = leftChildren[i];
+          const childWidth = subtreeWidths.get(child) || 1;
+          leftX -= (childWidth * nodeSpacing) / 2;
+          positionNode(child, leftX, depth + 1);
+          leftX -= (childWidth * nodeSpacing) / 2;
+        }
+        
+        // Position right children to the right (starting from the right edge of active subtree)
+        let rightX = x + (activeChildWidth * nodeSpacing) / 2;
+        for (const child of rightChildren) {
+          const childWidth = subtreeWidths.get(child) || 1;
+          rightX += (childWidth * nodeSpacing) / 2;
+          positionNode(child, rightX, depth + 1);
+          rightX += (childWidth * nodeSpacing) / 2;
+        }
+      } else {
+        // No active child - distribute children evenly around this x position
+        const totalWidth = node.children.reduce((sum, child) => 
+          sum + (subtreeWidths.get(child) || 1), 0);
+        
+        let currentX = x - (totalWidth * nodeSpacing) / 2;
+        for (const child of node.children) {
+          const childWidth = subtreeWidths.get(child) || 1;
+          currentX += (childWidth * nodeSpacing) / 2;
+          positionNode(child, currentX, depth + 1);
+          currentX += (childWidth * nodeSpacing) / 2;
+        }
+      }
+    }
+    
+    positionNode(treeNodes, targetX, 0);
   }
   
   // Add links (edges) - vertical links
@@ -695,6 +873,14 @@ function toggleCompactMode() {
   compactModeManuallySet.value = true; // User has manually toggled
 }
 
+function toggleAlignActivePath() {
+  alignActivePath.value = !alignActivePath.value;
+}
+
+function toggleCollapseNonActive() {
+  collapseNonActive.value = !collapseNonActive.value;
+}
+
 // Load bookmarks
 async function loadBookmarks() {
   try {
@@ -717,7 +903,9 @@ watch([
   () => props.selectedParentBranchId,
   () => props.participants,
   bookmarks,
-  compactMode
+  compactMode,
+  alignActivePath,
+  collapseNonActive
 ], () => {
   renderTree();
 }, { deep: true });
