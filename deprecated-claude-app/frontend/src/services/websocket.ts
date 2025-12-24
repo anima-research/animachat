@@ -76,6 +76,7 @@ export class WebSocketService {
     this.ws.onopen = () => {
       console.log('WebSocket connected');
       this.reconnectAttempts = 0;
+      this.emit('connection_state', { state: 'connected' });
       
       // Send queued messages
       while (this.messageQueue.length > 0) {
@@ -98,6 +99,7 @@ export class WebSocketService {
     
     this.ws.onclose = () => {
       console.log('WebSocket disconnected');
+      this.emit('connection_state', { state: 'disconnected' });
       this.attemptReconnect();
     };
     
@@ -164,13 +166,15 @@ export class WebSocketService {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error('Max reconnection attempts reached');
       this.emit('error', { error: 'Failed to reconnect to server' });
+      this.emit('connection_state', { state: 'failed' });
       return;
     }
     
     this.reconnectAttempts++;
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 10000);
     
-    console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+    this.emit('connection_state', { state: 'reconnecting', attempt: this.reconnectAttempts, maxAttempts: this.maxReconnectAttempts });
     
     this.reconnectTimeout = window.setTimeout(() => {
       this.connect();
@@ -221,5 +225,24 @@ export class WebSocketService {
   
   getCurrentRoom(): string | null {
     return this.currentRoomId;
+  }
+  
+  get isConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+  
+  get isConnecting(): boolean {
+    return this.ws?.readyState === WebSocket.CONNECTING;
+  }
+  
+  get connectionState(): 'connected' | 'connecting' | 'disconnected' | 'reconnecting' {
+    if (this.ws?.readyState === WebSocket.OPEN) return 'connected';
+    if (this.ws?.readyState === WebSocket.CONNECTING) return 'connecting';
+    if (this.reconnectAttempts > 0 && this.reconnectAttempts < this.maxReconnectAttempts) return 'reconnecting';
+    return 'disconnected';
+  }
+  
+  get queuedMessageCount(): number {
+    return this.messageQueue.length;
   }
 }
