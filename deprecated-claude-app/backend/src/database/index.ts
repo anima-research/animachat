@@ -3009,6 +3009,8 @@ export class Database {
     
     // Build index of message_created events by messageId for looking up deleted message data
     const messageCreatedByIdMap = new Map<string, any>();
+    // Track branches added after message creation, keyed by messageId
+    const additionalBranchesByMessageId = new Map<string, any[]>();
     // Also track branches by branchId for looking up deleted branches
     const branchByIdMap = new Map<string, { messageId: string; branch: any }>();
     
@@ -3023,6 +3025,12 @@ export class Database {
       if (event.type === 'message_branch_added' && event.data?.branch) {
         // Index branches from message_branch_added
         branchByIdMap.set(event.data.branch.id, { messageId: event.data.messageId, branch: event.data.branch });
+        // Also track additional branches per message for full message reconstruction
+        const messageId = event.data.messageId;
+        if (!additionalBranchesByMessageId.has(messageId)) {
+          additionalBranchesByMessageId.set(messageId, []);
+        }
+        additionalBranchesByMessageId.get(messageId)!.push(event.data.branch);
       }
     }
     
@@ -3077,10 +3085,19 @@ export class Database {
         const messageId = event.data?.messageId || event.data?.id;
         enriched.messageId = messageId;
         
-        // Look up original message from message_created event
-        const originalMessage = messageCreatedByIdMap.get(messageId);
-        if (originalMessage) {
-          enriched.originalMessage = originalMessage;
+        // Look up original message from message_created event and merge in any additional branches
+        const baseMessage = messageCreatedByIdMap.get(messageId);
+        if (baseMessage) {
+          const additionalBranches = additionalBranchesByMessageId.get(messageId) || [];
+          if (additionalBranches.length > 0) {
+            // Merge additional branches into the message for full restoration
+            enriched.originalMessage = {
+              ...baseMessage,
+              branches: [...(baseMessage.branches || []), ...additionalBranches]
+            };
+          } else {
+            enriched.originalMessage = baseMessage;
+          }
         }
       }
       

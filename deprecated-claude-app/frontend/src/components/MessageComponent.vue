@@ -202,12 +202,6 @@
             </v-list-item>
           </template>
           <v-divider class="my-0" />
-          <v-list-item density="compact" @click="$emit('delete', message.id, currentBranch.id)">
-            <template v-slot:prepend>
-              <v-icon size="16" icon="mdi-delete-outline" color="error" />
-            </template>
-            <v-list-item-title class="text-caption">Delete branch</v-list-item-title>
-          </v-list-item>
           <v-list-item v-if="message.branches.length > 1" density="compact" @click="$emit('delete-all-branches', message.id)">
             <template v-slot:prepend>
               <v-icon size="16" icon="mdi-delete-sweep-outline" color="error" />
@@ -424,6 +418,14 @@
           @click="saveEdit"
         >
           {{ isPostHocEditing ? 'Save for AI' : 'Save & Regenerate' }}
+        </v-btn>
+        <v-btn
+          v-if="!isPostHocEditing"
+          size="small"
+          variant="outlined"
+          @click="saveEditOnly"
+        >
+          Save
         </v-btn>
         <v-btn
           size="small"
@@ -760,6 +762,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   regenerate: [messageId: string, branchId: string];
   edit: [messageId: string, branchId: string, content: string];
+  'edit-only': [messageId: string, branchId: string, content: string];  // Edit and branch without regeneration
   'switch-branch': [messageId: string, branchId: string];
   delete: [messageId: string, branchId: string];
   'delete-all-branches': [messageId: string];
@@ -1312,6 +1315,14 @@ function saveEdit() {
       // Regular edit that triggers regeneration
       emit('edit', props.message.id, currentBranch.value.id, editContent.value);
     }
+  }
+  cancelEdit();
+}
+
+function saveEditOnly() {
+  if (editContent.value !== currentBranch.value.content) {
+    // Edit and branch without triggering regeneration
+    emit('edit-only', props.message.id, currentBranch.value.id, editContent.value);
   }
   cancelEdit();
 }

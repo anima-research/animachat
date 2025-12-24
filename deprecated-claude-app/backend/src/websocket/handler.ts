@@ -1528,8 +1528,8 @@ async function handleEdit(
   // Broadcast to other users in the room
   roomManager.broadcastToRoom(message.conversationId, userEditEvent, ws);
 
-  // If this was a user message, automatically generate an assistant response
-  if (branch.role === 'user') {
+  // If this was a user message, automatically generate an assistant response (unless skipped)
+  if (branch.role === 'user' && !message.skipRegeneration) {
     // Get all messages to find the position of the edited message
     const allMessages = await db.getConversationMessages(msg.conversationId, ws.userId);
     const editedMessageIndex = allMessages.findIndex(m => m.id === msg.id);

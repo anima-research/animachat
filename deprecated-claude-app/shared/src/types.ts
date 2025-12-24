@@ -594,7 +594,8 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     messageId: z.string().uuid(),
     branchId: z.string().uuid(),
     content: z.string(),
-    responderId: z.string().uuid().optional() // Which assistant should respond after edit
+    responderId: z.string().uuid().optional(), // Which assistant should respond after edit
+    skipRegeneration: z.boolean().optional() // If true, don't generate AI response after edit
   }),
   z.object({
     type: z.literal('delete'),

@@ -58,7 +58,7 @@ export interface Store {
   continueGeneration(responderId?: string, explicitParentBranchId?: string, samplingBranches?: number): Promise<void>;
   regenerateMessage(messageId: string, branchId: string, parentBranchId?: string): Promise<void>;
   abortGeneration(): void;
-  editMessage(messageId: string, branchId: string, content: string, responderId?: string): Promise<void>;
+  editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
   getVisibleMessages(): Message[];
@@ -623,7 +623,7 @@ export function createStore(): {
       });
     },
     
-    async editMessage(messageId: string, branchId: string, content: string, responderId?: string) {
+    async editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean) {
       if (!state.currentConversation || !state.wsService) return;
       
       state.wsService.sendMessage({
@@ -632,7 +632,8 @@ export function createStore(): {
         messageId,
         branchId,
         content,
-        responderId // Pass the currently selected responder
+        responderId, // Pass the currently selected responder
+        skipRegeneration // If true, don't generate AI response after edit
       } as any);
       
       // Update the conversation's updatedAt timestamp locally for immediate sorting

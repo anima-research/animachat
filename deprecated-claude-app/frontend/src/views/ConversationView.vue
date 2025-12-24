@@ -412,6 +412,7 @@
               :post-hoc-affected="postHocAffectedMessages.get(message.id)"
               @regenerate="regenerateMessage"
               @edit="editMessage"
+              @edit-only="editMessageOnly"
               @switch-branch="switchBranch"
               @delete="deleteMessage"
               @delete-all-branches="deleteAllBranches"
@@ -463,8 +464,11 @@
             :disabled="isStreaming"
             :single-model="currentModel"
             :is-standard-conversation="currentConversation.format === 'standard'"
+            :no-response-mode="noResponseMode"
             class="mb-2"
             @select-responder="(p) => selectedResponder = p.id"
+            @deselect-responder="selectedResponder = ''"
+            @toggle-no-response="noResponseMode = !noResponseMode"
             @quick-send="triggerParticipantResponse"
             @add-model="handleAddModel"
             @add-suggested-model="triggerModelResponse"
@@ -483,7 +487,10 @@
             :disabled="isStreaming"
             :single-model="currentModel"
             :is-standard-conversation="currentConversation.format === 'standard'"
+            :no-response-mode="noResponseMode"
             @select-responder="(p) => selectedResponder = p.id"
+            @deselect-responder="selectedResponder = ''"
+            @toggle-no-response="noResponseMode = !noResponseMode"
             @quick-send="triggerParticipantResponse"
             @add-model="handleAddModel"
             @add-suggested-model="triggerModelResponse"
@@ -1023,6 +1030,7 @@ const messagesContainer = ref<HTMLElement>();
 const participants = ref<Participant[]>([]);
 const selectedParticipant = ref<string>('');
 const selectedResponder = ref<string>('');
+const noResponseMode = ref(false);  // For standard conversations: disable AI response
 const showMobileSpeakingAs = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
 const bookmarks = ref<Bookmark[]>([]);
@@ -2181,9 +2189,9 @@ async function sendMessage() {
   hiddenFromAi.value = false; // Reset hiddenFromAi for next message (sampling stays)
   
   // Only set streaming state if message will trigger AI generation
-  // Hidden messages and messages without responder don't trigger AI
+  // Hidden messages, no-response mode, and messages without responder don't trigger AI
   const willTriggerAi = !messageHiddenFromAi && (
-    currentConversation.value?.format === 'standard' || selectedResponder.value
+    (currentConversation.value?.format === 'standard' && !noResponseMode.value) || selectedResponder.value
   );
   
   if (willTriggerAi && !isMultiuserConversation.value) {
@@ -2206,7 +2214,8 @@ async function sendMessage() {
       const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.name === 'Assistant');
       
       participantId = defaultUser?.id;
-      responderId = defaultAssistant?.id;
+      // Only set responderId if not in no-response mode
+      responderId = noResponseMode.value ? undefined : defaultAssistant?.id;
     } else {
       // For other formats, use selected participants
       participantId = selectedParticipant.value || undefined;
@@ -2377,15 +2386,22 @@ async function editMessage(messageId: string, branchId: string, content: string)
   let responderId: string | undefined;
   
   if (currentConversation.value?.format === 'standard') {
-    // For standard format, use default assistant
-    const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.name === 'Assistant');
-    responderId = defaultAssistant?.id;
+    // For standard format, use default assistant (unless in no-response mode)
+    if (!noResponseMode.value) {
+      const defaultAssistant = participants.value.find(p => p.type === 'assistant' && p.name === 'Assistant');
+      responderId = defaultAssistant?.id;
+    }
   } else {
     // For other formats, use selected responder
     responderId = selectedResponder.value || undefined;
   }
   
   await store.editMessage(messageId, branchId, content, responderId);
+}
+
+async function editMessageOnly(messageId: string, branchId: string, content: string) {
+  // Edit and branch without triggering AI regeneration
+  await store.editMessage(messageId, branchId, content, undefined, true);
 }
 
 function switchBranch(messageId: string, branchId: string) {

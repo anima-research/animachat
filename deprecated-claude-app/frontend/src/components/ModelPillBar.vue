@@ -12,15 +12,28 @@
     <!-- Single model pill for standard conversations -->
     <div
       v-if="isStandardConversation && singleModel"
-      class="pill selected"
-      :style="getSingleModelStyle()"
-      @click="$emit('open-settings')"
+      class="pill"
+      :class="{ 'selected': !noResponseMode, 'no-response': noResponseMode }"
+      :style="noResponseMode ? getNoResponseStyle() : getSingleModelStyle()"
+      @click="toggleStandardResponse"
+      :title="noResponseMode ? 'Click to enable AI response' : 'Click to disable AI response'"
     >
-      <v-icon size="x-small" class="pill-icon">{{ getModelIcon(singleModel) }}</v-icon>
-      <span class="pill-name">{{ singleModel.shortName || singleModel.displayName }}</span>
+      <v-icon size="x-small" class="pill-icon">{{ noResponseMode ? 'mdi-robot-off' : getModelIcon(singleModel) }}</v-icon>
+      <span class="pill-name">{{ noResponseMode ? 'No response' : (singleModel.shortName || singleModel.displayName) }}</span>
       <span class="pill-settings" @click.stop="$emit('open-settings')" title="Model settings">
         <v-icon size="x-small">mdi-cog</v-icon>
       </span>
+    </div>
+
+    <!-- "No response" indicator for group chat when no responder selected -->
+    <div
+      v-if="!isStandardConversation && !selectedResponderId"
+      class="pill no-response selected"
+      :style="getNoResponseStyle()"
+      title="No AI will respond. Click a model to select a responder."
+    >
+      <v-icon size="x-small" class="pill-icon">mdi-robot-off</v-icon>
+      <span class="pill-name">No response</span>
     </div>
 
     <!-- Participant pills (for group chat) -->
@@ -35,6 +48,7 @@
         }"
         :style="getPillStyle(participant)"
         @click="selectResponder(participant)"
+        :title="participant.id === selectedResponderId ? 'Click to deselect (no AI response)' : 'Click to select as responder'"
       >
         <v-icon size="x-small" class="pill-icon">{{ getParticipantIcon(participant) }}</v-icon>
         <span class="pill-name">{{ getDisplayName(participant) }}</span>
@@ -90,15 +104,19 @@ const props = defineProps<{
   // For one-on-one conversations
   singleModel?: Model | null;
   isStandardConversation?: boolean;
+  // For standard conversations: whether AI response is disabled
+  noResponseMode?: boolean;
 }>();
 
 const emit = defineEmits<{
   'select-responder': [participant: Participant];
+  'deselect-responder': [];
   'quick-send': [participant: Participant];
   'add-model': [model?: Model];
   'add-suggested-model': [model: Model];
   'quick-send-model': [model: Model];
   'open-settings': [];
+  'toggle-no-response': [];
 }>();
 
 const isMobile = computed(() => {
@@ -107,7 +125,12 @@ const isMobile = computed(() => {
 
 function selectResponder(participant: Participant) {
   if (!props.disabled) {
-    emit('select-responder', participant);
+    // Toggle: if already selected, emit with null id to deselect
+    if (participant.id === props.selectedResponderId) {
+      emit('deselect-responder');
+    } else {
+      emit('select-responder', participant);
+    }
   }
 }
 
@@ -144,6 +167,19 @@ function getSingleModelStyle() {
     '--pill-text': '#fff',
     borderColor: color
   };
+}
+
+function getNoResponseStyle() {
+  return {
+    '--pill-color': '#666',
+    '--pill-bg': '#333',
+    '--pill-text': '#999',
+    borderColor: '#666'
+  };
+}
+
+function toggleStandardResponse() {
+  emit('toggle-no-response');
 }
 
 function getModelIcon(model: Model): string {
@@ -231,6 +267,15 @@ function getProviderIcon(provider: string): string {
 
 .pill.selected {
   font-weight: 500;
+}
+
+.pill.no-response {
+  border-style: dashed;
+  opacity: 0.8;
+}
+
+.pill.no-response:hover {
+  opacity: 1;
 }
 
 .pill.suggested {
