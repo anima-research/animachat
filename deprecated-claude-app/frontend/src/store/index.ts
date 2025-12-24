@@ -26,6 +26,8 @@ interface StoreState {
   // Detached branch mode - allows users to navigate branches independently
   isDetachedFromMainBranch: boolean;
   localBranchSelections: Map<string, string>; // messageId -> branchId
+  // WebSocket connection state
+  wsConnectionState: 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'failed';
 }
 
 export interface Store {
@@ -195,7 +197,9 @@ export function createStore(): {
     systemConfig: null,
     // Detached branch mode
     isDetachedFromMainBranch: false,
-    localBranchSelections: new Map()
+    localBranchSelections: new Map(),
+    // WebSocket connection state
+    wsConnectionState: 'disconnected'
   });
 
   const store: Store = {
@@ -1016,6 +1020,13 @@ export function createStore(): {
       console.log(`[Store] Creating WebSocketService...`);
       state.wsService = new WebSocketService(token);
       console.log(`[Store] WebSocketService created, setting up handlers...`);
+      
+      // Track connection state
+      state.wsService.on('connection_state', (data: any) => {
+        console.log(`[Store] WebSocket connection state: ${data.state}`);
+        state.wsConnectionState = data.state;
+      });
+      state.wsConnectionState = 'connecting';
       
       state.wsService.on('message_created', (data: any) => {
         // console.log('Store handling message_created:', data);

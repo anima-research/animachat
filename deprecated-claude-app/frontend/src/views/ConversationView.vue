@@ -346,9 +346,19 @@
           class="flex-grow-1 overflow-y-auto messages-container"
           style="max-height: calc(100vh - 160px);"
         >
-          <div v-if="!currentConversation" class="text-center mt-12">
+          <div v-if="!currentConversation && !isLoadingConversation" class="text-center mt-12">
             <v-icon size="64" color="grey">mdi-message-text-outline</v-icon>
             <h2 class="text-h5 mt-4 text-grey">Select or create a conversation to start</h2>
+          </div>
+          
+          <!-- Loading spinner while conversation is being fetched -->
+          <div v-else-if="isLoadingConversation" class="text-center mt-12">
+            <v-progress-circular
+              indeterminate
+              color="primary"
+              size="64"
+            />
+            <h2 class="text-h6 mt-4 text-grey-lighten-1">Loading conversation...</h2>
           </div>
           
           <div v-else>
@@ -525,6 +535,23 @@
             <span class="text-body-1 mt-2">Drop files here</span>
           </div>
           
+          <!-- Connection status indicator -->
+          <div v-if="wsConnectionState !== 'connected'" class="connection-status-bar mb-2">
+            <v-icon 
+              size="small" 
+              :color="wsConnectionState === 'reconnecting' ? 'warning' : 'error'"
+              class="mr-2"
+            >
+              {{ wsConnectionState === 'reconnecting' ? 'mdi-wifi-refresh' : 'mdi-wifi-off' }}
+            </v-icon>
+            <span class="text-caption">
+              {{ wsConnectionState === 'connecting' ? 'Connecting...' : 
+                 wsConnectionState === 'reconnecting' ? 'Reconnecting...' :
+                 wsConnectionState === 'failed' ? 'Connection failed. Please refresh the page.' :
+                 'Disconnected' }}
+            </span>
+          </div>
+          
           <v-textarea
             ref="messageTextarea"
             v-model="messageInput"
@@ -670,13 +697,14 @@
             <!-- Send/Stop button -->
             <v-btn
               v-if="!isStreaming"
-              :disabled="!messageInput"
-              color="primary"
+              :disabled="!messageInput || !isWsConnected"
+              :color="isWsConnected ? 'primary' : 'grey'"
               icon="mdi-send"
               variant="flat"
               size="small"
               style="touch-action: manipulation;"
               class="ml-2"
+              :title="isWsConnected ? 'Send message' : 'Waiting for connection...'"
               @click="sendMessage"
             />
             <v-btn
@@ -874,6 +902,7 @@ const streamingMessageId = ref<string | null>(null);
 const autoScrollEnabled = ref(true);
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
+const isLoadingConversation = ref(false);
 
 // General error snackbar (for non-streaming errors like pricing validation)
 const errorSnackbar = ref(false);
@@ -1059,6 +1088,8 @@ function getPermissionColor(permission: string): string {
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
+const wsConnectionState = computed(() => store.state.wsConnectionState);
+const isWsConnected = computed(() => store.state.wsConnectionState === 'connected');
 
 // Compute which messages are affected by post-hoc operations
 // IMPORTANT: Only consider operations that are on the CURRENT visible branch path
@@ -1750,6 +1781,7 @@ onMounted(async () => {
     console.log(`[ConversationView] Route has conversation ID: ${route.params.id}`);
     console.log(`[ConversationView] Starting conversation load...`);
     const loadStart = Date.now();
+    isLoadingConversation.value = true;
     
     try {
       await store.loadConversation(route.params.id as string);
@@ -1757,6 +1789,8 @@ onMounted(async () => {
       console.log(`[ConversationView] allMessages.length: ${store.state.allMessages.length}`);
     } catch (error) {
       console.error(`[ConversationView] ✗ store.loadConversation failed:`, error);
+    } finally {
+      isLoadingConversation.value = false;
     }
     
     try {
@@ -1856,6 +1890,7 @@ watch(() => route.params.id, async (newId, oldId) => {
   if (newId) {
     console.log(`[ConversationView:watch] Route changed to: ${newId}`);
     const loadStart = Date.now();
+    isLoadingConversation.value = true;
     
     // Restore draft for this conversation or clear input
     messageInput.value = conversationDrafts.value.get(newId as string) || '';
@@ -1870,6 +1905,8 @@ watch(() => route.params.id, async (newId, oldId) => {
       console.log(`[ConversationView:watch] ✓ Conversation loaded in ${Date.now() - loadStart}ms, messages: ${store.state.allMessages.length}`);
     } catch (error) {
       console.error(`[ConversationView:watch] ✗ Failed to load conversation:`, error);
+    } finally {
+      isLoadingConversation.value = false;
     }
     
     await loadParticipants();
