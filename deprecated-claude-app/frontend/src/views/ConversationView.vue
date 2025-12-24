@@ -3784,6 +3784,17 @@ function formatDate(date: Date | string): string {
 </script>
 
 <style scoped>
+/* Connection status indicator */
+.connection-status-bar {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: rgba(255, 152, 0, 0.1);
+  border: 1px solid rgba(255, 152, 0, 0.3);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
 /* Custom scrollbar styles for better visibility in dark theme */
 .overflow-y-auto::-webkit-scrollbar {
   width: 12px;
