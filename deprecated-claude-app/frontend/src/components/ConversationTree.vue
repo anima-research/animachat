@@ -2,11 +2,18 @@
   <div class="conversation-tree-container">
     <div class="tree-controls pa-2">
       <v-btn
+        icon="mdi-crosshairs-gps"
+        size="small"
+        variant="text"
+        @click="centerOnNode"
+        title="Center on current node"
+      />
+      <v-btn
         icon="mdi-fit-to-page-outline"
         size="small"
         variant="text"
         @click="centerTree"
-        title="Center view"
+        title="Fit entire tree in view"
       />
       <v-btn
         icon="mdi-magnify-plus"
@@ -559,9 +566,15 @@ function renderTree() {
     }
   });
 
-  // Center the tree initially
-  centerTree();
+  // Use smart centering: fit entire tree if small, center on node if large
+  smartCenter();
 }
+
+// Minimum zoom scale threshold - if fitting the tree would zoom out below this, use centerOnNode instead
+const MIN_AUTO_FIT_SCALE = 0.4;
+
+// Preferred zoom scale when centering on a node
+const CENTER_ON_NODE_SCALE = 0.8;
 
 function centerTree() {
   if (!svg || !g || !treeData.value) return;
@@ -584,6 +597,87 @@ function centerTree() {
       zoom.transform as any,
       d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
     );
+}
+
+// Calculate what scale centerTree would use without actually applying it
+function calculateFitScale(): number {
+  if (!g || !svgRef.value) return 1;
+  
+  const bounds = (g.node() as SVGGElement).getBBox();
+  const width = svgRef.value.clientWidth || 400;
+  const height = svgRef.value.clientHeight || 600;
+  
+  const fullWidth = bounds.width;
+  const fullHeight = bounds.height;
+  
+  return 0.9 / Math.max(fullWidth / width, fullHeight / height);
+}
+
+// Center view on the currently active/selected node
+function centerOnNode() {
+  if (!svg || !g || !treeData.value) return;
+  
+  const width = svgRef.value?.clientWidth || 400;
+  const height = svgRef.value?.clientHeight || 600;
+  
+  // Find the active node (the one with blue outline)
+  // Priority: selectedParent if exists, otherwise current message/branch
+  let targetMessageId = props.selectedParentMessageId || props.currentMessageId;
+  let targetBranchId = props.selectedParentBranchId || props.currentBranchId;
+  
+  if (!targetMessageId || !targetBranchId) return;
+  
+  // Find the node element in the SVG
+  const nodes = g.selectAll('.node').data() as d3.HierarchyPointNode<TreeNode>[];
+  const targetNode = nodes.find(d => 
+    d.data.messageId === targetMessageId && 
+    d.data.branchId === targetBranchId
+  );
+  
+  if (!targetNode) {
+    // Node not found, fall back to centerTree
+    centerTree();
+    return;
+  }
+  
+  // Get node position (with the +50 offset that's applied in renderTree)
+  const nodeX = targetNode.x + 50;
+  const nodeY = targetNode.y + 50;
+  
+  // Determine zoom scale:
+  // - If current scale is less than preferred, zoom in to preferred
+  // - Otherwise maintain current scale
+  const currentTransform = d3.zoomTransform(svg.node()!);
+  const currentScale = currentTransform.k;
+  const targetScale = Math.max(currentScale, CENTER_ON_NODE_SCALE);
+  
+  // Calculate translation to center the node
+  const translate = [
+    width / 2 - targetScale * nodeX,
+    height / 2 - targetScale * nodeY
+  ];
+  
+  svg.transition()
+    .duration(750)
+    .call(
+      zoom.transform as any,
+      d3.zoomIdentity.translate(translate[0], translate[1]).scale(targetScale)
+    );
+}
+
+// Smart centering: center on node if tree is large, otherwise fit entire tree
+function smartCenter() {
+  if (!svg || !g || !treeData.value) return;
+  
+  const fitScale = calculateFitScale();
+  
+  if (fitScale < MIN_AUTO_FIT_SCALE) {
+    // Tree is too large to fit nicely, center on current node instead
+    centerOnNode();
+  } else {
+    // Tree is small enough, fit entire tree in view
+    centerTree();
+  }
 }
 
 function zoomIn() {
