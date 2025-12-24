@@ -105,6 +105,7 @@ const compactMode = ref(false);
 const compactModeManuallySet = ref(false); // Track if user manually toggled
 const alignActivePath = ref(false); // Align active path ancestors vertically
 const collapseNonActive = ref(false); // Hide nodes not on active path or immediate children of it
+const nodesWithCollapsedDescendants = ref(new Set<string>()); // Track nodes that have hidden children
 const store = useStore();
 const bookmarks = ref<Bookmark[]>([]);
 
@@ -283,6 +284,9 @@ function filterCompactNodes(originalRoot: d3.HierarchyNode<TreeNode>): d3.Hierar
 
 // Filter nodes to only show active path and immediate children of active path nodes
 function filterToActivePath(originalRoot: d3.HierarchyNode<TreeNode>): d3.HierarchyNode<TreeNode> {
+  // Clear the collapsed descendants tracker
+  nodesWithCollapsedDescendants.value = new Set<string>();
+  
   // First, build the active path set by tracing from current node to root
   const activePathIds = new Set<string>();
   
@@ -311,6 +315,12 @@ function filterToActivePath(originalRoot: d3.HierarchyNode<TreeNode>): d3.Hierar
   
   findActivePath(originalRoot);
   
+  // Helper to count all descendants in original tree
+  function countDescendants(node: d3.HierarchyNode<TreeNode>): number {
+    if (!node.children || node.children.length === 0) return 0;
+    return node.children.length + node.children.reduce((sum, c) => sum + countDescendants(c), 0);
+  }
+  
   // Now filter the tree
   function filterNode(node: d3.HierarchyNode<TreeNode>, parentOnActivePath: boolean): TreeNode | null {
     const nodeId = `${node.data.messageId}-${node.data.branchId}`;
@@ -325,6 +335,29 @@ function filterToActivePath(originalRoot: d3.HierarchyNode<TreeNode>): d3.Hierar
             .map(c => filterNode(c, isOnActivePath))
             .filter(c => c !== null) as TreeNode[]
         : [];
+      
+      // Check if this node has descendants that were filtered out
+      const originalDescendantCount = countDescendants(node);
+      const filteredDescendantCount = filteredChildren.reduce((sum, c) => {
+        // Count children of filtered children (since we kept immediate children)
+        const childInOriginal = node.children?.find(
+          oc => oc.data.messageId === c.messageId && oc.data.branchId === c.branchId
+        );
+        return sum + 1 + (childInOriginal ? countDescendants(childInOriginal) : 0);
+      }, 0);
+      
+      // If the node originally had children but now has fewer descendants, mark it
+      if (node.children && node.children.length > 0) {
+        // Check if any child has descendants that are now hidden
+        for (const child of node.children) {
+          const childId = `${child.data.messageId}-${child.data.branchId}`;
+          const childDescendants = countDescendants(child);
+          if (childDescendants > 0 && !activePathIds.has(childId)) {
+            // This child has descendants that will be hidden
+            nodesWithCollapsedDescendants.value.add(childId);
+          }
+        }
+      }
       
       return {
         ...node.data,
@@ -468,95 +501,48 @@ function renderTree() {
   
   // Apply custom layout if active path alignment is enabled
   if (alignActivePath.value && activePath.size > 0) {
-    // Custom layout: position active path vertically aligned, then position other subtrees around it
-    const nodeSpacing = baseNodeRadius * 3;
-    const targetX = 0; // Center the active path at x=0
+    // Simple approach: shift each level so the active path node at that level is at x=0
+    // This preserves all relative spacing (no overlaps) while aligning the active path
     
-    // First, calculate subtree widths for all nodes (number of leaf descendants or 1 if leaf)
-    const subtreeWidths = new Map<d3.HierarchyPointNode<TreeNode>, number>();
+    const targetX = 0;
     
-    function calculateSubtreeWidth(node: d3.HierarchyPointNode<TreeNode>): number {
-      if (!node.children || node.children.length === 0) {
-        subtreeWidths.set(node, 1);
-        return 1;
+    // Group nodes by depth
+    const nodesByDepth = new Map<number, d3.HierarchyPointNode<TreeNode>[]>();
+    let maxDepth = 0;
+    for (const node of treeNodes.descendants()) {
+      const depth = node.depth;
+      maxDepth = Math.max(maxDepth, depth);
+      if (!nodesByDepth.has(depth)) {
+        nodesByDepth.set(depth, []);
       }
-      const width = node.children.reduce((sum, child) => sum + calculateSubtreeWidth(child), 0);
-      subtreeWidths.set(node, width);
-      return width;
+      nodesByDepth.get(depth)!.push(node);
     }
     
-    calculateSubtreeWidth(treeNodes);
+    // Track the last shift applied (for levels below the active path)
+    let lastShift = 0;
     
-    // Now position nodes with active path aligned
-    function positionNode(node: d3.HierarchyPointNode<TreeNode>, x: number, depth: number) {
-      node.x = x;
-      node.y = depth * baseNodeRadius * 4;
+    // For each depth level, find the active path node and calculate shift
+    for (let depth = 0; depth <= maxDepth; depth++) {
+      const nodes = nodesByDepth.get(depth);
+      if (!nodes) continue;
       
-      if (!node.children || node.children.length === 0) return;
-      
-      // Find which child (if any) is on the active path
-      const activeChild = node.children.find(child => {
-        const childId = `${child.data.messageId}-${child.data.branchId}`;
-        return activePath.has(childId);
+      // Find the active path node at this depth
+      const activeNode = nodes.find(node => {
+        const nodeId = `${node.data.messageId}-${node.data.branchId}`;
+        return activePath.has(nodeId);
       });
       
-      if (activeChild) {
-        // Active child stays at the same x position (aligned)
-        // Other children are distributed on either side
-        const leftChildren: d3.HierarchyPointNode<TreeNode>[] = [];
-        const rightChildren: d3.HierarchyPointNode<TreeNode>[] = [];
-        
-        let foundActive = false;
-        for (const child of node.children) {
-          if (child === activeChild) {
-            foundActive = true;
-          } else if (!foundActive) {
-            leftChildren.push(child);
-          } else {
-            rightChildren.push(child);
-          }
-        }
-        
-        // Position active child at same x
-        positionNode(activeChild, x, depth + 1);
-        
-        // Get the active child's subtree width to know where to start positioning siblings
-        const activeChildWidth = subtreeWidths.get(activeChild) || 1;
-        
-        // Position left children to the left (starting from the left edge of active subtree)
-        let leftX = x - (activeChildWidth * nodeSpacing) / 2;
-        for (let i = leftChildren.length - 1; i >= 0; i--) {
-          const child = leftChildren[i];
-          const childWidth = subtreeWidths.get(child) || 1;
-          leftX -= (childWidth * nodeSpacing) / 2;
-          positionNode(child, leftX, depth + 1);
-          leftX -= (childWidth * nodeSpacing) / 2;
-        }
-        
-        // Position right children to the right (starting from the right edge of active subtree)
-        let rightX = x + (activeChildWidth * nodeSpacing) / 2;
-        for (const child of rightChildren) {
-          const childWidth = subtreeWidths.get(child) || 1;
-          rightX += (childWidth * nodeSpacing) / 2;
-          positionNode(child, rightX, depth + 1);
-          rightX += (childWidth * nodeSpacing) / 2;
-        }
-      } else {
-        // No active child - distribute children evenly around this x position
-        const totalWidth = node.children.reduce((sum, child) => 
-          sum + (subtreeWidths.get(child) || 1), 0);
-        
-        let currentX = x - (totalWidth * nodeSpacing) / 2;
-        for (const child of node.children) {
-          const childWidth = subtreeWidths.get(child) || 1;
-          currentX += (childWidth * nodeSpacing) / 2;
-          positionNode(child, currentX, depth + 1);
-          currentX += (childWidth * nodeSpacing) / 2;
-        }
+      if (activeNode) {
+        // Calculate shift needed to move active node to targetX
+        lastShift = targetX - activeNode.x;
+      }
+      // If no active node at this level, use the last shift (for levels below active path)
+      
+      // Apply shift to ALL nodes at this depth
+      for (const node of nodes) {
+        node.x += lastShift;
       }
     }
-    
-    positionNode(treeNodes, targetX, 0);
   }
   
   // Add links (edges) - vertical links
@@ -741,6 +727,37 @@ function renderTree() {
         .style('hyphens', 'auto')
         .style('line-height', '1.2')
         .text(d.data.bookmarkLabel);
+    }
+    
+    // Add plus indicator for nodes with collapsed descendants
+    if (collapseNonActive.value) {
+      const nodeId = `${d.data.messageId}-${d.data.branchId}`;
+      if (nodesWithCollapsedDescendants.value.has(nodeId)) {
+        const plusSize = baseNodeRadius * 0.5;
+        const plusOffset = baseNodeRadius * 0.9;
+        
+        // Draw a small circle background
+        g.append('circle')
+          .attr('cx', plusOffset)
+          .attr('cy', plusOffset)
+          .attr('r', plusSize * 0.9)
+          .style('fill', 'var(--v-theme-surface)')
+          .style('stroke', '#888')
+          .style('stroke-width', 1)
+          .style('pointer-events', 'none');
+        
+        // Draw plus sign
+        g.append('path')
+          .attr('d', `M ${plusOffset - plusSize * 0.5},${plusOffset} 
+                      L ${plusOffset + plusSize * 0.5},${plusOffset} 
+                      M ${plusOffset},${plusOffset - plusSize * 0.5} 
+                      L ${plusOffset},${plusOffset + plusSize * 0.5}`)
+          .style('stroke', '#888')
+          .style('stroke-width', Math.max(1.5, plusSize * 0.3))
+          .style('stroke-linecap', 'round')
+          .style('fill', 'none')
+          .style('pointer-events', 'none');
+      }
     }
   });
 
