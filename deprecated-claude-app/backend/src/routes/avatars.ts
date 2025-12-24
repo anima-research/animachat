@@ -22,16 +22,34 @@ const __dirname = path.dirname(__filename);
 
 const router = Router();
 
-// Avatar storage paths
-// From dist/routes/ we need to go up 3 levels to deprecated-claude-app, then into frontend
-const AVATARS_BASE_PATH = path.join(__dirname, '../../../frontend/public/avatars');
+// Avatar storage paths - configurable via environment variable
+// In production, this should point to the static files directory served by nginx
+// e.g., AVATARS_PATH=/var/www/frontend/avatars
+// In development, we use the frontend/public/avatars directory
+const getAvatarsBasePath = () => {
+  if (process.env.AVATARS_PATH) {
+    return process.env.AVATARS_PATH;
+  }
+  // Development default: From dist/routes/ go up 3 levels to deprecated-claude-app, then into frontend
+  return path.join(__dirname, '../../../frontend/public/avatars');
+};
+
+const AVATARS_BASE_PATH = getAvatarsBasePath();
 const SYSTEM_PACKS_PATH = path.join(AVATARS_BASE_PATH, 'system');
 const USER_PACKS_PATH = path.join(AVATARS_BASE_PATH, 'users');
 
+console.log(`[Avatars] Using avatar storage path: ${AVATARS_BASE_PATH}`);
+
 // Ensure directories exist
 async function ensureDirectories() {
-  await fs.mkdir(SYSTEM_PACKS_PATH, { recursive: true });
-  await fs.mkdir(USER_PACKS_PATH, { recursive: true });
+  try {
+    await fs.mkdir(SYSTEM_PACKS_PATH, { recursive: true });
+    await fs.mkdir(USER_PACKS_PATH, { recursive: true });
+  } catch (error: any) {
+    console.error(`[Avatars] Failed to create avatar directories at ${AVATARS_BASE_PATH}: ${error.message}`);
+    console.error(`[Avatars] Set AVATARS_PATH environment variable to a writable directory`);
+    throw error;
+  }
 }
 
 // Configure multer for avatar uploads - use memory storage for processing with sharp

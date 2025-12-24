@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import { clearOpenRouterLog } from './utils/openrouterLogger.js';
 
 // Clean up old OpenRouter request logs on startup
@@ -78,9 +79,42 @@ if (USE_HTTPS) {
   server = createHttpServer(app);
 }
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ 
+  server,
+  // Enable per-message deflate compression for large messages
+  perMessageDeflate: {
+    zlibDeflateOptions: {
+      // Use maximum compression level for slow connections
+      level: 6, // 1-9, higher = more compression but slower
+    },
+    zlibInflateOptions: {
+      chunkSize: 10 * 1024
+    },
+    // Compress messages larger than 1KB
+    threshold: 1024,
+    // Don't limit concurrent decompression
+    concurrencyLimit: 10,
+  }
+});
+console.log('[WebSocket] Per-message deflate compression enabled (threshold: 1KB)');
 
 // Middleware
+// Enable gzip/deflate compression for HTTP responses
+app.use(compression({
+  // Compress responses larger than 1KB
+  threshold: 1024,
+  // Compression level (1-9, higher = more compression)
+  level: 6,
+  // Don't compress if client doesn't support it
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
+console.log('[HTTP] Gzip compression enabled (threshold: 1KB)');
+
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true
