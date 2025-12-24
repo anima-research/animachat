@@ -269,30 +269,64 @@
             {{ currentConversation.title || 'New Conversation' }}
           </div>
 
-          <!-- Scrollable bookmarks section -->
-          <div v-if="bookmarksInActivePath.length > 0" class="d-flex align-center bookmarks-scroll-container">
-            <v-icon icon="mdi-map-marker-right" size="small" class="mx-0" />
-            <div ref="bookmarksScrollRef" class="bookmarks-scroll">
-              <div class="d-flex align-center">
-                <template v-for="(bookmark, index) in bookmarksInActivePath" :key="bookmark.id">
-                  <span
-                    :ref="el => bookmarkRefs[index] = el as HTMLElement"
-                    class="bookmark-item cursor-pointer"
-                    :class="{ 'bookmark-current': index === currentBookmarkIndex }"
-                    @click="scrollToMessage(bookmark.messageId)"
-                  >
-                    {{ bookmark.label }}
-                  </span>
-                  <v-icon
-                    v-if="index < bookmarksInActivePath.length - 1"
-                    icon="mdi-chevron-right"
-                    size="small"
-                    class="mx-0"
-                    :style="{ opacity: index < currentBookmarkIndex ? 0.4 : 1 }"
-                  />
-                </template>
+          <!-- Bookmark navigation section - shows if there are any bookmarks in the tree -->
+          <div v-if="bookmarks.length > 0" class="d-flex align-center bookmarks-scroll-container">
+            <!-- Bookmark browser dropdown (using map marker icon) -->
+            <v-menu location="bottom" :close-on-content-click="true" max-height="400">
+              <template v-slot:activator="{ props }">
+                <v-icon
+                  v-bind="props"
+                  icon="mdi-map-marker-right"
+                  size="small"
+                  class="bookmark-browser-btn cursor-pointer"
+                  :title="`Browse all bookmarks (${bookmarks.length})`"
+                />
+              </template>
+              <v-list density="compact" class="bookmark-browser-list" min-width="300" max-width="400">
+                <v-list-subheader>All Bookmarks ({{ bookmarks.length }})</v-list-subheader>
+                <v-list-item
+                  v-for="bookmark in allBookmarksWithPreviews"
+                  :key="bookmark.id"
+                  @click="navigateToBookmark(bookmark.messageId, bookmark.branchId)"
+                  :class="{ 'bookmark-in-path': isBookmarkInActivePath(bookmark) }"
+                >
+                  <template v-slot:prepend>
+                    <v-icon size="small" :color="isBookmarkInActivePath(bookmark) ? 'primary' : undefined">
+                      mdi-bookmark
+                    </v-icon>
+                  </template>
+                  <v-list-item-title class="font-weight-medium">{{ bookmark.label }}</v-list-item-title>
+                  <v-list-item-subtitle class="text-caption bookmark-preview">
+                    {{ bookmark.preview }}
+                  </v-list-item-subtitle>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+
+            <!-- Path indicator and scrollable bookmarks in active path -->
+            <template v-if="bookmarksInActivePath.length > 0">
+              <div ref="bookmarksScrollRef" class="bookmarks-scroll">
+                <div class="d-flex align-center">
+                  <template v-for="(bookmark, index) in bookmarksInActivePath" :key="bookmark.id">
+                    <span
+                      :ref="el => bookmarkRefs[index] = el as HTMLElement"
+                      class="bookmark-item cursor-pointer"
+                      :class="{ 'bookmark-current': index === currentBookmarkIndex }"
+                      @click="scrollToMessage(bookmark.messageId)"
+                    >
+                      {{ bookmark.label }}
+                    </span>
+                    <v-icon
+                      v-if="index < bookmarksInActivePath.length - 1"
+                      icon="mdi-chevron-right"
+                      size="small"
+                      class="mx-0"
+                      :style="{ opacity: index < currentBookmarkIndex ? 0.4 : 1 }"
+                    />
+                  </template>
+                </div>
               </div>
-            </div>
+            </template>
           </div>
         </div>
 
@@ -1316,6 +1350,37 @@ const bookmarksInActivePath = computed(() => {
 
   return result;
 });
+
+// Get all bookmarks with message content previews for the bookmark browser
+const allBookmarksWithPreviews = computed(() => {
+  return bookmarks.value.map(bookmark => {
+    // Find the message and branch
+    const message = allMessages.value.find(m => m.id === bookmark.messageId);
+    const branch = message?.branches.find(b => b.id === bookmark.branchId);
+    
+    // Generate preview from message content
+    const content = branch?.content || '';
+    const preview = content.slice(0, 80) + (content.length > 80 ? '...' : '');
+    
+    return {
+      ...bookmark,
+      preview
+    };
+  });
+});
+
+// Check if a bookmark is in the current active path
+function isBookmarkInActivePath(bookmark: Bookmark): boolean {
+  return bookmarksInActivePath.value.some(
+    b => b.messageId === bookmark.messageId && b.branchId === bookmark.branchId
+  );
+}
+
+// Navigate to a bookmark (switches branches if needed and scrolls to message)
+async function navigateToBookmark(messageId: string, branchId: string) {
+  // Use navigateToTreeBranch which properly switches all ancestor branches
+  await navigateToTreeBranch(messageId, branchId);
+}
 
 const selectedResponderName = computed(() => {
   const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
@@ -4089,6 +4154,45 @@ function formatDate(date: Date | string): string {
 .bookmark-item:hover {
   background-color: rgba(255, 255, 255, 0.1);
   opacity: 0.9;
+}
+
+/* Bookmark browser button */
+.bookmark-browser-btn {
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.bookmark-browser-btn:hover {
+  opacity: 1;
+}
+
+/* Bookmark browser list */
+.bookmark-browser-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.bookmark-browser-list .v-list-item {
+  border-left: 3px solid transparent;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.bookmark-browser-list .v-list-item.bookmark-in-path {
+  border-left-color: rgb(var(--v-theme-primary));
+  background-color: rgba(var(--v-theme-primary), 0.08);
+}
+
+.bookmark-browser-list .v-list-item:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Bookmark preview text */
+.bookmark-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 350px;
+  opacity: 0.7;
 }
 
 /* Drop zone styles for drag-and-drop attachments */
