@@ -87,6 +87,12 @@ function applyBackroomPromptIfNeeded(params: BackroomPromptParams): string {
     return existingSystemPrompt;
   }
   
+  // If user has set a custom system prompt, respect it and don't apply the default
+  if (existingSystemPrompt) {
+    Logger.websocket(`[WebSocket] Custom system prompt set, skipping backroom prompt`);
+    return existingSystemPrompt;
+  }
+  
   // Check if model supports prefill
   const supportsPrefill = modelProvider === 'anthropic' || modelProvider === 'bedrock' || modelSupportsPrefill === true;
   if (!supportsPrefill) {
@@ -102,9 +108,7 @@ function applyBackroomPromptIfNeeded(params: BackroomPromptParams): string {
   }
   
   Logger.websocket(`[WebSocket] Applied backroom prompt (${messageCount} messages, provider: ${modelProvider})`);
-  return existingSystemPrompt 
-    ? `${BACKROOM_PROMPT}\n\n${existingSystemPrompt}`
-    : BACKROOM_PROMPT;
+  return BACKROOM_PROMPT;
 }
 
 /**

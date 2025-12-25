@@ -1222,6 +1222,19 @@ const renderedContent = computed(() => {
   // This prevents raw HTML from being rendered but preserves it visually
   content = content.replace(/</g, '&lt;').replace(/>/g, '&gt;');
   
+  // Preserve multiple consecutive spaces by converting to non-breaking spaces
+  // (do this before markdown rendering, which would collapse them)
+  // Convert 2+ spaces to alternating space/nbsp to preserve them
+  content = content.replace(/ {2,}/g, (match) => {
+    // Alternate between regular space and nbsp to allow wrapping while preserving count
+    return match.split('').map((_, i) => i % 2 === 0 ? ' ' : '&nbsp;').join('');
+  });
+  
+  // Also preserve leading spaces on each line (for indentation)
+  content = content.replace(/^( +)/gm, (match) => {
+    return match.replace(/ /g, '&nbsp;');
+  });
+  
   // Restore code blocks and inline code
   content = content.replace(/__CODE_BLOCK_(\d+)__/g, (_, index) => codeBlocks[parseInt(index)]);
   content = content.replace(/__INLINE_CODE_(\d+)__/g, (_, index) => inlineCode[parseInt(index)]);

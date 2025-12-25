@@ -940,6 +940,7 @@ const messageInput = ref('');
 const personas = ref<Persona[]>([]);
 const isStreaming = ref(false);
 const streamingMessageId = ref<string | null>(null);
+const streamingBranchId = ref<string | null>(null);  // Track which branch is streaming
 const autoScrollEnabled = ref(true);
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
@@ -1631,19 +1632,35 @@ onMounted(async () => {
       });
       
       store.state.wsService.on('stream', (data: any) => {
-        // Streaming content update
-        if (data.messageId === streamingMessageId.value) {
-          // Check if streaming is complete or was aborted
+        // Streaming content update - track which branch is being streamed
+        // This helps us know whether to auto-scroll (only if visible branch is streaming)
+        if (data.messageId && data.branchId) {
+          // Check if this is the active (visible) branch of the message
+          const message = store.state.allMessages.find(m => m.id === data.messageId);
+          const isActiveBranch = message && message.activeBranchId === data.branchId;
+          
           if (data.isComplete || data.aborted) {
-            isStreaming.value = false;
-            streamingMessageId.value = null;
+            // This branch finished streaming
+            if (data.branchId === streamingBranchId.value) {
+              streamingBranchId.value = null;
+            }
+            // Only clear global streaming state if ALL branches are done
+            // (for now, just clear if this was the tracked branch)
+            if (data.messageId === streamingMessageId.value && isActiveBranch) {
+              isStreaming.value = false;
+              streamingMessageId.value = null;
+            }
             if (data.aborted) {
               console.log('Generation was aborted');
             }
           } else {
-            // Still streaming
-            if (!isStreaming.value) {
-              isStreaming.value = true;
+            // Still streaming - update tracking if this is the active branch
+            if (isActiveBranch) {
+              streamingMessageId.value = data.messageId;
+              streamingBranchId.value = data.branchId;
+              if (!isStreaming.value) {
+                isStreaming.value = true;
+              }
             }
           }
         }
@@ -1655,6 +1672,7 @@ onMounted(async () => {
         if (data.conversationId === currentConversation.value?.id) {
           isStreaming.value = false;
           streamingMessageId.value = null;
+          streamingBranchId.value = null;
         }
       });
       
@@ -1828,6 +1846,7 @@ onMounted(async () => {
             console.log('[Room] Clearing streaming state from ai_finished event');
             isStreaming.value = false;
             streamingMessageId.value = null;
+            streamingBranchId.value = null;
           }
         }
       });
@@ -1958,6 +1977,7 @@ watch(() => route.params.id, async (newId, oldId) => {
   // Reset streaming state when switching conversations
   isStreaming.value = false;
   streamingMessageId.value = null;
+  streamingBranchId.value = null;
   streamingError.value = null;
   
   if (newId) {
@@ -2007,8 +2027,18 @@ watch(() => route.params.id, async (newId, oldId) => {
 
 // Watch for new messages to scroll
 watch(messages, () => {
-  // Don't auto-scroll if we're switching branches via the navigation arrows
-  if (autoScrollEnabled.value && !isSwitchingBranch.value) {
+  // Don't auto-scroll if:
+  // 1. Auto-scroll is disabled (user scrolled up)
+  // 2. We're switching branches via the navigation arrows
+  // 3. A non-visible branch is being updated (streaming on a branch user isn't viewing)
+  const shouldScroll = autoScrollEnabled.value && 
+                       !isSwitchingBranch.value &&
+                       // If streaming, only scroll if the visible branch is the one streaming
+                       (!isStreaming.value || !streamingBranchId.value || 
+                        // Check if the streaming branch is currently visible
+                        messages.value.some(m => m.id === streamingMessageId.value && m.activeBranchId === streamingBranchId.value));
+  
+  if (shouldScroll) {
     nextTick(() => {
       scrollToBottom(true); // Smooth scroll for new messages
     });

@@ -57,17 +57,21 @@
           class="mt-4"
         />
         
+        <!-- System prompt - available for all formats -->
+        <v-textarea
+          v-model="settings.systemPrompt"
+          label="System Prompt"
+          :placeholder="settings.format === 'standard' ? 'You are a helpful AI assistant...' : 'Optional conversation-level system prompt (each participant can also have their own)'"
+          variant="outlined"
+          density="compact"
+          rows="4"
+          class="mt-4"
+        />
+        <p v-if="settings.format === 'prefill'" class="text-caption text-grey mt-1 mb-0">
+          Note: For early group chats (&lt;10 messages), a default "CLI mode" prompt is applied if this is left empty. Setting a prompt here will override the default.
+        </p>
+        
         <div v-if="settings.format === 'standard'">
-          <v-textarea
-            v-model="settings.systemPrompt"
-            label="System Prompt"
-            placeholder="You are a helpful AI assistant..."
-            variant="outlined"
-            density="compact"
-            rows="4"
-            class="mt-4"
-          />
-          
           <v-divider class="my-4" />
           
           <h4 class="text-h6 mb-2">Model Parameters</h4>
