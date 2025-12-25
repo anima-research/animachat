@@ -4,7 +4,7 @@ import { InferenceService } from './inference.js';
 import { ContextWindow } from './context-strategies.js';
 import { Logger } from '../utils/logger.js';
 import { ConfigLoader } from '../config/loader.js';
-import { getOpenRouterPricing } from './pricing-cache.js';
+import { getOpenRouterPricing, tryRefreshOpenRouterCache } from './pricing-cache.js';
 
 // Custom error type for pricing issues
 export class PricingNotConfiguredError extends Error {
@@ -258,7 +258,14 @@ export async function validatePricingAvailable(
   
   // 2. For OpenRouter models, check the cached pricing
   if (model.provider === 'openrouter' && model.providerModelId) {
-    const orPricing = getOpenRouterPricing(model.providerModelId);
+    let orPricing = getOpenRouterPricing(model.providerModelId);
+    
+    // If not found, try lazy refresh of the cache
+    if (!orPricing) {
+      await tryRefreshOpenRouterCache();
+      orPricing = getOpenRouterPricing(model.providerModelId);
+    }
+    
     if (orPricing) {
       return { valid: true };
     }
