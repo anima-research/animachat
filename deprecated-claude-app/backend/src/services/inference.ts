@@ -838,6 +838,7 @@ export class InferenceService {
       let conversationContent = '';
       let lastMessageWasEmptyAssistant = false;
       let lastAssistantName = 'Assistant';
+      let lastParticipantName = ''; // Track previous participant for continuity
       let messageIndex = 0;  // Track index for cache breakpoints
       let messageOrder = 1;  // For ordering output messages
       
@@ -948,13 +949,19 @@ export class InferenceService {
           });
           
           console.log(`[PREFILL] Inserted user message with ${imageAttachments.length} image(s) at order ${messageOrder - 1}`);
+          // Reset participant tracking after image insertion
+          lastParticipantName = participantName;
         } else {
           // No images - add to conversation content as usual
           if (participantName === '') {
             conversationContent += `${messageContent}`;
+          } else if (participantName === lastParticipantName && lastParticipantName !== '') {
+            // Same participant as before - continue without prefix, just trim and append
+            conversationContent = conversationContent.trimEnd() + ' ' + messageContent.trimStart() + '\n\n';
           } else {
             conversationContent += `${participantName}: ${messageContent}\n\n`;
           }
+          lastParticipantName = participantName;
         }
         
         // Insert cache breakpoint marker if needed
@@ -972,6 +979,9 @@ export class InferenceService {
       if (lastMessageWasEmptyAssistant) {
         if (lastAssistantName === '') {
           conversationContent = conversationContent.trim() + thinkingPrefix;
+        } else if (lastAssistantName === lastParticipantName) {
+          // Same participant - just continue without name
+          conversationContent = conversationContent.trim() + thinkingPrefix;
         } else {
           conversationContent = conversationContent.trim() + `\n\n${lastAssistantName}:${thinkingPrefix}`;
         }
@@ -979,6 +989,9 @@ export class InferenceService {
         const responder = participants.find(p => p.id === responderId);
         if (responder) {
           if (responder.name === '') {
+            conversationContent = conversationContent.trim() + thinkingPrefix;
+          } else if (responder.name === lastParticipantName) {
+            // Same participant as last message - continue without name prefix
             conversationContent = conversationContent.trim() + thinkingPrefix;
           } else {
             conversationContent = conversationContent.trim() + `\n\n${responder.name}:${thinkingPrefix}`;
@@ -1115,8 +1128,10 @@ export class InferenceService {
         messagesFormatted.push(formattedMessage);
       }
       
-      // For Bedrock, we need to consolidate consecutive user messages
-      if (provider === 'bedrock') {
+      // Consolidate consecutive same-role messages if enabled or required for provider
+      // Bedrock always requires alternating turns
+      const shouldCombine = conversation?.combineConsecutiveMessages ?? true;
+      if (provider === 'bedrock' || shouldCombine) {
         return this.consolidateConsecutiveMessages(messagesFormatted);
       }
       

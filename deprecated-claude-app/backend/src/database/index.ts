@@ -936,6 +936,27 @@ export class Database {
         break;
       }
       
+      case 'message_split': {
+        // A message was split - the original message's content was truncated
+        // and a new message was created with the second part
+        const { messageId, branchId, splitPosition, newMessageId, newBranchId } = event.data;
+        
+        // The original message should already be in memory with truncated content
+        // The new message should be created from the event data
+        // Note: We don't have the new message data directly in the event,
+        // so we rely on the fact that message_created was also logged for the new message
+        
+        // Just update ordering if needed
+        const convMessages = this.conversationMessages.get(event.data.conversationId);
+        if (convMessages && newMessageId && !convMessages.includes(newMessageId)) {
+          const originalIndex = convMessages.indexOf(messageId);
+          if (originalIndex !== -1) {
+            convMessages.splice(originalIndex + 1, 0, newMessageId);
+          }
+        }
+        break;
+      }
+      
       case 'participant_created': {
         const { participant } = event.data;
         this.participants.set(participant.id, participant);
@@ -2679,6 +2700,129 @@ export class Database {
     });
     
     return updatedMessage;
+  }
+  
+  /**
+   * Split a message at a given position, creating a new message with the second part
+   */
+  async splitMessage(
+    conversationId: string, 
+    conversationOwnerUserId: string, 
+    messageId: string, 
+    branchId: string, 
+    splitPosition: number,
+    splitByUserId?: string
+  ): Promise<{ originalMessage: Message, newMessage: Message } | null> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
+    
+    const message = this.messages.get(messageId);
+    if (!message) {
+      console.log(`[splitMessage] Message not found: ${messageId}`);
+      return null;
+    }
+    
+    const branchIndex = message.branches.findIndex(b => b.id === branchId);
+    if (branchIndex === -1) {
+      console.log(`[splitMessage] Branch not found: ${branchId}`);
+      return null;
+    }
+    
+    const branch = message.branches[branchIndex];
+    const content = branch.content;
+    
+    if (splitPosition <= 0 || splitPosition >= content.length) {
+      console.log(`[splitMessage] Invalid split position: ${splitPosition} (content length: ${content.length})`);
+      return null;
+    }
+    
+    // Split the content
+    const firstPart = content.substring(0, splitPosition).trim();
+    const secondPart = content.substring(splitPosition).trim();
+    
+    if (!firstPart || !secondPart) {
+      console.log(`[splitMessage] Split would result in empty message`);
+      return null;
+    }
+    
+    // Update the original branch with the first part
+    const updatedBranch = { ...branch, content: firstPart };
+    const updatedBranches = [...message.branches];
+    updatedBranches[branchIndex] = updatedBranch;
+    
+    const originalMessage: Message = {
+      ...message,
+      branches: updatedBranches
+    };
+    this.messages.set(messageId, originalMessage);
+    
+    // Create a new message with the second part
+    const newMessageId = uuidv4();
+    const newBranchId = uuidv4();
+    const newBranch = {
+      id: newBranchId,
+      content: secondPart,
+      role: branch.role,
+      participantId: branch.participantId,
+      sentByUserId: branch.sentByUserId,
+      createdAt: new Date(),
+      model: branch.model,
+      parentBranchId: branch.id, // Parent is the original branch
+      attachments: undefined, // Attachments stay with original
+      hiddenFromAi: branch.hiddenFromAi
+    };
+    
+    const newMessage: Message = {
+      id: newMessageId,
+      conversationId,
+      branches: [newBranch],
+      activeBranchId: newBranchId,
+      order: message.order + 1
+    };
+    
+    // Increment order of all messages after the original
+    const convMessages = this.conversationMessages.get(conversationId) || [];
+    const originalIndex = convMessages.indexOf(messageId);
+    
+    for (let i = originalIndex + 1; i < convMessages.length; i++) {
+      const msgId = convMessages[i];
+      const msg = this.messages.get(msgId);
+      if (msg && msg.order !== undefined) {
+        const updatedMsg = { ...msg, order: msg.order + 1 };
+        this.messages.set(msgId, updatedMsg);
+      }
+    }
+    
+    // Insert new message after original
+    this.messages.set(newMessageId, newMessage);
+    convMessages.splice(originalIndex + 1, 0, newMessageId);
+    
+    // Log the new message created event (for proper replay)
+    await this.logConversationEvent(conversationId, 'message_created', newMessage, splitByUserId || conversationOwnerUserId);
+    
+    // Update the original message content in the event log
+    await this.logConversationEvent(conversationId, 'message_content_updated', {
+      messageId,
+      branchId,
+      content: firstPart
+    }, splitByUserId || conversationOwnerUserId);
+    
+    // Log the split event (for history tracking)
+    await this.logConversationEvent(conversationId, 'message_split', {
+      messageId,
+      branchId,
+      splitPosition,
+      newMessageId,
+      newBranchId,
+      splitByUserId: splitByUserId || conversationOwnerUserId,
+      conversationId
+    }, splitByUserId || conversationOwnerUserId);
+    
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    
+    console.log(`[splitMessage] Split message ${messageId} at position ${splitPosition}, created new message ${newMessageId}`);
+    
+    return { originalMessage, newMessage };
   }
   
   async importRawMessage(conversationId: string, conversationOwnerUserId: string, messageData: any): Promise<void> {

@@ -155,6 +155,27 @@
               <span class="text-caption">{{ cliModeThreshold }} messages</span>
             </template>
           </v-slider>
+          
+          <v-divider class="my-4" />
+          
+          <!-- Combine Consecutive Messages -->
+          <h4 class="text-h6 mb-4">Message Handling</h4>
+          
+          <v-checkbox
+            v-model="combineConsecutiveMessages"
+            label="Combine consecutive same-role messages"
+            density="compact"
+          >
+            <template v-slot:append>
+              <v-tooltip location="top" open-on-click open-on-focus max-width="300">
+                <template v-slot:activator="{ props }">
+                  <v-icon v-bind="props" size="small" class="tooltip-icon">mdi-help-circle-outline</v-icon>
+                </template>
+                When enabled, consecutive messages from the same role are merged when sent to the API.
+                Disable this if you want to keep split messages separate in context.
+              </v-tooltip>
+            </template>
+          </v-checkbox>
         </div>
         
         <div v-if="selectedModel && settings.format === 'standard'">
@@ -620,6 +641,7 @@ const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
 // CLI mode prompt settings
 const cliModeEnabled = ref(true);
 const cliModeThreshold = ref(10);
+const combineConsecutiveMessages = ref(true);
 
 const formatOptions = [
   {
@@ -780,6 +802,9 @@ watch(() => props.conversation, async (conversation) => {
       cliModeEnabled.value = true;
       cliModeThreshold.value = 10;
     }
+    
+    // Load combine consecutive messages setting
+    combineConsecutiveMessages.value = conversation.combineConsecutiveMessages ?? true;
     
     // Load participants if in multi-participant mode
     await loadParticipants();
@@ -1022,7 +1047,8 @@ function save() {
     settings: finalSettings,
     contextManagement,
     prefillUserMessage,
-    cliModePrompt
+    cliModePrompt,
+    combineConsecutiveMessages: combineConsecutiveMessages.value
   });
   
   // If in multi-participant mode, emit participants for parent to update

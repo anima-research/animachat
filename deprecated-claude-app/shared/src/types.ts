@@ -555,7 +555,8 @@ export const ConversationSchema = z.object({
   cliModePrompt: z.object({
     enabled: z.boolean().default(true),
     messageThreshold: z.number().default(10) // Apply CLI prompt for conversations under this many messages
-  }).optional()
+  }).optional(),
+  combineConsecutiveMessages: z.boolean().default(true).optional() // Combine consecutive same-role messages when building context (default: true)
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;
@@ -656,7 +657,8 @@ export const CreateConversationRequestSchema = z.object({
   systemPrompt: z.string().optional(),
   settings: ModelSettingsSchema.optional(),
   contextManagement: ContextManagementSchema.optional(),
-  prefillUserMessage: PrefillSettingsSchema.optional()
+  prefillUserMessage: PrefillSettingsSchema.optional(),
+  combineConsecutiveMessages: z.boolean().default(true).optional()
 });
 
 export type CreateConversationRequest = z.infer<typeof CreateConversationRequestSchema>;

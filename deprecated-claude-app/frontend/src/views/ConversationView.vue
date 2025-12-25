@@ -425,6 +425,7 @@
               @post-hoc-hide-before="handlePostHocHideBefore"
               @post-hoc-unhide="handlePostHocUnhide"
               @delete-post-hoc-operation="handleDeletePostHocOperation"
+              @split="handleSplit"
             />
           </div>
         </v-container>
@@ -2991,6 +2992,24 @@ async function handlePostHocEditContent(messageId: string, branchId: string, con
     await store.loadConversation(currentConversation.value.id);
   } catch (error) {
     console.error('Failed to create post-hoc edit operation:', error);
+  }
+}
+
+async function handleSplit(messageId: string, branchId: string, splitPosition: number) {
+  if (!currentConversation.value) return;
+  
+  try {
+    const response = await api.post(`/conversations/${currentConversation.value.id}/messages/${messageId}/split`, {
+      branchId,
+      splitPosition
+    });
+    
+    if (response.data.success) {
+      // Reload to get updated messages
+      await store.loadConversation(currentConversation.value.id);
+    }
+  } catch (error) {
+    console.error('Failed to split message:', error);
   }
 }
 

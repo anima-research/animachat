@@ -1165,6 +1165,34 @@ export function createStore(): {
         }
       });
       
+      state.wsService.on('message_split', (data: any) => {
+        console.log('Store handling message_split:', data);
+        const { originalMessage, newMessage } = data;
+        
+        // Update the original message
+        if (originalMessage) {
+          const index = state.allMessages.findIndex(m => m.id === originalMessage.id);
+          if (index !== -1) {
+            state.allMessages[index] = originalMessage;
+          }
+        }
+        
+        // Add the new message
+        if (newMessage) {
+          const existingIndex = state.allMessages.findIndex(m => m.id === newMessage.id);
+          if (existingIndex === -1) {
+            // Insert at correct position based on order
+            const insertIndex = newMessage.order !== undefined && newMessage.order < state.allMessages.length
+              ? newMessage.order
+              : state.allMessages.length;
+            state.allMessages.splice(insertIndex, 0, newMessage);
+          }
+        }
+        
+        state.messagesVersion++;
+        invalidateSortCache();
+      });
+      
       state.wsService.on('generation_aborted', (data: any) => {
         console.log('Store handling generation_aborted:', data);
         // The ConversationView will handle resetting isStreaming via the stream event with aborted flag

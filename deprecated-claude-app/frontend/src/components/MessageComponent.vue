@@ -356,8 +356,12 @@
       </div>
       
       <!-- Message content or edit mode -->
-      <div v-if="!isEditing" :class="['message-content', { 'monospace-mode': isMonospace }]" v-html="renderedContent" />
-      
+      <div 
+        v-if="!isEditing" 
+        :class="['message-content', { 'monospace-mode': isMonospace }]" 
+        v-html="renderedContent"
+        @contextmenu="handleContentContextMenu"
+      />
       <v-textarea
         v-else
         v-model="editContent"
@@ -367,6 +371,26 @@
         hide-details
         class="mb-2"
       />
+      
+      <!-- Context menu for split - teleported to body to avoid transform issues -->
+      <Teleport to="body">
+        <div 
+          v-if="showSplitContextMenu" 
+          class="split-context-menu"
+          :style="{ left: splitMenuPosition.x + 'px', top: splitMenuPosition.y + 'px' }"
+        >
+          <v-card elevation="8" class="pa-0">
+            <v-list density="compact" class="pa-0">
+              <v-list-item @click="splitAtContextPosition" density="compact">
+                <template v-slot:prepend>
+                  <v-icon size="16" icon="mdi-content-cut" />
+                </template>
+                <v-list-item-title class="text-caption">Split here</v-list-item-title>
+              </v-list-item>
+            </v-list>
+          </v-card>
+        </div>
+      </Teleport>
       
       <!-- Generated images (from model output) -->
       <div v-if="imageBlocks.length > 0" class="generated-images mt-3">
@@ -527,6 +551,7 @@
       :debug-request="currentBranch.debugRequest"
       :debug-response="currentBranch.debugResponse"
     />
+    
     
     <!-- Metadata Dialog (for researchers/admins) -->
     <v-dialog v-model="showMetadataDialog" max-width="800">
@@ -733,7 +758,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUpdated, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, onUpdated, watch } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Message, Participant } from '@deprecated-claude/shared';
@@ -775,6 +800,7 @@ const emit = defineEmits<{
   'post-hoc-hide-before': [messageId: string, branchId: string];
   'post-hoc-unhide': [messageId: string, branchId: string];
   'delete-post-hoc-operation': [messageId: string];
+  'split': [messageId: string, branchId: string, splitPosition: number];
 }>();
 
 const isEditing = ref(false);
@@ -787,6 +813,12 @@ const isMonospace = ref(false); // Toggle monospace display for entire message
 const moreMenuOpen = ref(false); // Track more menu state for debugging
 const isTouchDevice = ref(false); // Detect touch devices to disable hover bar
 const touchActionsOpen = ref(false); // Toggle for action bar on touch devices
+const isSplitting = ref(false); // True when in split mode (deprecated - using context menu now)
+const splitPosition = ref(0); // Position to split at (character index)
+const showSplitContextMenu = ref(false); // Context menu visibility
+const splitMenuPosition = ref({ x: 0, y: 0 }); // Position for context menu
+const contextSplitPosition = ref(0); // Position determined from context menu click
+const splitMenuCloseHandler = ref<((e: MouseEvent) => void) | null>(null); // Track close handler for cleanup
 
 // Detect touch device on mount - use multiple detection methods for reliability
 onMounted(() => {
@@ -794,6 +826,14 @@ onMounted(() => {
     'ontouchstart' in window || 
     navigator.maxTouchPoints > 0 ||
     (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+});
+
+onUnmounted(() => {
+  // Clean up split menu handler
+  if (splitMenuCloseHandler.value) {
+    document.removeEventListener('click', splitMenuCloseHandler.value);
+    document.removeEventListener('contextmenu', splitMenuCloseHandler.value);
+  }
 });
 
 // Toggle action bar on touch devices
@@ -1327,6 +1367,128 @@ function saveEditOnly() {
   cancelEdit();
 }
 
+function startSplit() {
+  const content = currentBranch.value?.content || '';
+  // Default to middle of message
+  splitPosition.value = Math.floor(content.length / 2);
+  isSplitting.value = true;
+}
+
+function cancelSplit() {
+  isSplitting.value = false;
+  splitPosition.value = 0;
+}
+
+function confirmSplit() {
+  if (splitPosition.value > 0 && splitPosition.value < (currentBranch.value?.content?.length || 0)) {
+    emit('split', props.message.id, currentBranch.value.id, splitPosition.value);
+  }
+  cancelSplit();
+}
+
+function handleContentContextMenu(event: MouseEvent) {
+  // Only show for assistant messages
+  if (currentBranch.value?.role !== 'assistant') return;
+  
+  event.preventDefault();
+  
+  // Get the text selection or caret position
+  const selection = window.getSelection();
+  if (!selection) return;
+  
+  // Get selected text or the word around caret
+  let selectedText = selection.toString();
+  let searchPosition = 0;
+  
+  if (selectedText.length === 0) {
+    // No selection - use the focused text node and offset
+    const range = selection.getRangeAt(0);
+    const node = range.startContainer;
+    
+    if (node.nodeType === Node.TEXT_NODE) {
+      const textContent = node.textContent || '';
+      const offset = range.startOffset;
+      // Get surrounding context (20 chars before)
+      const contextStart = Math.max(0, offset - 20);
+      selectedText = textContent.substring(contextStart, offset);
+    }
+  }
+  
+  // Find this text in the source content
+  const sourceContent = currentBranch.value?.content || '';
+  
+  if (selectedText.length > 0) {
+    // Find the position in source - search for the selected/context text
+    const index = sourceContent.indexOf(selectedText);
+    if (index !== -1) {
+      // Split after this text
+      searchPosition = index + selectedText.length;
+    } else {
+      // Fallback: estimate position based on selection range
+      // Try to find partial match
+      for (let len = selectedText.length; len >= 5; len--) {
+        const partial = selectedText.substring(selectedText.length - len);
+        const idx = sourceContent.indexOf(partial);
+        if (idx !== -1) {
+          searchPosition = idx + partial.length;
+          break;
+        }
+      }
+    }
+  }
+  
+  // Validate position
+  if (searchPosition <= 0 || searchPosition >= sourceContent.length) {
+    // Can't determine valid split position
+    return;
+  }
+  
+  contextSplitPosition.value = searchPosition;
+  // Use clientX/clientY for fixed positioning (viewport-relative)
+  splitMenuPosition.value = { x: event.clientX, y: event.clientY };
+  showSplitContextMenu.value = true;
+  
+  // Clean up any existing handler first
+  if (splitMenuCloseHandler.value) {
+    document.removeEventListener('click', splitMenuCloseHandler.value);
+    document.removeEventListener('contextmenu', splitMenuCloseHandler.value);
+  }
+  
+  // Close menu on click outside or another context menu
+  splitMenuCloseHandler.value = () => {
+    showSplitContextMenu.value = false;
+    if (splitMenuCloseHandler.value) {
+      document.removeEventListener('click', splitMenuCloseHandler.value);
+      document.removeEventListener('contextmenu', splitMenuCloseHandler.value);
+      splitMenuCloseHandler.value = null;
+    }
+  };
+  
+  // Delay adding listener so current event doesn't trigger it
+  setTimeout(() => {
+    if (splitMenuCloseHandler.value) {
+      document.addEventListener('click', splitMenuCloseHandler.value);
+      document.addEventListener('contextmenu', splitMenuCloseHandler.value);
+    }
+  }, 10);
+}
+
+function splitAtContextPosition() {
+  if (contextSplitPosition.value > 0 && contextSplitPosition.value < (currentBranch.value?.content?.length || 0)) {
+    emit('split', props.message.id, currentBranch.value.id, contextSplitPosition.value);
+  }
+  closeSplitMenu();
+}
+
+function closeSplitMenu() {
+  showSplitContextMenu.value = false;
+  if (splitMenuCloseHandler.value) {
+    document.removeEventListener('click', splitMenuCloseHandler.value);
+    document.removeEventListener('contextmenu', splitMenuCloseHandler.value);
+    splitMenuCloseHandler.value = null;
+  }
+}
+
 function copyContent() {
   navigator.clipboard.writeText(currentBranch.value.content);
 }
@@ -1647,6 +1809,7 @@ watch(() => currentBranch.value.id, async () => {
 </script>
 
 <style scoped>
+
 /* Post-hoc operation marker - compact inline display */
 .post-hoc-operation-marker {
   display: flex;
@@ -2055,6 +2218,14 @@ watch(() => currentBranch.value.id, async () => {
 .bookmark-tooltip {
   background-color: transparent !important;
   box-shadow: none !important;
+}
+
+/* Split context menu - teleported to body, so unscoped */
+.split-context-menu {
+  position: fixed;
+  z-index: 9999;
+  /* Offset slightly so cursor doesn't immediately trigger close */
+  transform: translate(2px, 2px);
 }
 </style>
 
