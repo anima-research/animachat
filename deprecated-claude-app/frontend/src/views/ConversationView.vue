@@ -1641,12 +1641,9 @@ onMounted(async () => {
           
           if (data.isComplete || data.aborted) {
             // This branch finished streaming
+            // Clear tracking if this was the tracked branch (whether active or not)
             if (data.branchId === streamingBranchId.value) {
               streamingBranchId.value = null;
-            }
-            // Only clear global streaming state if ALL branches are done
-            // (for now, just clear if this was the tracked branch)
-            if (data.messageId === streamingMessageId.value && isActiveBranch) {
               isStreaming.value = false;
               streamingMessageId.value = null;
             }
@@ -1654,13 +1651,11 @@ onMounted(async () => {
               console.log('Generation was aborted');
             }
           } else {
-            // Still streaming - update tracking if this is the active branch
+            // Still streaming - only track if this is the active (visible) branch
             if (isActiveBranch) {
               streamingMessageId.value = data.messageId;
               streamingBranchId.value = data.branchId;
-              if (!isStreaming.value) {
-                isStreaming.value = true;
-              }
+              isStreaming.value = true;
             }
           }
         }
@@ -2030,13 +2025,18 @@ watch(messages, () => {
   // Don't auto-scroll if:
   // 1. Auto-scroll is disabled (user scrolled up)
   // 2. We're switching branches via the navigation arrows
-  // 3. A non-visible branch is being updated (streaming on a branch user isn't viewing)
+  // 3. We're streaming but the streaming branch is not the visible one
+  
+  // Check if the currently streaming branch is visible
+  const isStreamingVisibleBranch = !isStreaming.value || (
+    streamingMessageId.value && 
+    streamingBranchId.value &&
+    messages.value.some(m => m.id === streamingMessageId.value && m.activeBranchId === streamingBranchId.value)
+  );
+  
   const shouldScroll = autoScrollEnabled.value && 
                        !isSwitchingBranch.value &&
-                       // If streaming, only scroll if the visible branch is the one streaming
-                       (!isStreaming.value || !streamingBranchId.value || 
-                        // Check if the streaming branch is currently visible
-                        messages.value.some(m => m.id === streamingMessageId.value && m.activeBranchId === streamingBranchId.value));
+                       isStreamingVisibleBranch;
   
   if (shouldScroll) {
     nextTick(() => {
@@ -2436,6 +2436,15 @@ async function editMessageOnly(messageId: string, branchId: string, content: str
 
 function switchBranch(messageId: string, branchId: string) {
   isSwitchingBranch.value = true;
+  
+  // If switching away from a streaming branch, clear streaming tracking
+  // This ensures we don't auto-scroll when viewing a different branch
+  if (streamingMessageId.value === messageId && streamingBranchId.value !== branchId) {
+    streamingBranchId.value = null;
+    streamingMessageId.value = null;
+    isStreaming.value = false;
+  }
+  
   store.switchBranch(messageId, branchId);
   // Reset the flag after a short delay to allow the watch to process
   setTimeout(() => {
