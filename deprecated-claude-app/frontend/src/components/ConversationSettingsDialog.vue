@@ -125,6 +125,36 @@
               </v-tooltip>
             </template>
           </v-textarea>
+          
+          <v-divider class="my-4" />
+          
+          <!-- CLI Mode Prompt Settings -->
+          <h4 class="text-h6 mb-4">CLI Mode Prompt</h4>
+          <p class="text-caption text-grey mb-3">
+            Automatically inject a CLI simulation prompt for early messages in group chats.
+          </p>
+          
+          <v-checkbox
+            v-model="cliModeEnabled"
+            label="Enable CLI mode prompt for early messages"
+            density="compact"
+          />
+          
+          <v-slider
+            v-if="cliModeEnabled"
+            v-model="cliModeThreshold"
+            label="Message threshold"
+            :min="1"
+            :max="50"
+            :step="1"
+            thumb-label
+            density="compact"
+            class="mt-2"
+          >
+            <template v-slot:append>
+              <span class="text-caption">{{ cliModeThreshold }} messages</span>
+            </template>
+          </v-slider>
         </div>
         
         <div v-if="selectedModel && settings.format === 'standard'">
@@ -587,6 +617,10 @@ const appendTokensBeforeCaching = ref(10000);
 const prefillUserMessageEnabled = ref(true);
 const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
 
+// CLI mode prompt settings
+const cliModeEnabled = ref(true);
+const cliModeThreshold = ref(10);
+
 const formatOptions = [
   {
     value: 'standard',
@@ -735,6 +769,16 @@ watch(() => props.conversation, async (conversation) => {
       // Default values
       prefillUserMessageEnabled.value = true;
       prefillUserMessageContent.value = '<cmd>cat untitled.log</cmd>';
+    }
+    
+    // Load CLI mode prompt settings
+    if (conversation.cliModePrompt) {
+      cliModeEnabled.value = conversation.cliModePrompt.enabled;
+      cliModeThreshold.value = conversation.cliModePrompt.messageThreshold;
+    } else {
+      // Default values
+      cliModeEnabled.value = true;
+      cliModeThreshold.value = 10;
     }
     
     // Load participants if in multi-participant mode
@@ -957,10 +1001,15 @@ function save() {
   
   // Build prefill user message settings (only for prefill format)
   let prefillUserMessage: any = undefined;
+  let cliModePrompt: any = undefined;
   if (settings.value.format === 'prefill') {
     prefillUserMessage = {
       enabled: prefillUserMessageEnabled.value,
       content: prefillUserMessageContent.value
+    };
+    cliModePrompt = {
+      enabled: cliModeEnabled.value,
+      messageThreshold: cliModeThreshold.value
     };
   }
   
@@ -972,7 +1021,8 @@ function save() {
     systemPrompt: settings.value.systemPrompt || undefined,
     settings: finalSettings,
     contextManagement,
-    prefillUserMessage
+    prefillUserMessage,
+    cliModePrompt
   });
   
   // If in multi-participant mode, emit participants for parent to update

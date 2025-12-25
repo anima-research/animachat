@@ -70,6 +70,7 @@ interface BackroomPromptParams {
   modelSupportsPrefill?: boolean;
   participantConversationMode?: string;
   existingSystemPrompt: string;
+  cliModePrompt?: { enabled: boolean; messageThreshold: number };
 }
 
 function applyBackroomPromptIfNeeded(params: BackroomPromptParams): string {
@@ -79,11 +80,20 @@ function applyBackroomPromptIfNeeded(params: BackroomPromptParams): string {
     modelProvider,
     modelSupportsPrefill,
     participantConversationMode,
-    existingSystemPrompt
+    existingSystemPrompt,
+    cliModePrompt
   } = params;
   
-  // Only for group chats with fewer than 10 messages
-  if (conversationFormat !== 'prefill' || messageCount >= 10) {
+  // Check if CLI mode prompt is disabled
+  const cliEnabled = cliModePrompt?.enabled ?? true;
+  const threshold = cliModePrompt?.messageThreshold ?? 10;
+  
+  if (!cliEnabled) {
+    return existingSystemPrompt;
+  }
+  
+  // Only for group chats with fewer than threshold messages
+  if (conversationFormat !== 'prefill' || messageCount >= threshold) {
     return existingSystemPrompt;
   }
   
@@ -785,7 +795,8 @@ async function handleChatMessage(
       modelProvider: modelConfig.provider,
       modelSupportsPrefill: modelConfig.supportsPrefill,
       participantConversationMode: responder.conversationMode,
-      existingSystemPrompt: inferenceSystemPrompt || ''
+      existingSystemPrompt: inferenceSystemPrompt || '',
+      cliModePrompt: conversation.cliModePrompt
     });
     
     // Create abort controller for this generation
@@ -1286,7 +1297,8 @@ async function handleRegenerate(
       modelProvider: modelConfig.provider,
       modelSupportsPrefill: modelConfig.supportsPrefill,
       participantConversationMode: responderParticipant?.conversationMode,
-      existingSystemPrompt: responderSystemPrompt || ''
+      existingSystemPrompt: responderSystemPrompt || '',
+      cliModePrompt: conversation.cliModePrompt
     });
     
     // Create abort controller for this generation
@@ -1711,7 +1723,8 @@ async function handleEdit(
         modelProvider: modelConfig.provider,
         modelSupportsPrefill: modelConfig.supportsPrefill,
         participantConversationMode: responderParticipantEdit?.conversationMode,
-        existingSystemPrompt: responderSystemPrompt || ''
+        existingSystemPrompt: responderSystemPrompt || '',
+        cliModePrompt: conversation.cliModePrompt
       });
       
       await inferenceService.streamCompletion(
@@ -2129,7 +2142,8 @@ async function handleContinue(
       modelProvider: modelConfig.provider,
       modelSupportsPrefill: modelConfig.supportsPrefill,
       participantConversationMode: responder.conversationMode,
-      existingSystemPrompt: responder.systemPrompt || conversation.systemPrompt || ''
+      existingSystemPrompt: responder.systemPrompt || conversation.systemPrompt || '',
+      cliModePrompt: conversation.cliModePrompt
     });
     
     // Helper function to run inference for a single branch

@@ -551,7 +551,11 @@ export const ConversationSchema = z.object({
   archived: z.boolean().default(false),
   settings: ModelSettingsSchema,
   contextManagement: ContextManagementSchema.optional(), // Conversation-level default
-  prefillUserMessage: PrefillSettingsSchema.optional() // Settings for initial user message in prefill mode
+  prefillUserMessage: PrefillSettingsSchema.optional(), // Settings for initial user message in prefill mode
+  cliModePrompt: z.object({
+    enabled: z.boolean().default(true),
+    messageThreshold: z.number().default(10) // Apply CLI prompt for conversations under this many messages
+  }).optional()
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;
