@@ -28,6 +28,8 @@ import PersonasView from './views/PersonasView.vue';
 import VerifyEmailView from './views/VerifyEmailView.vue';
 import ResetPasswordView from './views/ResetPasswordView.vue';
 import ArchiveView from './views/ArchiveView.vue';
+import TermsView from './views/TermsView.vue';
+import PrivacyView from './views/PrivacyView.vue';
 
 const vuetify = createVuetify({
   components,
@@ -81,6 +83,16 @@ const router = createRouter({
       path: '/about',
       name: 'about',
       component: AboutView,
+    },
+    {
+      path: '/terms',
+      name: 'terms',
+      component: TermsView,
+    },
+    {
+      path: '/privacy',
+      name: 'privacy',
+      component: PrivacyView,
     },
     {
       path: '/model-test',

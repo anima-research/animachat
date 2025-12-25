@@ -2,16 +2,28 @@
  * Content Filter Service
  * 
  * Uses OpenAI's Moderation API to filter harmful content.
- * Applied to non-researcher users only.
+ * Implements tiered moderation based on user status:
  * 
- * The moderation API is free to use and provides comprehensive
- * coverage of hate speech, harassment, violence, and other harmful content.
+ * ALWAYS BLOCKED (all users, including researchers):
+ * - sexual/minors (CSAM) - illegal everywhere
+ * - self-harm/instructions - significant liability
+ * 
+ * BLOCKED FOR NON-AGE-VERIFIED USERS:
+ * - sexual - age verification required for adult content
+ * 
+ * BLOCKED FOR NON-RESEARCHERS:
+ * - hate, hate/threatening - platform policy
  */
 
 export interface FilterResult {
   blocked: boolean;
   reason?: string;
   categories?: string[];
+}
+
+export interface UserContext {
+  isResearcher?: boolean;
+  isAgeVerified?: boolean;
 }
 
 interface ModerationCategory {
@@ -42,14 +54,29 @@ interface ModerationResponse {
   results: ModerationResult[];
 }
 
-// Categories we block on - focusing only on hate speech
-const BLOCKING_CATEGORIES: (keyof ModerationCategory)[] = [
+// Categories ALWAYS blocked for ALL users (including researchers)
+// These represent absolute legal/ethical lines
+const ALWAYS_BLOCKED_CATEGORIES: (keyof ModerationCategory)[] = [
+  'sexual/minors',        // CSAM - federal crime
+  'self-harm/instructions', // Significant legal liability
+];
+
+// Categories blocked for users without age verification
+const AGE_RESTRICTED_CATEGORIES: (keyof ModerationCategory)[] = [
+  'sexual', // Adult content requires age verification
+];
+
+// Categories blocked for non-researcher users
+const RESEARCHER_EXEMPT_CATEGORIES: (keyof ModerationCategory)[] = [
   'hate',
   'hate/threatening',
 ];
 
 // Threshold for blocking (higher = more permissive)
 const BLOCKING_THRESHOLD = 0.7;
+
+// Lower threshold for critical categories (more sensitive)
+const CRITICAL_THRESHOLD = 0.5;
 
 // Cache for API key
 let cachedApiKey: string | null = null;
@@ -74,12 +101,13 @@ function getOpenAIApiKey(): string | null {
 }
 
 /**
- * Check content using OpenAI's Moderation API
+ * Check content using OpenAI's Moderation API with tiered moderation
  * @param content The text content to check
+ * @param userContext Optional user context for tiered moderation
  * @returns FilterResult with blocked status and optional reason
  */
-export async function checkContent(content: string): Promise<FilterResult> {
-  console.log(`[Content Filter] checkContent called with ${content?.length || 0} chars`);
+export async function checkContent(content: string, userContext?: UserContext): Promise<FilterResult> {
+  console.log(`[Content Filter] checkContent called with ${content?.length || 0} chars, context: ${JSON.stringify(userContext || {})}`);
   
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return { blocked: false };
@@ -121,8 +149,6 @@ export async function checkContent(content: string): Promise<FilterResult> {
 
     const data = await response.json() as ModerationResponse;
     
-    console.log(`[Content Filter] API response:`, JSON.stringify(data, null, 2));
-    
     if (!data.results || data.results.length === 0) {
       console.log(`[Content Filter] No results in response`);
       return { blocked: false };
@@ -131,28 +157,67 @@ export async function checkContent(content: string): Promise<FilterResult> {
     const result = data.results[0];
     
     // Log relevant scores
-    console.log(`[Content Filter] Scores - hate: ${result.category_scores['hate']?.toFixed(4)}, hate/threatening: ${result.category_scores['hate/threatening']?.toFixed(4)}`);
+    console.log(`[Content Filter] Scores - sexual/minors: ${result.category_scores['sexual/minors']?.toFixed(4)}, sexual: ${result.category_scores['sexual']?.toFixed(4)}, hate: ${result.category_scores['hate']?.toFixed(4)}, self-harm/instructions: ${result.category_scores['self-harm/instructions']?.toFixed(4)}`);
     
-    // Check blocking categories
     const violatedCategories: string[] = [];
     
-    for (const category of BLOCKING_CATEGORIES) {
+    // TIER 1: ALWAYS BLOCKED (no exceptions, not even researchers)
+    for (const category of ALWAYS_BLOCKED_CATEGORIES) {
       const score = result.category_scores[category];
-      if (score >= BLOCKING_THRESHOLD) {
+      // Use lower threshold for critical categories
+      if (score >= CRITICAL_THRESHOLD) {
         violatedCategories.push(category);
       }
     }
-
+    
     if (violatedCategories.length > 0) {
-      console.warn(`[Content Filter] Content blocked. Categories: ${violatedCategories.join(', ')}`);
+      console.warn(`[Content Filter] CRITICAL: Content blocked (always-blocked category). Categories: ${violatedCategories.join(', ')}`);
       return {
         blocked: true,
-        reason: 'Message contains content that violates our usage policy',
+        reason: 'Message contains prohibited content that cannot be allowed on this platform',
         categories: violatedCategories
       };
     }
+    
+    // TIER 2: AGE-RESTRICTED CONTENT (blocked for non-age-verified users)
+    if (!userContext?.isAgeVerified) {
+      for (const category of AGE_RESTRICTED_CATEGORIES) {
+        const score = result.category_scores[category];
+        if (score >= BLOCKING_THRESHOLD) {
+          violatedCategories.push(category);
+        }
+      }
+      
+      if (violatedCategories.length > 0) {
+        console.warn(`[Content Filter] Age-restricted content blocked for non-verified user. Categories: ${violatedCategories.join(', ')}`);
+        return {
+          blocked: true,
+          reason: 'This content is age-restricted. Please verify your age in account settings to access adult content.',
+          categories: violatedCategories
+        };
+      }
+    }
+    
+    // TIER 3: RESEARCHER-EXEMPT CONTENT (blocked for non-researchers)
+    if (!userContext?.isResearcher) {
+      for (const category of RESEARCHER_EXEMPT_CATEGORIES) {
+        const score = result.category_scores[category];
+        if (score >= BLOCKING_THRESHOLD) {
+          violatedCategories.push(category);
+        }
+      }
+      
+      if (violatedCategories.length > 0) {
+        console.warn(`[Content Filter] Content blocked for non-researcher. Categories: ${violatedCategories.join(', ')}`);
+        return {
+          blocked: true,
+          reason: 'Message contains content that violates our usage policy',
+          categories: violatedCategories
+        };
+      }
+    }
 
-    console.log(`[Content Filter] Content allowed (no categories exceeded threshold)`);
+    console.log(`[Content Filter] Content allowed (no categories exceeded threshold for user context)`);
     return { blocked: false };
   } catch (error) {
     console.error('[Content Filter] Error calling moderation API:', error);
@@ -164,12 +229,13 @@ export async function checkContent(content: string): Promise<FilterResult> {
 /**
  * Check all messages in a conversation context
  * @param messages Array of message contents to check
+ * @param userContext Optional user context for tiered moderation
  * @returns FilterResult - blocked if any message is blocked
  */
-export async function checkMessages(messages: string[]): Promise<FilterResult> {
+export async function checkMessages(messages: string[], userContext?: UserContext): Promise<FilterResult> {
   // Combine messages for more efficient API call
   const combined = messages.filter(m => m && m.trim()).join('\n\n---\n\n');
-  return checkContent(combined);
+  return checkContent(combined, userContext);
 }
 
 /**

@@ -452,6 +452,70 @@ export function adminRouter(db: Database): Router {
     }
   });
 
+  // POST /admin/set-all-age-verified - Set age verified flag for all users
+  // For migrating users who registered before age gate was added
+  router.post('/set-all-age-verified', async (req: AuthRequest, res) => {
+    try {
+      const users = await db.getAllUsers();
+      console.log(`[Admin] set-all-age-verified: Found ${users.length} total users`);
+      
+      let updatedCount = 0;
+      const updatedUsers: string[] = [];
+      
+      for (const user of users) {
+        if (!user.ageVerified) {
+          await db.setAgeVerified(user.id);
+          updatedCount++;
+          updatedUsers.push(user.email);
+        }
+      }
+      
+      console.log(`[Admin] set-all-age-verified: Updated ${updatedCount} users`);
+      
+      res.json({ 
+        success: true, 
+        message: `Set age verified for ${updatedCount} user${updatedCount !== 1 ? 's' : ''}`,
+        updatedCount,
+        updatedUsers
+      });
+    } catch (error) {
+      console.error('Error setting age verified:', error);
+      res.status(500).json({ error: 'Failed to set age verified' });
+    }
+  });
+
+  // POST /admin/set-all-tos-accepted - Set ToS accepted flag for all users
+  // For migrating users who registered before ToS gate was added
+  router.post('/set-all-tos-accepted', async (req: AuthRequest, res) => {
+    try {
+      const users = await db.getAllUsers();
+      console.log(`[Admin] set-all-tos-accepted: Found ${users.length} total users`);
+      
+      let updatedCount = 0;
+      const updatedUsers: string[] = [];
+      
+      for (const user of users) {
+        if (!user.tosAccepted) {
+          await db.setTosAccepted(user.id);
+          updatedCount++;
+          updatedUsers.push(user.email);
+        }
+      }
+      
+      console.log(`[Admin] set-all-tos-accepted: Updated ${updatedCount} users`);
+      
+      res.json({ 
+        success: true, 
+        message: `Set ToS accepted for ${updatedCount} user${updatedCount !== 1 ? 's' : ''}`,
+        updatedCount,
+        updatedUsers
+      });
+    } catch (error) {
+      console.error('Error setting ToS accepted:', error);
+      res.status(500).json({ error: 'Failed to set ToS accepted' });
+    }
+  });
+
   return router;
 }
 

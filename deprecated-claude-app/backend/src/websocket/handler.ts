@@ -11,7 +11,7 @@ import { llmLogger } from '../utils/llmLogger.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { roomManager } from './room-manager.js';
 import { USER_FACING_ERRORS } from '../utils/error-messages.js';
-import { checkContent } from '../services/content-filter.js';
+import { checkContent, type UserContext } from '../services/content-filter.js';
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -496,18 +496,20 @@ async function handleChatMessage(
     return;
   }
 
-  // Content filter check (skip for researchers)
+  // Content filter check with tiered moderation
   const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
-  if (!isResearcher) {
-    const filterResult = await checkContent(message.content);
-    if (filterResult.blocked) {
-      ws.send(JSON.stringify({ 
-        type: 'content_blocked',
-        reason: filterResult.reason || 'Message blocked by content filter',
-        categories: filterResult.categories
-      }));
-      return;
-    }
+  const isAgeVerified = await db.isUserAgeVerified(ws.userId);
+  const userContext: UserContext = { isResearcher, isAgeVerified };
+  
+  // Always check content - the filter applies tiered logic based on user context
+  const filterResult = await checkContent(message.content, userContext);
+  if (filterResult.blocked) {
+    ws.send(JSON.stringify({ 
+      type: 'content_blocked',
+      reason: filterResult.reason || 'Message blocked by content filter',
+      categories: filterResult.categories
+    }));
+    return;
   }
 
   // Create user message with specified parent if provided
@@ -934,27 +936,25 @@ async function handleChatMessage(
               // Trim leading/trailing whitespace from final content
               finalBranch.content = branchContent.trim();
               
-              // Content filter check for AI output (skip for researchers)
-              if (!isResearcher) {
-                const outputFilterResult = await checkContent(finalBranch.content);
-                if (outputFilterResult.blocked) {
-                  console.warn(`[Content Filter] AI output blocked for conversation ${assistantMessage.conversationId}`);
-                  finalBranch.content = '[Content filtered]';
-                  finalBranch.contentBlocks = undefined;
-                  // Send update to replace the streamed content
-                  const filterEvent = {
-                    type: 'stream',
-                    conversationId: message.conversationId,
-                    messageId: assistantMessage.id,
-                    branchId: branchId,
-                    content: finalBranch.content,
-                    contentBlocks: undefined,
-                    isComplete: true,
-                    filtered: true
-                  };
-                  ws.send(JSON.stringify(filterEvent));
-                  roomManager.broadcastToRoom(message.conversationId, filterEvent, ws);
-                }
+              // Content filter check for AI output with tiered moderation
+              const outputFilterResult = await checkContent(finalBranch.content, userContext);
+              if (outputFilterResult.blocked) {
+                console.warn(`[Content Filter] AI output blocked for conversation ${assistantMessage.conversationId}`);
+                finalBranch.content = '[Content filtered]';
+                finalBranch.contentBlocks = undefined;
+                // Send update to replace the streamed content
+                const filterEvent = {
+                  type: 'stream',
+                  conversationId: message.conversationId,
+                  messageId: assistantMessage.id,
+                  branchId: branchId,
+                  content: finalBranch.content,
+                  contentBlocks: undefined,
+                  isComplete: true,
+                  filtered: true
+                };
+                ws.send(JSON.stringify(filterEvent));
+                roomManager.broadcastToRoom(message.conversationId, filterEvent, ws);
               }
               
             await db.updateMessageContent(
@@ -988,6 +988,40 @@ async function handleChatMessage(
         abortController.signal
       );
     };
+    
+    // DEBUG: Check for magic string to simulate stuck generation
+    // This simulates the case where generation request is sent but NO tokens ever arrive
+    const STUCK_MAGIC_STRING = '__SIMULATE_STUCK__';
+    if (message.content.includes(STUCK_MAGIC_STRING)) {
+      console.log('[DEBUG] Magic string detected - simulating stuck generation (no tokens will be sent)');
+      
+      // Don't send any stream tokens at all - just wait
+      // The frontend has already received the assistant message placeholder
+      // but will never receive any stream data
+      
+      await new Promise<void>((resolve) => {
+        const checkAbort = setInterval(() => {
+          if (abortController.signal.aborted) {
+            console.log('[DEBUG] Stuck simulation aborted by user');
+            clearInterval(checkAbort);
+            resolve();
+          }
+        }, 1000);
+        
+        // Auto-resolve after 5 minutes to prevent true infinite wait
+        setTimeout(() => {
+          console.log('[DEBUG] Stuck simulation timed out after 5 minutes');
+          clearInterval(checkAbort);
+          resolve();
+        }, 5 * 60 * 1000);
+      });
+      
+      console.log('[DEBUG] Stuck simulation ended');
+      
+      // Clean up
+      roomManager.endAiRequest(message.conversationId);
+      return;
+    }
     
     // Run all branches in parallel
     await Promise.all(
@@ -1173,8 +1207,10 @@ async function handleRegenerate(
     return;
   }
 
-  // Check if user is researcher (for content filter bypass)
+  // Build user context for content filter
   const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
+  const isAgeVerified = await db.isUserAgeVerified(ws.userId);
+  const userContext: UserContext = { isResearcher, isAgeVerified };
 
   // Use conversation.userId (the owner) to fetch message
   const msg = await db.getMessage(message.messageId, message.conversationId, conversation.userId);
@@ -1369,26 +1405,24 @@ async function handleRegenerate(
             if (isComplete) {
               currentBranch.content = currentBranch.content.trim();
               
-              // Content filter check for AI output (skip for researchers)
-              if (!isResearcher) {
-                const outputFilterResult = await checkContent(currentBranch.content);
-                if (outputFilterResult.blocked) {
-                  console.warn(`[Content Filter] AI output blocked for conversation ${updatedMessage.conversationId}`);
-                  currentBranch.content = '[Content filtered]';
-                  currentBranch.contentBlocks = undefined;
-                  // Send update to replace the streamed content
-                  const filterEvent = {
-                    type: 'stream',
-                    messageId: updatedMessage.id,
-                    branchId: updatedMessage.activeBranchId,
-                    content: currentBranch.content,
-                    contentBlocks: undefined,
-                    isComplete: true,
-                    filtered: true
-                  };
-                  ws.send(JSON.stringify(filterEvent));
-                  roomManager.broadcastToRoom(message.conversationId, filterEvent, ws);
-                }
+              // Content filter check for AI output with tiered moderation
+              const outputFilterResult = await checkContent(currentBranch.content, userContext);
+              if (outputFilterResult.blocked) {
+                console.warn(`[Content Filter] AI output blocked for conversation ${updatedMessage.conversationId}`);
+                currentBranch.content = '[Content filtered]';
+                currentBranch.contentBlocks = undefined;
+                // Send update to replace the streamed content
+                const filterEvent = {
+                  type: 'stream',
+                  messageId: updatedMessage.id,
+                  branchId: updatedMessage.activeBranchId,
+                  content: currentBranch.content,
+                  contentBlocks: undefined,
+                  isComplete: true,
+                  filtered: true
+                };
+                ws.send(JSON.stringify(filterEvent));
+                roomManager.broadcastToRoom(message.conversationId, filterEvent, ws);
               }
           }
           
@@ -1560,18 +1594,20 @@ async function handleEdit(
     return;
   }
 
-  // Content filter check (skip for researchers)
+  // Content filter check with tiered moderation
   const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
-  if (!isResearcher) {
-    const filterResult = await checkContent(message.content);
-    if (filterResult.blocked) {
-      ws.send(JSON.stringify({ 
-        type: 'content_blocked',
-        reason: filterResult.reason || 'Message blocked by content filter',
-        categories: filterResult.categories
-      }));
-      return;
-    }
+  const isAgeVerified = await db.isUserAgeVerified(ws.userId);
+  const userContext: UserContext = { isResearcher, isAgeVerified };
+  
+  // Always check content - the filter applies tiered logic based on user context
+  const filterResult = await checkContent(message.content, userContext);
+  if (filterResult.blocked) {
+    ws.send(JSON.stringify({ 
+      type: 'content_blocked',
+      reason: filterResult.reason || 'Message blocked by content filter',
+      categories: filterResult.categories
+    }));
+    return;
   }
 
   // Use conversation.userId (the owner) to fetch message
@@ -2005,8 +2041,10 @@ async function handleContinue(
       return;
     }
 
-    // Check if user is researcher (for content filter bypass)
+    // Build user context for content filter
     const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
+    const isAgeVerified = await db.isUserAgeVerified(ws.userId);
+    const userContext: UserContext = { isResearcher, isAgeVerified };
 
     // Get participants
     const participants = await db.getConversationParticipants(conversationId, conversation.userId);
@@ -2268,27 +2306,25 @@ async function handleContinue(
           if (isComplete) {
             const finalBranch = assistantMessage.branches.find((b: any) => b.id === branchId);
             if (finalBranch) {
-              // Content filter check for AI output (skip for researchers)
-              if (!isResearcher) {
-                const outputFilterResult = await checkContent(finalBranch.content);
-                if (outputFilterResult.blocked) {
-                  console.warn(`[Content Filter] AI output blocked for conversation ${conversationId}`);
-                  finalBranch.content = '[Content filtered]';
-                  finalBranch.contentBlocks = undefined;
-                  // Send update to replace the streamed content
-                  const filterEvent = {
-                    type: 'stream',
-                    messageId: assistantMessage.id,
-                    branchId: branchId,
-                    content: finalBranch.content,
-                    contentBlocks: undefined,
-                    isComplete: true,
-                    branchIndex,
-                    filtered: true
-                  };
-                  ws.send(JSON.stringify(filterEvent));
-                  roomManager.broadcastToRoom(conversationId, filterEvent, ws);
-                }
+              // Content filter check for AI output with tiered moderation
+              const outputFilterResult = await checkContent(finalBranch.content, userContext);
+              if (outputFilterResult.blocked) {
+                console.warn(`[Content Filter] AI output blocked for conversation ${conversationId}`);
+                finalBranch.content = '[Content filtered]';
+                finalBranch.contentBlocks = undefined;
+                // Send update to replace the streamed content
+                const filterEvent = {
+                  type: 'stream',
+                  messageId: assistantMessage.id,
+                  branchId: branchId,
+                  content: finalBranch.content,
+                  contentBlocks: undefined,
+                  isComplete: true,
+                  branchIndex,
+                  filtered: true
+                };
+                ws.send(JSON.stringify(filterEvent));
+                roomManager.broadcastToRoom(conversationId, filterEvent, ws);
               }
               await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, branchId, finalBranch.content, finalBranch.contentBlocks);
           }

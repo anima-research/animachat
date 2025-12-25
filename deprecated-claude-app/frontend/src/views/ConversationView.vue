@@ -407,7 +407,9 @@
               :is-streaming="isStreaming"
               :streaming-error="streamingError"
               :post-hoc-affected-messages="postHocAffectedMessages"
+              :show-stuck-button="showStuckButton"
               @regenerate="regenerateMessage"
+              @stuck-clicked="stuckDialog = true"
               @edit="editMessage"
               @edit-only="editMessageOnly"
               @switch-branch="switchBranch"
@@ -875,7 +877,7 @@
         <v-card-text class="text-body-1">
           <p class="mb-4">
             Your message was flagged by our content moderation system. To protect Arc from potential 
-            publicity risks, we filter certain categories of content on our hosted platform.
+            legal liability and public relations risks, we filter certain categories of content on our hosted platform.
           </p>
           
           <v-divider class="my-4" />
@@ -940,6 +942,52 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Stuck Generation Dialog -->
+    <v-dialog v-model="stuckDialog" max-width="550" persistent>
+      <v-card class="pa-4">
+        <v-card-title class="d-flex align-center text-h5">
+          <v-icon color="warning" class="mr-2">mdi-alert-circle</v-icon>
+          Generation Appears Stuck
+        </v-card-title>
+        
+        <v-card-text class="text-body-1">
+          <p class="mb-4">
+            The AI generation has been running for over a minute without producing any output. 
+            This is an intermittent issue we're investigating. Most likely it is related to real-time sync malfunctioning.
+          </p>
+          
+          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+            <strong>Help us fix this!</strong> Submitting diagnostics will help us identify the cause. 
+            This includes console logs from your browser session (no personal data).
+          </v-alert>
+          
+          <p class="text-body-2 text-grey">
+            After submitting, the page will reload to restore normal operation.
+          </p>
+        </v-card-text>
+        
+        <v-card-actions class="justify-end">
+          <v-btn
+            variant="text"
+            @click="dismissStuckDialog"
+          >
+            Just Reload
+          </v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="stuckAnalyticsSubmitting"
+            @click="submitStuckAnalytics"
+          >
+            <v-icon start>mdi-send</v-icon>
+            Submit Diagnostics & Reload
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+    
+    <!-- Stuck button is now shown inline next to the generating indicator in MessageComponent -->
 
     <!-- Error snackbar for non-streaming errors (pricing validation, etc.) -->
     <v-snackbar
@@ -1020,6 +1068,25 @@ const autoScrollEnabled = ref(true);
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
 const isLoadingConversation = ref(false);
+
+// Stuck generation detection
+const streamingStartTime = ref<number | null>(null);
+const firstTokenReceived = ref(false);
+const showStuckButton = ref(false);
+const stuckDialog = ref(false);
+const stuckAnalyticsSubmitting = ref(false);
+let stuckCheckTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Get stuck threshold based on current model - Anthropic is faster to detect issues
+const getStuckThresholdMs = () => {
+  const model = currentConversation.value?.model || '';
+  const isAnthropic = model.includes('anthropic') || model.includes('claude');
+  return isAnthropic ? 15000 : 60000; // 15s for Anthropic, 60s for others
+};
+
+// Console log collection for debugging
+const consoleLogs = ref<string[]>([]);
+const MAX_CONSOLE_LOGS = 200;
 
 // General error snackbar (for non-streaming errors like pricing validation)
 const errorSnackbar = ref(false);
@@ -1277,11 +1344,13 @@ const postHocAffectedMessages = computed(() => {
     const activeBranch = msg.branches.find((b: any) => b.id === msg.activeBranchId);
     if (activeBranch?.postHocOperation) {
       operations.push({ order: msg.order, op: activeBranch.postHocOperation });
-      console.log('[PostHoc] Found visible operation:', activeBranch.postHocOperation.type, 'targeting:', activeBranch.postHocOperation.targetMessageId);
     }
   }
   
-  console.log('[PostHoc] Visible messages:', visibleMsgs.length, 'Operations found:', operations.length);
+  // Debug logging only when there are operations (computed runs frequently)
+  if (operations.length > 0) {
+    console.log('[PostHoc] Found operations:', operations.length);
+  }
   
   if (operations.length === 0) return affected;
   
@@ -1693,6 +1762,32 @@ watch(conversations, (newConversations) => {
 
 // Load initial data
 onMounted(async () => {
+  // Set up console log interceptor for debugging stuck generations
+  if (typeof window !== 'undefined') {
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    
+    const captureLog = (level: string, args: any[]) => {
+      const timestamp = new Date().toISOString();
+      const message = args.map(a => {
+        try {
+          return typeof a === 'object' ? JSON.stringify(a) : String(a);
+        } catch {
+          return '[unserializable]';
+        }
+      }).join(' ');
+      consoleLogs.value.push(`[${timestamp}] [${level}] ${message}`);
+      if (consoleLogs.value.length > MAX_CONSOLE_LOGS) {
+        consoleLogs.value.shift();
+      }
+    };
+    
+    console.log = (...args) => { captureLog('LOG', args); originalLog.apply(console, args); };
+    console.warn = (...args) => { captureLog('WARN', args); originalWarn.apply(console, args); };
+    console.error = (...args) => { captureLog('ERROR', args); originalError.apply(console, args); };
+  }
+  
   if (typeof window !== 'undefined') {
     updateMobileState();
     window.addEventListener('resize', updateMobileState);
@@ -1728,6 +1823,7 @@ onMounted(async () => {
             isStreaming.value = true;
             autoScrollEnabled.value = true; // Re-enable auto-scroll for new messages
             streamingError.value = null; // Clear any previous errors
+            startStuckDetection(); // Start tracking for stuck generation
           }
           
           // Update the conversation's updatedAt timestamp to move it to the top
@@ -1752,6 +1848,7 @@ onMounted(async () => {
             isStreaming.value = true;
             autoScrollEnabled.value = true;
             streamingError.value = null;
+            startStuckDetection(); // Start tracking for stuck generation
             console.log('[WebSocket] Regenerate detected - starting streaming for message:', data.message.id.slice(0, 8));
           }
         }
@@ -1760,10 +1857,16 @@ onMounted(async () => {
       store.state.wsService.on('stream', (data: any) => {
         // Streaming content update
         if (data.messageId === streamingMessageId.value) {
+          // Track token arrival for stuck detection
+          if (data.content || data.contentBlocks) {
+            onTokenReceived();
+          }
+          
           // Check if streaming is complete or was aborted
           if (data.isComplete || data.aborted) {
             isStreaming.value = false;
             streamingMessageId.value = null;
+            clearStuckDetection();
             if (data.aborted) {
               console.log('Generation was aborted');
             }
@@ -1782,6 +1885,7 @@ onMounted(async () => {
         if (data.conversationId === currentConversation.value?.id) {
           isStreaming.value = false;
           streamingMessageId.value = null;
+          clearStuckDetection();
         }
       });
       
@@ -2512,6 +2616,83 @@ function abortGeneration() {
   console.log('Aborting generation...');
   store.abortGeneration();
   // Note: isStreaming will be reset when we receive the aborted stream event
+}
+
+// Stuck generation detection
+function startStuckDetection() {
+  streamingStartTime.value = Date.now();
+  firstTokenReceived.value = false;
+  showStuckButton.value = false;
+  
+  // Clear any existing timer
+  if (stuckCheckTimer) {
+    clearTimeout(stuckCheckTimer);
+  }
+  
+  // Set timer to check for stuck state after threshold (model-dependent)
+  const thresholdMs = getStuckThresholdMs();
+  stuckCheckTimer = setTimeout(() => {
+    if (isStreaming.value && !firstTokenReceived.value) {
+      console.warn('[Stuck Detection] Generation appears stuck - no tokens received after', thresholdMs / 1000, 'seconds');
+      showStuckButton.value = true;
+    }
+  }, thresholdMs);
+}
+
+function onTokenReceived() {
+  if (!firstTokenReceived.value) {
+    firstTokenReceived.value = true;
+    showStuckButton.value = false;
+    if (stuckCheckTimer) {
+      clearTimeout(stuckCheckTimer);
+      stuckCheckTimer = null;
+    }
+  }
+}
+
+function clearStuckDetection() {
+  streamingStartTime.value = null;
+  firstTokenReceived.value = false;
+  showStuckButton.value = false;
+  if (stuckCheckTimer) {
+    clearTimeout(stuckCheckTimer);
+    stuckCheckTimer = null;
+  }
+}
+
+async function submitStuckAnalytics() {
+  stuckAnalyticsSubmitting.value = true;
+  
+  try {
+    const analyticsData = {
+      timestamp: new Date().toISOString(),
+      streamingStartTime: streamingStartTime.value ? new Date(streamingStartTime.value).toISOString() : null,
+      elapsedMs: streamingStartTime.value ? Date.now() - streamingStartTime.value : null,
+      conversationId: currentConversation.value?.id,
+      streamingMessageId: streamingMessageId.value,
+      firstTokenReceived: firstTokenReceived.value,
+      wsConnected: store.state.wsService?.isConnected,
+      userAgent: navigator.userAgent,
+      consoleLogs: consoleLogs.value.slice(-100), // Last 100 logs
+      currentUrl: window.location.href,
+    };
+    
+    // Send to backend
+    await api.post('/analytics/stuck-generation', analyticsData);
+    console.log('[Stuck Detection] Analytics submitted successfully');
+  } catch (error) {
+    console.error('[Stuck Detection] Failed to submit analytics:', error);
+  } finally {
+    stuckAnalyticsSubmitting.value = false;
+    stuckDialog.value = false;
+    // Reload the page
+    window.location.reload();
+  }
+}
+
+function dismissStuckDialog() {
+  stuckDialog.value = false;
+  showStuckButton.value = false;
 }
 
 async function editMessage(messageId: string, branchId: string, content: string) {
@@ -4418,5 +4599,17 @@ function formatDate(date: Date | string): string {
     background-color: transparent;
     box-shadow: none;
   }
+}
+
+/* Stuck button animation is now inline in MessageComponent */
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

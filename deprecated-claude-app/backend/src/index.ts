@@ -146,6 +146,37 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Analytics endpoint for stuck generation debugging
+app.post('/api/analytics/stuck-generation', authenticateToken, (req: any, res) => {
+  try {
+    const data = req.body;
+    const userId = req.userId;
+    
+    // Log the stuck generation report
+    console.log('=== STUCK GENERATION REPORT ===');
+    console.log('User ID:', userId);
+    console.log('Timestamp:', data.timestamp);
+    console.log('Streaming started:', data.streamingStartTime);
+    console.log('Elapsed (ms):', data.elapsedMs);
+    console.log('Conversation ID:', data.conversationId);
+    console.log('Streaming Message ID:', data.streamingMessageId);
+    console.log('First token received:', data.firstTokenReceived);
+    console.log('WebSocket connected:', data.wsConnected);
+    console.log('User Agent:', data.userAgent);
+    console.log('URL:', data.currentUrl);
+    console.log('Console logs (last 100):');
+    if (data.consoleLogs && Array.isArray(data.consoleLogs)) {
+      data.consoleLogs.forEach((log: string) => console.log('  ', log));
+    }
+    console.log('=== END STUCK GENERATION REPORT ===');
+    
+    res.json({ success: true, message: 'Report received' });
+  } catch (error) {
+    console.error('Error processing stuck generation report:', error);
+    res.status(500).json({ error: 'Failed to process report' });
+  }
+});
+
 // WebSocket handling
 wss.on('connection', (ws, req) => {
   websocketHandler(ws, req, db);

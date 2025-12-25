@@ -1200,7 +1200,14 @@ export class Database {
   }
 
   // User methods
-  async createUser(email: string, password: string, name: string, emailVerified: boolean = false): Promise<User> {
+  async createUser(
+    email: string, 
+    password: string, 
+    name: string, 
+    emailVerified: boolean = false,
+    ageVerified: boolean = false,
+    tosAccepted: boolean = false
+  ): Promise<User> {
     if (this.usersByEmail.has(email)) {
       throw new Error('User already exists');
     }
@@ -1213,6 +1220,10 @@ export class Database {
       createdAt: new Date(),
       emailVerified,
       emailVerifiedAt: emailVerified ? new Date() : undefined,
+      ageVerified,
+      ageVerifiedAt: ageVerified ? new Date() : undefined,
+      tosAccepted,
+      tosAcceptedAt: tosAccepted ? new Date() : undefined,
       apiKeys: []
     };
 
@@ -1227,6 +1238,37 @@ export class Database {
     // Store password separately (not in User object)
     this.logEvent('user_created', { user, passwordHash: hashedPassword });
 
+    return user;
+  }
+  
+  // Age verification methods
+  async setAgeVerified(userId: string): Promise<User | null> {
+    const user = this.users.get(userId);
+    if (!user) return null;
+    
+    user.ageVerified = true;
+    user.ageVerifiedAt = new Date();
+    this.users.set(userId, user);
+    
+    this.logEvent('user_age_verified', { userId, ageVerifiedAt: user.ageVerifiedAt });
+    return user;
+  }
+  
+  async isUserAgeVerified(userId: string): Promise<boolean> {
+    const user = this.users.get(userId);
+    return user?.ageVerified === true;
+  }
+  
+  // ToS acceptance methods
+  async setTosAccepted(userId: string): Promise<User | null> {
+    const user = this.users.get(userId);
+    if (!user) return null;
+    
+    user.tosAccepted = true;
+    user.tosAcceptedAt = new Date();
+    this.users.set(userId, user);
+    
+    this.logEvent('user_tos_accepted', { userId, tosAcceptedAt: user.tosAcceptedAt });
     return user;
   }
   

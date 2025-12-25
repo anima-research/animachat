@@ -81,7 +81,9 @@
         :error-message="getErrorMessage(message)"
         :error-suggestion="getErrorSuggestion(message)"
         :post-hoc-affected="postHocAffected(message)"
+        :show-stuck-button="showStuckButton && streamingCheck(message)"
         @regenerate="(msgId: string, branchId: string) => emit('regenerate', msgId, branchId)"
+        @stuck-clicked="() => emit('stuck-clicked')"
         @edit="(msgId: string, branchId: string, content: string) => emit('edit', msgId, branchId, content)"
         @edit-only="(msgId: string, branchId: string, content: string) => emit('edit-only', msgId, branchId, content)"
         @switch-branch="(msgId: string, branchId: string) => emit('switch-branch', msgId, branchId)"
@@ -119,6 +121,7 @@ const props = defineProps<{
   isStreaming?: boolean;
   streamingError?: { messageId: string; error: string; suggestion?: string } | null;
   postHocAffectedMessages?: Map<string, any>;
+  showStuckButton?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -138,6 +141,7 @@ const emit = defineEmits<{
   'post-hoc-unhide': [msgId: string, branchId: string];
   'delete-post-hoc-operation': [msgId: string];
   split: [msgId: string, branchId: string, position: number];
+  'stuck-clicked': [];
 }>();
 
 const isExpanded = ref(false);

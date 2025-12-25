@@ -475,7 +475,7 @@
           </div>
         </div>
       </div>
-      <div v-else-if="isStreaming && currentBranch.role === 'assistant'" class="generating-indicator mt-1">
+      <div v-else-if="isStreaming && currentBranch.role === 'assistant'" class="generating-indicator mt-1 d-flex align-center gap-2">
         <v-chip 
           size="x-small" 
           :color="participantColor || 'grey'"
@@ -490,6 +490,16 @@
           />
           Generating...
         </v-chip>
+        <v-btn
+          v-if="showStuckButton"
+          size="x-small"
+          color="warning"
+          variant="tonal"
+          @click="emit('stuck-clicked')"
+        >
+          <v-icon start size="14">mdi-help-circle</v-icon>
+          Stuck?
+        </v-btn>
       </div>
 
     <!-- Bookmark dialog -->
@@ -782,6 +792,7 @@ const props = defineProps<{
   errorMessage?: string;
   errorSuggestion?: string;
   postHocAffected?: { hidden: boolean; edited: boolean; editedContent?: string; originalContent?: string; hiddenAttachments: number[] };
+  showStuckButton?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -793,6 +804,7 @@ const emit = defineEmits<{
   'delete-all-branches': [messageId: string];
   'select-as-parent': [messageId: string, branchId: string];
   'stop-auto-scroll': [];
+  'stuck-clicked': [];
   'bookmark-changed': [];
   'post-hoc-hide': [messageId: string, branchId: string];
   'post-hoc-edit': [messageId: string, branchId: string];
