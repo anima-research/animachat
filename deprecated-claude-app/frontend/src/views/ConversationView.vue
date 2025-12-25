@@ -396,20 +396,17 @@
           </div>
           
           <div v-else>
-            <MessageComponent
-              v-for="(message, index) in messages"
-              :id="`message-${message.id}`"
-              :key="message.id"
-              :message="message"
+            <CompositeMessageGroup
+              v-for="(group, groupIndex) in groupedMessages"
+              :key="group.id"
+              :messages="group.messages"
               :participants="participants"
-              :is-selected-parent="selectedBranchForParent?.messageId === message.id &&
-                                   selectedBranchForParent?.branchId === message.activeBranchId"
-              :is-last-message="index === messages.length - 1"
-              :is-streaming="isStreaming && message.id === streamingMessageId"
-              :has-error="streamingError?.messageId === message.id"
-              :error-message="streamingError?.messageId === message.id ? streamingError.error : undefined"
-              :error-suggestion="streamingError?.messageId === message.id ? streamingError.suggestion : undefined"
-              :post-hoc-affected="postHocAffectedMessages.get(message.id)"
+              :is-last-group="groupIndex === groupedMessages.length - 1"
+              :selected-branch-for-parent="selectedBranchForParent"
+              :streaming-message-id="streamingMessageId"
+              :is-streaming="isStreaming"
+              :streaming-error="streamingError"
+              :post-hoc-affected-messages="postHocAffectedMessages"
               @regenerate="regenerateMessage"
               @edit="editMessage"
               @edit-only="editMessageOnly"
@@ -894,7 +891,7 @@ import { useStore } from '@/store';
 import { api } from '@/services/api';
 import type { Conversation, Message, Participant, Model, Bookmark, Persona } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema, getValidatedModelDefaults } from '@deprecated-claude/shared';
-import MessageComponent from '@/components/MessageComponent.vue';
+import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
@@ -1131,6 +1128,57 @@ function getPermissionColor(permission: string): string {
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
+
+// Group consecutive messages from the same participant for visual combining
+interface MessageGroup {
+  id: string;
+  messages: any[]; // Message[]
+  participantName: string;
+}
+
+const groupedMessages = computed((): MessageGroup[] => {
+  const msgs = messages.value;
+  if (!msgs || msgs.length === 0) return [];
+  
+  const groups: MessageGroup[] = [];
+  let currentGroup: MessageGroup | null = null;
+  
+  for (const message of msgs) {
+    const branch = message.branches?.find((b: any) => b.id === message.activeBranchId);
+    if (!branch) continue;
+    
+    // Get participant name
+    let participantName = branch.role === 'user' ? 'User' : 'Assistant';
+    if (branch.participantId) {
+      const participant = participants.value.find(p => p.id === branch.participantId);
+      if (participant) {
+        participantName = participant.name;
+      }
+    }
+    
+    // Check if this continues the current group
+    if (currentGroup && currentGroup.participantName === participantName && participantName !== '') {
+      currentGroup.messages.push(message);
+    } else {
+      // Start a new group
+      if (currentGroup) {
+        groups.push(currentGroup);
+      }
+      currentGroup = {
+        id: `group-${message.id}`,
+        messages: [message],
+        participantName
+      };
+    }
+  }
+  
+  // Don't forget the last group
+  if (currentGroup) {
+    groups.push(currentGroup);
+  }
+  
+  return groups;
+});
 const wsConnectionState = computed(() => store.state.wsConnectionState);
 const isWsConnected = computed(() => store.state.wsConnectionState === 'connected');
 
