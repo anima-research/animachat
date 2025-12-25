@@ -864,6 +864,83 @@
       @add="handleAddParticipant"
     />
     
+    <!-- Content Blocked Dialog -->
+    <v-dialog v-model="contentBlockedDialog" max-width="600" persistent>
+      <v-card class="pa-4">
+        <v-card-title class="d-flex align-center text-h5">
+          <v-icon color="warning" class="mr-2">mdi-shield-alert</v-icon>
+          Content Moderation
+        </v-card-title>
+        
+        <v-card-text class="text-body-1">
+          <p class="mb-4">
+            Your message was flagged by our content moderation system. To protect Arc from potential 
+            publicity risks, we filter certain categories of content on our hosted platform.
+          </p>
+          
+          <v-divider class="my-4" />
+          
+          <p class="mb-3"><strong>Options for unrestricted access:</strong></p>
+          
+          <v-list density="compact" class="bg-transparent">
+            <v-list-item lines="three">
+              <template v-slot:prepend>
+                <v-icon color="primary">mdi-account-check</v-icon>
+              </template>
+              <v-list-item-title>Request Researcher Access</v-list-item-title>
+              <v-list-item-subtitle class="text-wrap">
+                Join our Discord and request researcher access for legitimate research purposes. If you are in our Discord aleady, you most likely qualify.
+              </v-list-item-subtitle>
+            </v-list-item>
+            
+            <v-list-item lines="three">
+              <template v-slot:prepend>
+                <v-icon color="primary">mdi-github</v-icon>
+              </template>
+              <v-list-item-title>Self-Host Arc</v-list-item-title>
+              <v-list-item-subtitle class="text-wrap">
+                Download and run Arc locally for unrestricted use and privacy of data. The project is available on our GitHub. 
+              </v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
+          
+          <v-divider class="my-4" />
+          
+          <p class="text-caption text-grey">
+            <v-icon size="small" class="mr-1">mdi-information-outline</v-icon>
+            Our filters are tuned to be permissive and should only trigger on severe content. 
+            If you believe this was flagged incorrectly, please let us know on Discord.
+          </p>
+        </v-card-text>
+        
+        <v-card-actions class="d-flex justify-end ga-2 px-4 pb-4">
+          <v-btn
+            variant="outlined"
+            href="https://discord.gg/anima"
+            target="_blank"
+          >
+            <v-icon start>mdi-discord</v-icon>
+            Discord
+          </v-btn>
+          <v-btn
+            variant="outlined"
+            href="https://github.com/anima-research/animachat"
+            target="_blank"
+          >
+            <v-icon start>mdi-github</v-icon>
+            GitHub
+          </v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            @click="contentBlockedDialog = false"
+          >
+            OK
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Error snackbar for non-streaming errors (pricing validation, etc.) -->
     <v-snackbar
       v-model="errorSnackbar"
@@ -933,6 +1010,7 @@ const duplicateConversationTarget = ref<Conversation | null>(null);
 const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
 const addParticipantDialog = ref(false);
+const contentBlockedDialog = ref(false);
 const rawImportData = ref('');
 const messageInput = ref('');
 const personas = ref<Persona[]>([]);
@@ -1823,6 +1901,12 @@ onMounted(async () => {
           errorSnackbarDetails.value = data.details || data.suggestion || '';
           errorSnackbar.value = true;
         }
+      });
+      
+      store.state.wsService.on('content_blocked', (data: any) => {
+        // Content was blocked by moderation - show informative dialog
+        console.warn('Content blocked by moderation:', data);
+        contentBlockedDialog.value = true;
       });
       
       // Multi-user room events
