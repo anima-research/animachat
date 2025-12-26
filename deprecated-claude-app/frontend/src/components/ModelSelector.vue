@@ -31,10 +31,41 @@
         v-bind="props"
         :subtitle="getModelSubtitle(item.raw)"
         class="model-item"
+        :class="{ 'model-unavailable': availability && getAvailabilityStatus(item.raw) === 'unavailable' }"
       >
+        <template v-slot:prepend>
+          <!-- Availability indicator icon -->
+          <v-icon
+            v-if="availability && getAvailabilityStatus(item.raw) === 'user-key'"
+            icon="mdi-key"
+            size="16"
+            color="success"
+            class="mr-2"
+            title="You have an API key configured"
+          />
+          <v-icon
+            v-else-if="availability && getAvailabilityStatus(item.raw) === 'subsidized'"
+            icon="mdi-check-circle"
+            size="16"
+            color="info"
+            class="mr-2"
+            title="Available (subsidized)"
+          />
+          <v-icon
+            v-else-if="availability && getAvailabilityStatus(item.raw) === 'unavailable'"
+            icon="mdi-key-remove"
+            size="16"
+            color="grey"
+            class="mr-2"
+            title="No API key configured"
+          />
+        </template>
         <template v-slot:title>
           <div class="d-flex align-center">
-            <span :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`">
+            <span 
+              :style="`color: ${getModelColor(item.raw.id)}; font-weight: 500;`"
+              :class="{ 'text-grey': availability && getAvailabilityStatus(item.raw) === 'unavailable' }"
+            >
               {{ item.raw.displayName }}
             </span>
             <v-chip
@@ -114,9 +145,19 @@ import { ref, computed, watch } from 'vue';
 import type { Model } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 
+// Model availability info
+interface ModelAvailability {
+  userProviders: string[];
+  adminProviders: string[];
+  grantCurrencies: string[];
+  canOverspend: boolean;
+  availableProviders: string[];
+}
+
 const props = withDefaults(defineProps<{
   modelValue: string | null;
   models: Model[];
+  availability?: ModelAvailability | null;
   label?: string;
   placeholder?: string;
   variant?: 'outlined' | 'filled' | 'underlined' | 'solo' | 'solo-inverted' | 'solo-filled' | 'plain';
@@ -137,7 +178,8 @@ const props = withDefaults(defineProps<{
   clearable: false,
   showIcon: true,
   showProviderFilter: true,
-  excludeHidden: true
+  excludeHidden: true,
+  availability: null
 });
 
 const emit = defineEmits<{
@@ -228,9 +270,37 @@ function formatProvider(provider: string): string {
     'anthropic': 'Anthropic',
     'bedrock': 'AWS Bedrock',
     'openrouter': 'OpenRouter',
-    'openai-compatible': 'OpenAI Compatible'
+    'openai-compatible': 'OpenAI Compatible',
+    'google': 'Google'
   };
   return providerNames[provider] || provider;
+}
+
+// Check if user has their own API key for this model's provider
+function hasUserKey(model: Model): boolean {
+  if (!props.availability) return false;
+  return props.availability.userProviders.includes(model.provider);
+}
+
+// Check if there's an admin-configured (subsidized) key for this model's provider
+function hasAdminKey(model: Model): boolean {
+  if (!props.availability) return false;
+  return props.availability.adminProviders.includes(model.provider);
+}
+
+// Check if the model is available (either user key, admin key, or can overspend)
+function isModelAvailable(model: Model): boolean {
+  if (!props.availability) return true; // Default to available if no info
+  return hasUserKey(model) || hasAdminKey(model) || props.availability.canOverspend;
+}
+
+// Get availability status for display
+function getAvailabilityStatus(model: Model): 'user-key' | 'subsidized' | 'unavailable' | null {
+  if (!props.availability) return null;
+  if (hasUserKey(model)) return 'user-key';
+  if (hasAdminKey(model)) return 'subsidized';
+  if (props.availability.canOverspend) return 'subsidized'; // Treat overspend as subsidized
+  return 'unavailable';
 }
 
 function onModelSelected(modelId: string | null) {
@@ -258,6 +328,10 @@ watch(() => props.modelValue, () => {
   padding: 8px 0;
 }
 
+.model-item.model-unavailable {
+  opacity: 0.6;
+}
+
 .model-info {
   display: flex;
   flex-direction: column;
@@ -275,6 +349,10 @@ watch(() => props.modelValue, () => {
 
 :deep(.v-chip-group) {
   flex-wrap: wrap;
+}
+
+.text-grey {
+  color: rgba(var(--v-theme-on-surface), 0.5) !important;
 }
 </style>
 

@@ -51,6 +51,7 @@
           v-if="settings.format === 'standard'"
           v-model="settings.model"
           :models="activeModels"
+          :availability="store.state.modelAvailability"
           label="Model"
           variant="outlined"
           density="compact"
@@ -78,6 +79,7 @@
           <ParticipantsSection
             v-model="localParticipants"
             :models="activeModels"
+            :availability="store.state.modelAvailability"
             :personas="personas || []"
             :can-use-personas="canUsePersonas || false"
           />

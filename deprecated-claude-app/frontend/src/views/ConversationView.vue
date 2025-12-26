@@ -858,6 +858,7 @@
     <AddParticipantDialog
       v-model="addParticipantDialog"
       :models="store.state.models"
+      :availability="store.state.modelAvailability"
       :personas="personas"
       :conversation-id="currentConversation?.id || ''"
       :is-standard-conversation="currentConversation?.format === 'standard'"

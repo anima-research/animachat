@@ -91,6 +91,7 @@
           v-if="newParticipant.type === 'assistant'"
           v-model="newParticipant.model"
           :models="models"
+          :availability="props.availability"
           label="Model"
           variant="outlined"
           density="compact"
@@ -125,9 +126,18 @@ import { ref, computed, watch } from 'vue';
 import type { Model, Persona } from '@deprecated-claude/shared';
 import ModelSelector from '@/components/ModelSelector.vue';
 
+interface ModelAvailability {
+  userProviders: string[];
+  adminProviders: string[];
+  grantCurrencies: string[];
+  canOverspend: boolean;
+  availableProviders: string[];
+}
+
 const props = defineProps<{
   modelValue: boolean;
   models: Model[];
+  availability?: ModelAvailability | null;
   personas: Persona[];
   conversationId: string;
   isStandardConversation?: boolean;

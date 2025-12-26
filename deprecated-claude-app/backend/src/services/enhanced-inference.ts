@@ -161,7 +161,7 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   
   // Bedrock model IDs (internal Arc model IDs)
   'claude-3-opus-bedrock': 75.00,
-  'claude-3-sonnet-bedrock': 45.00,
+  'claude-3-sonnet-bedrock': 45.00, // legacy pricing because of the deprecation
   'claude-3-haiku-bedrock': 1.25,
   'claude-3.5-sonnet-bedrock': 45.00,
   'claude-3.6-sonnet-bedrock': 45.00,  // Same as 3.5 sonnet v2

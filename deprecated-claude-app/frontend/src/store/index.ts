@@ -4,6 +4,15 @@ import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { api } from '../services/api';
 import { WebSocketService } from '../services/websocket';
 
+// Model availability info - which providers user can use
+interface ModelAvailability {
+  userProviders: string[];      // Providers where user has their own API key
+  adminProviders: string[];     // Providers with admin-configured keys (subsidized)
+  grantCurrencies: string[];    // Currencies where user has positive balance
+  canOverspend: boolean;        // Whether user can use models without balance
+  availableProviders: string[]; // Combined set of all usable providers
+}
+
 interface StoreState {
   user: User | null;
   conversations: Conversation[];
@@ -13,6 +22,7 @@ interface StoreState {
   models: Model[];
   openRouterModels: OpenRouterModel[];
   customModels: UserDefinedModel[];
+  modelAvailability: ModelAvailability | null; // Which providers user can use
   isLoading: boolean;
   error: string | null;
   wsService: WebSocketService | null;
@@ -202,6 +212,7 @@ export function createStore(): {
     models: [],
     openRouterModels: [],
     customModels: [],
+    modelAvailability: null,
     isLoading: false,
     error: null,
     wsService: null,
@@ -927,14 +938,22 @@ export function createStore(): {
     // Model actions
     async loadModels() {
       try {
-        const response = await api.get('/models');
-        state.models = response.data;
+        // Fetch models and availability in parallel
+        const [modelsResponse, availabilityResponse] = await Promise.all([
+          api.get('/models'),
+          api.get('/models/availability').catch(() => ({ data: null }))
+        ]);
+        
+        state.models = modelsResponse.data;
+        state.modelAvailability = availabilityResponse.data;
+        
         // console.log('Frontend loaded models:', state.models.map(m => ({
         //   id: m.id,
         //   name: m.name,
         //   displayName: m.displayName,
         //   provider: m.provider
         // })));
+        // console.log('Model availability:', state.modelAvailability);
       } catch (error) {
         console.error('Failed to load models:', error);
         throw error;
