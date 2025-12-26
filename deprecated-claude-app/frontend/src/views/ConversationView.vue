@@ -4116,6 +4116,16 @@ function formatDate(date: Date | string): string {
 </script>
 
 <style scoped>
+/* Force multiline subtitles in content moderation dialog */
+.v-dialog :deep(.v-list-item-subtitle) {
+  -webkit-line-clamp: unset !important;
+  line-clamp: unset !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  display: block !important;
+  line-height: 1.4;
+}
+
 /* Connection status indicator */
 .connection-status-bar {
   display: flex;
