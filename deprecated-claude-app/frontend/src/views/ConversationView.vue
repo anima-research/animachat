@@ -1065,10 +1065,15 @@ const messageInput = ref('');
 const personas = ref<Persona[]>([]);
 const isStreaming = ref(false);
 const streamingMessageId = ref<string | null>(null);
+const streamingBranchId = ref<string | null>(null); // Track which branch is streaming
 const autoScrollEnabled = ref(true);
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
 const isLoadingConversation = ref(false);
+
+// Track last completed branch to prevent re-triggering streaming on DEBUG CAPTURE updates
+const lastCompletedBranchId = ref<string | null>(null);
+const lastCompletedTime = ref<number | null>(null);
 
 // Stuck generation detection
 const streamingStartTime = ref<number | null>(null);
@@ -1844,8 +1849,19 @@ onMounted(async () => {
         if (data.message && data.message.branches?.length > 0) {
           const activeBranch = data.message.branches.find((b: any) => b.id === data.message.activeBranchId);
           // If the active branch is an assistant with empty/minimal content, streaming is starting
-          if (activeBranch && activeBranch.role === 'assistant' && (!activeBranch.content || activeBranch.content.length < 10)) {
+          // BUT: Don't re-enter streaming mode if:
+          // 1. We're already streaming for this exact message, OR
+          // 2. This branch ID was recently streamed (completed within last 30 seconds)
+          // This prevents race conditions with fast completions and DEBUG CAPTURE updates
+          const alreadyStreamingThisMessage = isStreaming.value && streamingMessageId.value === data.message.id;
+          const recentlyCompletedBranch = lastCompletedBranchId.value === data.message.activeBranchId && 
+            lastCompletedTime.value && (Date.now() - lastCompletedTime.value < 30000);
+          
+          if (!alreadyStreamingThisMessage && !recentlyCompletedBranch && 
+              activeBranch && activeBranch.role === 'assistant' && 
+              (!activeBranch.content || activeBranch.content.length < 10)) {
             streamingMessageId.value = data.message.id;
+            streamingBranchId.value = data.message.activeBranchId;
             isStreaming.value = true;
             autoScrollEnabled.value = true;
             streamingError.value = null;
@@ -1865,8 +1881,14 @@ onMounted(async () => {
           
           // Check if streaming is complete or was aborted
           if (data.isComplete || data.aborted) {
+            // Track this completed branch to prevent re-triggering from DEBUG CAPTURE updates
+            if (data.branchId) {
+              lastCompletedBranchId.value = data.branchId;
+              lastCompletedTime.value = Date.now();
+            }
             isStreaming.value = false;
             streamingMessageId.value = null;
+            streamingBranchId.value = null;
             clearStuckDetection();
             if (data.aborted) {
               console.log('Generation was aborted');
