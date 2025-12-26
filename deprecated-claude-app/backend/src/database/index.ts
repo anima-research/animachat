@@ -906,6 +906,16 @@ export class Database {
         break;
       }
       
+      case 'message_order_changed': {
+        const { messageId, newOrder } = event.data;
+        const message = this.messages.get(messageId);
+        if (message) {
+          const updated = { ...message, order: newOrder };
+          this.messages.set(messageId, updated);
+        }
+        break;
+      }
+      
       case 'message_imported_raw': {
         // This event is logged when importing raw messages
         // The problem: we only store messageId and conversationId, not the full message
@@ -2823,21 +2833,35 @@ export class Database {
     };
     
     // Increment order of all messages after the original
+    // IMPORTANT: We must log these order changes for proper event replay
     const convMessages = this.conversationMessages.get(conversationId) || [];
     const originalIndex = convMessages.indexOf(messageId);
+    const orderChanges: { messageId: string; oldOrder: number; newOrder: number }[] = [];
     
     for (let i = originalIndex + 1; i < convMessages.length; i++) {
       const msgId = convMessages[i];
       const msg = this.messages.get(msgId);
       if (msg && msg.order !== undefined) {
-        const updatedMsg = { ...msg, order: msg.order + 1 };
+        const oldOrder = msg.order;
+        const newOrder = msg.order + 1;
+        const updatedMsg = { ...msg, order: newOrder };
         this.messages.set(msgId, updatedMsg);
+        orderChanges.push({ messageId: msgId, oldOrder, newOrder });
       }
     }
     
     // Insert new message after original
     this.messages.set(newMessageId, newMessage);
     convMessages.splice(originalIndex + 1, 0, newMessageId);
+    
+    // Log order changes for all affected messages (for proper replay)
+    for (const change of orderChanges) {
+      await this.logConversationEvent(conversationId, 'message_order_changed', {
+        messageId: change.messageId,
+        oldOrder: change.oldOrder,
+        newOrder: change.newOrder
+      }, splitByUserId || conversationOwnerUserId);
+    }
     
     // Log the new message created event (for proper replay)
     await this.logConversationEvent(conversationId, 'message_created', newMessage, splitByUserId || conversationOwnerUserId);
