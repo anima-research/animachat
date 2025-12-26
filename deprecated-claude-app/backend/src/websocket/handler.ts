@@ -553,7 +553,8 @@ async function handleChatMessage(
         message.participantId,
         attachments,
         ws.userId, // sentByUserId - actual user who sent this
-        message.hiddenFromAi // whether message is hidden from AI
+        message.hiddenFromAi, // whether message is hidden from AI
+        'human_edit' // creationSource - user messages are human-authored
       );
     } else {
       // No siblings exist yet, create a new message
@@ -568,7 +569,8 @@ async function handleChatMessage(
         message.participantId,
         attachments,
         ws.userId, // sentByUserId - actual user who sent this
-        message.hiddenFromAi // whether message is hidden from AI
+        message.hiddenFromAi, // whether message is hidden from AI
+        'human_edit' // creationSource - user messages are human-authored
       );
     }
   } else {
@@ -583,7 +585,8 @@ async function handleChatMessage(
       message.participantId,
       attachments,
       ws.userId, // sentByUserId - actual user who sent this
-      message.hiddenFromAi // whether message is hidden from AI
+      message.hiddenFromAi, // whether message is hidden from AI
+      'human_edit' // creationSource - user messages are human-authored
     );
   }
   
@@ -685,7 +688,9 @@ async function handleChatMessage(
       responder.model || conversation.model,
       responder.id,
       undefined, // no attachments for assistant
-      ws.userId  // user who triggered the generation
+      ws.userId, // user who triggered the generation
+      undefined, // hiddenFromAi
+      'inference' // creationSource - AI generated
     );
   } else {
     // No siblings exist yet, create a new message
@@ -698,7 +703,9 @@ async function handleChatMessage(
       userBranch?.id,
       responder.id,
       undefined, // no attachments for assistant
-      ws.userId  // user who triggered the generation
+      ws.userId, // user who triggered the generation
+      undefined, // hiddenFromAi
+      'inference' // creationSource - AI generated
     );
   }
   
@@ -842,7 +849,9 @@ async function handleChatMessage(
           responder.model || conversation.model,
           responder.id,
           undefined, // no attachments
-          ws.userId  // user who triggered the generation
+          ws.userId, // user who triggered the generation
+          undefined, // hiddenFromAi
+          'inference' // creationSource - AI generated (sampling)
         );
         
         if (newBranchMessage) {
@@ -1268,7 +1277,9 @@ async function handleRegenerate(
     regenerateModel,
     participantId,
     undefined, // no attachments
-    ws.userId  // user who triggered the regeneration
+    ws.userId, // user who triggered the regeneration
+    undefined, // hiddenFromAi
+    'regeneration' // creationSource - this is a regeneration
   );
 
   if (!updatedMessage) {
@@ -1636,7 +1647,9 @@ async function handleEdit(
     branch.model,
     branch.participantId, // Keep the same participant
     undefined, // no attachments
-    ws.userId  // user who made the edit
+    ws.userId, // user who made the edit
+    undefined, // hiddenFromAi
+    'human_edit' // creationSource - human edited this message
   );
 
   if (!updatedMessage) {
@@ -1709,7 +1722,9 @@ async function handleEdit(
         responderModel,  // Use responder's model, not conversation model
         responderId, // Assistant participant ID
         undefined, // no attachments
-        ws.userId  // user who triggered the generation
+        ws.userId, // user who triggered the generation
+        undefined, // hiddenFromAi
+        'inference' // creationSource - AI generated after user edit
       );
       
       if (!newBranch) {
@@ -1740,7 +1755,9 @@ async function handleEdit(
         updatedMessage.activeBranchId, // Parent is the edited user message's active branch
         responderId, // Assistant participant ID
         undefined,   // no attachments
-        ws.userId    // user who triggered the generation
+        ws.userId,   // user who triggered the generation
+        undefined,   // hiddenFromAi
+        'inference'  // creationSource - AI generated after user edit
       );
       
       // Send assistant message to frontend
@@ -2100,7 +2117,9 @@ async function handleContinue(
           responderModelId,
           responder.id,
           undefined, // no attachments
-          ws.userId  // user who triggered the generation
+          ws.userId, // user who triggered the generation
+          undefined, // hiddenFromAi
+          'inference' // creationSource - AI generated (continue)
         );
       } else {
         // No siblings exist yet, create a new message
@@ -2114,7 +2133,9 @@ async function handleContinue(
           parentBranchId,
           responder.id,
           undefined, // no attachments
-          ws.userId  // user who triggered the generation
+          ws.userId, // user who triggered the generation
+          undefined, // hiddenFromAi
+          'inference' // creationSource - AI generated (continue)
         );
       }
     } else {
@@ -2128,7 +2149,9 @@ async function handleContinue(
         undefined,
         responder.id,
         undefined, // no attachments
-        ws.userId  // user who triggered the generation
+        ws.userId, // user who triggered the generation
+        undefined, // hiddenFromAi
+        'inference' // creationSource - AI generated (continue)
       );
     }
 
@@ -2238,7 +2261,9 @@ async function handleContinue(
           responder.model || conversation.model,
           responder.id,
           undefined, // no attachments
-          ws.userId  // user who triggered the generation
+          ws.userId, // user who triggered the generation
+          undefined, // hiddenFromAi
+          'inference' // creationSource - AI generated (sampling in continue)
         );
         
         if (newBranchMessage) {

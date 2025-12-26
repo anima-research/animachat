@@ -1,0 +1,12 @@
+{
+  "id": "anima-discord",
+  "name": "Anima Discord",
+  "description": "Avatar collection from the Anima Discord community. These avatars represent the personalities and visual identities that emerged through community interaction.",
+  "version": "1.0.0",
+  "author": "Anima Labs",
+  "history": "Originally created through collaborative effort on the Anima Discord server, these avatars capture the distinct visual identities that community members associated with different Claude models and other AI systems.",
+  "isSystem": true,
+  "avatars": {}
+}
+
+

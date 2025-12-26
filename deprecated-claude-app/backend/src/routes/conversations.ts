@@ -240,7 +240,13 @@ export function conversationRouter(db: Database): Router {
           conversation.userId,
           msg.content,
           msg.role,
-          msg.role === 'assistant' ? data.model : undefined
+          msg.role === 'assistant' ? data.model : undefined,
+          undefined, // parentBranchId
+          undefined, // participantId
+          undefined, // attachments
+          undefined, // sentByUserId
+          undefined, // hiddenFromAi
+          'import'   // creationSource - imported data
         );
 
         // Add branches if provided
@@ -253,7 +259,12 @@ export function conversationRouter(db: Database): Router {
               branch.content,
               msg.role,
               message.branches[0].id,
-              msg.role === 'assistant' ? data.model : undefined
+              msg.role === 'assistant' ? data.model : undefined,
+              undefined, // participantId
+              undefined, // attachments
+              undefined, // sentByUserId
+              undefined, // hiddenFromAi
+              'import'   // creationSource - imported data
             );
           }
         }

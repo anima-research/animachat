@@ -2353,7 +2353,7 @@ export class Database {
   }
 
   // Message methods
-  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean): Promise<Message> {
+  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, creationSource?: 'inference' | 'human_edit' | 'regeneration' | 'split' | 'import'): Promise<Message> {
     const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) throw new Error("Conversation not found");
     // Get conversation messages to determine parent
@@ -2407,7 +2407,8 @@ export class Database {
           mimeType: (att as any).mimeType,
           createdAt: new Date()
         })) : undefined,
-        hiddenFromAi // If true, message is visible to humans but excluded from AI context
+        hiddenFromAi, // If true, message is visible to humans but excluded from AI context
+        creationSource // How this branch was created (inference, human_edit, regeneration, split, import)
       }],
       activeBranchId: '',
       order: 0
@@ -2533,7 +2534,7 @@ export class Database {
     return message;
   }
 
-  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean): Promise<Message | null> {
+  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, creationSource?: 'inference' | 'human_edit' | 'regeneration' | 'split' | 'import'): Promise<Message | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
     
@@ -2557,7 +2558,8 @@ export class Database {
         mimeType: (att as any).mimeType,
         createdAt: new Date()
       })) : undefined,
-      hiddenFromAi // If true, message is excluded from AI context
+      hiddenFromAi, // If true, message is excluded from AI context
+      creationSource // How this branch was created
     };
 
     // Create new message object with added branch
@@ -2837,7 +2839,8 @@ export class Database {
       model: branch.model,
       parentBranchId: branch.id, // Parent is the original branch
       attachments: undefined, // Attachments stay with original
-      hiddenFromAi: branch.hiddenFromAi
+      hiddenFromAi: branch.hiddenFromAi,
+      creationSource: 'split' as const // Mark this as a split result
     };
     
     const newMessage: Message = {

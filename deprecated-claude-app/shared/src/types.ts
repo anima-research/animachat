@@ -498,6 +498,16 @@ export const PostHocOperationSchema = z.object({
 
 export type PostHocOperation = z.infer<typeof PostHocOperationSchema>;
 
+// Branch creation source - tracks how a branch was created for authenticity verification
+export const CreationSourceSchema = z.enum([
+  'inference',      // AI generated this content
+  'human_edit',     // Human edited/wrote this content
+  'regeneration',   // AI regeneration of a previous attempt
+  'split',          // Result of message split operation
+  'import'          // Imported from external source
+]);
+export type CreationSource = z.infer<typeof CreationSourceSchema>;
+
 // Message types
 export const MessageBranchSchema = z.object({
   id: z.string().uuid(),
@@ -516,7 +526,10 @@ export const MessageBranchSchema = z.object({
   debugRequest: z.any().optional(), // Raw LLM request for debugging (researchers/admins only)
   debugResponse: z.any().optional(), // Raw LLM response for debugging (researchers/admins only)
   // Post-hoc operation - if present, this message is an operation that affects a previous message
-  postHocOperation: PostHocOperationSchema.optional()
+  postHocOperation: PostHocOperationSchema.optional(),
+  // How this branch was created - for authenticity verification
+  // undefined means legacy data (pre-tracking), should be treated as unknown
+  creationSource: CreationSourceSchema.optional()
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;
