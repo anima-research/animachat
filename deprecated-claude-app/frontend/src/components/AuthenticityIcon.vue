@@ -10,13 +10,13 @@
         <svg 
           :width="size" 
           :height="size" 
-          viewBox="0 0 120 120" 
+          viewBox="0 0 24 24" 
           xmlns="http://www.w3.org/2000/svg"
         >
           <!-- Background glow for higher authenticity levels -->
           <defs>
             <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="3" result="blur"/>
+              <feGaussianBlur stdDeviation="1" result="blur"/>
               <feMerge>
                 <feMergeNode in="blur"/>
                 <feMergeNode in="SourceGraphic"/>
@@ -27,72 +27,47 @@
           <!-- Outermost arc - only visible for higher levels -->
           <path 
             v-if="showAllArcs"
-            d="M 20 80 Q 60 20, 100 80" 
+            d="M 2 20 Q 12 2, 22 20" 
             :stroke="arcColor" 
-            :stroke-width="strokeWidth" 
+            stroke-width="2" 
             fill="none" 
-            :opacity="level === 'hard_mode' ? 0.8 : 0.3"
+            stroke-linecap="round"
+            :opacity="level === 'hard_mode' ? 1 : 0.6"
             :filter="level === 'hard_mode' ? 'url(#glow)' : undefined"
           />
           
           <!-- Second arc -->
           <path 
             v-if="showThreeArcs"
-            d="M 30 75 Q 60 30, 90 75" 
+            d="M 5 18 Q 12 5, 19 18" 
             :stroke="arcColor" 
-            :stroke-width="strokeWidth" 
+            stroke-width="2" 
             fill="none" 
-            :opacity="level === 'hard_mode' || level === 'full' ? 0.7 : 0.4"
+            stroke-linecap="round"
+            :opacity="level === 'hard_mode' || level === 'full' ? 1 : 0.7"
           />
           
           <!-- Third arc -->
           <path 
             v-if="showTwoArcs"
-            d="M 40 70 Q 60 40, 80 70" 
+            d="M 7 16 Q 12 8, 17 16" 
             :stroke="arcColor" 
-            :stroke-width="strokeWidth * 1.2" 
+            stroke-width="2.5" 
             fill="none" 
-            :opacity="0.8"
+            stroke-linecap="round"
+            :opacity="1"
           />
           
           <!-- Innermost arc - always visible -->
           <path 
-            d="M 50 65 Q 60 50, 70 65" 
+            d="M 9 14 Q 12 10, 15 14" 
             :stroke="arcColor" 
-            :stroke-width="strokeWidth * 1.5" 
+            stroke-width="2.5" 
             fill="none"
+            stroke-linecap="round"
             :opacity="1"
           />
           
-          <!-- X mark for altered messages -->
-          <g v-if="level === 'altered' || level === 'human_written'">
-            <line 
-              x1="35" y1="35" x2="85" y2="85" 
-              :stroke="level === 'human_written' ? '#E91E63' : '#FF9800'" 
-              stroke-width="4" 
-              stroke-linecap="round"
-              opacity="0.8"
-            />
-            <line 
-              x1="85" y1="35" x2="35" y2="85" 
-              :stroke="level === 'human_written' ? '#E91E63' : '#FF9800'" 
-              stroke-width="4" 
-              stroke-linecap="round"
-              opacity="0.8"
-            />
-          </g>
-          
-          <!-- Question mark for legacy -->
-          <text 
-            v-if="level === 'legacy'"
-            x="60" 
-            y="75" 
-            text-anchor="middle" 
-            :fill="arcColor"
-            font-size="40"
-            font-weight="bold"
-            opacity="0.6"
-          >?</text>
         </svg>
       </div>
     </template>
@@ -140,9 +115,9 @@ const showThreeArcs = computed(() =>
   ['hard_mode', 'full', 'trace_only', 'split_only'].includes(props.level)
 );
 
-// Show at least 2 arcs for unaltered+
+// Show at least 2 arcs for unaltered+ (includes legacy/altered/human_written - they just get different colors)
 const showTwoArcs = computed(() => 
-  !['altered', 'legacy', 'human_written'].includes(props.level)
+  !['altered', 'human_written'].includes(props.level)
 );
 
 function handleClick() {
@@ -157,6 +132,7 @@ function handleClick() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  vertical-align: middle;
   transition: transform 0.2s ease;
 }
 

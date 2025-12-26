@@ -40,11 +40,20 @@
       isHumanWrittenAI ? 'human-written-ai' : ''
     ]"
     :style="{
-      borderLeft: isSelectedParent ? '3px solid rgb(var(--v-theme-info))' : undefined
+      borderLeft: isSelectedParent ? '3px solid rgb(var(--v-theme-info))' : undefined,
+      position: 'relative'
     }"
     @mouseenter="isHovered = true"
     @mouseleave="handleMouseLeave"
   >
+    <!-- Authenticity Icon - positioned top right -->
+    <div v-if="authenticityLevel" class="authenticity-corner-wrapper">
+      <AuthenticityIcon 
+        :level="authenticityLevel" 
+        :size="14"
+      />
+    </div>
+    
     <!-- Action bar - appears on hover (desktop) or tap (mobile), positioned at bottom -->
     <div 
       v-if="(isHovered || moreMenuOpen || touchActionsOpen) && !isEditing && !isStreaming" 
@@ -265,13 +274,6 @@
           {{ formatTimestamp(currentBranch.createdAt) }}
         </span>
         
-        <!-- Authenticity Icon -->
-        <AuthenticityIcon 
-          v-if="authenticityLevel" 
-          :level="authenticityLevel" 
-          :size="16"
-          class="ml-1"
-        />
         
         <!-- Human-written AI plaque -->
         <v-chip 
@@ -1860,6 +1862,21 @@ watch(() => currentBranch.value.id, async () => {
 </script>
 
 <style scoped>
+
+/* Authenticity icon wrapper in top right corner */
+.authenticity-corner-wrapper {
+  position: absolute;
+  top: -2px;
+  right: 8px;
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.authenticity-corner-wrapper:hover {
+  opacity: 1;
+}
 
 /* Post-hoc operation marker - compact inline display */
 .post-hoc-operation-marker {

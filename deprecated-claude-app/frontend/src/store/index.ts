@@ -771,7 +771,9 @@ export function createStore(): {
         }
       }
       
-      // Force recompute visible messages after branch switch
+      // Invalidate cache and force recompute visible messages after branch switch
+      state.messagesVersion++;
+      invalidateSortCache();
       const newVisible = this.getVisibleMessages();
       console.log('After switch, visible messages:', newVisible.length);
     },

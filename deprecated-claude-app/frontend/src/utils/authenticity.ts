@@ -176,11 +176,11 @@ export function getAuthenticityColor(level: AuthenticityLevel): string {
   switch (level) {
     case 'hard_mode': return '#2196F3';      // Bright blue
     case 'full': return '#42A5F5';           // Blue
-    case 'split_only': return '#90CAF9';     // Light blue
+    case 'split_only': return '#64B5F6';     // Medium blue
     case 'trace_only': return '#78909C';     // Blue-grey
-    case 'unaltered': return '#9E9E9E';      // Grey
+    case 'unaltered': return '#81C784';      // Light green
     case 'altered': return '#FF9800';        // Orange/warning
-    case 'legacy': return '#757575';         // Dark grey
+    case 'legacy': return '#B0BEC5';         // Light blue-grey (more visible)
     case 'human_written': return '#E91E63';  // Pink/magenta
   }
 }
@@ -193,9 +193,9 @@ export function getAuthenticityTooltip(level: AuthenticityLevel): string {
     case 'hard_mode':
       return 'Hard Mode Authentic: This message and all above are unaltered, with no branches or splits in the entire path.';
     case 'full':
-      return 'Fully Authentic: This message is unaltered, with no problematic splits or edits in the conversation history.';
+      return 'Fully Authentic: This message is unaltered, with no splits or edits in the conversation history.';
     case 'split_only':
-      return 'Split Authentic: No split-regeneration issues, but trace authenticity is broken (edits or name collisions above).';
+      return 'Split Authentic: No splits in history, but trace authenticity is broken (edits or name collisions above).';
     case 'trace_only':
       return 'Trace Authentic: Full trace integrity, but split authenticity is compromised.';
     case 'unaltered':
