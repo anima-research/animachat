@@ -37,6 +37,14 @@
             <v-icon size="12" class="mr-1">mdi-source-branch</v-icon>
             {{ branchStats.totalBranches }} branches
           </v-chip>
+          
+          <!-- Authenticity icon for group -->
+          <AuthenticityIcon 
+            v-if="groupAuthenticityLevel" 
+            :level="groupAuthenticityLevel" 
+            :size="16"
+            class="ml-1"
+          />
         </div>
         
         <!-- Expand button -->
@@ -82,6 +90,7 @@
         :error-suggestion="getErrorSuggestion(message)"
         :post-hoc-affected="postHocAffected(message)"
         :show-stuck-button="showStuckButton && streamingCheck(message)"
+        :authenticity-status="getAuthenticityStatus(message)"
         @regenerate="(msgId: string, branchId: string) => emit('regenerate', msgId, branchId)"
         @stuck-clicked="() => emit('stuck-clicked')"
         @edit="(msgId: string, branchId: string, content: string) => emit('edit', msgId, branchId, content)"
@@ -109,8 +118,10 @@ import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import MessageComponent from './MessageComponent.vue';
+import AuthenticityIcon from './AuthenticityIcon.vue';
 import type { Message, Participant } from '@deprecated-claude/shared';
 import { getAvatarUrl, getParticipantColor } from '@/utils/avatars';
+import { type AuthenticityStatus, getAuthenticityLevel } from '@/utils/authenticity';
 
 const props = defineProps<{
   messages: Message[];
@@ -122,6 +133,7 @@ const props = defineProps<{
   streamingError?: { messageId: string; error: string; suggestion?: string } | null;
   postHocAffectedMessages?: Map<string, any>;
   showStuckButton?: boolean;
+  authenticityMap?: Map<string, AuthenticityStatus>;
 }>();
 
 const emit = defineEmits<{
@@ -271,6 +283,36 @@ function getErrorSuggestion(message: Message) {
 function postHocAffected(message: Message) {
   return props.postHocAffectedMessages?.get(message.id);
 }
+
+// Get authenticity status for a message
+function getAuthenticityStatus(message: Message): AuthenticityStatus | undefined {
+  return props.authenticityMap?.get(message.id);
+}
+
+// Get the "worst" (lowest) authenticity level in the group for collapsed view
+const groupAuthenticityLevel = computed(() => {
+  if (!props.authenticityMap || props.messages.length === 0) return null;
+  
+  // Priority: lower is worse
+  const levelPriority = ['altered', 'human_written', 'legacy', 'unaltered', 'trace_only', 'split_only', 'full', 'hard_mode'];
+  
+  let worstLevel = 'hard_mode';
+  let worstPriority = levelPriority.length - 1;
+  
+  for (const msg of props.messages) {
+    const status = props.authenticityMap.get(msg.id);
+    if (status) {
+      const level = getAuthenticityLevel(status);
+      const priority = levelPriority.indexOf(level);
+      if (priority < worstPriority) {
+        worstPriority = priority;
+        worstLevel = level;
+      }
+    }
+  }
+  
+  return worstLevel as any;
+});
 
 // Format model name for display (extract short name)
 function formatModelName(modelId: string): string {

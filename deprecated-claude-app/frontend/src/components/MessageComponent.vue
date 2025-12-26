@@ -36,7 +36,8 @@
       isSelectedParent ? 'selected-parent' : '',
       postHocAffected?.hidden ? 'post-hoc-hidden' : '',
       postHocAffected?.edited ? 'post-hoc-edited' : '',
-      (isHovered || touchActionsOpen) ? 'action-bar-visible' : ''
+      (isHovered || touchActionsOpen) ? 'action-bar-visible' : '',
+      isHumanWrittenAI ? 'human-written-ai' : ''
     ]"
     :style="{
       borderLeft: isSelectedParent ? '3px solid rgb(var(--v-theme-info))' : undefined
@@ -263,6 +264,28 @@
         <span v-if="currentBranch?.createdAt" class="text-caption meta-text">
           {{ formatTimestamp(currentBranch.createdAt) }}
         </span>
+        
+        <!-- Authenticity Icon -->
+        <AuthenticityIcon 
+          v-if="authenticityLevel" 
+          :level="authenticityLevel" 
+          :size="16"
+          class="ml-1"
+        />
+        
+        <!-- Human-written AI plaque -->
+        <v-chip 
+          v-if="isHumanWrittenAI" 
+          size="x-small" 
+          color="pink" 
+          variant="tonal" 
+          density="compact"
+          class="ml-1"
+        >
+          <v-icon size="x-small" start>mdi-account-edit</v-icon>
+          Human-written
+        </v-chip>
+        
         <!-- Badges -->
         <v-chip v-if="currentBranch?.hiddenFromAi" size="x-small" color="warning" variant="tonal" density="compact">
           <v-icon size="x-small" start>mdi-eye-off</v-icon>
@@ -778,9 +801,13 @@ import { api } from '@/services/api';
 import { useStore } from '@/store';
 import { getParticipantAvatarUrl, getAvatarColor, loadAvatarPacks } from '@/utils/avatars';
 import DebugMessageDialog from './DebugMessageDialog.vue';
+import AuthenticityIcon from './AuthenticityIcon.vue';
+import { getAuthenticityLevel } from '@/utils/authenticity';
 import 'katex/dist/katex.min.css'; // KaTeX styles
 
 const store = useStore();
+
+import type { AuthenticityStatus as AuthStatus } from '@/utils/authenticity';
 
 const props = defineProps<{
   message: Message;
@@ -793,6 +820,7 @@ const props = defineProps<{
   errorSuggestion?: string;
   postHocAffected?: { hidden: boolean; edited: boolean; editedContent?: string; originalContent?: string; hiddenAttachments: number[] };
   showStuckButton?: boolean;
+  authenticityStatus?: AuthStatus;
 }>();
 
 const emit = defineEmits<{
@@ -1078,6 +1106,17 @@ const modelIndicator = computed(() => {
   }
   
   return null;
+});
+
+// Authenticity level for this message
+const authenticityLevel = computed(() => {
+  if (!props.authenticityStatus) return null;
+  return getAuthenticityLevel(props.authenticityStatus);
+});
+
+// Check if this is a human-written AI message (for special styling)
+const isHumanWrittenAI = computed(() => {
+  return props.authenticityStatus?.isHumanWrittenAI ?? false;
 });
 
 const participantColor = computed(() => {
@@ -1859,6 +1898,17 @@ watch(() => currentBranch.value.id, async () => {
 /* Messages affected by post-hoc edit operations */
 .post-hoc-edited {
   border-left: 3px solid rgb(var(--v-theme-info)) !important;
+}
+
+/* Human-written AI messages - distinct styling */
+.human-written-ai {
+  background: linear-gradient(135deg, rgba(233, 30, 99, 0.08) 0%, rgba(156, 39, 176, 0.05) 100%) !important;
+  border-left: 3px solid #E91E63 !important;
+}
+
+.human-written-ai .message-content {
+  /* Subtle italic for human-written AI content */
+  font-style: italic;
 }
 
 /* Mobile: full-width messages */

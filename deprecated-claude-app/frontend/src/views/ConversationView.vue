@@ -408,6 +408,7 @@
               :streaming-error="streamingError"
               :post-hoc-affected-messages="postHocAffectedMessages"
               :show-stuck-button="showStuckButton"
+              :authenticity-map="authenticityMap"
               @regenerate="regenerateMessage"
               @stuck-clicked="stuckDialog = true"
               @edit="editMessage"
@@ -1033,6 +1034,7 @@ import MetricsDisplay from '@/components/MetricsDisplay.vue';
 import ModelPillBar from '@/components/ModelPillBar.vue';
 import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
 import { getModelColor } from '@/utils/modelColors';
+import { computeAuthenticity, type AuthenticityStatus } from '@/utils/authenticity';
 
 const route = useRoute();
 const router = useRouter();
@@ -1279,6 +1281,11 @@ function getPermissionColor(permission: string): string {
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
+
+// Compute authenticity for visible messages
+const authenticityMap = computed((): Map<string, AuthenticityStatus> => {
+  return computeAuthenticity(messages.value, participants.value);
+});
 
 // Group consecutive messages from the same participant for visual combining
 interface MessageGroup {
