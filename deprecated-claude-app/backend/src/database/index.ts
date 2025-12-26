@@ -2870,12 +2870,53 @@ export class Database {
     this.messages.set(newMessageId, newMessage);
     convMessages.splice(originalIndex + 1, 0, newMessageId);
     
+    // CRITICAL: Reparent any messages that were children of the original branch
+    // They should now be children of the NEW message's branch (the second part)
+    const reparentChanges: { messageId: string; branchId: string; oldParentBranchId: string; newParentBranchId: string }[] = [];
+    
+    for (const msgId of convMessages) {
+      if (msgId === messageId || msgId === newMessageId) continue; // Skip original and new message
+      
+      const msg = this.messages.get(msgId);
+      if (!msg) continue;
+      
+      let branchesUpdated = false;
+      const updatedBranches = msg.branches.map(b => {
+        if (b.parentBranchId === branchId) {
+          // This branch was a child of the original branch - reparent to new branch
+          reparentChanges.push({
+            messageId: msgId,
+            branchId: b.id,
+            oldParentBranchId: branchId,
+            newParentBranchId: newBranchId
+          });
+          branchesUpdated = true;
+          return { ...b, parentBranchId: newBranchId };
+        }
+        return b;
+      });
+      
+      if (branchesUpdated) {
+        this.messages.set(msgId, { ...msg, branches: updatedBranches });
+      }
+    }
+    
     // Log order changes for all affected messages (for proper replay)
     for (const change of orderChanges) {
       await this.logConversationEvent(conversationId, 'message_order_changed', {
         messageId: change.messageId,
         oldOrder: change.oldOrder,
         newOrder: change.newOrder
+      }, splitByUserId || conversationOwnerUserId);
+    }
+    
+    // Log reparent changes for all affected messages (for proper replay)
+    for (const change of reparentChanges) {
+      await this.logConversationEvent(conversationId, 'branch_parent_changed', {
+        messageId: change.messageId,
+        branchId: change.branchId,
+        oldParentBranchId: change.oldParentBranchId,
+        newParentBranchId: change.newParentBranchId
       }, splitByUserId || conversationOwnerUserId);
     }
     
