@@ -916,6 +916,22 @@ export class Database {
         break;
       }
       
+      case 'branch_parent_changed': {
+        const { messageId, branchId, newParentBranchId } = event.data;
+        const message = this.messages.get(messageId);
+        if (message) {
+          const updatedBranches = message.branches.map(b => {
+            if (b.id === branchId) {
+              return { ...b, parentBranchId: newParentBranchId };
+            }
+            return b;
+          });
+          const updated = { ...message, branches: updatedBranches };
+          this.messages.set(messageId, updated);
+        }
+        break;
+      }
+      
       case 'message_imported_raw': {
         // This event is logged when importing raw messages
         // The problem: we only store messageId and conversationId, not the full message
