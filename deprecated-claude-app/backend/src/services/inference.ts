@@ -808,26 +808,31 @@ export class InferenceService {
           Array.from(cacheBreakpointIndices).sort((a, b) => a - b));
       }
       
-      // Add initial user message if configured
+      // Add initial user message - REQUIRED for prefill format
+      // Anthropic API requires at least one user message before any assistant message
       const prefillSettings = conversation?.prefillUserMessage || { enabled: true, content: '<cmd>cat untitled.log</cmd>' };
       
-      if (prefillSettings.enabled) {
-        const cmdMessage: Message = {
-          id: 'prefill-cmd',
-          conversationId: messages[0]?.conversationId || '',
-          branches: [{
-            id: 'prefill-cmd-branch',
-            content: prefillSettings.content,
-            role: 'user',
-            createdAt: new Date(),
-            isActive: true,
-            parentBranchId: 'root'
-          }],
-          activeBranchId: 'prefill-cmd-branch',
-          order: 0
-        };
-        prefillMessages.push(cmdMessage);
-      }
+      // Even if "enabled" is false, we need a minimal user message for the API
+      // If disabled, use a minimal placeholder that's less visible in the conversation
+      const userMessageContent = prefillSettings.enabled 
+        ? prefillSettings.content 
+        : '.'; // Minimal placeholder - can't be empty
+      
+      const cmdMessage: Message = {
+        id: 'prefill-cmd',
+        conversationId: messages[0]?.conversationId || '',
+        branches: [{
+          id: 'prefill-cmd-branch',
+          content: userMessageContent,
+          role: 'user',
+          createdAt: new Date(),
+          isActive: true,
+          parentBranchId: 'root'
+        }],
+        activeBranchId: 'prefill-cmd-branch',
+        order: 0
+      };
+      prefillMessages.push(cmdMessage);
       
       // Build the conversation content with participant names
       // When we encounter images, we need to:
