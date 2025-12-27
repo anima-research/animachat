@@ -879,6 +879,17 @@ async function handleChatMessage(
       console.log(`[Chat] Created ${branchesToGenerate.length} branches for parallel sampling`);
     }
     
+    // Helper function to safely send WebSocket messages (may fail if user disconnected)
+    const safeSend = (data: any) => {
+      try {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify(data));
+        }
+      } catch (e) {
+        // User disconnected, ignore
+      }
+    };
+    
     // Helper function to run inference for a single branch
     const runBranchInference = async (branchId: string, branchIndex: number) => {
       let branchContent = '';
@@ -932,8 +943,8 @@ async function handleChatMessage(
             console.log(`[WebSocket] Branch ${branchIndex}: Sending content blocks:`, contentBlocks.length, 'types:', contentBlocks.map((b: any) => b.type));
         }
         
-          // Send to original requester
-        ws.send(JSON.stringify(streamData));
+          // Send to original requester (safe - may fail if disconnected)
+        safeSend(streamData);
           
           // Broadcast to all other users in the room
           roomManager.broadcastToRoom(message.conversationId, streamData, ws);
@@ -962,7 +973,7 @@ async function handleChatMessage(
                   isComplete: true,
                   filtered: true
                 };
-                ws.send(JSON.stringify(filterEvent));
+                safeSend(filterEvent);
                 roomManager.broadcastToRoom(message.conversationId, filterEvent, ws);
               }
               
@@ -984,18 +995,69 @@ async function handleChatMessage(
           if (branchIndex === 0) {
         await db.addMetrics(conversation.id, conversation.userId, metrics);
         
-        // Send metrics update to client
-        ws.send(JSON.stringify({
+        // Send metrics update to client (safe - may fail if disconnected)
+        safeSend({
           type: 'metrics_update',
           conversationId: conversation.id,
               metrics,
               branchIndex
-            }));
+            });
           }
         },
         participants,
         abortController.signal
       );
+      
+      // DEBUG CAPTURE: Capture debug data immediately after this branch completes
+      // This happens per-branch so even if user disconnects mid-way, completed branches get debug data
+      try {
+        const rawRequest = baseInferenceService.lastRawRequest;
+        if (rawRequest) {
+          const branchObj = assistantMessage.branches.find((b: any) => b.id === branchId);
+          if (branchObj) {
+            console.log(`[DEBUG CAPTURE] Branch ${branchIndex} (${branchId.substring(0, 8)}): Capturing debug data...`);
+            
+            // Compute actual format used
+            const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+            const participantMode = responder.conversationMode;
+            const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
+            const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
+            
+            const debugRequest = {
+              ...rawRequest,
+              provider: modelConfig.provider,
+              settings: inferenceSettings,
+              conversationFormat: conversation.format,
+              participantConversationMode: participantMode || 'auto',
+              actualFormatUsed: actualFormat
+            };
+            
+            const debugResponse = {
+              content: branchObj.content,
+              contentBlocks: branchObj.contentBlocks,
+              model: branchObj.model
+            };
+            
+            await db.updateMessageBranch(
+              assistantMessage.id,
+              conversation.userId,
+              branchId,
+              { debugRequest, debugResponse }
+            );
+            
+            console.log(`[DEBUG CAPTURE] Branch ${branchIndex} (${branchId.substring(0, 8)}): Debug data saved`);
+            
+            // Notify frontend (safe - may fail if disconnected)
+            const updatedMessage = await db.getMessage(assistantMessage.id, conversation.id, conversation.userId);
+            if (updatedMessage) {
+              safeSend({ type: 'message_edited', message: updatedMessage });
+              roomManager.broadcastToRoom(conversation.id, { type: 'message_edited', message: updatedMessage }, ws);
+            }
+          }
+        }
+      } catch (debugError) {
+        console.error(`[DEBUG CAPTURE] Branch ${branchIndex}: Failed to capture debug data:`, debugError);
+      }
     };
     
     // DEBUG: Check for magic string to simulate stuck generation
@@ -1033,82 +1095,13 @@ async function handleChatMessage(
     }
     
     // Run all branches in parallel
+    // Note: DEBUG CAPTURE now happens per-branch inside runBranchInference,
+    // so even if user disconnects mid-way, completed branches get their debug data
     await Promise.all(
       branchesToGenerate.map((branch, index) =>
         runBranchInference(branch.branchId, index)
       )
     );
-
-    // Capture debug request/response for researchers
-    console.log('[DEBUG CAPTURE] Starting debug data capture...');
-    try {
-      // Get the raw API request that was just sent
-      const rawRequest = baseInferenceService.lastRawRequest;
-      console.log(`[DEBUG CAPTURE] Raw request available: ${!!rawRequest}`);
-
-      if (rawRequest) {
-        // Store debug data on each generated branch
-        console.log(`[DEBUG CAPTURE] Processing ${branchesToGenerate.length} branches`);
-        // Compute actual format used (same logic as applyBackroomPromptIfNeeded)
-        const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
-        const participantMode = responder.conversationMode;
-        const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
-        const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
-        
-        for (const branch of branchesToGenerate) {
-          const branchObj = assistantMessage.branches.find((b: any) => b.id === branch.branchId);
-          console.log(`[DEBUG CAPTURE] Branch ${branch.branchId}: branchObj found = ${!!branchObj}`);
-          if (branchObj) {
-            // Store the raw API request with inference metadata
-            const debugRequest = {
-              ...rawRequest,
-              provider: modelConfig.provider,
-              settings: inferenceSettings,
-              // Inference format metadata
-              conversationFormat: conversation.format,
-              participantConversationMode: participantMode || 'auto',
-              actualFormatUsed: actualFormat
-            };
-
-            // Store the response (content is already in the branch)
-            const debugResponse = {
-              content: branchObj.content,
-              contentBlocks: branchObj.contentBlocks,
-              model: branchObj.model
-            };
-
-            console.log(`[DEBUG CAPTURE] Updating message branch ${branch.branchId}...`);
-            await db.updateMessageBranch(
-              assistantMessage.id,
-              conversation.userId,
-              branch.branchId,
-              {
-                debugRequest,
-                debugResponse
-              }
-            );
-            console.log(`[DEBUG CAPTURE] Branch ${branch.branchId} updated successfully`);
-
-            // Send update to frontend so bug icon appears immediately
-            const updatedMessage = await db.getMessage(assistantMessage.id, conversation.id, conversation.userId);
-            if (updatedMessage) {
-              const updateEvent = {
-                type: 'message_edited',
-                message: updatedMessage
-              };
-              ws.send(JSON.stringify(updateEvent));
-              roomManager.broadcastToRoom(conversation.id, updateEvent, ws);
-            }
-          }
-        }
-        console.log('[DEBUG CAPTURE] Debug data capture complete');
-      } else {
-        console.log('[DEBUG CAPTURE] No raw request available (non-Anthropic provider?)');
-      }
-    } catch (debugError) {
-      console.error('[DEBUG CAPTURE] Failed to capture debug data:', debugError);
-      // Don't fail the whole request if debug capture fails
-    }
 
     // Update conversation timestamp after all branches complete
     await db.updateConversation(conversation.id, conversation.userId, { updatedAt: new Date() });
@@ -2289,6 +2282,17 @@ async function handleContinue(
       cliModePrompt: conversation.cliModePrompt
     });
     
+    // Helper function to safely send WebSocket messages (may fail if user disconnected)
+    const safeSendContinue = (data: any) => {
+      try {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify(data));
+        }
+      } catch (e) {
+        // User disconnected, ignore
+      }
+    };
+    
     // Helper function to run inference for a single branch
     const runBranchInference = async (branchId: string, branchIndex: number) => {
       let branchContent = '';
@@ -2325,7 +2329,7 @@ async function handleContinue(
             isComplete,
             branchIndex
           };
-          ws.send(JSON.stringify(streamData));
+          safeSendContinue(streamData);
           roomManager.broadcastToRoom(conversationId, streamData, ws);
 
           if (isComplete) {
@@ -2348,7 +2352,7 @@ async function handleContinue(
                   branchIndex,
                   filtered: true
                 };
-                ws.send(JSON.stringify(filterEvent));
+                safeSendContinue(filterEvent);
                 roomManager.broadcastToRoom(conversationId, filterEvent, ws);
               }
               await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, branchId, finalBranch.content, finalBranch.contentBlocks);
@@ -2360,40 +2364,30 @@ async function handleContinue(
       async (metrics) => {
           if (branchIndex === 0) {
         await db.addMetrics(conversation.id, conversation.userId, metrics);
-            ws.send(JSON.stringify({ type: 'metrics_update', conversationId: conversation.id, metrics, branchIndex }));
+            safeSendContinue({ type: 'metrics_update', conversationId: conversation.id, metrics, branchIndex });
           }
         },
         participants,
         abortController.signal
       );
-    };
-    
-    // Run all branches in parallel
-    await Promise.all(
-      branchesToGenerate.map((branch, index) => runBranchInference(branch.branchId, index))
-    );
-    
-    // Capture debug request/response for researchers
-    console.log('[DEBUG CAPTURE] Starting debug data capture for continue...');
-    try {
-      const rawRequest = baseInferenceService.lastRawRequest;
-      console.log(`[DEBUG CAPTURE] Raw request available: ${!!rawRequest}`);
       
-      if (rawRequest) {
-        // Compute actual format used (same logic as applyBackroomPromptIfNeeded)
-        const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
-        const participantMode = responder.conversationMode;
-        const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
-        const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
-        
-        for (const branch of branchesToGenerate) {
-          const branchObj = assistantMessage.branches.find((b: any) => b.id === branch.branchId);
+      // DEBUG CAPTURE: Capture debug data immediately after this branch completes
+      try {
+        const rawRequest = baseInferenceService.lastRawRequest;
+        if (rawRequest) {
+          const branchObj = assistantMessage.branches.find((b: any) => b.id === branchId);
           if (branchObj) {
+            console.log(`[DEBUG CAPTURE] Continue branch ${branchIndex} (${branchId.substring(0, 8)}): Capturing debug data...`);
+            
+            const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+            const participantMode = responder.conversationMode;
+            const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
+            const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
+            
             const debugRequest = {
               ...rawRequest,
               provider: modelConfig.provider,
               settings: inferenceSettings,
-              // Inference format metadata
               conversationFormat: conversation.format,
               participantConversationMode: participantMode || 'auto',
               actualFormatUsed: actualFormat
@@ -2405,27 +2399,26 @@ async function handleContinue(
               model: branchObj.model
             };
             
-            await db.updateMessageBranch(
-              assistantMessage.id,
-              conversation.userId,
-              branch.branchId,
-              { debugRequest, debugResponse }
-            );
-            console.log(`[DEBUG CAPTURE] Continue branch ${branch.branchId} updated`);
+            await db.updateMessageBranch(assistantMessage.id, conversation.userId, branchId, { debugRequest, debugResponse });
+            console.log(`[DEBUG CAPTURE] Continue branch ${branchIndex} (${branchId.substring(0, 8)}): Debug data saved`);
             
-            // Send update to frontend so bug icon appears immediately
             const refreshedMessage = await db.getMessage(assistantMessage.id, conversationId, conversation.userId);
             if (refreshedMessage) {
-              ws.send(JSON.stringify({ type: 'message_edited', message: refreshedMessage }));
+              safeSendContinue({ type: 'message_edited', message: refreshedMessage });
               roomManager.broadcastToRoom(conversationId, { type: 'message_edited', message: refreshedMessage }, ws);
             }
           }
         }
-        console.log('[DEBUG CAPTURE] Debug data capture complete for continue');
+      } catch (debugError) {
+        console.error(`[DEBUG CAPTURE] Continue branch ${branchIndex}: Failed to capture debug data:`, debugError);
       }
-    } catch (debugError) {
-      console.error('[DEBUG CAPTURE] Failed to capture debug data for continue:', debugError);
-    }
+    };
+    
+    // Run all branches in parallel
+    // Note: DEBUG CAPTURE now happens per-branch inside runBranchInference
+    await Promise.all(
+      branchesToGenerate.map((branch, index) => runBranchInference(branch.branchId, index))
+    );
     
     // Send updated conversation after all complete
     const updatedConversation = await db.getConversation(conversationId, conversation.userId);
