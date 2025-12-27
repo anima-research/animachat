@@ -96,7 +96,7 @@ export class InferenceService {
         apiMessages = await this.anthropicService.formatMessagesForAnthropic(formattedMessages);
         break;
       case 'bedrock':
-        apiMessages = this.bedrockService.formatMessagesForClaude(formattedMessages);
+        apiMessages = await this.bedrockService.formatMessagesForClaude(formattedMessages);
         break;
       case 'openai-compatible':
         // For prompt building, we don't need actual API keys, just format the messages
