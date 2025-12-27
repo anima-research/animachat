@@ -1145,6 +1145,11 @@ async function handleChatMessage(
     } else if (errorMsg.includes('Rate limit') || errorMsg.includes('rate_limit') || errorMsg.includes('429')) {
       friendlyError = USER_FACING_ERRORS.RATE_LIMIT.message;
       suggestion = USER_FACING_ERRORS.RATE_LIMIT.suggestion;
+    } else if (errorMsg.includes('usage limit') || errorMsg.includes('API usage limit')) {
+      // Extract the specific message from API response
+      const jsonMatch = errorMsg.match(/\{.*"message"\s*:\s*"([^"]+)"/);
+      friendlyError = jsonMatch ? jsonMatch[1] : 'You have reached your API usage limits.';
+      suggestion = 'Check your API provider\'s billing settings to increase your limit.';
     } else if (errorMsg.includes('overloaded') || errorMsg.includes('503')) {
       friendlyError = USER_FACING_ERRORS.OVERLOADED.message;
       suggestion = USER_FACING_ERRORS.OVERLOADED.suggestion;
@@ -1567,10 +1572,18 @@ async function handleRegenerate(
     }
     
     console.error('Regeneration error:', error);
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    let errorMsg = error instanceof Error ? error.message : String(error);
+    
+    // Extract meaningful error from Anthropic/API errors
+    // e.g., "400 {"type":"error","error":{"message":"You have reached..."}}"
+    const jsonMatch = errorMsg.match(/\{.*"message"\s*:\s*"([^"]+)"/);
+    if (jsonMatch && jsonMatch[1]) {
+      errorMsg = jsonMatch[1];
+    }
+    
     ws.send(JSON.stringify({
       type: 'error',
-      error: errorMsg.length < 150 ? errorMsg : 'Failed to regenerate response'
+      error: errorMsg.length < 300 ? errorMsg : errorMsg.substring(0, 297) + '...'
     }));
   }
 }
@@ -1964,10 +1977,17 @@ async function handleEdit(
       }
     } catch (error) {
       console.error('Error generating response to edited message:', error);
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      let errorMsg = error instanceof Error ? error.message : String(error);
+      
+      // Extract meaningful error from Anthropic/API errors
+      const jsonMatch = errorMsg.match(/\{.*"message"\s*:\s*"([^"]+)"/);
+      if (jsonMatch && jsonMatch[1]) {
+        errorMsg = jsonMatch[1];
+      }
+      
       ws.send(JSON.stringify({
         type: 'error',
-        error: errorMsg.length < 150 ? errorMsg : 'Failed to generate response'
+        error: errorMsg.length < 300 ? errorMsg : errorMsg.substring(0, 297) + '...'
       }));
     }
   }
@@ -2450,9 +2470,17 @@ async function handleContinue(
     }
     
     console.error('Continue generation error:', error);
+    let errorMsg = error instanceof Error ? error.message : String(error);
+    
+    // Extract meaningful error from Anthropic/API errors
+    const jsonMatch = errorMsg.match(/\{.*"message"\s*:\s*"([^"]+)"/);
+    if (jsonMatch && jsonMatch[1]) {
+      errorMsg = jsonMatch[1];
+    }
+    
     ws.send(JSON.stringify({ 
       type: 'error', 
-      error: error instanceof Error ? error.message : 'Failed to continue generation'
+      error: errorMsg.length < 300 ? errorMsg : errorMsg.substring(0, 297) + '...'
     }));
   }
 }
