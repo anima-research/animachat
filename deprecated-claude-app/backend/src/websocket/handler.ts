@@ -85,7 +85,7 @@ function applyBackroomPromptIfNeeded(params: BackroomPromptParams): string {
     cliModePrompt
   } = params;
   
-  // Check if CLI mode prompt is disabled
+  // Check if CLI mode prompt is disabled by toggle
   const cliEnabled = cliModePrompt?.enabled ?? true;
   const threshold = cliModePrompt?.messageThreshold ?? 10;
   
@@ -95,12 +95,6 @@ function applyBackroomPromptIfNeeded(params: BackroomPromptParams): string {
   
   // Only for group chats with fewer than threshold messages
   if (conversationFormat !== 'prefill' || messageCount >= threshold) {
-    return existingSystemPrompt;
-  }
-  
-  // If user has set a custom system prompt, respect it and don't apply the default
-  if (existingSystemPrompt) {
-    Logger.websocket(`[WebSocket] Custom system prompt set, skipping backroom prompt`);
     return existingSystemPrompt;
   }
   
@@ -116,6 +110,13 @@ function applyBackroomPromptIfNeeded(params: BackroomPromptParams): string {
                        participantConversationMode === 'prefill';
   if (!wantsPrefill) {
     return existingSystemPrompt;
+  }
+  
+  // CLI mode is enabled and conditions are met - apply the backroom prompt
+  // If there's an existing system prompt, prepend the CLI prompt to it
+  if (existingSystemPrompt) {
+    Logger.websocket(`[WebSocket] Applied backroom prompt + custom prompt (${messageCount} messages, provider: ${modelProvider})`);
+    return `${BACKROOM_PROMPT}\n\n${existingSystemPrompt}`;
   }
   
   Logger.websocket(`[WebSocket] Applied backroom prompt (${messageCount} messages, provider: ${modelProvider})`);

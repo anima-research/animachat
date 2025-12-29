@@ -69,7 +69,7 @@
           class="mt-4"
         />
         <p v-if="settings.format === 'prefill'" class="text-caption text-grey mt-1 mb-0">
-          Note: For early group chats (&lt;10 messages), a default "CLI mode" prompt is applied if this is left empty. Setting a prompt here will override the default.
+          Note: If the CLI mode prompt toggle below is enabled, it will be prepended to this system prompt for early messages.
         </p>
         
         <div v-if="settings.format === 'standard'">

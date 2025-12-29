@@ -6,8 +6,17 @@ import {
   RawMessageSchema 
 } from '@deprecated-claude/shared';
 
+// Maximum number of automatically detected participants to limit false positives
+const MAX_AUTO_DETECTED_PARTICIPANTS = 15;
+
+export interface ParseOptions {
+  // If provided, only these names will be treated as message headers
+  // Other potential headers will be treated as regular text
+  allowedParticipants?: string[];
+}
+
 export class ImportParser {
-  async parse(format: ImportFormat, content: string): Promise<ImportPreview> {
+  async parse(format: ImportFormat, content: string, options?: ParseOptions): Promise<ImportPreview> {
     let messages: ParsedMessage[];
     let title: string | undefined;
     let metadata: Record<string, any> | undefined;
@@ -29,10 +38,10 @@ export class ImportParser {
         ({ messages, title, metadata } = await this.parseOpenAI(content));
         break;
       case 'colon_single':
-        ({ messages, title, metadata } = await this.parseColonFormat(content, '\n'));
+        ({ messages, title, metadata } = await this.parseColonFormat(content, '\n', options?.allowedParticipants));
         break;
       case 'colon_double':
-        ({ messages, title, metadata } = await this.parseColonFormat(content, '\n\n'));
+        ({ messages, title, metadata } = await this.parseColonFormat(content, '\n\n', options?.allowedParticipants));
         break;
       default:
         throw new Error(`Unsupported format: ${format}`);
@@ -70,6 +79,16 @@ export class ImportParser {
         role: data.role,
         messageCount: data.count
       }));
+      
+      // Sort by message count descending
+      detectedParticipants.sort((a, b) => b.messageCount - a.messageCount);
+      
+      // Limit to top MAX_AUTO_DETECTED_PARTICIPANTS if not using allowed participants filter
+      // (If allowedParticipants is set, we already filtered during parsing)
+      if (!options?.allowedParticipants && detectedParticipants.length > MAX_AUTO_DETECTED_PARTICIPANTS) {
+        console.log(`[ImportParser] Limiting from ${detectedParticipants.length} to ${MAX_AUTO_DETECTED_PARTICIPANTS} participants`);
+        detectedParticipants = detectedParticipants.slice(0, MAX_AUTO_DETECTED_PARTICIPANTS);
+      }
       
       // Suggest format based on participant count
       suggestedFormat = detectedParticipants.length > 2 ? 'prefill' : 'standard';
@@ -449,25 +468,61 @@ export class ImportParser {
     return this.parseBasicJson(content);
   }
 
-  private async parseColonFormat(content: string, separator: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
+  private async parseColonFormat(
+    content: string, 
+    separator: string,
+    allowedParticipants?: string[]
+  ): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
     const messages: ParsedMessage[] = [];
     const blocks = content.split(separator).filter(block => block.trim());
     
+    // If allowedParticipants is set, only treat those names as message headers
+    // Other patterns that look like headers get treated as regular text
+    const allowedSet = allowedParticipants ? new Set(allowedParticipants) : null;
+    
     for (const block of blocks) {
       const colonIndex = block.indexOf(':');
-      if (colonIndex === -1) continue;
       
-      const name = block.substring(0, colonIndex).trim();
+      // No colon found - append to previous message if exists, otherwise skip
+      if (colonIndex === -1) {
+        if (messages.length > 0) {
+          messages[messages.length - 1].content += separator + block;
+        }
+        continue;
+      }
+      
+      const potentialName = block.substring(0, colonIndex).trim();
       const text = block.substring(colonIndex + 1).trim();
       
-      if (name && text) {
-        // Try to guess role based on common patterns
-        const role = this.guessRole(name);
+      // Check if this looks like a valid participant name
+      // Names should be reasonably short (no more than 50 chars) and not contain newlines
+      const isValidNameFormat = potentialName.length > 0 && 
+                                potentialName.length <= 50 && 
+                                !potentialName.includes('\n');
+      
+      // If we have allowed participants filter, check against it
+      const isAllowedParticipant = allowedSet ? allowedSet.has(potentialName) : isValidNameFormat;
+      
+      if (isAllowedParticipant && text) {
+        // This is a valid message header
+        const role = this.guessRole(potentialName);
         
         messages.push({
           role,
           content: text,
-          participantName: name
+          participantName: potentialName
+        });
+      } else if (messages.length > 0) {
+        // Not a valid header - append to previous message
+        // Include the colon since it's part of the content
+        messages[messages.length - 1].content += separator + block;
+      } else {
+        // No previous message to append to and not a valid header
+        // Create a message with unknown participant
+        messages.push({
+          role: 'user',
+          content: block,
+          participantName: 'Unknown'
         });
       }
     }

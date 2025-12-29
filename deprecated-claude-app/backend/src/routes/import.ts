@@ -20,13 +20,16 @@ export function importRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const { format, content } = req.body;
+      const { format, content, allowedParticipants } = req.body;
       
       if (!format || !content) {
         return res.status(400).json({ error: 'Format and content are required' });
       }
 
-      const preview = await parser.parse(format as ImportFormat, content);
+      // Pass allowedParticipants to parser for re-parsing with filtered participants
+      const preview = await parser.parse(format as ImportFormat, content, {
+        allowedParticipants: allowedParticipants as string[] | undefined
+      });
       res.json(preview);
     } catch (error) {
       console.error('Import preview error:', error);
@@ -49,8 +52,13 @@ export function importRouter(db: Database): Router {
 
       const importRequest = ImportRequestSchema.parse(req.body);
       
-      // First, parse the content
-      const preview = await parser.parse(importRequest.format, importRequest.content);
+      // Extract allowedParticipants from request body (not in schema, but passed for re-parsing)
+      const allowedParticipants = req.body.allowedParticipants as string[] | undefined;
+      
+      // First, parse the content with participant filter if provided
+      const preview = await parser.parse(importRequest.format, importRequest.content, {
+        allowedParticipants
+      });
       
       // Determine the model to use for the conversation
       // Priority: 1. Explicit model in request, 2. First assistant from arc_chat participants, 3. Default

@@ -111,55 +111,92 @@
             <v-card-text v-if="preview">
               <h4 class="text-h6 mb-4">Preview</h4>
               
-              <!-- Detected Participants -->
-              <div class="mb-4">
-                <h5 class="text-subtitle-1 mb-2">Detected Participants</h5>
-                <v-chip
-                  v-for="participant in preview.detectedParticipants"
-                  :key="participant.name"
-                  class="mr-2 mb-2"
-                  :color="participant.role === 'user' ? 'primary' : 'secondary'"
-                >
-                  {{ participant.name }} ({{ participant.messageCount }} messages)
-                </v-chip>
-              </div>
-
               <!-- Participant Mapping -->
-              <div v-if="preview.detectedParticipants.length > 0" class="mb-4">
-                <h5 class="text-subtitle-1 mb-2">Map Participants</h5>
+              <div class="mb-4">
+                <div class="d-flex align-center mb-2">
+                  <h5 class="text-subtitle-1">Participants</h5>
+                  <v-spacer />
+                  <v-btn
+                    v-if="isTextFormat"
+                    size="small"
+                    variant="tonal"
+                    color="primary"
+                    :loading="reparsingPreview"
+                    @click="reparseWithCurrentParticipants"
+                  >
+                    <v-icon start size="small">mdi-refresh</v-icon>
+                    Re-parse
+                  </v-btn>
+                </div>
+                
+                <p v-if="isTextFormat" class="text-caption text-grey mb-3">
+                  Edit participant names or delete false positives, then click "Re-parse" to update the preview.
+                  Only text matching these participant names will be parsed as message headers.
+                </p>
+                
                 <v-row
-                  v-for="participant in preview.detectedParticipants"
-                  :key="participant.name"
+                  v-for="(mapping, index) in editableParticipants"
+                  :key="index"
                   dense
-                  class="mb-2"
+                  class="mb-2 align-center"
                 >
-                  <v-col cols="4">
+                  <v-col cols="3">
                     <v-text-field
-                      :model-value="participant.name"
-                      label="From"
+                      v-model="mapping.sourceName"
+                      label="From (in transcript)"
                       variant="outlined"
                       density="compact"
-                      readonly
+                      :readonly="!isTextFormat"
+                      :hint="isTextFormat ? 'Name as it appears in transcript' : ''"
                     />
                   </v-col>
-                  <v-col cols="4">
+                  <v-col cols="3">
                     <v-text-field
-                      v-model="participantMappings[participant.name].targetName"
-                      label="To"
+                      v-model="mapping.targetName"
+                      label="To (display name)"
                       variant="outlined"
                       density="compact"
                     />
                   </v-col>
-                  <v-col cols="4">
+                  <v-col cols="3">
                     <v-select
-                      v-model="participantMappings[participant.name].type"
+                      v-model="mapping.type"
                       :items="['user', 'assistant']"
                       label="Type"
                       variant="outlined"
                       density="compact"
                     />
                   </v-col>
+                  <v-col cols="2" class="text-center">
+                    <span class="text-caption text-grey">
+                      {{ getMessageCountForParticipant(mapping.sourceName) }} msgs
+                    </span>
+                  </v-col>
+                  <v-col cols="1">
+                    <v-btn
+                      icon
+                      size="small"
+                      variant="text"
+                      color="error"
+                      :disabled="editableParticipants.length <= 1"
+                      @click="removeParticipant(index)"
+                    >
+                      <v-icon size="small">mdi-delete</v-icon>
+                    </v-btn>
+                  </v-col>
                 </v-row>
+                
+                <v-btn
+                  v-if="isTextFormat"
+                  size="small"
+                  variant="text"
+                  color="primary"
+                  class="mt-2"
+                  @click="addParticipant"
+                >
+                  <v-icon start size="small">mdi-plus</v-icon>
+                  Add Participant
+                </v-btn>
               </div>
 
               <!-- Message Preview -->
@@ -342,6 +379,8 @@ const fileContent = ref('');
 // Step 2: Preview
 const preview = ref<ImportPreview | null>(null);
 const participantMappings = ref<Record<string, ParticipantMapping>>({});
+const editableParticipants = ref<Array<{ sourceName: string; targetName: string; type: 'user' | 'assistant' }>>([]);
+const reparsingPreview = ref(false);
 
 // Step 3: Configuration
 const conversationTitle = ref('');
@@ -480,14 +519,17 @@ async function previewImport() {
     
     preview.value = response.data;
     
-    // Initialize participant mappings
+    // Initialize participant mappings and editable list
     participantMappings.value = {};
+    editableParticipants.value = [];
     for (const participant of preview.value.detectedParticipants) {
-      participantMappings.value[participant.name] = {
+      const mapping = {
         sourceName: participant.name,
         targetName: participant.name,
-        type: participant.role === 'unknown' ? 'user' : participant.role
+        type: (participant.role === 'unknown' ? 'user' : participant.role) as 'user' | 'assistant'
       };
+      participantMappings.value[participant.name] = mapping;
+      editableParticipants.value.push(mapping);
     }
     
     // Set suggested values
@@ -555,10 +597,21 @@ async function executeImport() {
   try {
     const content = isTextFormat.value ? textContent.value : fileContent.value;
     
+    // For text formats, pass allowed participants to re-parse on server
+    // This ensures the final import uses the same parsing as the preview
+    const allowedParticipants = isTextFormat.value 
+      ? editableParticipants.value.map(p => p.sourceName)
+      : undefined;
+    
     const response = await api.post('/import/execute', {
       format: selectedFormat.value,
       content,
-      participantMappings: Object.values(participantMappings.value),
+      participantMappings: editableParticipants.value.map(p => ({
+        sourceName: p.sourceName,
+        targetName: p.targetName,
+        type: p.type
+      })),
+      allowedParticipants, // Pass to server for re-parsing
       conversationFormat: conversationFormat.value,
       title: conversationTitle.value,
       // Only include model for standard format - group chats derive from participants
@@ -583,6 +636,61 @@ function formatDate(date: Date | string): string {
   return d.toLocaleString();
 }
 
+// Get message count for a participant from current preview
+function getMessageCountForParticipant(sourceName: string): number {
+  if (!preview.value) return 0;
+  return preview.value.messages.filter(m => m.participantName === sourceName).length;
+}
+
+// Add a new participant
+function addParticipant() {
+  const newName = `Participant ${editableParticipants.value.length + 1}`;
+  editableParticipants.value.push({
+    sourceName: newName,
+    targetName: newName,
+    type: 'user'
+  });
+}
+
+// Remove a participant
+function removeParticipant(index: number) {
+  editableParticipants.value.splice(index, 1);
+}
+
+// Re-parse the transcript with current participant names
+async function reparseWithCurrentParticipants() {
+  if (!selectedFormat.value) return;
+  
+  reparsingPreview.value = true;
+  error.value = '';
+  
+  try {
+    const content = isTextFormat.value ? textContent.value : fileContent.value;
+    
+    // Get the list of source names from editable participants
+    const allowedParticipants = editableParticipants.value.map(p => p.sourceName);
+    
+    const response = await api.post('/import/preview', {
+      format: selectedFormat.value,
+      content,
+      allowedParticipants
+    });
+    
+    // Update preview with new parsing
+    preview.value = response.data;
+    
+    // Keep the editable participants as-is (user may have edited names/types)
+    // but update message counts by matching source names
+    // Note: New participants detected won't be added automatically
+    // The user has full control over the participant list now
+    
+  } catch (err: any) {
+    error.value = err.response?.data?.error || 'Failed to re-parse import';
+  } finally {
+    reparsingPreview.value = false;
+  }
+}
+
 function close() {
   step.value = 1;
   selectedFormat.value = null;
@@ -591,6 +699,7 @@ function close() {
   fileContent.value = '';
   preview.value = null;
   participantMappings.value = {};
+  editableParticipants.value = [];
   conversationTitle.value = '';
   conversationFormat.value = 'standard';
   selectedModel.value = '';
