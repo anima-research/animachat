@@ -2768,6 +2768,7 @@ async function regenerateMessage(messageId: string, branchId: string) {
   console.log('parentBranchId:', parentBranchId?.slice(0, 8));
   console.log('visible messages count:', visibleMessages.length);
   console.log('message index in visible:', messageIndex);
+  console.log('samplingBranches:', samplingBranches.value);
   
   // Set streaming state before sending request
   streamingMessageId.value = messageId;
@@ -2775,7 +2776,7 @@ async function regenerateMessage(messageId: string, branchId: string) {
   streamingError.value = null;
   autoScrollEnabled.value = true;
   
-  await store.regenerateMessage(messageId, branchId, parentBranchId);
+  await store.regenerateMessage(messageId, branchId, parentBranchId, samplingBranches.value);
 }
 
 function abortGeneration() {
@@ -2876,7 +2877,7 @@ async function editMessage(messageId: string, branchId: string, content: string)
     responderId = selectedResponder.value || undefined;
   }
   
-  await store.editMessage(messageId, branchId, content, responderId);
+  await store.editMessage(messageId, branchId, content, responderId, false, samplingBranches.value);
 }
 
 async function editMessageOnly(messageId: string, branchId: string, content: string) {

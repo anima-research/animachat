@@ -66,9 +66,9 @@ export interface Store {
   loadMessages(conversationId: string): Promise<void>;
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number): Promise<void>;
   continueGeneration(responderId?: string, explicitParentBranchId?: string, samplingBranches?: number): Promise<void>;
-  regenerateMessage(messageId: string, branchId: string, parentBranchId?: string): Promise<void>;
+  regenerateMessage(messageId: string, branchId: string, parentBranchId?: string, samplingBranches?: number): Promise<void>;
   abortGeneration(): void;
-  editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean): Promise<void>;
+  editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean, samplingBranches?: number): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
   getVisibleMessages(): Message[];
@@ -634,7 +634,7 @@ export function createStore(): {
       }
     },
     
-    async regenerateMessage(messageId: string, branchId: string, parentBranchId?: string) {
+    async regenerateMessage(messageId: string, branchId: string, parentBranchId?: string, samplingBranches?: number) {
       if (!state.currentConversation || !state.wsService) return;
       
       state.wsService.sendMessage({
@@ -642,7 +642,8 @@ export function createStore(): {
         conversationId: state.currentConversation.id,
         messageId,
         branchId,
-        parentBranchId // Current visible parent, for correct branch parenting after switches
+        parentBranchId, // Current visible parent, for correct branch parenting after switches
+        samplingBranches // Number of parallel response branches to generate
       });
       
       // Update the conversation's updatedAt timestamp locally for immediate sorting
@@ -661,7 +662,7 @@ export function createStore(): {
       });
     },
     
-    async editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean) {
+    async editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean, samplingBranches?: number) {
       if (!state.currentConversation || !state.wsService) return;
       
       state.wsService.sendMessage({
@@ -671,7 +672,8 @@ export function createStore(): {
         branchId,
         content,
         responderId, // Pass the currently selected responder
-        skipRegeneration // If true, don't generate AI response after edit
+        skipRegeneration, // If true, don't generate AI response after edit
+        samplingBranches // Number of parallel response branches to generate
       } as any);
       
       // Update the conversation's updatedAt timestamp locally for immediate sorting

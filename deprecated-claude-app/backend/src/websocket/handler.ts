@@ -296,6 +296,249 @@ function sendInsufficientCreditsError(ws: AuthenticatedWebSocket): void {
   }));
 }
 
+/**
+ * Parameters for running parallel branch inference.
+ * This shared utility handles creating multiple branches and running inference on them in parallel.
+ */
+interface ParallelInferenceParams {
+  ws: AuthenticatedWebSocket;
+  db: Database;
+  inferenceService: EnhancedInferenceService;
+  conversation: any; // Conversation object
+  targetMessage: Message; // The message to add branches to
+  initialBranchId: string; // The first branch ID (already created)
+  parentBranchId: string; // Parent branch for all new branches
+  samplingBranchCount: number; // Total number of branches to generate
+  modelConfig: any; // Model configuration
+  model: string; // Model ID
+  historyMessages: any[]; // Conversation history for inference
+  systemPrompt: string;
+  settings: any; // Inference settings
+  participants: Participant[];
+  responderParticipant?: Participant;
+  participantId?: string; // Participant ID for new branches
+  userContext: UserContext; // For content filtering
+  abortSignal: AbortSignal;
+  creationSource: 'inference' | 'regeneration';
+  conversationId: string; // For room broadcasts
+}
+
+/**
+ * Run inference on multiple branches in parallel.
+ * Creates additional branches if samplingBranchCount > 1, then runs inference on all branches.
+ * @returns Array of branch IDs that were generated
+ */
+async function runParallelBranchInference(params: ParallelInferenceParams): Promise<string[]> {
+  const {
+    ws,
+    db,
+    inferenceService,
+    conversation,
+    targetMessage,
+    initialBranchId,
+    parentBranchId,
+    samplingBranchCount,
+    modelConfig,
+    model,
+    historyMessages,
+    systemPrompt,
+    settings,
+    participants,
+    responderParticipant,
+    participantId,
+    userContext,
+    abortSignal,
+    creationSource,
+    conversationId
+  } = params;
+
+  // Track branches to generate
+  const branchesToGenerate: { branchId: string; branchContent: string }[] = [
+    { branchId: initialBranchId, branchContent: '' }
+  ];
+
+  // Create additional branches if sampling multiple responses
+  if (samplingBranchCount > 1) {
+    for (let i = 1; i < samplingBranchCount; i++) {
+      // Add a new branch to the same message
+      // Use preserveActiveBranch: true to keep selection on the first branch
+      const newBranchMessage = await db.addMessageBranch(
+        targetMessage.id,
+        targetMessage.conversationId,
+        conversation.userId,
+        '', // empty content
+        'assistant',
+        parentBranchId,
+        model,
+        participantId,
+        undefined, // no attachments
+        ws.userId,  // user who triggered the generation
+        undefined, // hiddenFromAi
+        true,      // preserveActiveBranch - keep selection on first branch during parallel gen
+        creationSource
+      );
+      
+      if (newBranchMessage) {
+        const newBranch = newBranchMessage.branches[newBranchMessage.branches.length - 1];
+        branchesToGenerate.push({ branchId: newBranch.id, branchContent: '' });
+        
+        // Update our local targetMessage with the new branch
+        targetMessage.branches.push(newBranch);
+        
+        // Send branch created notification
+        const editEvent = { type: 'message_edited', message: targetMessage };
+        ws.send(JSON.stringify(editEvent));
+        
+        // Broadcast to other users
+        roomManager.broadcastToRoom(conversationId, {
+          type: 'message_edited',
+          message: targetMessage,
+          fromUserId: ws.userId
+        }, ws);
+      }
+    }
+    
+    console.log(`[ParallelInference] Created ${branchesToGenerate.length} branches for parallel sampling`);
+  }
+  
+  // Helper function to safely send WebSocket messages (may fail if user disconnected)
+  const safeSend = (data: any) => {
+    try {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify(data));
+      }
+    } catch (e) {
+      // User disconnected, ignore
+    }
+  };
+  
+  // Helper function to run inference for a single branch
+  const runBranchInference = async (branchId: string, branchIndex: number) => {
+    let branchContent = '';
+    
+    await inferenceService.streamCompletion(
+      modelConfig,
+      historyMessages,
+      systemPrompt,
+      settings,
+      conversation.userId,
+      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+        // Update branch content
+        branchContent += chunk;
+        
+        // Find the branch in our message
+        const currentBranch = targetMessage.branches.find((b: any) => b.id === branchId);
+        if (currentBranch) {
+          currentBranch.content = branchContent;
+          
+          // Store content blocks if provided
+          if (contentBlocks && contentBlocks.length > 0) {
+            currentBranch.contentBlocks = contentBlocks;
+          }
+          
+          // Save partial content every 500 characters to prevent data loss
+          if (branchContent.length % 500 === 0 || isComplete) {
+            await db.updateMessageContent(
+              targetMessage.id,
+              targetMessage.conversationId,
+              conversation.userId,
+              branchId,
+              branchContent,
+              currentBranch.contentBlocks
+            );
+          }
+        }
+        
+        // Send stream update with branchIndex for client tracking
+        const streamData = {
+          type: 'stream',
+          messageId: targetMessage.id,
+          branchId: branchId,
+          content: chunk,
+          contentBlocks: contentBlocks,
+          isComplete,
+          branchIndex
+        };
+        safeSend(streamData);
+        
+        // Broadcast to other users in the room
+        roomManager.broadcastToRoom(conversationId, streamData, ws);
+        
+        // Handle completion
+        if (isComplete) {
+          const finalBranch = targetMessage.branches.find((b: any) => b.id === branchId);
+          if (finalBranch) {
+            // Trim whitespace from final content
+            finalBranch.content = branchContent.trim();
+            branchContent = finalBranch.content;
+            
+            // Content filter check for AI output with tiered moderation
+            const outputFilterResult = await checkContent(finalBranch.content, userContext);
+            if (outputFilterResult.blocked) {
+              console.warn(`[Content Filter] AI output blocked for conversation ${conversationId}`);
+              finalBranch.content = '[Content filtered]';
+              finalBranch.contentBlocks = undefined;
+              branchContent = finalBranch.content;
+              
+              // Send filter event to replace streamed content
+              const filterEvent = {
+                type: 'stream',
+                conversationId: conversationId,
+                messageId: targetMessage.id,
+                branchId: branchId,
+                content: finalBranch.content,
+                contentBlocks: undefined,
+                isComplete: true,
+                filtered: true
+              };
+              safeSend(filterEvent);
+              roomManager.broadcastToRoom(conversationId, filterEvent, ws);
+            }
+            
+            // Final save
+            await db.updateMessageContent(
+              targetMessage.id,
+              targetMessage.conversationId,
+              conversation.userId,
+              branchId,
+              finalBranch.content,
+              finalBranch.contentBlocks
+            );
+          }
+        }
+      },
+      conversation,
+      responderParticipant,
+      async (metrics) => {
+        // Store metrics only for first branch to avoid duplicate counting
+        if (branchIndex === 0) {
+          await db.addMetrics(conversation.id, conversation.userId, metrics);
+          
+          // Send metrics update to client
+          safeSend({
+            type: 'metrics_update',
+            conversationId: conversation.id,
+            metrics,
+            branchIndex
+          });
+        }
+      },
+      participants,
+      abortSignal
+    );
+    
+    return branchContent;
+  };
+  
+  // Run inference for all branches in parallel
+  await Promise.all(
+    branchesToGenerate.map((branch, index) => runBranchInference(branch.branchId, index))
+  );
+  
+  // Return the branch IDs that were generated
+  return branchesToGenerate.map(b => b.branchId);
+}
+
 export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessage, db: Database) {
   // Extract token from query params
   const url = new URL(req.url || '', `http://${req.headers.host}`);
@@ -836,281 +1079,82 @@ async function handleChatMessage(
     // Track AI request in room manager for multi-user sync
     roomManager.startAiRequest(message.conversationId, ws.userId!, assistantMessage.id);
     
+    let generatedBranchIds: string[];
     try {
-    // Prepare all branches for parallel sampling
-    const branchesToGenerate: Array<{ branchId: string; branchContent: string }> = [
-      { branchId: assistantMessage.activeBranchId, branchContent: '' }
-    ];
-    
-    // Create additional branches if sampling multiple responses
-    if (samplingBranchCount > 1) {
-      for (let i = 1; i < samplingBranchCount; i++) {
-        // Add a new branch to the same assistant message
-        // Use preserveActiveBranch: true to keep selection on the first branch
-        const newBranchMessage = await db.addMessageBranch(
-          assistantMessage.id,
-          assistantMessage.conversationId,
-          conversation.userId,
-          '', // empty content
-          'assistant',
-          userBranch?.id, // same parent as first branch
-          responder.model || conversation.model,
-          responder.id,
-          undefined, // no attachments
-          ws.userId,  // user who triggered the generation
-          undefined, // hiddenFromAi
-          true,      // preserveActiveBranch - keep selection on first branch during parallel gen
-          'inference' // creationSource - AI generated (sampling)
-        );
-        
-        if (newBranchMessage) {
-          const newBranch = newBranchMessage.branches[newBranchMessage.branches.length - 1];
-          branchesToGenerate.push({ branchId: newBranch.id, branchContent: '' });
-          
-          // Update our local assistantMessage with the new branch
-          assistantMessage.branches.push(newBranch);
-          
-          // Send branch created notification
-          ws.send(JSON.stringify({
-            type: 'message_edited',
-            message: assistantMessage
-          }));
-          
-          // Broadcast to other users
-          roomManager.broadcastToRoom(message.conversationId, {
-            type: 'message_edited',
-            message: assistantMessage,
-            fromUserId: ws.userId
-          }, ws);
-        }
-      }
-      
-      console.log(`[Chat] Created ${branchesToGenerate.length} branches for parallel sampling`);
-    }
-    
-    // Helper function to safely send WebSocket messages (may fail if user disconnected)
-    const safeSend = (data: any) => {
-      try {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify(data));
-        }
-      } catch (e) {
-        // User disconnected, ignore
-      }
-    };
-    
-    // Helper function to run inference for a single branch
-    const runBranchInference = async (branchId: string, branchIndex: number) => {
-      let branchContent = '';
-    
-    await inferenceService.streamCompletion(
-      modelConfig,
-      messagesForInference,
-      inferenceSystemPrompt || '',
-      inferenceSettings,
-      conversation.userId,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-          // Update branch content
-          branchContent += chunk;
-          
-          // Find the branch in our message
-          const currentBranch = assistantMessage.branches.find((b: any) => b.id === branchId);
-        if (currentBranch) {
-            currentBranch.content = branchContent;
-          
-          // Store content blocks if provided
-          if (contentBlocks && contentBlocks.length > 0) {
-            currentBranch.contentBlocks = contentBlocks;
-          }
-          
-          // Save partial content every 500 characters to prevent data loss on interruption
-            if (branchContent.length % 500 === 0 || isComplete) {
-            await db.updateMessageContent(
-              assistantMessage.id,
-              assistantMessage.conversationId,
-              conversation.userId,
-                branchId,
-                branchContent,
-              currentBranch.contentBlocks
-            );
-          }
-        }
-
-        // Send stream update
-        const streamData = {
-          type: 'stream',
-          messageId: assistantMessage.id,
-            branchId: branchId,
-          content: chunk,
-          contentBlocks: contentBlocks,
-            isComplete,
-            branchIndex: branchIndex // Let client know which branch this is for
-        };
-        
-          // Log content blocks being sent (only when there are blocks and no text chunk)
-        if (contentBlocks && contentBlocks.length > 0 && !chunk) {
-            console.log(`[WebSocket] Branch ${branchIndex}: Sending content blocks:`, contentBlocks.length, 'types:', contentBlocks.map((b: any) => b.type));
-        }
-        
-          // Send to original requester (safe - may fail if disconnected)
-        safeSend(streamData);
-          
-          // Broadcast to all other users in the room
-          roomManager.broadcastToRoom(message.conversationId, streamData, ws);
-
-        if (isComplete) {
-            // Final save
-            const finalBranch = assistantMessage.branches.find((b: any) => b.id === branchId);
-            if (finalBranch) {
-              // Trim leading/trailing whitespace from final content
-              finalBranch.content = branchContent.trim();
-              
-              // Content filter check for AI output with tiered moderation
-              const outputFilterResult = await checkContent(finalBranch.content, userContext);
-              if (outputFilterResult.blocked) {
-                console.warn(`[Content Filter] AI output blocked for conversation ${assistantMessage.conversationId}`);
-                finalBranch.content = '[Content filtered]';
-                finalBranch.contentBlocks = undefined;
-                // Send update to replace the streamed content
-                const filterEvent = {
-                  type: 'stream',
-                  conversationId: message.conversationId,
-                  messageId: assistantMessage.id,
-                  branchId: branchId,
-                  content: finalBranch.content,
-                  contentBlocks: undefined,
-                  isComplete: true,
-                  filtered: true
-                };
-                safeSend(filterEvent);
-                roomManager.broadcastToRoom(message.conversationId, filterEvent, ws);
-              }
-              
-            await db.updateMessageContent(
-              assistantMessage.id,
-              assistantMessage.conversationId,
-              conversation.userId,
-                branchId,
-                finalBranch.content,
-                finalBranch.contentBlocks
-              );
-            }
-        }
-      },
-      conversation,
-      responder,
-      async (metrics) => {
-          // Store metrics in database (only for first branch to avoid duplicate counting)
-          if (branchIndex === 0) {
-        await db.addMetrics(conversation.id, conversation.userId, metrics);
-        
-        // Send metrics update to client (safe - may fail if disconnected)
-        safeSend({
-          type: 'metrics_update',
-          conversationId: conversation.id,
-              metrics,
-              branchIndex
-            });
-          }
-        },
+      // Run parallel inference using shared utility
+      generatedBranchIds = await runParallelBranchInference({
+        ws,
+        db,
+        inferenceService,
+        conversation,
+        targetMessage: assistantMessage,
+        initialBranchId: assistantMessage.activeBranchId,
+        parentBranchId: userBranch?.id || 'root',
+        samplingBranchCount,
+        modelConfig,
+        model: responder.model || conversation.model,
+        historyMessages: messagesForInference,
+        systemPrompt: inferenceSystemPrompt || '',
+        settings: inferenceSettings,
         participants,
-        abortController.signal
-      );
-      
-      // DEBUG CAPTURE: Capture debug data immediately after this branch completes
-      // This happens per-branch so even if user disconnects mid-way, completed branches get debug data
-      try {
-        const rawRequest = baseInferenceService.lastRawRequest;
-        if (rawRequest) {
-          const branchObj = assistantMessage.branches.find((b: any) => b.id === branchId);
-          if (branchObj) {
-            console.log(`[DEBUG CAPTURE] Branch ${branchIndex} (${branchId.substring(0, 8)}): Capturing debug data...`);
-            
-            // Compute actual format used
-            const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
-            const participantMode = responder.conversationMode;
-            const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
-            const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
-            
-            const debugRequest = {
-              ...rawRequest,
-              provider: modelConfig.provider,
-              settings: inferenceSettings,
-              conversationFormat: conversation.format,
-              participantConversationMode: participantMode || 'auto',
-              actualFormatUsed: actualFormat
-            };
-            
-            const debugResponse = {
-              content: branchObj.content,
-              contentBlocks: branchObj.contentBlocks,
-              model: branchObj.model
-            };
-            
-            await db.updateMessageBranch(
-              assistantMessage.id,
-              conversation.userId,
-              branchId,
-              { debugRequest, debugResponse }
-            );
-            
-            console.log(`[DEBUG CAPTURE] Branch ${branchIndex} (${branchId.substring(0, 8)}): Debug data saved`);
-            
-            // Notify frontend (safe - may fail if disconnected)
-            const updatedMessage = await db.getMessage(assistantMessage.id, conversation.id, conversation.userId);
-            if (updatedMessage) {
-              safeSend({ type: 'message_edited', message: updatedMessage });
-              roomManager.broadcastToRoom(conversation.id, { type: 'message_edited', message: updatedMessage }, ws);
-            }
+        responderParticipant: responder,
+        participantId: responder.id,
+        userContext,
+        abortSignal: abortController.signal,
+        creationSource: 'inference',
+        conversationId: message.conversationId
+      });
+    
+    // DEBUG CAPTURE: Capture debug data for the first branch after completion
+    try {
+      const rawRequest = baseInferenceService.lastRawRequest;
+      if (rawRequest && generatedBranchIds.length > 0) {
+        const firstBranchId = generatedBranchIds[0];
+        const branchObj = assistantMessage.branches.find((b: any) => b.id === firstBranchId);
+        if (branchObj) {
+          console.log(`[DEBUG CAPTURE] Capturing debug data for branch ${firstBranchId.substring(0, 8)}...`);
+          
+          // Compute actual format used
+          const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+          const participantMode = responder.conversationMode;
+          const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
+          const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
+          
+          const debugRequest = {
+            ...rawRequest,
+            provider: modelConfig.provider,
+            settings: inferenceSettings,
+            conversationFormat: conversation.format,
+            participantConversationMode: participantMode || 'auto',
+            actualFormatUsed: actualFormat
+          };
+          
+          const debugResponse = {
+            content: branchObj.content,
+            contentBlocks: branchObj.contentBlocks,
+            model: branchObj.model
+          };
+          
+          await db.updateMessageBranch(
+            assistantMessage.id,
+            conversation.userId,
+            firstBranchId,
+            { debugRequest, debugResponse }
+          );
+          
+          console.log(`[DEBUG CAPTURE] Debug data saved for branch ${firstBranchId.substring(0, 8)}`);
+          
+          // Notify frontend
+          const updatedMessage = await db.getMessage(assistantMessage.id, conversation.id, conversation.userId);
+          if (updatedMessage) {
+            ws.send(JSON.stringify({ type: 'message_edited', message: updatedMessage }));
+            roomManager.broadcastToRoom(conversation.id, { type: 'message_edited', message: updatedMessage }, ws);
           }
         }
-      } catch (debugError) {
-        console.error(`[DEBUG CAPTURE] Branch ${branchIndex}: Failed to capture debug data:`, debugError);
       }
-    };
-    
-    // DEBUG: Check for magic string to simulate stuck generation
-    // This simulates the case where generation request is sent but NO tokens ever arrive
-    const STUCK_MAGIC_STRING = '__SIMULATE_STUCK__';
-    if (message.content.includes(STUCK_MAGIC_STRING)) {
-      console.log('[DEBUG] Magic string detected - simulating stuck generation (no tokens will be sent)');
-      
-      // Don't send any stream tokens at all - just wait
-      // The frontend has already received the assistant message placeholder
-      // but will never receive any stream data
-      
-      await new Promise<void>((resolve) => {
-        const checkAbort = setInterval(() => {
-          if (abortController.signal.aborted) {
-            console.log('[DEBUG] Stuck simulation aborted by user');
-            clearInterval(checkAbort);
-            resolve();
-          }
-        }, 1000);
-        
-        // Auto-resolve after 5 minutes to prevent true infinite wait
-        setTimeout(() => {
-          console.log('[DEBUG] Stuck simulation timed out after 5 minutes');
-          clearInterval(checkAbort);
-          resolve();
-        }, 5 * 60 * 1000);
-      });
-      
-      console.log('[DEBUG] Stuck simulation ended');
-      
-      // Clean up
-      roomManager.endAiRequest(message.conversationId);
-      return;
+    } catch (debugError) {
+      console.error('[DEBUG CAPTURE] Failed to capture debug data:', debugError);
     }
-    
-    // Run all branches in parallel
-    // Note: DEBUG CAPTURE now happens per-branch inside runBranchInference,
-    // so even if user disconnects mid-way, completed branches get their debug data
-    await Promise.all(
-      branchesToGenerate.map((branch, index) =>
-        runBranchInference(branch.branchId, index)
-      )
-    );
 
     // Update conversation timestamp after all branches complete
     await db.updateConversation(conversation.id, conversation.userId, { updatedAt: new Date() });
@@ -1223,6 +1267,12 @@ async function handleRegenerate(
     return;
   }
 
+  // Get sampling branches count (default 1)
+  const samplingBranchCount = (message as any).samplingBranches || 1;
+  if (samplingBranchCount > 1) {
+    console.log(`[Regenerate] Sampling ${samplingBranchCount} response branches in parallel`);
+  }
+
   // Build user context for content filter
   const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
   const isAgeVerified = await db.isUserAgeVerified(ws.userId);
@@ -1254,6 +1304,7 @@ async function handleRegenerate(
   console.log('Frontend parentBranchId:', message.parentBranchId?.slice(0, 8) || 'not provided');
   console.log('Original branch parent:', originalBranch?.parentBranchId?.slice(0, 8) || 'none');
   console.log('Using parentBranchId:', correctParentBranchId.slice(0, 8));
+  console.log('Sampling branches:', samplingBranchCount);
   
   Logger.debug('[Regenerate] Message:', message.messageId, 'Branch:', message.branchId);
   Logger.debug('[Regenerate] Original branch parent:', originalBranch?.parentBranchId);
@@ -1275,7 +1326,7 @@ async function handleRegenerate(
   }
 
   // Create new branch with correct parent and model
-  const updatedMessage = await db.addMessageBranch(
+  let updatedMessage = await db.addMessageBranch(
     message.messageId,
     message.conversationId,
     conversation.userId,
@@ -1404,96 +1455,37 @@ async function handleRegenerate(
     // Track AI request in room manager for multi-user sync
     roomManager.startAiRequest(message.conversationId, ws.userId!, updatedMessage.id);
     
+    let generatedBranchIds: string[];
     try {
-    await inferenceService.streamCompletion(
-      modelConfig,
-      filteredHistoryMessages,
-      responderSystemPrompt || '',
-      responderSettings,
-      conversation.userId,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-        const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
-        if (currentBranch) {
-          currentBranch.content += chunk;
-          
-          // Store content blocks if provided
-          if (contentBlocks && contentBlocks.length > 0) {
-            currentBranch.contentBlocks = contentBlocks;
-          }
-            
-            // Trim whitespace on completion
-            if (isComplete) {
-              currentBranch.content = currentBranch.content.trim();
-              
-              // Content filter check for AI output with tiered moderation
-              const outputFilterResult = await checkContent(currentBranch.content, userContext);
-              if (outputFilterResult.blocked) {
-                console.warn(`[Content Filter] AI output blocked for conversation ${updatedMessage.conversationId}`);
-                currentBranch.content = '[Content filtered]';
-                currentBranch.contentBlocks = undefined;
-                // Send update to replace the streamed content
-                const filterEvent = {
-                  type: 'stream',
-                  messageId: updatedMessage.id,
-                  branchId: updatedMessage.activeBranchId,
-                  content: currentBranch.content,
-                  contentBlocks: undefined,
-                  isComplete: true,
-                  filtered: true
-                };
-                ws.send(JSON.stringify(filterEvent));
-                roomManager.broadcastToRoom(message.conversationId, filterEvent, ws);
-              }
-          }
-          
-          // Save partial content periodically to prevent data loss
-          if (currentBranch.content.length % 500 === 0 || isComplete) {
-            await db.updateMessageContent(
-              updatedMessage.id,
-              updatedMessage.conversationId,
-              conversation.userId,
-              updatedMessage.activeBranchId,
-              currentBranch.content,
-              currentBranch.contentBlocks
-            );
-          }
-        }
-
-        const streamData = {
-          type: 'stream',
-          messageId: updatedMessage.id,
-          branchId: updatedMessage.activeBranchId,
-          content: chunk,
-          contentBlocks: contentBlocks,
-          isComplete
-        };
-        ws.send(JSON.stringify(streamData));
-        
-        // Broadcast to other users in the room
-        roomManager.broadcastToRoom(message.conversationId, streamData, ws);
-      },
-      conversation,
-      responderParticipant,
-      async (metrics) => {
-        // Store metrics in database
-        await db.addMetrics(conversation.id, conversation.userId, metrics);
-        
-        // Send metrics update to client
-        ws.send(JSON.stringify({
-          type: 'metrics_update',
-          conversationId: conversation.id,
-          metrics
-        }));
-      },
+      // Run parallel inference using shared utility
+      generatedBranchIds = await runParallelBranchInference({
+        ws,
+        db,
+        inferenceService,
+        conversation,
+        targetMessage: updatedMessage,
+        initialBranchId: updatedMessage.activeBranchId,
+        parentBranchId: correctParentBranchId,
+        samplingBranchCount,
+        modelConfig,
+        model: regenerateModel,
+        historyMessages: filteredHistoryMessages,
+        systemPrompt: responderSystemPrompt || '',
+        settings: responderSettings,
         participants,
-        abortController.signal
-    );
+        responderParticipant,
+        participantId,
+        userContext,
+        abortSignal: abortController.signal,
+        creationSource: 'regeneration',
+        conversationId: message.conversationId
+      });
     } finally {
       endGeneration(conversation.userId, conversation.id);
       roomManager.endAiRequest(message.conversationId);
     }
 
-    // Capture debug request/response for researchers
+    // Capture debug request/response for researchers (only for first branch)
     console.log('[DEBUG CAPTURE] Starting debug data capture for regenerate...');
     try {
       // Get the raw API request that was just sent
@@ -1501,17 +1493,18 @@ async function handleRegenerate(
       console.log(`[DEBUG CAPTURE] Raw request available: ${!!rawRequest}`);
 
       if (rawRequest) {
-        // Store debug data on the regenerated branch
-        const currentBranch = updatedMessage.branches.find(b => b.id === updatedMessage.activeBranchId);
-        console.log(`[DEBUG CAPTURE] Branch ${updatedMessage.activeBranchId}: branchObj found = ${!!currentBranch}`);
+        // Store debug data on the first regenerated branch
+        const firstBranchId = generatedBranchIds[0];
+        const currentBranch = updatedMessage.branches.find(b => b.id === firstBranchId);
+        console.log(`[DEBUG CAPTURE] Branch ${firstBranchId}: branchObj found = ${!!currentBranch}`);
 
         if (currentBranch) {
           // Get the participant for mode info
-          const responderParticipant = participants.find(p => p.id === participantId);
+          const responderParticipantForDebug = participants.find(p => p.id === participantId);
           
           // Compute actual format used (same logic as applyBackroomPromptIfNeeded)
           const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
-          const participantMode = responderParticipant?.conversationMode;
+          const participantMode = responderParticipantForDebug?.conversationMode;
           const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
           const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
           
@@ -1533,17 +1526,17 @@ async function handleRegenerate(
             model: currentBranch.model
           };
 
-          console.log(`[DEBUG CAPTURE] Updating message branch ${updatedMessage.activeBranchId}...`);
+          console.log(`[DEBUG CAPTURE] Updating message branch ${firstBranchId}...`);
           await db.updateMessageBranch(
             updatedMessage.id,
             conversation.userId,
-            updatedMessage.activeBranchId,
+            firstBranchId,
             {
               debugRequest,
               debugResponse
             }
           );
-          console.log(`[DEBUG CAPTURE] Branch ${updatedMessage.activeBranchId} updated successfully`);
+          console.log(`[DEBUG CAPTURE] Branch ${firstBranchId} updated successfully`);
 
           // Send update to frontend so bug icon appears immediately
           const refreshedMessage = await db.getMessage(updatedMessage.id, conversation.id, conversation.userId);
@@ -1571,14 +1564,17 @@ async function handleRegenerate(
     // Check if this was an abort
     if (error instanceof Error && error.message === 'Generation aborted') {
       console.log(`[Abort] Regeneration was aborted for conversation ${message.conversationId}`);
-      ws.send(JSON.stringify({
-        type: 'stream',
-        messageId: updatedMessage.id,
-        branchId: updatedMessage.activeBranchId,
-        content: '',
-        isComplete: true,
-        aborted: true
-      }));
+      // Send abort notification for all branches on the message
+      for (const branch of updatedMessage.branches) {
+        ws.send(JSON.stringify({
+          type: 'stream',
+          messageId: updatedMessage.id,
+          branchId: branch.id,
+          content: '',
+          isComplete: true,
+          aborted: true
+        }));
+      }
       return;
     }
     
@@ -1687,6 +1683,18 @@ async function handleEdit(
 
   // If this was a user message, automatically generate an assistant response (unless skipped)
   if (branch.role === 'user' && !message.skipRegeneration) {
+    // Get sampling branches count (default 1)
+    const samplingBranchCount = (message as any).samplingBranches || 1;
+    if (samplingBranchCount > 1) {
+      console.log(`[Edit] Sampling ${samplingBranchCount} response branches in parallel`);
+    }
+    
+    // Build user context for content filter
+    const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
+    const isAgeVerified = await db.isUserAgeVerified(ws.userId);
+    const isAdmin = await db.userHasActiveGrantCapability(ws.userId, 'admin');
+    const userContext: UserContext = { isResearcher, isAgeVerified, isAdmin };
+    
     // Get all messages to find the position of the edited message
     const allMessages = await db.getConversationMessages(msg.conversationId, ws.userId);
     const editedMessageIndex = allMessages.findIndex(m => m.id === msg.id);
@@ -1877,68 +1885,41 @@ async function handleEdit(
         cliModePrompt: conversation.cliModePrompt
       });
       
-      await inferenceService.streamCompletion(
-        modelConfig,
-        filteredHistoryMessages,
-        responderSystemPrompt || '',
-        responderSettings,
-        conversation.userId,
-        async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-          const currentBranch = targetMessage.branches.find(b => b.id === targetBranchId);
-          if (currentBranch) {
-            currentBranch.content += chunk;
-            
-            // Store content blocks if provided
-            if (contentBlocks && contentBlocks.length > 0) {
-              currentBranch.contentBlocks = contentBlocks;
-            }
-            
-            // Trim whitespace on completion
-            if (isComplete) {
-              currentBranch.content = currentBranch.content.trim();
-            }
-            
-            // Save partial content periodically
-            if (currentBranch.content.length % 500 === 0 || isComplete) {
-              await db.updateMessageContent(
-                targetMessage.id,
-                targetMessage.conversationId,
-                conversation.userId!,
-                targetBranchId,
-                currentBranch.content,
-                currentBranch.contentBlocks
-              );
-            }
-          }
-
-          const streamData = {
-            type: 'stream',
-            messageId: targetMessage.id,
-            branchId: targetBranchId,
-            content: chunk,
-            contentBlocks: contentBlocks,
-            isComplete
-          };
-          ws.send(JSON.stringify(streamData));
-          
-          // Broadcast to other users
-          roomManager.broadcastToRoom(message.conversationId, streamData, ws);
-        },
-        conversation,
-        responderParticipant,
-        async (metrics) => {
-          // Store metrics in database
-          await db.addMetrics(conversation.id, conversation.userId, metrics);
-          
-          // Send metrics update to client
-          ws.send(JSON.stringify({
-            type: 'metrics_update',
-            conversationId: conversation.id,
-            metrics
-          }));
-        },
-        participants
-      );
+      // Create abort controller for this generation
+      const abortController = startGeneration(conversation.userId, conversation.id);
+      
+      // Track AI request in room manager for multi-user sync
+      roomManager.startAiRequest(message.conversationId, ws.userId!, targetMessage.id);
+      
+      let generatedBranchIds: string[];
+      try {
+        // Run parallel inference using shared utility
+        generatedBranchIds = await runParallelBranchInference({
+          ws,
+          db,
+          inferenceService,
+          conversation,
+          targetMessage,
+          initialBranchId: targetBranchId,
+          parentBranchId: updatedMessage.activeBranchId, // Parent is the edited user message
+          samplingBranchCount,
+          modelConfig,
+          model: responderModel,
+          historyMessages: filteredHistoryMessages,
+          systemPrompt: responderSystemPrompt || '',
+          settings: responderSettings,
+          participants,
+          responderParticipant,
+          participantId: responderId,
+          userContext,
+          abortSignal: abortController.signal,
+          creationSource: 'inference',
+          conversationId: message.conversationId
+        });
+      } finally {
+        endGeneration(conversation.userId, conversation.id);
+        roomManager.endAiRequest(message.conversationId);
+      }
       
       // Capture debug request/response for researchers
       console.log('[DEBUG CAPTURE] Starting debug data capture for edit...');
@@ -1947,7 +1928,8 @@ async function handleEdit(
         console.log(`[DEBUG CAPTURE] Raw request available for edit: ${!!rawRequest}`);
 
         if (rawRequest && targetMessage) {
-          const currentBranch = targetMessage.branches.find(b => b.id === targetBranchId);
+          const firstBranchId = generatedBranchIds[0];
+          const currentBranch = targetMessage.branches.find(b => b.id === firstBranchId);
           if (currentBranch) {
             // Compute actual format used
             const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
@@ -1973,10 +1955,10 @@ async function handleEdit(
             await db.updateMessageBranch(
               targetMessage.id,
               conversation.userId,
-              targetBranchId,
+              firstBranchId,
               { debugRequest, debugResponse }
             );
-            console.log(`[DEBUG CAPTURE] Edit branch ${targetBranchId} updated successfully`);
+            console.log(`[DEBUG CAPTURE] Edit branch ${firstBranchId} updated successfully`);
 
             // Send update to frontend
             const refreshedMessage = await db.getMessage(targetMessage.id, conversation.id, conversation.userId);
@@ -2271,43 +2253,6 @@ async function handleContinue(
             modelSpecific: responder.settings?.modelSpecific ?? conversation.settings?.modelSpecific
         };
     
-    try {
-    // Prepare all branches for parallel sampling
-    const branchesToGenerate: Array<{ branchId: string; branchContent: string }> = [
-      { branchId: assistantBranch.id, branchContent: '' }
-    ];
-    
-    // Create additional branches if sampling multiple responses
-    if (samplingBranchCount > 1) {
-      for (let i = 1; i < samplingBranchCount; i++) {
-        const newBranchMessage = await db.addMessageBranch(
-          assistantMessage.id,
-          assistantMessage.conversationId,
-          conversation.userId,
-          '',
-          'assistant',
-          parentBranchId,
-          responder.model || conversation.model,
-          responder.id,
-          undefined, // no attachments
-          ws.userId, // user who triggered the generation
-          undefined, // hiddenFromAi
-          true,      // preserveActiveBranch - keep selection on first branch during parallel gen
-          'inference' // creationSource - AI generated (sampling in continue)
-        );
-        
-        if (newBranchMessage) {
-          const newBranch = newBranchMessage.branches[newBranchMessage.branches.length - 1];
-          branchesToGenerate.push({ branchId: newBranch.id, branchContent: '' });
-          assistantMessage.branches.push(newBranch);
-          
-          ws.send(JSON.stringify({ type: 'message_edited', message: assistantMessage }));
-          roomManager.broadcastToRoom(conversationId, { type: 'message_edited', message: assistantMessage, fromUserId: ws.userId }, ws);
-        }
-      }
-      console.log(`[Continue] Created ${branchesToGenerate.length} branches for parallel sampling`);
-    }
-    
     // Determine system prompt with backroom logic for early group chats
     const continueSystemPrompt = applyBackroomPromptIfNeeded({
       conversationFormat: conversation.format,
@@ -2319,102 +2264,40 @@ async function handleContinue(
       cliModePrompt: conversation.cliModePrompt
     });
     
-    // Helper function to safely send WebSocket messages (may fail if user disconnected)
-    const safeSendContinue = (data: any) => {
-      try {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify(data));
-        }
-      } catch (e) {
-        // User disconnected, ignore
-      }
-    };
-    
-    // Helper function to run inference for a single branch
-    const runBranchInference = async (branchId: string, branchIndex: number) => {
-      let branchContent = '';
-      
-      await inferenceService.streamCompletion(
+    let generatedBranchIds: string[];
+    try {
+      // Run parallel inference using shared utility
+      generatedBranchIds = await runParallelBranchInference({
+        ws,
+        db,
+        inferenceService,
+        conversation,
+        targetMessage: assistantMessage,
+        initialBranchId: assistantBranch.id,
+        parentBranchId: parentBranchId || 'root',
+        samplingBranchCount,
         modelConfig,
-        messagesWithNewAssistant,
-        continueSystemPrompt,
-        inferenceSettings,
-      ws.userId!,
-      async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
-          branchContent += chunk;
-        
-          const currentBranch = assistantMessage.branches.find((b: any) => b.id === branchId);
-          if (currentBranch) {
-            currentBranch.content = branchContent;
-        if (contentBlocks && contentBlocks.length > 0) {
-              currentBranch.contentBlocks = contentBlocks;
-            }
-            if (isComplete) {
-              currentBranch.content = branchContent.trim();
-            }
-            if (branchContent.length % 500 === 0 || isComplete) {
-              await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, branchId, currentBranch.content, currentBranch.contentBlocks);
-            }
-          }
-          
-          const streamData = {
-          type: 'stream',
-          messageId: assistantMessage.id,
-            branchId: branchId,
-          content: chunk,
-          contentBlocks: contentBlocks,
-            isComplete,
-            branchIndex
-          };
-          safeSendContinue(streamData);
-          roomManager.broadcastToRoom(conversationId, streamData, ws);
-
-          if (isComplete) {
-            const finalBranch = assistantMessage.branches.find((b: any) => b.id === branchId);
-            if (finalBranch) {
-              // Content filter check for AI output with tiered moderation
-              const outputFilterResult = await checkContent(finalBranch.content, userContext);
-              if (outputFilterResult.blocked) {
-                console.warn(`[Content Filter] AI output blocked for conversation ${conversationId}`);
-                finalBranch.content = '[Content filtered]';
-                finalBranch.contentBlocks = undefined;
-                // Send update to replace the streamed content
-                const filterEvent = {
-                  type: 'stream',
-                  messageId: assistantMessage.id,
-                  branchId: branchId,
-                  content: finalBranch.content,
-                  contentBlocks: undefined,
-                  isComplete: true,
-                  branchIndex,
-                  filtered: true
-                };
-                safeSendContinue(filterEvent);
-                roomManager.broadcastToRoom(conversationId, filterEvent, ws);
-              }
-              await db.updateMessageContent(assistantMessage.id, conversationId, conversation.userId, branchId, finalBranch.content, finalBranch.contentBlocks);
-          }
-        }
-      },
-      conversation,
-      responder,
-      async (metrics) => {
-          if (branchIndex === 0) {
-        await db.addMetrics(conversation.id, conversation.userId, metrics);
-            safeSendContinue({ type: 'metrics_update', conversationId: conversation.id, metrics, branchIndex });
-          }
-        },
+        model: responder.model || conversation.model,
+        historyMessages: messagesWithNewAssistant,
+        systemPrompt: continueSystemPrompt,
+        settings: inferenceSettings,
         participants,
-        abortController.signal
-      );
+        responderParticipant: responder,
+        participantId: responder.id,
+        userContext,
+        abortSignal: abortController.signal,
+        creationSource: 'inference',
+        conversationId
+      });
       
-      // DEBUG CAPTURE: Capture debug data immediately after this branch completes
+      // DEBUG CAPTURE: Capture debug data for the first branch after completion
       try {
         const rawRequest = baseInferenceService.lastRawRequest;
-        if (rawRequest) {
-          const branchObj = assistantMessage.branches.find((b: any) => b.id === branchId);
+        if (rawRequest && generatedBranchIds.length > 0) {
+          const firstBranchId = generatedBranchIds[0];
+          const branchObj = assistantMessage.branches.find((b: any) => b.id === firstBranchId);
           if (branchObj) {
-            console.log(`[DEBUG CAPTURE] Continue branch ${branchIndex} (${branchId.substring(0, 8)}): Capturing debug data...`);
+            console.log(`[DEBUG CAPTURE] Continue: Capturing debug data for branch ${firstBranchId.substring(0, 8)}...`);
             
             const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
             const participantMode = responder.conversationMode;
@@ -2436,26 +2319,19 @@ async function handleContinue(
               model: branchObj.model
             };
             
-            await db.updateMessageBranch(assistantMessage.id, conversation.userId, branchId, { debugRequest, debugResponse });
-            console.log(`[DEBUG CAPTURE] Continue branch ${branchIndex} (${branchId.substring(0, 8)}): Debug data saved`);
+            await db.updateMessageBranch(assistantMessage.id, conversation.userId, firstBranchId, { debugRequest, debugResponse });
+            console.log(`[DEBUG CAPTURE] Continue: Debug data saved for branch ${firstBranchId.substring(0, 8)}`);
             
             const refreshedMessage = await db.getMessage(assistantMessage.id, conversationId, conversation.userId);
             if (refreshedMessage) {
-              safeSendContinue({ type: 'message_edited', message: refreshedMessage });
+              ws.send(JSON.stringify({ type: 'message_edited', message: refreshedMessage }));
               roomManager.broadcastToRoom(conversationId, { type: 'message_edited', message: refreshedMessage }, ws);
             }
           }
         }
       } catch (debugError) {
-        console.error(`[DEBUG CAPTURE] Continue branch ${branchIndex}: Failed to capture debug data:`, debugError);
+        console.error('[DEBUG CAPTURE] Continue: Failed to capture debug data:', debugError);
       }
-    };
-    
-    // Run all branches in parallel
-    // Note: DEBUG CAPTURE now happens per-branch inside runBranchInference
-    await Promise.all(
-      branchesToGenerate.map((branch, index) => runBranchInference(branch.branchId, index))
-    );
     
     // Send updated conversation after all complete
     const updatedConversation = await db.getConversation(conversationId, conversation.userId);

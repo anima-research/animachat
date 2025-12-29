@@ -608,7 +608,8 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     conversationId: z.string().uuid(),
     messageId: z.string().uuid(),
     branchId: z.string().uuid(),
-    parentBranchId: z.string().uuid().optional() // Current visible parent, for correct branch parenting after switches
+    parentBranchId: z.string().uuid().optional(), // Current visible parent, for correct branch parenting after switches
+    samplingBranches: z.number().min(1).max(10).optional() // Number of parallel response branches to generate
   }),
   z.object({
     type: z.literal('edit'),
@@ -617,7 +618,8 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     branchId: z.string().uuid(),
     content: z.string(),
     responderId: z.string().uuid().optional(), // Which assistant should respond after edit
-    skipRegeneration: z.boolean().optional() // If true, don't generate AI response after edit
+    skipRegeneration: z.boolean().optional(), // If true, don't generate AI response after edit
+    samplingBranches: z.number().min(1).max(10).optional() // Number of parallel response branches to generate
   }),
   z.object({
     type: z.literal('delete'),
