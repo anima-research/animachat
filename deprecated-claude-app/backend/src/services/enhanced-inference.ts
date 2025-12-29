@@ -382,12 +382,12 @@ export class EnhancedInferenceService {
           // - cacheCreationInputTokens = tokens written to cache
           // - cacheReadInputTokens = tokens read from cache
           // Total prompt = fresh + cache_creation + cache_read
-          const freshTokens = actualUsage.inputTokens;
+          const freshTokens = actualUsage.inputTokens ?? 0; // Defensive default to prevent NaN
           const cacheCreation = actualUsage.cacheCreationInputTokens || 0;
           const cacheRead = actualUsage.cacheReadInputTokens || 0;
           
           inputTokens = freshTokens + cacheCreation + cacheRead; // TOTAL input
-          outputTokens = actualUsage.outputTokens;
+          outputTokens = actualUsage.outputTokens ?? 0; // Defensive default
           // Cache size: creation OR read (whichever is non-zero shows current cache size)
           cachedTokens = cacheRead > 0 ? cacheRead : cacheCreation;
           cacheHit = cacheRead > 0;

@@ -516,6 +516,65 @@ export function adminRouter(db: Database): Router {
     }
   });
 
+  // GET /admin/conversation-size/:id - Get conversation data size for debugging
+  // Useful for diagnosing browser crashes from large images
+  router.get('/conversation-size/:id', async (req: AuthRequest, res) => {
+    try {
+      const conversationId = req.params.id;
+      
+      // Get conversation data as admin (bypass normal access control for diagnosis)
+      const messages = await db.getConversationMessagesAdmin(conversationId);
+      
+      if (!messages || messages.length === 0) {
+        return res.status(404).json({ error: 'Conversation not found or no messages' });
+      }
+      
+      // Analyze size
+      let totalContentLength = 0;
+      let totalImageDataLength = 0;
+      let imageCount = 0;
+      const messageStats: any[] = [];
+      
+      for (const message of messages) {
+        for (const branch of message.branches) {
+          totalContentLength += branch.content?.length || 0;
+          
+          if (branch.contentBlocks) {
+            for (const block of branch.contentBlocks) {
+              if ((block as any).type === 'image' && (block as any).data) {
+                imageCount++;
+                const dataLen = (block as any).data.length;
+                totalImageDataLength += dataLen;
+                messageStats.push({
+                  messageId: message.id.slice(0, 8),
+                  branchId: branch.id.slice(0, 8),
+                  imageSize: `${(dataLen / 1024 / 1024).toFixed(2)} MB`,
+                  mimeType: (block as any).mimeType
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      const totalJson = JSON.stringify(messages);
+      
+      res.json({
+        conversationId,
+        messageCount: messages.length,
+        totalJsonSize: `${(totalJson.length / 1024 / 1024).toFixed(2)} MB`,
+        totalContentLength: `${(totalContentLength / 1024).toFixed(2)} KB`,
+        totalImageDataLength: `${(totalImageDataLength / 1024 / 1024).toFixed(2)} MB`,
+        imageCount,
+        images: messageStats,
+        warning: totalJson.length > 10 * 1024 * 1024 ? '⚠️ VERY LARGE - may crash browsers!' : null
+      });
+    } catch (error) {
+      console.error('Error getting conversation size:', error);
+      res.status(500).json({ error: 'Failed to get conversation size' });
+    }
+  });
+
   return router;
 }
 

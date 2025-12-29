@@ -3268,6 +3268,28 @@ export class Database {
   }
 
   /**
+   * Admin-only: Get conversation messages without requiring owner ID
+   * Used for diagnostic purposes to investigate problematic conversations
+   */
+  async getConversationMessagesAdmin(conversationId: string): Promise<Message[]> {
+    // Find the conversation by scanning all users' conversations
+    // This is inefficient but acceptable for admin diagnostics
+    for (const [userId] of this.users) {
+      await this.loadUser(userId);
+      const userConvos = this.userConversations.get(userId) || [];
+      if (userConvos.includes(conversationId)) {
+        await this.loadConversation(conversationId, userId);
+        const messageIds = this.conversationMessages.get(conversationId) || [];
+        const messages = messageIds
+          .map(id => this.messages.get(id))
+          .filter((msg): msg is Message => msg !== undefined && msg.branches.length > 0);
+        return this.sortMessagesByTreeOrder(messages);
+      }
+    }
+    return [];
+  }
+
+  /**
    * Get event history for a conversation
    */
   async getConversationEvents(conversationId: string, conversationOwnerUserId: string): Promise<any[]> {
@@ -3503,6 +3525,10 @@ export class Database {
           const branch = msg.branches.get(data.branchId);
           if (branch) {
             branch.content = data.content;
+            // Restore contentBlocks if present in the event
+            if (data.contentBlocks && Array.isArray(data.contentBlocks)) {
+              branch.contentBlocks = data.contentBlocks;
+            }
           }
         }
       }
