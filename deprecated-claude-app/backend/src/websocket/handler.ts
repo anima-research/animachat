@@ -503,7 +503,8 @@ async function handleChatMessage(
   // Content filter check with tiered moderation
   const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
   const isAgeVerified = await db.isUserAgeVerified(ws.userId);
-  const userContext: UserContext = { isResearcher, isAgeVerified };
+  const isAdmin = await db.userHasActiveGrantCapability(ws.userId, 'admin');
+  const userContext: UserContext = { isResearcher, isAgeVerified, isAdmin };
   
   // Always check content - the filter applies tiered logic based on user context
   const filterResult = await checkContent(message.content, userContext);
@@ -1223,7 +1224,8 @@ async function handleRegenerate(
   // Build user context for content filter
   const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
   const isAgeVerified = await db.isUserAgeVerified(ws.userId);
-  const userContext: UserContext = { isResearcher, isAgeVerified };
+  const isAdmin = await db.userHasActiveGrantCapability(ws.userId, 'admin');
+  const userContext: UserContext = { isResearcher, isAgeVerified, isAdmin };
 
   // Use conversation.userId (the owner) to fetch message
   const msg = await db.getMessage(message.messageId, message.conversationId, conversation.userId);
@@ -1620,7 +1622,8 @@ async function handleEdit(
   // Content filter check with tiered moderation
   const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
   const isAgeVerified = await db.isUserAgeVerified(ws.userId);
-  const userContext: UserContext = { isResearcher, isAgeVerified };
+  const isAdmin = await db.userHasActiveGrantCapability(ws.userId, 'admin');
+  const userContext: UserContext = { isResearcher, isAgeVerified, isAdmin };
   
   // Always check content - the filter applies tiered logic based on user context
   const filterResult = await checkContent(message.content, userContext);
@@ -2080,7 +2083,8 @@ async function handleContinue(
     // Build user context for content filter
     const isResearcher = await db.userHasActiveGrantCapability(ws.userId, 'researcher');
     const isAgeVerified = await db.isUserAgeVerified(ws.userId);
-    const userContext: UserContext = { isResearcher, isAgeVerified };
+    const isAdmin = await db.userHasActiveGrantCapability(ws.userId, 'admin');
+    const userContext: UserContext = { isResearcher, isAgeVerified, isAdmin };
 
     // Get participants
     const participants = await db.getConversationParticipants(conversationId, conversation.userId);
