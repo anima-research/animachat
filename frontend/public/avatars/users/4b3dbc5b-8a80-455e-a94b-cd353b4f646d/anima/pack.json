@@ -1,0 +1,11 @@
+{
+  "id": "anima",
+  "name": "Anima Server",
+  "description": "",
+  "version": "1.0.0",
+  "author": "User",
+  "isSystem": false,
+  "avatars": {
+    "claude-opus-4.5": "op45.png.png"
+  }
+}

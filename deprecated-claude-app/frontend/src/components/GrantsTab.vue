@@ -1,6 +1,6 @@
 <template>
   <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
-    <p class="text-body-2 mb-4">Review your grant balances and capabilities. Grants track credits you've received, spent, or shared with others.</p>
+    <p class="text-body-2 mb-4">Arc does not accept payments or resell inference. The starting balance is sponsored for access to deprecated models. You can use your API keys or you can obtain research grants from Anima Labs by contacting us on Discord.<br><br>Here you can review your grant balances and capabilities. Grants track credits you've received, spent, or shared with others.</p>
     <div v-if="loading" class="d-flex align-center justify-center py-6">
       <v-progress-circular indeterminate color="primary" />
     </div>

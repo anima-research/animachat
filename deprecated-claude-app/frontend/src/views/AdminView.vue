@@ -69,23 +69,71 @@
     <!-- Config Editor -->
     <ConfigEditor class="mb-6" />
 
-    <!-- Legacy User Verification (Temporary) -->
+    <!-- Legacy Migration Tools -->
     <v-card class="mb-6" variant="outlined" color="warning">
-      <v-card-text class="d-flex align-center">
-        <v-icon color="warning" class="mr-3">mdi-email-check</v-icon>
-        <div class="flex-grow-1">
-          <div class="font-weight-medium">Verify Legacy Users</div>
-          <div class="text-caption text-grey">Mark all users registered before Dec 8, 2025 as email-verified</div>
+      <v-card-title class="text-subtitle-1">
+        <v-icon color="warning" class="mr-2">mdi-database-sync</v-icon>
+        Legacy Migration Tools
+      </v-card-title>
+      <v-card-text>
+        <div class="d-flex flex-column" style="gap: 12px;">
+          <!-- Verify Legacy Users -->
+          <div class="d-flex align-center">
+            <v-icon color="warning" size="small" class="mr-3">mdi-email-check</v-icon>
+            <div class="flex-grow-1">
+              <div class="font-weight-medium text-body-2">Verify Legacy Users</div>
+              <div class="text-caption text-grey">Mark users registered before Dec 8, 2025 as email-verified</div>
+            </div>
+            <v-btn
+              color="warning"
+              variant="tonal"
+              size="small"
+              :loading="verifyingLegacyUsers"
+              @click="verifyLegacyUsers"
+            >
+              <v-icon start size="small">mdi-check-all</v-icon>
+              Run
+            </v-btn>
+          </div>
+          
+          <!-- Set Age Verified for All Users -->
+          <div class="d-flex align-center">
+            <v-icon color="info" size="small" class="mr-3">mdi-account-check</v-icon>
+            <div class="flex-grow-1">
+              <div class="font-weight-medium text-body-2">Set Age Verified (18+)</div>
+              <div class="text-caption text-grey">Mark all existing users as age-verified (for legacy users before age gate)</div>
+            </div>
+            <v-btn
+              color="info"
+              variant="tonal"
+              size="small"
+              :loading="settingAgeVerified"
+              @click="setAllUsersAgeVerified"
+            >
+              <v-icon start size="small">mdi-check-all</v-icon>
+              Run
+            </v-btn>
+          </div>
+          
+          <!-- Set ToS Accepted for All Users -->
+          <div class="d-flex align-center">
+            <v-icon color="success" size="small" class="mr-3">mdi-file-document-check</v-icon>
+            <div class="flex-grow-1">
+              <div class="font-weight-medium text-body-2">Set ToS Accepted</div>
+              <div class="text-caption text-grey">Mark all existing users as having accepted Terms of Service</div>
+            </div>
+            <v-btn
+              color="success"
+              variant="tonal"
+              size="small"
+              :loading="settingTosAccepted"
+              @click="setAllUsersTosAccepted"
+            >
+              <v-icon start size="small">mdi-check-all</v-icon>
+              Run
+            </v-btn>
+          </div>
         </div>
-        <v-btn
-          color="warning"
-          variant="tonal"
-          :loading="verifyingLegacyUsers"
-          @click="verifyLegacyUsers"
-        >
-          <v-icon start>mdi-check-all</v-icon>
-          Verify Legacy Users
-        </v-btn>
       </v-card-text>
     </v-card>
 
@@ -384,6 +432,8 @@ const reloadingUser = ref(false);
 const allCapabilities = ['admin', 'mint', 'send', 'overspend', 'researcher'];
 const currencies = ['credit', 'old_sonnets', 'claude3opus', 'haiku', 'gemini'];
 const verifyingLegacyUsers = ref(false);
+const settingAgeVerified = ref(false);
+const settingTosAccepted = ref(false);
 
 const tableHeaders = [
   { title: 'User', key: 'email', sortable: true },
@@ -598,6 +648,38 @@ async function verifyLegacyUsers() {
     error.value = e?.response?.data?.error || 'Failed to verify legacy users';
   } finally {
     verifyingLegacyUsers.value = false;
+  }
+}
+
+async function setAllUsersAgeVerified() {
+  if (!confirm('This will mark ALL existing users as age-verified (18+). This is for legacy users who registered before the age gate was added. Continue?')) {
+    return;
+  }
+  
+  settingAgeVerified.value = true;
+  try {
+    const response = await api.post('/admin/set-all-age-verified');
+    successMessage.value = response.data.message || `Updated ${response.data.updatedCount} users`;
+  } catch (e: any) {
+    error.value = e?.response?.data?.error || 'Failed to set age verification';
+  } finally {
+    settingAgeVerified.value = false;
+  }
+}
+
+async function setAllUsersTosAccepted() {
+  if (!confirm('This will mark ALL existing users as having accepted the Terms of Service. This is for legacy users who registered before the ToS gate was added. Continue?')) {
+    return;
+  }
+  
+  settingTosAccepted.value = true;
+  try {
+    const response = await api.post('/admin/set-all-tos-accepted');
+    successMessage.value = response.data.message || `Updated ${response.data.updatedCount} users`;
+  } catch (e: any) {
+    error.value = e?.response?.data?.error || 'Failed to set ToS acceptance';
+  } finally {
+    settingTosAccepted.value = false;
   }
 }
 

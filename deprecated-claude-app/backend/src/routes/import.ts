@@ -278,7 +278,10 @@ export function importRouter(db: Database): Router {
             firstBranch.model,
             mappedParentBranchId,
             participantId,
-            firstBranch.attachments
+            firstBranch.attachments,
+            undefined, // sentByUserId
+            undefined, // hiddenFromAi
+            'import'   // creationSource - imported data
           );
           
           // Map the first branch ID
@@ -329,7 +332,10 @@ export function importRouter(db: Database): Router {
               branchParentId,
               branch.model,
               branchParticipantId,
-              branch.attachments
+              branch.attachments,
+              undefined, // sentByUserId
+              undefined, // hiddenFromAi
+              'import'   // creationSource - imported data
             );
             
             // Map this branch ID
@@ -409,7 +415,11 @@ export function importRouter(db: Database): Router {
               parsedMsg.role,
               parentBranch?.parentBranchId,  // Use same parent as the first branch
               parsedMsg.model,
-              participantId
+              participantId,
+              undefined, // attachments
+              undefined, // sentByUserId
+              undefined, // hiddenFromAi
+              'import'   // creationSource - imported data
             );
             
             if (updatedMessage) {
@@ -460,7 +470,11 @@ export function importRouter(db: Database): Router {
             parsedMsg.role,
             parsedMsg.model,
             parentBranchId,
-            participantId
+            participantId,
+            undefined, // attachments
+            undefined, // sentByUserId
+            undefined, // hiddenFromAi
+            'import'   // creationSource - imported data
           );
           
           console.log(`Created message ${createdMessage.id} with ${createdMessage.branches.length} branches`);

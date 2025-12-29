@@ -4,6 +4,15 @@ import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { api } from '../services/api';
 import { WebSocketService } from '../services/websocket';
 
+// Model availability info - which providers user can use
+interface ModelAvailability {
+  userProviders: string[];      // Providers where user has their own API key
+  adminProviders: string[];     // Providers with admin-configured keys (subsidized)
+  grantCurrencies: string[];    // Currencies where user has positive balance
+  canOverspend: boolean;        // Whether user can use models without balance
+  availableProviders: string[]; // Combined set of all usable providers
+}
+
 interface StoreState {
   user: User | null;
   conversations: Conversation[];
@@ -13,6 +22,7 @@ interface StoreState {
   models: Model[];
   openRouterModels: OpenRouterModel[];
   customModels: UserDefinedModel[];
+  modelAvailability: ModelAvailability | null; // Which providers user can use
   isLoading: boolean;
   error: string | null;
   wsService: WebSocketService | null;
@@ -105,6 +115,19 @@ let sortedMessagesCache: {
 // Version counter - increment this when messages change to invalidate cache
 let messagesVersion = 0;
 
+// Cache for visible messages to prevent recomputation on every access
+let visibleMessagesCache: {
+  sourceVersion: number;
+  sourceLength: number;
+  detachedBranchSelections: string; // JSON stringified for comparison
+  result: Message[];
+} = {
+  sourceVersion: 0,
+  sourceLength: 0,
+  detachedBranchSelections: '{}',
+  result: []
+};
+
 /**
  * Invalidate the sorted messages cache.
  * Call this when messages are added, removed, or modified.
@@ -191,6 +214,7 @@ export function createStore(): {
     models: [],
     openRouterModels: [],
     customModels: [],
+    modelAvailability: null,
     isLoading: false,
     error: null,
     wsService: null,
@@ -273,10 +297,24 @@ export function createStore(): {
       }
     },
     
-    async register(email: string, password: string, name: string, inviteCode?: string) {
+    async register(
+      email: string, 
+      password: string, 
+      name: string, 
+      inviteCode?: string,
+      tosAgreed?: boolean,
+      ageVerified?: boolean
+    ) {
       try {
         state.isLoading = true;
-        const response = await api.post('/auth/register', { email, password, name, inviteCode });
+        const response = await api.post('/auth/register', { 
+          email, 
+          password, 
+          name, 
+          inviteCode,
+          tosAgreed,
+          ageVerified
+        });
         const { user, token, requiresVerification } = response.data;
         
         // If email verification is required, return early without logging in
@@ -759,7 +797,9 @@ export function createStore(): {
         }
       }
       
-      // Force recompute visible messages after branch switch
+      // Invalidate cache and force recompute visible messages after branch switch
+      state.messagesVersion++;
+      invalidateSortCache();
       const newVisible = this.getVisibleMessages();
       console.log('After switch, visible messages:', newVisible.length);
     },
@@ -777,6 +817,14 @@ export function createStore(): {
 
     // Helper method to get visible messages based on current branch selections
     getVisibleMessages(): Message[] {
+      // Check cache first to avoid expensive recomputation
+      const localSelectionsKey = JSON.stringify(Array.from(state.localBranchSelections.entries()));
+      if (visibleMessagesCache.sourceVersion === messagesVersion &&
+          visibleMessagesCache.sourceLength === state.allMessages.length &&
+          visibleMessagesCache.detachedBranchSelections === localSelectionsKey) {
+        return visibleMessagesCache.result;
+      }
+      
       // Sort messages by tree order to ensure parents come before children
       // This handles cases where order numbers don't reflect tree structure
       const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
@@ -864,13 +912,15 @@ export function createStore(): {
         branchPath.push(selectedBranch.id);
       }
       
-       console.log('=== GET_VISIBLE_MESSAGES RESULT ===');
-        console.log('Total:', state.allMessages.length, '-> Visible:', visibleMessages.length);
-        console.log('Branch path:', branchPath.map(b => b.slice(0, 8)));
-        if (visibleMessages.length > 0) {
-          const last = visibleMessages[visibleMessages.length - 1];
-          console.log('Last visible:', last.id.slice(0, 8), 'activeBranch:', last.activeBranchId?.slice(0, 8));
-        }
+      // Update cache before returning
+      visibleMessagesCache = {
+        sourceVersion: messagesVersion,
+        sourceLength: state.allMessages.length,
+        detachedBranchSelections: localSelectionsKey,
+        result: visibleMessages
+      };
+      
+      console.log('[getVisibleMessages] Cache miss - computed', visibleMessages.length, 'visible from', state.allMessages.length, 'total');
       return visibleMessages;
     },
     
@@ -916,14 +966,22 @@ export function createStore(): {
     // Model actions
     async loadModels() {
       try {
-        const response = await api.get('/models');
-        state.models = response.data;
+        // Fetch models and availability in parallel
+        const [modelsResponse, availabilityResponse] = await Promise.all([
+          api.get('/models'),
+          api.get('/models/availability').catch(() => ({ data: null }))
+        ]);
+        
+        state.models = modelsResponse.data;
+        state.modelAvailability = availabilityResponse.data;
+        
         // console.log('Frontend loaded models:', state.models.map(m => ({
         //   id: m.id,
         //   name: m.name,
         //   displayName: m.displayName,
         //   provider: m.provider
         // })));
+        // console.log('Model availability:', state.modelAvailability);
       } catch (error) {
         console.error('Failed to load models:', error);
         throw error;
@@ -1210,6 +1268,34 @@ export function createStore(): {
           state.messagesVersion++;
           invalidateSortCache();
         }
+      });
+      
+      state.wsService.on('message_split', (data: any) => {
+        console.log('Store handling message_split:', data);
+        const { originalMessage, newMessage } = data;
+        
+        // Update the original message
+        if (originalMessage) {
+          const index = state.allMessages.findIndex(m => m.id === originalMessage.id);
+          if (index !== -1) {
+            state.allMessages[index] = originalMessage;
+          }
+        }
+        
+        // Add the new message
+        if (newMessage) {
+          const existingIndex = state.allMessages.findIndex(m => m.id === newMessage.id);
+          if (existingIndex === -1) {
+            // Insert at correct position based on order
+            const insertIndex = newMessage.order !== undefined && newMessage.order < state.allMessages.length
+              ? newMessage.order
+              : state.allMessages.length;
+            state.allMessages.splice(insertIndex, 0, newMessage);
+          }
+        }
+        
+        state.messagesVersion++;
+        invalidateSortCache();
       });
       
       state.wsService.on('generation_aborted', (data: any) => {

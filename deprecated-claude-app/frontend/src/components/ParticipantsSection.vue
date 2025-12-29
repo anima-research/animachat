@@ -84,6 +84,7 @@
               :model-value="participant.model"
               @update:model-value="(value) => updateParticipantModel(participant, value)"
               :models="activeModels"
+              :availability="props.availability"
               density="compact"
               variant="plain"
               hide-details
@@ -197,6 +198,7 @@
             v-if="newParticipant.type === 'assistant'"
             v-model="newParticipant.model"
             :models="activeModels"
+            :availability="props.availability"
             label="Model"
             variant="outlined"
             density="compact"
@@ -477,6 +479,10 @@ const props = defineProps({
   models: {
     type: Array as PropType<Model[]>,
     required: true
+  },
+  availability: {
+    type: Object as PropType<{ userProviders: string[]; adminProviders: string[]; grantCurrencies: string[]; canOverspend: boolean; availableProviders: string[] } | null>,
+    default: null
   },
   personas: {
     type: Array as PropType<Persona[]>,

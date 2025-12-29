@@ -288,6 +288,7 @@
           <a href="https://github.com/socketteer/Claude-Conversation-Exporter" target="_blank">[export tool]</a>
           <a href="/">[arc chat]</a>
           <a href="https://discord.gg/anima" target="_blank">[discord]</a>
+          <a href="https://github.com/anima-research/animachat" target="_blank">[github]</a>
         </div>
       </div>
     </div>

@@ -1,0 +1,645 @@
+{
+  "models": [
+    {
+      "id": "claude-haiku-4.5",
+      "providerModelId": "claude-haiku-4-5-20251001",
+      "displayName": "Claude Haiku 4.5",
+      "shortName": "Haiku 4.5",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
+      "currencies": {
+        "haiku": true,
+        "models-2025": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 64000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-sonnet-4.5",
+      "providerModelId": "claude-sonnet-4-5-20250929",
+      "displayName": "Claude Sonnet 4.5",
+      "shortName": "Sonnet 4.5",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
+      "currencies": {
+        "sonnets": true,
+        "models-2025": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 64000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-opus-4.1",
+      "providerModelId": "claude-opus-4-1-20250805",
+      "displayName": "Claude Opus 4.1",
+      "shortName": "Opus 4.1",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 32000,
+      "supportsThinking": true,
+      "currencies": {
+        "opus": true,
+        "models-2025": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 32000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-opus-4",
+      "providerModelId": "claude-opus-4-20250514",
+      "displayName": "Claude Opus 4",
+      "shortName": "Opus 4",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 32000,
+      "supportsThinking": true,
+      "currencies": {
+        "opus": true,
+        "models-2025": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 32000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-sonnet-4",
+      "providerModelId": "claude-sonnet-4-20250514",
+      "displayName": "Claude Sonnet 4",
+      "shortName": "Sonnet 4",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
+      "currencies": {
+        "sonnets": true,
+        "models-2025": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 64000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3.7-sonnet",
+      "providerModelId": "claude-3-7-sonnet-20250219",
+      "displayName": "Claude 3.7 Sonnet",
+      "shortName": "Sonnet 3.7",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
+      "currencies": {
+        "sonnets": true,
+        "models-2025": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 64000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3.5-haiku",
+      "providerModelId": "claude-3-5-haiku-20241022",
+      "displayName": "Claude 3.5 Haiku",
+      "shortName": "Haiku 3.5",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "currencies": {
+        "haiku": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 8192,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3.6-sonnet",
+      "providerModelId": "claude-3-5-sonnet-20241022",
+      "displayName": "Claude 3.6 Sonnet",
+      "shortName": "Sonnet 3.6",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "currencies": {
+        "sonnets": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 8192,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3.5-sonnet",
+      "providerModelId": "claude-3-5-sonnet-20240620",
+      "displayName": "Claude 3.5 Sonnet",
+      "shortName": "Sonnet 3.5",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "currencies": {
+        "sonnets": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 8192,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3-opus",
+      "providerModelId": "claude-3-opus-20240229",
+      "displayName": "Claude 3 Opus",
+      "shortName": "Opus 3",
+      "provider": "anthropic",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "currencies": {
+        "opus": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 4096,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3.5-haiku-bedrock",
+      "providerModelId": "anthropic.claude-3-5-haiku-20241022-v1:0",
+      "displayName": "Claude 3.5 Haiku (Bedrock)",
+      "shortName": "Haiku 3.5 (BR)",
+      "provider": "bedrock",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "currencies": {
+        "haiku": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 8192,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3.6-sonnet-bedrock",
+      "providerModelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      "displayName": "Claude 3.6 Sonnet (Bedrock)",
+      "shortName": "Sonnet 3.6",
+      "provider": "bedrock",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "currencies": {
+        "sonnets": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 8192,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3-sonnet-bedrock",
+      "providerModelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+      "displayName": "Claude 3 Sonnet (Bedrock)",
+      "shortName": "Sonnet 3",
+      "provider": "bedrock",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "currencies": {
+        "sonnets": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 4096,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3-haiku-bedrock",
+      "providerModelId": "anthropic.claude-3-haiku-20240307-v1:0",
+      "displayName": "Claude 3 Haiku (Bedrock)",
+      "shortName": "Haiku 3",
+      "provider": "bedrock",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "currencies": {
+        "haiku": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 4096,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-3.6-sonnet-openrouter",
+      "providerModelId": "anthropic/claude-3.5-sonnet",
+      "displayName": "Claude 3.6 Sonnet (OpenRouter)",
+      "shortName": "Sonnet 3.6",
+      "provider": "openrouter",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 8192,
+      "currencies": {
+        "sonnets": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 8192,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        }
+      }
+    },
+    {
+      "id": "claude-3-opus-openrouter",
+      "providerModelId": "anthropic/claude-3-opus",
+      "displayName": "Claude 3 Opus (OpenRouter)",
+      "shortName": "Opus 3",
+      "provider": "openrouter",
+      "deprecated": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 4096,
+      "currencies": {
+        "opus": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 4096,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        }
+      }
+    },
+    {
+      "id": "gpt-4-turbo-openrouter",
+      "providerModelId": "openai/gpt-4-turbo-preview",
+      "displayName": "GPT-4 Turbo (OpenRouter)",
+      "shortName": "GPT-4T (OR)",
+      "provider": "openrouter",
+      "deprecated": false,
+      "contextWindow": 128000,
+      "outputTokenLimit": 4096,
+      "currencies": {
+        "openai": true,
+        "models-2025": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 4096,
+          "default": 1024
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        }
+      }
+    }
+  ]
+}

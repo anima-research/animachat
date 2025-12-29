@@ -21,6 +21,7 @@
         <ModelSelector
           v-model="form.modelId"
           :models="models"
+          :availability="props.availability"
           label="Model"
           variant="outlined"
           density="compact"
@@ -116,9 +117,18 @@ import { ref, computed, watch } from 'vue';
 import type { Model, CreatePersonaRequest } from '@deprecated-claude/shared';
 import ModelSelector from '@/components/ModelSelector.vue';
 
+interface ModelAvailability {
+  userProviders: string[];
+  adminProviders: string[];
+  grantCurrencies: string[];
+  canOverspend: boolean;
+  availableProviders: string[];
+}
+
 const props = defineProps<{
   modelValue: boolean;
   models: Model[];
+  availability?: ModelAvailability | null;
 }>();
 
 const emit = defineEmits<{

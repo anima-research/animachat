@@ -240,7 +240,13 @@ export function conversationRouter(db: Database): Router {
           conversation.userId,
           msg.content,
           msg.role,
-          msg.role === 'assistant' ? data.model : undefined
+          msg.role === 'assistant' ? data.model : undefined,
+          undefined, // parentBranchId
+          undefined, // participantId
+          undefined, // attachments
+          undefined, // sentByUserId
+          undefined, // hiddenFromAi
+          'import'   // creationSource - imported data
         );
 
         // Add branches if provided
@@ -253,7 +259,12 @@ export function conversationRouter(db: Database): Router {
               branch.content,
               msg.role,
               message.branches[0].id,
-              msg.role === 'assistant' ? data.model : undefined
+              msg.role === 'assistant' ? data.model : undefined,
+              undefined, // participantId
+              undefined, // attachments
+              undefined, // sentByUserId
+              undefined, // hiddenFromAi
+              'import'   // creationSource - imported data
             );
           }
         }
@@ -622,6 +633,52 @@ export function conversationRouter(db: Database): Router {
       res.json({ success: true, message: restoredMessage });
     } catch (error) {
       console.error('Restore branch error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Split a message at a given position
+  router.post('/:id/messages/:messageId/split', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { splitPosition, branchId } = req.body;
+      if (typeof splitPosition !== 'number' || !branchId) {
+        return res.status(400).json({ error: 'splitPosition (number) and branchId required' });
+      }
+
+      // Check access (owner or editor)
+      const canChat = await db.canUserChatInConversation(req.params.id, req.userId);
+      if (!canChat) {
+        return res.status(403).json({ error: 'You do not have permission to split messages in this conversation' });
+      }
+
+      // Get the conversation owner
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Split the message
+      const result = await db.splitMessage(req.params.id, conversation.userId, req.params.messageId, branchId, splitPosition, req.userId);
+      if (!result) {
+        return res.status(404).json({ error: 'Message or branch not found' });
+      }
+      
+      // Broadcast to conversation room
+      roomManager.broadcastToRoom(req.params.id, {
+        type: 'message_split',
+        conversationId: req.params.id,
+        originalMessage: result.originalMessage,
+        newMessage: result.newMessage,
+        splitByUserId: req.userId
+      });
+      
+      res.json({ success: true, originalMessage: result.originalMessage, newMessage: result.newMessage });
+    } catch (error) {
+      console.error('Split message error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

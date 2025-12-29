@@ -32,7 +32,7 @@
               <template v-if="hasCredits">
                 <h4 class="text-h6 mb-1">
                   <v-icon color="success" class="mr-1">mdi-check-circle</v-icon>
-                  You're All Set!
+                  You're have grants!
                 </h4>
               <p class="text-body-2 mb-2">
                   You have 

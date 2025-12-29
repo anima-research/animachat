@@ -11,7 +11,9 @@ const RegisterSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   name: z.string(),
-  inviteCode: z.string().optional()
+  inviteCode: z.string().optional(),
+  tosAgreed: z.boolean().optional(), // User agreed to Terms of Service
+  ageVerified: z.boolean().optional() // User confirmed they are 18+
 });
 
 const LoginSchema = z.object({
@@ -64,8 +66,15 @@ export function authRouter(db: Database): Router {
       const config = await ConfigLoader.getInstance().loadConfig();
       const requireEmailVerification = (config as any).requireEmailVerification !== false && !!process.env.RESEND_API_KEY;
       
-      // Create user with emailVerified based on config
-      const user = await db.createUser(data.email, data.password, data.name, !requireEmailVerification);
+      // Create user with emailVerified based on config, and ageVerified/tosAccepted from registration
+      const user = await db.createUser(
+        data.email, 
+        data.password, 
+        data.name, 
+        !requireEmailVerification,
+        data.ageVerified === true, // Pass age verification status
+        data.tosAgreed === true // Pass ToS acceptance status
+      );
 
       // Grant initial credits from config
       const initialGrants = (config as any).initialGrants || {};

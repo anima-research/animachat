@@ -906,6 +906,32 @@ export class Database {
         break;
       }
       
+      case 'message_order_changed': {
+        const { messageId, newOrder } = event.data;
+        const message = this.messages.get(messageId);
+        if (message) {
+          const updated = { ...message, order: newOrder };
+          this.messages.set(messageId, updated);
+        }
+        break;
+      }
+      
+      case 'branch_parent_changed': {
+        const { messageId, branchId, newParentBranchId } = event.data;
+        const message = this.messages.get(messageId);
+        if (message) {
+          const updatedBranches = message.branches.map(b => {
+            if (b.id === branchId) {
+              return { ...b, parentBranchId: newParentBranchId };
+            }
+            return b;
+          });
+          const updated = { ...message, branches: updatedBranches };
+          this.messages.set(messageId, updated);
+        }
+        break;
+      }
+      
       case 'message_imported_raw': {
         // This event is logged when importing raw messages
         // The problem: we only store messageId and conversationId, not the full message
@@ -932,6 +958,27 @@ export class Database {
               : message.activeBranchId
             };
             this.messages.set(messageId, updated);
+        }
+        break;
+      }
+      
+      case 'message_split': {
+        // A message was split - the original message's content was truncated
+        // and a new message was created with the second part
+        const { messageId, branchId, splitPosition, newMessageId, newBranchId } = event.data;
+        
+        // The original message should already be in memory with truncated content
+        // The new message should be created from the event data
+        // Note: We don't have the new message data directly in the event,
+        // so we rely on the fact that message_created was also logged for the new message
+        
+        // Just update ordering if needed
+        const convMessages = this.conversationMessages.get(event.data.conversationId);
+        if (convMessages && newMessageId && !convMessages.includes(newMessageId)) {
+          const originalIndex = convMessages.indexOf(messageId);
+          if (originalIndex !== -1) {
+            convMessages.splice(originalIndex + 1, 0, newMessageId);
+          }
         }
         break;
       }
@@ -1179,7 +1226,14 @@ export class Database {
   }
 
   // User methods
-  async createUser(email: string, password: string, name: string, emailVerified: boolean = false): Promise<User> {
+  async createUser(
+    email: string, 
+    password: string, 
+    name: string, 
+    emailVerified: boolean = false,
+    ageVerified: boolean = false,
+    tosAccepted: boolean = false
+  ): Promise<User> {
     if (this.usersByEmail.has(email)) {
       throw new Error('User already exists');
     }
@@ -1192,6 +1246,10 @@ export class Database {
       createdAt: new Date(),
       emailVerified,
       emailVerifiedAt: emailVerified ? new Date() : undefined,
+      ageVerified,
+      ageVerifiedAt: ageVerified ? new Date() : undefined,
+      tosAccepted,
+      tosAcceptedAt: tosAccepted ? new Date() : undefined,
       apiKeys: []
     };
 
@@ -1206,6 +1264,37 @@ export class Database {
     // Store password separately (not in User object)
     this.logEvent('user_created', { user, passwordHash: hashedPassword });
 
+    return user;
+  }
+  
+  // Age verification methods
+  async setAgeVerified(userId: string): Promise<User | null> {
+    const user = this.users.get(userId);
+    if (!user) return null;
+    
+    user.ageVerified = true;
+    user.ageVerifiedAt = new Date();
+    this.users.set(userId, user);
+    
+    this.logEvent('user_age_verified', { userId, ageVerifiedAt: user.ageVerifiedAt });
+    return user;
+  }
+  
+  async isUserAgeVerified(userId: string): Promise<boolean> {
+    const user = this.users.get(userId);
+    return user?.ageVerified === true;
+  }
+  
+  // ToS acceptance methods
+  async setTosAccepted(userId: string): Promise<User | null> {
+    const user = this.users.get(userId);
+    if (!user) return null;
+    
+    user.tosAccepted = true;
+    user.tosAcceptedAt = new Date();
+    this.users.set(userId, user);
+    
+    this.logEvent('user_tos_accepted', { userId, tosAcceptedAt: user.tosAcceptedAt });
     return user;
   }
   
@@ -2264,7 +2353,7 @@ export class Database {
   }
 
   // Message methods
-  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean): Promise<Message> {
+  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, creationSource?: 'inference' | 'human_edit' | 'regeneration' | 'split' | 'import'): Promise<Message> {
     const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) throw new Error("Conversation not found");
     // Get conversation messages to determine parent
@@ -2318,7 +2407,8 @@ export class Database {
           mimeType: (att as any).mimeType,
           createdAt: new Date()
         })) : undefined,
-        hiddenFromAi // If true, message is visible to humans but excluded from AI context
+        hiddenFromAi, // If true, message is visible to humans but excluded from AI context
+        creationSource // How this branch was created (inference, human_edit, regeneration, split, import)
       }],
       activeBranchId: '',
       order: 0
@@ -2444,7 +2534,7 @@ export class Database {
     return message;
   }
 
-  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, preserveActiveBranch?: boolean): Promise<Message | null> {
+  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, preserveActiveBranch?: boolean, creationSource?: 'inference' | 'human_edit' | 'regeneration' | 'split' | 'import'): Promise<Message | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
     
@@ -2468,7 +2558,8 @@ export class Database {
         mimeType: (att as any).mimeType,
         createdAt: new Date()
       })) : undefined,
-      hiddenFromAi // If true, message is excluded from AI context
+      hiddenFromAi, // If true, message is excluded from AI context
+      creationSource // How this branch was created
     };
 
     // Create new message object with added branch
@@ -2680,6 +2771,185 @@ export class Database {
     });
     
     return updatedMessage;
+  }
+  
+  /**
+   * Split a message at a given position, creating a new message with the second part
+   */
+  async splitMessage(
+    conversationId: string, 
+    conversationOwnerUserId: string, 
+    messageId: string, 
+    branchId: string, 
+    splitPosition: number,
+    splitByUserId?: string
+  ): Promise<{ originalMessage: Message, newMessage: Message } | null> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
+    
+    const message = this.messages.get(messageId);
+    if (!message) {
+      console.log(`[splitMessage] Message not found: ${messageId}`);
+      return null;
+    }
+    
+    const branchIndex = message.branches.findIndex(b => b.id === branchId);
+    if (branchIndex === -1) {
+      console.log(`[splitMessage] Branch not found: ${branchId}`);
+      return null;
+    }
+    
+    const branch = message.branches[branchIndex];
+    const content = branch.content;
+    
+    if (splitPosition <= 0 || splitPosition >= content.length) {
+      console.log(`[splitMessage] Invalid split position: ${splitPosition} (content length: ${content.length})`);
+      return null;
+    }
+    
+    // Split the content
+    const firstPart = content.substring(0, splitPosition).trim();
+    const secondPart = content.substring(splitPosition).trim();
+    
+    if (!firstPart || !secondPart) {
+      console.log(`[splitMessage] Split would result in empty message`);
+      return null;
+    }
+    
+    // Update the original branch with the first part
+    const updatedBranch = { ...branch, content: firstPart };
+    const updatedBranches = [...message.branches];
+    updatedBranches[branchIndex] = updatedBranch;
+    
+    const originalMessage: Message = {
+      ...message,
+      branches: updatedBranches
+    };
+    this.messages.set(messageId, originalMessage);
+    
+    // Create a new message with the second part
+    const newMessageId = uuidv4();
+    const newBranchId = uuidv4();
+    const newBranch = {
+      id: newBranchId,
+      content: secondPart,
+      role: branch.role,
+      participantId: branch.participantId,
+      sentByUserId: branch.sentByUserId,
+      createdAt: new Date(),
+      model: branch.model,
+      parentBranchId: branch.id, // Parent is the original branch
+      attachments: undefined, // Attachments stay with original
+      hiddenFromAi: branch.hiddenFromAi,
+      creationSource: 'split' as const // Mark this as a split result
+    };
+    
+    const newMessage: Message = {
+      id: newMessageId,
+      conversationId,
+      branches: [newBranch],
+      activeBranchId: newBranchId,
+      order: message.order + 1
+    };
+    
+    // Increment order of all messages after the original
+    // IMPORTANT: We must log these order changes for proper event replay
+    const convMessages = this.conversationMessages.get(conversationId) || [];
+    const originalIndex = convMessages.indexOf(messageId);
+    const orderChanges: { messageId: string; oldOrder: number; newOrder: number }[] = [];
+    
+    for (let i = originalIndex + 1; i < convMessages.length; i++) {
+      const msgId = convMessages[i];
+      const msg = this.messages.get(msgId);
+      if (msg && msg.order !== undefined) {
+        const oldOrder = msg.order;
+        const newOrder = msg.order + 1;
+        const updatedMsg = { ...msg, order: newOrder };
+        this.messages.set(msgId, updatedMsg);
+        orderChanges.push({ messageId: msgId, oldOrder, newOrder });
+      }
+    }
+    
+    // Insert new message after original
+    this.messages.set(newMessageId, newMessage);
+    convMessages.splice(originalIndex + 1, 0, newMessageId);
+    
+    // CRITICAL: Reparent any messages that were children of the original branch
+    // They should now be children of the NEW message's branch (the second part)
+    const reparentChanges: { messageId: string; branchId: string; oldParentBranchId: string; newParentBranchId: string }[] = [];
+    
+    for (const msgId of convMessages) {
+      if (msgId === messageId || msgId === newMessageId) continue; // Skip original and new message
+      
+      const msg = this.messages.get(msgId);
+      if (!msg) continue;
+      
+      let branchesUpdated = false;
+      const updatedBranches = msg.branches.map(b => {
+        if (b.parentBranchId === branchId) {
+          // This branch was a child of the original branch - reparent to new branch
+          reparentChanges.push({
+            messageId: msgId,
+            branchId: b.id,
+            oldParentBranchId: branchId,
+            newParentBranchId: newBranchId
+          });
+          branchesUpdated = true;
+          return { ...b, parentBranchId: newBranchId };
+        }
+        return b;
+      });
+      
+      if (branchesUpdated) {
+        this.messages.set(msgId, { ...msg, branches: updatedBranches });
+      }
+    }
+    
+    // Log order changes for all affected messages (for proper replay)
+    for (const change of orderChanges) {
+      await this.logConversationEvent(conversationId, 'message_order_changed', {
+        messageId: change.messageId,
+        oldOrder: change.oldOrder,
+        newOrder: change.newOrder
+      }, splitByUserId || conversationOwnerUserId);
+    }
+    
+    // Log reparent changes for all affected messages (for proper replay)
+    for (const change of reparentChanges) {
+      await this.logConversationEvent(conversationId, 'branch_parent_changed', {
+        messageId: change.messageId,
+        branchId: change.branchId,
+        oldParentBranchId: change.oldParentBranchId,
+        newParentBranchId: change.newParentBranchId
+      }, splitByUserId || conversationOwnerUserId);
+    }
+    
+    // Log the new message created event (for proper replay)
+    await this.logConversationEvent(conversationId, 'message_created', newMessage, splitByUserId || conversationOwnerUserId);
+    
+    // Update the original message content in the event log
+    await this.logConversationEvent(conversationId, 'message_content_updated', {
+      messageId,
+      branchId,
+      content: firstPart
+    }, splitByUserId || conversationOwnerUserId);
+    
+    // Log the split event (for history tracking)
+    await this.logConversationEvent(conversationId, 'message_split', {
+      messageId,
+      branchId,
+      splitPosition,
+      newMessageId,
+      newBranchId,
+      splitByUserId: splitByUserId || conversationOwnerUserId,
+      conversationId
+    }, splitByUserId || conversationOwnerUserId);
+    
+    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    
+    console.log(`[splitMessage] Split message ${messageId} at position ${splitPosition}, created new message ${newMessageId}`);
+    
+    return { originalMessage, newMessage };
   }
   
   async importRawMessage(conversationId: string, conversationOwnerUserId: string, messageData: any): Promise<void> {

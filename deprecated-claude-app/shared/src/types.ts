@@ -8,6 +8,10 @@ export const UserSchema = z.object({
   createdAt: z.date(),
   emailVerified: z.boolean().optional(), // Whether email has been verified
   emailVerifiedAt: z.date().optional(), // When email was verified
+  ageVerified: z.boolean().optional(), // Whether user has confirmed they are 18+
+  ageVerifiedAt: z.date().optional(), // When age was verified
+  tosAccepted: z.boolean().optional(), // Whether user has accepted Terms of Service
+  tosAcceptedAt: z.date().optional(), // When ToS was accepted
   apiKeys: z.array(z.object({
     id: z.string().uuid(),
     name: z.string(),
@@ -494,6 +498,16 @@ export const PostHocOperationSchema = z.object({
 
 export type PostHocOperation = z.infer<typeof PostHocOperationSchema>;
 
+// Branch creation source - tracks how a branch was created for authenticity verification
+export const CreationSourceSchema = z.enum([
+  'inference',      // AI generated this content
+  'human_edit',     // Human edited/wrote this content
+  'regeneration',   // AI regeneration of a previous attempt
+  'split',          // Result of message split operation
+  'import'          // Imported from external source
+]);
+export type CreationSource = z.infer<typeof CreationSourceSchema>;
+
 // Message types
 export const MessageBranchSchema = z.object({
   id: z.string().uuid(),
@@ -512,7 +526,10 @@ export const MessageBranchSchema = z.object({
   debugRequest: z.any().optional(), // Raw LLM request for debugging (researchers/admins only)
   debugResponse: z.any().optional(), // Raw LLM response for debugging (researchers/admins only)
   // Post-hoc operation - if present, this message is an operation that affects a previous message
-  postHocOperation: PostHocOperationSchema.optional()
+  postHocOperation: PostHocOperationSchema.optional(),
+  // How this branch was created - for authenticity verification
+  // undefined means legacy data (pre-tracking), should be treated as unknown
+  creationSource: CreationSourceSchema.optional()
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;
@@ -551,7 +568,12 @@ export const ConversationSchema = z.object({
   archived: z.boolean().default(false),
   settings: ModelSettingsSchema,
   contextManagement: ContextManagementSchema.optional(), // Conversation-level default
-  prefillUserMessage: PrefillSettingsSchema.optional() // Settings for initial user message in prefill mode
+  prefillUserMessage: PrefillSettingsSchema.optional(), // Settings for initial user message in prefill mode
+  cliModePrompt: z.object({
+    enabled: z.boolean().default(true),
+    messageThreshold: z.number().default(10) // Apply CLI prompt for conversations under this many messages
+  }).optional(),
+  combineConsecutiveMessages: z.boolean().default(true).optional() // Combine consecutive same-role messages when building context (default: true)
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;
@@ -652,7 +674,8 @@ export const CreateConversationRequestSchema = z.object({
   systemPrompt: z.string().optional(),
   settings: ModelSettingsSchema.optional(),
   contextManagement: ContextManagementSchema.optional(),
-  prefillUserMessage: PrefillSettingsSchema.optional()
+  prefillUserMessage: PrefillSettingsSchema.optional(),
+  combineConsecutiveMessages: z.boolean().default(true).optional()
 });
 
 export type CreateConversationRequest = z.infer<typeof CreateConversationRequestSchema>;

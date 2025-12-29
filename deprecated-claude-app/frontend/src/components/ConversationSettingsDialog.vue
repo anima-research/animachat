@@ -51,6 +51,7 @@
           v-if="settings.format === 'standard'"
           v-model="settings.model"
           :models="activeModels"
+          :availability="store.state.modelAvailability"
           label="Model"
           variant="outlined"
           density="compact"
@@ -82,6 +83,7 @@
           <ParticipantsSection
             v-model="localParticipants"
             :models="activeModels"
+            :availability="store.state.modelAvailability"
             :personas="personas || []"
             :can-use-personas="canUsePersonas || false"
           />
@@ -129,6 +131,57 @@
               </v-tooltip>
             </template>
           </v-textarea>
+          
+          <v-divider class="my-4" />
+          
+          <!-- CLI Mode Prompt Settings -->
+          <h4 class="text-h6 mb-4">CLI Mode Prompt</h4>
+          <p class="text-caption text-grey mb-3">
+            Automatically inject a CLI simulation prompt for early messages in group chats.
+          </p>
+          
+          <v-checkbox
+            v-model="cliModeEnabled"
+            label="Enable CLI mode prompt for early messages"
+            density="compact"
+          />
+          
+          <v-slider
+            v-if="cliModeEnabled"
+            v-model="cliModeThreshold"
+            label="Message threshold"
+            :min="1"
+            :max="50"
+            :step="1"
+            thumb-label
+            density="compact"
+            class="mt-2"
+          >
+            <template v-slot:append>
+              <span class="text-caption">{{ cliModeThreshold }} messages</span>
+            </template>
+          </v-slider>
+          
+          <v-divider class="my-4" />
+          
+          <!-- Combine Consecutive Messages -->
+          <h4 class="text-h6 mb-4">Message Handling</h4>
+          
+          <v-checkbox
+            v-model="combineConsecutiveMessages"
+            label="Combine consecutive same-role messages"
+            density="compact"
+          >
+            <template v-slot:append>
+              <v-tooltip location="top" open-on-click open-on-focus max-width="300">
+                <template v-slot:activator="{ props }">
+                  <v-icon v-bind="props" size="small" class="tooltip-icon">mdi-help-circle-outline</v-icon>
+                </template>
+                When enabled, consecutive messages from the same role are merged when sent to the API.
+                Disable this if you want to keep split messages separate in context.
+              </v-tooltip>
+            </template>
+          </v-checkbox>
         </div>
         
         <div v-if="selectedModel && settings.format === 'standard'">
@@ -591,6 +644,11 @@ const appendTokensBeforeCaching = ref(10000);
 const prefillUserMessageEnabled = ref(true);
 const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
 
+// CLI mode prompt settings
+const cliModeEnabled = ref(true);
+const cliModeThreshold = ref(10);
+const combineConsecutiveMessages = ref(true);
+
 const formatOptions = [
   {
     value: 'standard',
@@ -740,6 +798,19 @@ watch(() => props.conversation, async (conversation) => {
       prefillUserMessageEnabled.value = true;
       prefillUserMessageContent.value = '<cmd>cat untitled.log</cmd>';
     }
+    
+    // Load CLI mode prompt settings
+    if (conversation.cliModePrompt) {
+      cliModeEnabled.value = conversation.cliModePrompt.enabled;
+      cliModeThreshold.value = conversation.cliModePrompt.messageThreshold;
+    } else {
+      // Default values
+      cliModeEnabled.value = true;
+      cliModeThreshold.value = 10;
+    }
+    
+    // Load combine consecutive messages setting
+    combineConsecutiveMessages.value = conversation.combineConsecutiveMessages ?? true;
     
     // Load participants if in multi-participant mode
     await loadParticipants();
@@ -961,10 +1032,15 @@ function save() {
   
   // Build prefill user message settings (only for prefill format)
   let prefillUserMessage: any = undefined;
+  let cliModePrompt: any = undefined;
   if (settings.value.format === 'prefill') {
     prefillUserMessage = {
       enabled: prefillUserMessageEnabled.value,
       content: prefillUserMessageContent.value
+    };
+    cliModePrompt = {
+      enabled: cliModeEnabled.value,
+      messageThreshold: cliModeThreshold.value
     };
   }
   
@@ -976,7 +1052,9 @@ function save() {
     systemPrompt: settings.value.systemPrompt || undefined,
     settings: finalSettings,
     contextManagement,
-    prefillUserMessage
+    prefillUserMessage,
+    cliModePrompt,
+    combineConsecutiveMessages: combineConsecutiveMessages.value
   });
   
   // If in multi-participant mode, emit participants for parent to update

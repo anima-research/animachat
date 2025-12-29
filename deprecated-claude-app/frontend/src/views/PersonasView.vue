@@ -124,6 +124,7 @@
     <CreatePersonaDialog
       v-model="showCreateDialog"
       :models="models"
+      :availability="store.state.modelAvailability"
       @create="handleCreatePersona"
     />
 

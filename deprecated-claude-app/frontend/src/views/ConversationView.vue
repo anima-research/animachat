@@ -396,21 +396,22 @@
           </div>
           
           <div v-else>
-            <MessageComponent
-              v-for="(message, index) in messages"
-              :id="`message-${message.id}`"
-              :key="message.id"
-              :message="message"
+            <CompositeMessageGroup
+              v-for="(group, groupIndex) in groupedMessages"
+              :key="group.id"
+              :messages="group.messages"
               :participants="participants"
-              :is-selected-parent="selectedBranchForParent?.messageId === message.id &&
-                                   selectedBranchForParent?.branchId === message.activeBranchId"
-              :is-last-message="index === messages.length - 1"
-              :is-streaming="isStreaming && message.id === streamingMessageId && message.activeBranchId === streamingBranchId"
-              :has-error="streamingError?.messageId === message.id"
-              :error-message="streamingError?.messageId === message.id ? streamingError.error : undefined"
-              :error-suggestion="streamingError?.messageId === message.id ? streamingError.suggestion : undefined"
-              :post-hoc-affected="postHocAffectedMessages.get(message.id)"
+              :is-last-group="groupIndex === groupedMessages.length - 1"
+              :selected-branch-for-parent="selectedBranchForParent"
+              :streaming-message-id="streamingMessageId"
+              :streaming-branch-id="streamingBranchId"
+              :is-streaming="isStreaming"
+              :streaming-error="streamingError"
+              :post-hoc-affected-messages="postHocAffectedMessages"
+              :show-stuck-button="showStuckButton"
+              :authenticity-map="authenticityMap"
               @regenerate="regenerateMessage"
+              @stuck-clicked="stuckDialog = true"
               @edit="editMessage"
               @edit-only="editMessageOnly"
               @switch-branch="switchBranch"
@@ -425,6 +426,7 @@
               @post-hoc-hide-before="handlePostHocHideBefore"
               @post-hoc-unhide="handlePostHocUnhide"
               @delete-post-hoc-operation="handleDeletePostHocOperation"
+              @split="handleSplit"
             />
           </div>
         </v-container>
@@ -858,6 +860,7 @@
     <AddParticipantDialog
       v-model="addParticipantDialog"
       :models="store.state.models"
+      :availability="store.state.modelAvailability"
       :personas="personas"
       :conversation-id="currentConversation?.id || ''"
       :is-standard-conversation="currentConversation?.format === 'standard'"
@@ -866,6 +869,129 @@
       @add="handleAddParticipant"
     />
     
+    <!-- Content Blocked Dialog -->
+    <v-dialog v-model="contentBlockedDialog" max-width="600" persistent>
+      <v-card class="pa-4">
+        <v-card-title class="d-flex align-center text-h5">
+          <v-icon color="warning" class="mr-2">mdi-shield-alert</v-icon>
+          Content Moderation
+        </v-card-title>
+        
+        <v-card-text class="text-body-1">
+          <p class="mb-4">
+            Your message was flagged by our content moderation system. To protect Arc from potential 
+            legal liability and public relations risks, we filter certain categories of content on our hosted platform.
+          </p>
+          
+          <v-divider class="my-4" />
+          
+          <p class="mb-3"><strong>Options for unrestricted access:</strong></p>
+          
+          <v-list density="compact" class="bg-transparent">
+            <v-list-item lines="three">
+              <template v-slot:prepend>
+                <v-icon color="primary">mdi-account-check</v-icon>
+              </template>
+              <v-list-item-title>Request Researcher Access</v-list-item-title>
+              <v-list-item-subtitle class="text-wrap">
+                Join our Discord and request researcher access for legitimate research purposes. If you are in our Discord aleady, you most likely qualify.
+              </v-list-item-subtitle>
+            </v-list-item>
+            
+            <v-list-item lines="three">
+              <template v-slot:prepend>
+                <v-icon color="primary">mdi-github</v-icon>
+              </template>
+              <v-list-item-title>Self-Host Arc</v-list-item-title>
+              <v-list-item-subtitle class="text-wrap">
+                Download and run Arc locally for unrestricted use and privacy of data. The project is available on our GitHub. 
+              </v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
+          
+          <v-divider class="my-4" />
+          
+          <p class="text-caption text-grey">
+            <v-icon size="small" class="mr-1">mdi-information-outline</v-icon>
+            Our filters are tuned to be permissive and should only trigger on severe content. 
+            If you believe this was flagged incorrectly, please let us know on Discord.
+          </p>
+        </v-card-text>
+        
+        <v-card-actions class="d-flex justify-end ga-2 px-4 pb-4">
+          <v-btn
+            variant="outlined"
+            href="https://discord.gg/anima"
+            target="_blank"
+          >
+            <v-icon start>mdi-discord</v-icon>
+            Discord
+          </v-btn>
+          <v-btn
+            variant="outlined"
+            href="https://github.com/anima-research/animachat"
+            target="_blank"
+          >
+            <v-icon start>mdi-github</v-icon>
+            GitHub
+          </v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            @click="contentBlockedDialog = false"
+          >
+            OK
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Stuck Generation Dialog -->
+    <v-dialog v-model="stuckDialog" max-width="550" persistent>
+      <v-card class="pa-4">
+        <v-card-title class="d-flex align-center text-h5">
+          <v-icon color="warning" class="mr-2">mdi-alert-circle</v-icon>
+          Generation Appears Stuck
+        </v-card-title>
+        
+        <v-card-text class="text-body-1">
+          <p class="mb-4">
+            The AI generation has been running for over a minute without producing any output. 
+            This is an intermittent issue we're investigating. Most likely it is related to real-time sync malfunctioning.
+          </p>
+          
+          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+            <strong>Help us fix this!</strong> Submitting diagnostics will help us identify the cause. 
+            This includes console logs from your browser session (no personal data).
+          </v-alert>
+          
+          <p class="text-body-2 text-grey">
+            After submitting, the page will reload to restore normal operation.
+          </p>
+        </v-card-text>
+        
+        <v-card-actions class="justify-end">
+          <v-btn
+            variant="text"
+            @click="dismissStuckDialog"
+          >
+            Just Reload
+          </v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="stuckAnalyticsSubmitting"
+            @click="submitStuckAnalytics"
+          >
+            <v-icon start>mdi-send</v-icon>
+            Submit Diagnostics & Reload
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+    
+    <!-- Stuck button is now shown inline next to the generating indicator in MessageComponent -->
+
     <!-- Error snackbar for non-streaming errors (pricing validation, etc.) -->
     <v-snackbar
       v-model="errorSnackbar"
@@ -893,7 +1019,7 @@ import { useStore } from '@/store';
 import { api } from '@/services/api';
 import type { Conversation, Message, Participant, Model, Bookmark, Persona } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema, getValidatedModelDefaults } from '@deprecated-claude/shared';
-import MessageComponent from '@/components/MessageComponent.vue';
+import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
@@ -909,6 +1035,7 @@ import MetricsDisplay from '@/components/MetricsDisplay.vue';
 import ModelPillBar from '@/components/ModelPillBar.vue';
 import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
 import { getModelColor } from '@/utils/modelColors';
+import { computeAuthenticity, type AuthenticityStatus } from '@/utils/authenticity';
 
 const route = useRoute();
 const router = useRouter();
@@ -935,6 +1062,7 @@ const duplicateConversationTarget = ref<Conversation | null>(null);
 const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
 const addParticipantDialog = ref(false);
+const contentBlockedDialog = ref(false);
 const rawImportData = ref('');
 const messageInput = ref('');
 const personas = ref<Persona[]>([]);
@@ -947,6 +1075,29 @@ const isProgrammaticScroll = ref(false);  // Tracks when scroll is from code, no
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
 const isLoadingConversation = ref(false);
+
+// Track last completed branch to prevent re-triggering streaming on DEBUG CAPTURE updates
+const lastCompletedBranchId = ref<string | null>(null);
+const lastCompletedTime = ref<number | null>(null);
+
+// Stuck generation detection
+const streamingStartTime = ref<number | null>(null);
+const firstTokenReceived = ref(false);
+const showStuckButton = ref(false);
+const stuckDialog = ref(false);
+const stuckAnalyticsSubmitting = ref(false);
+let stuckCheckTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Get stuck threshold based on current model - Anthropic is faster to detect issues
+const getStuckThresholdMs = () => {
+  const model = currentConversation.value?.model || '';
+  const isAnthropic = model.includes('anthropic') || model.includes('claude');
+  return isAnthropic ? 15000 : 60000; // 15s for Anthropic, 60s for others
+};
+
+// Console log collection for debugging
+const consoleLogs = ref<string[]>([]);
+const MAX_CONSOLE_LOGS = 200;
 
 // General error snackbar (for non-streaming errors like pricing validation)
 const errorSnackbar = ref(false);
@@ -1133,6 +1284,62 @@ function getPermissionColor(permission: string): string {
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
+
+// Compute authenticity for visible messages
+const authenticityMap = computed((): Map<string, AuthenticityStatus> => {
+  return computeAuthenticity(messages.value, participants.value);
+});
+
+// Group consecutive messages from the same participant for visual combining
+interface MessageGroup {
+  id: string;
+  messages: any[]; // Message[]
+  participantName: string;
+}
+
+const groupedMessages = computed((): MessageGroup[] => {
+  const msgs = messages.value;
+  if (!msgs || msgs.length === 0) return [];
+  
+  const groups: MessageGroup[] = [];
+  let currentGroup: MessageGroup | null = null;
+  
+  for (const message of msgs) {
+    const branch = message.branches?.find((b: any) => b.id === message.activeBranchId);
+    if (!branch) continue;
+    
+    // Get participant name
+    let participantName = branch.role === 'user' ? 'User' : 'Assistant';
+    if (branch.participantId) {
+      const participant = participants.value.find(p => p.id === branch.participantId);
+      if (participant) {
+        participantName = participant.name;
+      }
+    }
+    
+    // Check if this continues the current group
+    if (currentGroup && currentGroup.participantName === participantName && participantName !== '') {
+      currentGroup.messages.push(message);
+    } else {
+      // Start a new group
+      if (currentGroup) {
+        groups.push(currentGroup);
+      }
+      currentGroup = {
+        id: `group-${message.id}`,
+        messages: [message],
+        participantName
+      };
+    }
+  }
+  
+  // Don't forget the last group
+  if (currentGroup) {
+    groups.push(currentGroup);
+  }
+  
+  return groups;
+});
 const wsConnectionState = computed(() => store.state.wsConnectionState);
 const isWsConnected = computed(() => store.state.wsConnectionState === 'connected');
 
@@ -1153,11 +1360,13 @@ const postHocAffectedMessages = computed(() => {
     const activeBranch = msg.branches.find((b: any) => b.id === msg.activeBranchId);
     if (activeBranch?.postHocOperation) {
       operations.push({ order: msg.order, op: activeBranch.postHocOperation });
-      console.log('[PostHoc] Found visible operation:', activeBranch.postHocOperation.type, 'targeting:', activeBranch.postHocOperation.targetMessageId);
     }
   }
   
-  console.log('[PostHoc] Visible messages:', visibleMsgs.length, 'Operations found:', operations.length);
+  // Debug logging only when there are operations (computed runs frequently)
+  if (operations.length > 0) {
+    console.log('[PostHoc] Found operations:', operations.length);
+  }
   
   if (operations.length === 0) return affected;
   
@@ -1569,6 +1778,32 @@ watch(conversations, (newConversations) => {
 
 // Load initial data
 onMounted(async () => {
+  // Set up console log interceptor for debugging stuck generations
+  if (typeof window !== 'undefined') {
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    
+    const captureLog = (level: string, args: any[]) => {
+      const timestamp = new Date().toISOString();
+      const message = args.map(a => {
+        try {
+          return typeof a === 'object' ? JSON.stringify(a) : String(a);
+        } catch {
+          return '[unserializable]';
+        }
+      }).join(' ');
+      consoleLogs.value.push(`[${timestamp}] [${level}] ${message}`);
+      if (consoleLogs.value.length > MAX_CONSOLE_LOGS) {
+        consoleLogs.value.shift();
+      }
+    };
+    
+    console.log = (...args) => { captureLog('LOG', args); originalLog.apply(console, args); };
+    console.warn = (...args) => { captureLog('WARN', args); originalWarn.apply(console, args); };
+    console.error = (...args) => { captureLog('ERROR', args); originalError.apply(console, args); };
+  }
+  
   if (typeof window !== 'undefined') {
     updateMobileState();
     window.addEventListener('resize', updateMobileState);
@@ -1605,6 +1840,7 @@ onMounted(async () => {
             isStreaming.value = true;
             autoScrollEnabled.value = true; // Re-enable auto-scroll for new messages
             streamingError.value = null; // Clear any previous errors
+            startStuckDetection(); // Start tracking for stuck generation
           }
           
           // Update the conversation's updatedAt timestamp to move it to the top
@@ -1624,20 +1860,24 @@ onMounted(async () => {
         if (data.message && data.message.branches?.length > 0) {
           const activeBranch = data.message.branches.find((b: any) => b.id === data.message.activeBranchId);
           // If the active branch is an assistant with empty/minimal content, streaming is starting
-          if (activeBranch && activeBranch.role === 'assistant' && (!activeBranch.content || activeBranch.content.length < 10)) {
-            // Only enable auto-scroll if this is a NEW streaming session, not an update to existing parallel generation
-            // This prevents re-enabling auto-scroll when user has scrolled up during parallel generation
-            const isNewStreamingSession = !isStreaming.value || 
-              streamingMessageId.value !== data.message.id;
-            
-            if (isNewStreamingSession) {
-              streamingMessageId.value = data.message.id;
-              streamingBranchId.value = data.message.activeBranchId;
-              isStreaming.value = true;
-              autoScrollEnabled.value = true;
-              streamingError.value = null;
-              console.log('[WebSocket] Regenerate detected - starting streaming for message:', data.message.id.slice(0, 8));
-            }
+          // BUT: Don't re-enter streaming mode if:
+          // 1. We're already streaming for this exact message, OR
+          // 2. This branch ID was recently streamed (completed within last 30 seconds)
+          // This prevents race conditions with fast completions and DEBUG CAPTURE updates
+          const alreadyStreamingThisMessage = isStreaming.value && streamingMessageId.value === data.message.id;
+          const recentlyCompletedBranch = lastCompletedBranchId.value === data.message.activeBranchId && 
+            lastCompletedTime.value && (Date.now() - lastCompletedTime.value < 30000);
+          
+          if (!alreadyStreamingThisMessage && !recentlyCompletedBranch && 
+              activeBranch && activeBranch.role === 'assistant' && 
+              (!activeBranch.content || activeBranch.content.length < 10)) {
+            streamingMessageId.value = data.message.id;
+            streamingBranchId.value = data.message.activeBranchId;
+            isStreaming.value = true;
+            autoScrollEnabled.value = true;
+            streamingError.value = null;
+            startStuckDetection(); // Start tracking for stuck generation
+            console.log('[WebSocket] Regenerate detected - starting streaming for message:', data.message.id.slice(0, 8));
           }
         }
       });
@@ -1650,13 +1890,24 @@ onMounted(async () => {
           const message = store.state.allMessages.find(m => m.id === data.messageId);
           const isActiveBranch = message && message.activeBranchId === data.branchId;
           
+          // Track token arrival for stuck detection (only for tracked message)
+          if (data.messageId === streamingMessageId.value && (data.content || data.contentBlocks)) {
+            onTokenReceived();
+          }
+          
           if (data.isComplete || data.aborted) {
             // This branch finished streaming
+            // Track this completed branch to prevent re-triggering from DEBUG CAPTURE updates
+            if (data.branchId) {
+              lastCompletedBranchId.value = data.branchId;
+              lastCompletedTime.value = Date.now();
+            }
             // Clear tracking if this was the tracked branch (whether active or not)
             if (data.branchId === streamingBranchId.value) {
               streamingBranchId.value = null;
               isStreaming.value = false;
               streamingMessageId.value = null;
+              clearStuckDetection();
             }
             if (data.aborted) {
               console.log('Generation was aborted');
@@ -1679,6 +1930,7 @@ onMounted(async () => {
           isStreaming.value = false;
           streamingMessageId.value = null;
           streamingBranchId.value = null;
+          clearStuckDetection();
         }
       });
       
@@ -1798,6 +2050,12 @@ onMounted(async () => {
           errorSnackbarDetails.value = data.details || data.suggestion || '';
           errorSnackbar.value = true;
         }
+      });
+      
+      store.state.wsService.on('content_blocked', (data: any) => {
+        // Content was blocked by moderation - show informative dialog
+        console.warn('Content blocked by moderation:', data);
+        contentBlockedDialog.value = true;
       });
       
       // Multi-user room events
@@ -2448,6 +2706,83 @@ function abortGeneration() {
   // Note: isStreaming will be reset when we receive the aborted stream event
 }
 
+// Stuck generation detection
+function startStuckDetection() {
+  streamingStartTime.value = Date.now();
+  firstTokenReceived.value = false;
+  showStuckButton.value = false;
+  
+  // Clear any existing timer
+  if (stuckCheckTimer) {
+    clearTimeout(stuckCheckTimer);
+  }
+  
+  // Set timer to check for stuck state after threshold (model-dependent)
+  const thresholdMs = getStuckThresholdMs();
+  stuckCheckTimer = setTimeout(() => {
+    if (isStreaming.value && !firstTokenReceived.value) {
+      console.warn('[Stuck Detection] Generation appears stuck - no tokens received after', thresholdMs / 1000, 'seconds');
+      showStuckButton.value = true;
+    }
+  }, thresholdMs);
+}
+
+function onTokenReceived() {
+  if (!firstTokenReceived.value) {
+    firstTokenReceived.value = true;
+    showStuckButton.value = false;
+    if (stuckCheckTimer) {
+      clearTimeout(stuckCheckTimer);
+      stuckCheckTimer = null;
+    }
+  }
+}
+
+function clearStuckDetection() {
+  streamingStartTime.value = null;
+  firstTokenReceived.value = false;
+  showStuckButton.value = false;
+  if (stuckCheckTimer) {
+    clearTimeout(stuckCheckTimer);
+    stuckCheckTimer = null;
+  }
+}
+
+async function submitStuckAnalytics() {
+  stuckAnalyticsSubmitting.value = true;
+  
+  try {
+    const analyticsData = {
+      timestamp: new Date().toISOString(),
+      streamingStartTime: streamingStartTime.value ? new Date(streamingStartTime.value).toISOString() : null,
+      elapsedMs: streamingStartTime.value ? Date.now() - streamingStartTime.value : null,
+      conversationId: currentConversation.value?.id,
+      streamingMessageId: streamingMessageId.value,
+      firstTokenReceived: firstTokenReceived.value,
+      wsConnected: store.state.wsService?.isConnected,
+      userAgent: navigator.userAgent,
+      consoleLogs: consoleLogs.value.slice(-100), // Last 100 logs
+      currentUrl: window.location.href,
+    };
+    
+    // Send to backend
+    await api.post('/analytics/stuck-generation', analyticsData);
+    console.log('[Stuck Detection] Analytics submitted successfully');
+  } catch (error) {
+    console.error('[Stuck Detection] Failed to submit analytics:', error);
+  } finally {
+    stuckAnalyticsSubmitting.value = false;
+    stuckDialog.value = false;
+    // Reload the page
+    window.location.reload();
+  }
+}
+
+function dismissStuckDialog() {
+  stuckDialog.value = false;
+  showStuckButton.value = false;
+}
+
 async function editMessage(messageId: string, branchId: string, content: string) {
   // Pass the currently selected responder for multi-participant mode
   let responderId: string | undefined;
@@ -3066,6 +3401,24 @@ async function handlePostHocEditContent(messageId: string, branchId: string, con
     await store.loadConversation(currentConversation.value.id);
   } catch (error) {
     console.error('Failed to create post-hoc edit operation:', error);
+  }
+}
+
+async function handleSplit(messageId: string, branchId: string, splitPosition: number) {
+  if (!currentConversation.value) return;
+  
+  try {
+    const response = await api.post(`/conversations/${currentConversation.value.id}/messages/${messageId}/split`, {
+      branchId,
+      splitPosition
+    });
+    
+    if (response.data.success) {
+      // Reload to get updated messages
+      await store.loadConversation(currentConversation.value.id);
+    }
+  } catch (error) {
+    console.error('Failed to split message:', error);
   }
 }
 
@@ -3859,6 +4212,27 @@ function formatDate(date: Date | string): string {
 </script>
 
 <style scoped>
+/* Force multiline subtitles in content moderation dialog */
+.v-dialog :deep(.v-list-item-subtitle) {
+  -webkit-line-clamp: unset !important;
+  line-clamp: unset !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  display: block !important;
+  line-height: 1.4;
+}
+
+/* Connection status indicator */
+.connection-status-bar {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: rgba(255, 152, 0, 0.1);
+  border: 1px solid rgba(255, 152, 0, 0.3);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
 /* Custom scrollbar styles for better visibility in dark theme */
 .overflow-y-auto::-webkit-scrollbar {
   width: 12px;
@@ -4331,5 +4705,17 @@ function formatDate(date: Date | string): string {
     background-color: transparent;
     box-shadow: none;
   }
+}
+
+/* Stuck button animation is now inline in MessageComponent */
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>
