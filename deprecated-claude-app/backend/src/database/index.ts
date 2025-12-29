@@ -2444,7 +2444,7 @@ export class Database {
     return message;
   }
 
-  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean): Promise<Message | null> {
+  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, preserveActiveBranch?: boolean): Promise<Message | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
     
@@ -2472,10 +2472,11 @@ export class Database {
     };
 
     // Create new message object with added branch
+    // If preserveActiveBranch is true, don't change the active branch (used for parallel generation)
     const updatedMessage = {
       ...message,
       branches: [...message.branches, newBranch],
-      activeBranchId: newBranch.id
+      activeBranchId: preserveActiveBranch ? message.activeBranchId : newBranch.id
     };
     
     this.messages.set(messageId, updatedMessage);

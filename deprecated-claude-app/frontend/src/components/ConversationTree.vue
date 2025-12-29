@@ -108,6 +108,7 @@ const collapseNonActive = ref(false); // Hide nodes not on active path or immedi
 const nodesWithCollapsedDescendants = ref(new Set<string>()); // Track nodes that have hidden children
 const store = useStore();
 const bookmarks = ref<Bookmark[]>([]);
+const lastTreeStructure = ref<string>(''); // Cache structure fingerprint to avoid re-renders during streaming
 
 let svg: d3.Selection<SVGElement, unknown, null, undefined>;
 let g: d3.Selection<SVGGElement, unknown, null, undefined>;
@@ -911,9 +912,36 @@ async function loadBookmarks() {
   }
 }
 
-// Watch for changes and re-render
+// Generate a fingerprint of tree structure (IDs only, not content)
+// This helps us avoid re-rendering during streaming when only content changes
+function getTreeStructureFingerprint(): string {
+  if (!props.messages || props.messages.length === 0) return '';
+  
+  // Build fingerprint from: message IDs, branch IDs, parent relationships, active branches
+  const parts: string[] = [];
+  for (const msg of props.messages) {
+    parts.push(`m:${msg.id}:${msg.activeBranchId}`);
+    for (const branch of msg.branches) {
+      parts.push(`b:${branch.id}:${branch.parentBranchId || 'root'}`);
+    }
+  }
+  // Include bookmarks
+  parts.push(`bm:${bookmarks.value.map(b => b.id).join(',')}`);
+  
+  return parts.join('|');
+}
+
+// Check if structure changed and render if needed
+function renderIfStructureChanged() {
+  const newFingerprint = getTreeStructureFingerprint();
+  if (newFingerprint !== lastTreeStructure.value) {
+    lastTreeStructure.value = newFingerprint;
+    renderTree();
+  }
+}
+
+// Watch for selection/UI changes - render immediately (no debounce)
 watch([
-  () => props.messages,
   () => props.currentMessageId,
   () => props.currentBranchId,
   () => props.selectedParentMessageId,
@@ -924,7 +952,13 @@ watch([
   alignActivePath,
   collapseNonActive
 ], () => {
-  renderTree();
+  renderTree(); // Immediate render for user interactions
+});
+
+// Watch for message changes separately - only render if structure changed
+// This prevents re-renders during streaming (content-only updates)
+watch(() => props.messages, () => {
+  renderIfStructureChanged();
 }, { deep: true });
 
 // Reset manual flag when messages change significantly (new conversation)

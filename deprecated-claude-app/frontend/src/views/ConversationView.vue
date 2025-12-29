@@ -405,7 +405,7 @@
               :is-selected-parent="selectedBranchForParent?.messageId === message.id &&
                                    selectedBranchForParent?.branchId === message.activeBranchId"
               :is-last-message="index === messages.length - 1"
-              :is-streaming="isStreaming && message.id === streamingMessageId"
+              :is-streaming="isStreaming && message.id === streamingMessageId && message.activeBranchId === streamingBranchId"
               :has-error="streamingError?.messageId === message.id"
               :error-message="streamingError?.messageId === message.id ? streamingError.error : undefined"
               :error-suggestion="streamingError?.messageId === message.id ? streamingError.suggestion : undefined"
@@ -942,6 +942,8 @@ const isStreaming = ref(false);
 const streamingMessageId = ref<string | null>(null);
 const streamingBranchId = ref<string | null>(null);  // Track which branch is streaming
 const autoScrollEnabled = ref(true);
+const userScrolledRecently = ref(false);  // Prevents auto-scroll from fighting with user
+const isProgrammaticScroll = ref(false);  // Tracks when scroll is from code, not user
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
 const isLoadingConversation = ref(false);
@@ -1599,6 +1601,7 @@ onMounted(async () => {
           const lastBranch = data.message.branches[data.message.branches.length - 1];
           if (lastBranch.role === 'assistant') {
             streamingMessageId.value = data.message.id;
+            streamingBranchId.value = lastBranch.id; // Track which branch is streaming
             isStreaming.value = true;
             autoScrollEnabled.value = true; // Re-enable auto-scroll for new messages
             streamingError.value = null; // Clear any previous errors
@@ -1622,11 +1625,19 @@ onMounted(async () => {
           const activeBranch = data.message.branches.find((b: any) => b.id === data.message.activeBranchId);
           // If the active branch is an assistant with empty/minimal content, streaming is starting
           if (activeBranch && activeBranch.role === 'assistant' && (!activeBranch.content || activeBranch.content.length < 10)) {
-            streamingMessageId.value = data.message.id;
-            isStreaming.value = true;
-            autoScrollEnabled.value = true;
-            streamingError.value = null;
-            console.log('[WebSocket] Regenerate detected - starting streaming for message:', data.message.id.slice(0, 8));
+            // Only enable auto-scroll if this is a NEW streaming session, not an update to existing parallel generation
+            // This prevents re-enabling auto-scroll when user has scrolled up during parallel generation
+            const isNewStreamingSession = !isStreaming.value || 
+              streamingMessageId.value !== data.message.id;
+            
+            if (isNewStreamingSession) {
+              streamingMessageId.value = data.message.id;
+              streamingBranchId.value = data.message.activeBranchId;
+              isStreaming.value = true;
+              autoScrollEnabled.value = true;
+              streamingError.value = null;
+              console.log('[WebSocket] Regenerate detected - starting streaming for message:', data.message.id.slice(0, 8));
+            }
           }
         }
       });
@@ -2024,8 +2035,9 @@ watch(() => route.params.id, async (newId, oldId) => {
 watch(messages, () => {
   // Don't auto-scroll if:
   // 1. Auto-scroll is disabled (user scrolled up)
-  // 2. We're switching branches via the navigation arrows
-  // 3. We're streaming but the streaming branch is not the visible one
+  // 2. User is actively scrolling (prevents fighting with user input)
+  // 3. We're switching branches via the navigation arrows
+  // 4. We're streaming but the streaming branch is not the visible one
   
   // Check if the currently streaming branch is visible
   const isStreamingVisibleBranch = !isStreaming.value || (
@@ -2035,6 +2047,7 @@ watch(messages, () => {
   );
   
   const shouldScroll = autoScrollEnabled.value && 
+                       !userScrolledRecently.value &&
                        !isSwitchingBranch.value &&
                        isStreamingVisibleBranch;
   
@@ -2047,6 +2060,7 @@ watch(messages, () => {
 
 // Set up scroll sync for breadcrumb navigation and auto-scroll detection
 let scrollTimeout: number;
+let userScrollCooldown: number;
 watch(messagesContainer, (container) => {
   if (container) {
     // Vuetify components expose their DOM element via $el
@@ -2054,15 +2068,25 @@ watch(messagesContainer, (container) => {
 
     if (element && element.addEventListener) {
       const handleScroll = () => {
-        // Check if user has scrolled away from bottom - disable auto-scroll if so
-        if (isStreaming.value) {
+        // Ignore programmatic scrolls for user interaction tracking
+        // But still allow them to sync breadcrumbs
+        if (!isProgrammaticScroll.value) {
+          // Mark that user scrolled recently - prevents auto-scroll from fighting
+          userScrolledRecently.value = true;
+          clearTimeout(userScrollCooldown);
+          userScrollCooldown = window.setTimeout(() => {
+            userScrolledRecently.value = false;
+          }, 300); // Wait 300ms after last scroll before allowing auto-scroll
+          
+          // Check scroll position and update autoScrollEnabled
+          // This allows user to scroll up to disable auto-scroll at any time
           const scrollBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-          // If even 1px from bottom, user has scrolled up - disable auto-scroll
-          if (scrollBottom > 1) {
+          // If user has scrolled up more than a small threshold, disable auto-scroll
+          if (scrollBottom > 50) {
             autoScrollEnabled.value = false;
           }
-          // If user scrolls back to absolute bottom, re-enable
-          else if (scrollBottom <= 1) {
+          // If user scrolls back near the bottom, re-enable (only for user scrolls)
+          else if (scrollBottom <= 10) {
             autoScrollEnabled.value = true;
           }
         }
@@ -2132,6 +2156,9 @@ watch(messages, () => {
 }, { deep: true });
 
 function scrollToBottom(smooth: boolean = false) {
+  // Mark this as a programmatic scroll so the scroll handler doesn't re-enable autoScroll
+  isProgrammaticScroll.value = true;
+  
   // For long conversations, we need multiple frames to ensure full render
   const attemptScroll = (attempts: number = 0) => {
     requestAnimationFrame(() => {
@@ -2155,8 +2182,18 @@ function scrollToBottom(smooth: boolean = false) {
               if (el && el.scrollHeight > previousHeight) {
                 // Content grew, scroll again
                 attemptScroll(attempts + 1);
+              } else {
+                // Done scrolling, clear the programmatic flag after a short delay
+                setTimeout(() => {
+                  isProgrammaticScroll.value = false;
+                }, 100);
               }
             }, 50); // Reduced delay for more responsive scrolling
+          } else {
+            // Max attempts reached, clear the flag
+            setTimeout(() => {
+              isProgrammaticScroll.value = false;
+            }, 100);
           }
         }
       }
@@ -2437,12 +2474,11 @@ async function editMessageOnly(messageId: string, branchId: string, content: str
 function switchBranch(messageId: string, branchId: string) {
   isSwitchingBranch.value = true;
   
-  // If switching away from a streaming branch, clear streaming tracking
-  // This ensures we don't auto-scroll when viewing a different branch
-  if (streamingMessageId.value === messageId && streamingBranchId.value !== branchId) {
-    streamingBranchId.value = null;
-    streamingMessageId.value = null;
-    isStreaming.value = false;
+  // Don't clear streaming state here - let stream completion events handle that
+  // The scroll logic will check if the streaming branch is visible
+  // Also disable auto-scroll when switching branches during streaming
+  if (isStreaming.value) {
+    autoScrollEnabled.value = false;
   }
   
   store.switchBranch(messageId, branchId);

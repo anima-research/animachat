@@ -808,6 +808,7 @@ async function handleChatMessage(
     if (samplingBranchCount > 1) {
       for (let i = 1; i < samplingBranchCount; i++) {
         // Add a new branch to the same assistant message
+        // Use preserveActiveBranch: true to keep selection on the first branch
         const newBranchMessage = await db.addMessageBranch(
           assistantMessage.id,
           assistantMessage.conversationId,
@@ -818,7 +819,9 @@ async function handleChatMessage(
           responder.model || conversation.model,
           responder.id,
           undefined, // no attachments
-          ws.userId  // user who triggered the generation
+          ws.userId,  // user who triggered the generation
+          undefined, // hiddenFromAi
+          true       // preserveActiveBranch - keep selection on first branch during parallel gen
         );
         
         if (newBranchMessage) {
