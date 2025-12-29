@@ -1,6 +1,7 @@
 import { Message, getActiveBranch, ModelSettings, TokenUsage } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
+import { parseThinkingTags } from '../utils/thinking-parser.js';
 
 interface OpenAIMessage {
   role: 'user' | 'assistant' | 'system';
@@ -119,7 +120,7 @@ export class OpenAICompatibleService {
             const data = line.slice(6);
             if (data === '[DONE]') {
               // Parse thinking tags from full content and create contentBlocks
-              const contentBlocks = this.parseThinkingTags(fullContent);
+              const contentBlocks = parseThinkingTags(fullContent);
               await onChunk('', true, contentBlocks.length > 0 ? contentBlocks : undefined);
               break;
             }
@@ -179,42 +180,6 @@ export class OpenAICompatibleService {
       
       throw error;
     }
-  }
-
-  /**
-   * Parse <think>...</think> tags from content and create contentBlocks
-   * Used for open source models that output reasoning in this format
-   */
-  private parseThinkingTags(content: string): any[] {
-    const contentBlocks: any[] = [];
-    
-    // Match all <think>...</think> blocks (non-greedy, handles multiple)
-    const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
-    let match;
-    let textContent = content;
-    
-    while ((match = thinkRegex.exec(content)) !== null) {
-      const thinkingContent = match[1].trim();
-      if (thinkingContent) {
-        contentBlocks.push({
-          type: 'thinking',
-          thinking: thinkingContent
-        });
-      }
-    }
-    
-    // Remove thinking tags from content to get the text part
-    textContent = content.replace(thinkRegex, '').trim();
-    
-    // Add text block if there's remaining content
-    if (textContent && contentBlocks.length > 0) {
-      contentBlocks.push({
-        type: 'text',
-        text: textContent
-      });
-    }
-    
-    return contentBlocks;
   }
 
   formatMessagesForOpenAI(messages: Message[], systemPrompt?: string): OpenAIMessage[] {

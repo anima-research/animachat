@@ -816,7 +816,7 @@
     </v-navigation-drawer>
 
     <!-- Dialogs -->
-    <ImportDialogV2
+    <ImportDialog
       v-model="importDialog"
     />
     
@@ -1028,7 +1028,7 @@ import { api } from '@/services/api';
 import type { Conversation, Message, Participant, Model, Bookmark, Persona } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema, getValidatedModelDefaults } from '@deprecated-claude/shared';
 import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
-import ImportDialogV2 from '@/components/ImportDialogV2.vue';
+import ImportDialog from '@/components/ImportDialog.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
 import ShareDialog from '@/components/ShareDialog.vue';

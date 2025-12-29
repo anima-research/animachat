@@ -3,6 +3,8 @@ import { Message, getActiveBranch, ModelSettings } from '@deprecated-claude/shar
 import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import sharp from 'sharp';
+import { getMediaType, isImageAttachment, isPdfAttachment } from '../utils/media-utils.js';
+import { parseThinkingTags } from '../utils/thinking-parser.js';
 
 // Anthropic's image size limit is 5MB, we target 4MB to have margin
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -307,7 +309,7 @@ export class AnthropicService {
           let finalContentBlocks = contentBlocks;
           if (contentBlocks.length === 0) {
             const fullResponse = chunks.join('');
-            const parsedBlocks = this.parseThinkingTags(fullResponse);
+            const parsedBlocks = parseThinkingTags(fullResponse);
             if (parsedBlocks.length > 0) {
               finalContentBlocks = parsedBlocks;
               console.log(`[Anthropic API] Parsed ${parsedBlocks.length} thinking blocks from prefill response`);
@@ -459,9 +461,9 @@ export class AnthropicService {
           
           console.log(`Processing ${activeBranch.attachments.length} attachments for user message`);
           for (const attachment of activeBranch.attachments) {
-            const isImage = this.isImageAttachment(attachment.fileName);
-            const isPdf = this.isPdfAttachment(attachment.fileName);
-            const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
+            const isImage = isImageAttachment(attachment.fileName);
+            const isPdf = isPdfAttachment(attachment.fileName);
+            const mediaType = getMediaType(attachment.fileName, (attachment as any).mimeType);
             
             if (isImage) {
               // Resize image if needed (Anthropic has 5MB limit)
@@ -626,13 +628,6 @@ export class AnthropicService {
     return contentBlocks;
   }
   
-  private isImageAttachment(fileName: string): boolean {
-    // Note: GIF excluded - Anthropic API has issues with some GIF formats
-    const imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-    const extension = fileName.split('.').pop()?.toLowerCase() || '';
-    return imageExtensions.includes(extension);
-  }
-  
   /**
    * Resize an image if it exceeds the max size limit (4MB to stay under Anthropic's 5MB limit)
    * Returns the resized base64 string, or the original if already small enough
@@ -682,56 +677,6 @@ export class AnthropicService {
       console.error(`[Anthropic] Failed to resize image ${fileName}:`, error);
       return base64Data; // Return original on error
     }
-  }
-  
-  private isPdfAttachment(fileName: string): boolean {
-    const extension = fileName.split('.').pop()?.toLowerCase() || '';
-    return extension === 'pdf';
-  }
-  
-  private isAudioAttachment(fileName: string): boolean {
-    const audioExtensions = ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'webm'];
-    const extension = fileName.split('.').pop()?.toLowerCase() || '';
-    return audioExtensions.includes(extension);
-  }
-  
-  private isVideoAttachment(fileName: string): boolean {
-    const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
-    const extension = fileName.split('.').pop()?.toLowerCase() || '';
-    return videoExtensions.includes(extension);
-  }
-  
-  private getMediaType(fileName: string, mimeType?: string): string {
-    // Use provided mimeType if available
-    if (mimeType) return mimeType;
-    
-    const extension = fileName.split('.').pop()?.toLowerCase() || '';
-    const mediaTypes: { [key: string]: string } = {
-      // Images
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'gif': 'image/gif',
-      'webp': 'image/webp',
-      // Documents
-      'pdf': 'application/pdf',
-      // Audio
-      'mp3': 'audio/mpeg',
-      'wav': 'audio/wav',
-      'flac': 'audio/flac',
-      'ogg': 'audio/ogg',
-      'm4a': 'audio/mp4',
-      'aac': 'audio/aac',
-      // Video
-      'mp4': 'video/mp4',
-      'mov': 'video/quicktime',
-      'webm': 'video/webm',
-    };
-    return mediaTypes[extension] || 'application/octet-stream';
-  }
-  
-  private getImageMediaType(fileName: string): string {
-    return this.getMediaType(fileName);
   }
 
   // Demo mode simulation
@@ -824,41 +769,5 @@ export class AnthropicService {
     const savings = cachedTokens * pricePerToken * 0.9;
     
     return savings;
-  }
-  
-  /**
-   * Parse <think>...</think> tags from content and create contentBlocks
-   * Used for prefill mode thinking where API thinking is not available
-   */
-  private parseThinkingTags(content: string): any[] {
-    const contentBlocks: any[] = [];
-    
-    // Match all <think>...</think> blocks (non-greedy, handles multiple)
-    const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
-    let match;
-    let textContent = content;
-    
-    while ((match = thinkRegex.exec(content)) !== null) {
-      const thinkingContent = match[1].trim();
-      if (thinkingContent) {
-        contentBlocks.push({
-          type: 'thinking',
-          thinking: thinkingContent
-        });
-      }
-    }
-    
-    // Remove thinking tags from content to get the text part
-    textContent = content.replace(thinkRegex, '').trim();
-    
-    // Add text block if there's remaining content
-    if (textContent && contentBlocks.length > 0) {
-      contentBlocks.push({
-        type: 'text',
-        text: textContent
-      });
-    }
-    
-    return contentBlocks;
   }
 }
