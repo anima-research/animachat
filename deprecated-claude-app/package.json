@@ -18,7 +18,9 @@
     "concurrently": "^8.2.2"
   },
   "dependencies": {
+    "@types/compression": "^1.8.1",
     "@types/multer": "^2.0.0",
+    "compression": "^1.8.1",
     "multer": "^2.0.2"
   }
 }
