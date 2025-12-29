@@ -9,7 +9,6 @@ import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { Logger } from '../utils/logger.js';
 import { ContextManager } from './context-manager.js';
-import { parseThinkingTags } from '../utils/thinking-parser.js';
 
 // Internal format type that includes 'messages' and 'completion' modes
 // - 'standard': Traditional alternating user/assistant (no participant names)
@@ -1463,6 +1462,42 @@ export class InferenceService {
     
     Logger.inference(`[PostHoc] Result: ${result.length} messages (original: ${messages.length})`);
     return result;
+  }
+  
+  /**
+   * Parse <think>...</think> tags from content and create contentBlocks
+   * Used for prefill mode thinking where API thinking is not available
+   */
+  private parseThinkingTags(content: string): any[] {
+    const contentBlocks: any[] = [];
+    
+    // Match all <think>...</think> blocks (non-greedy, handles multiple)
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
+    let match;
+    let textContent = content;
+    
+    while ((match = thinkRegex.exec(content)) !== null) {
+      const thinkingContent = match[1].trim();
+      if (thinkingContent) {
+        contentBlocks.push({
+          type: 'thinking',
+          thinking: thinkingContent
+        });
+      }
+    }
+    
+    // Remove thinking tags from content to get the text part
+    textContent = content.replace(thinkRegex, '').trim();
+    
+    // Add text block if there's remaining content
+    if (textContent && contentBlocks.length > 0) {
+      contentBlocks.push({
+        type: 'text',
+        text: textContent
+      });
+    }
+    
+    return contentBlocks;
   }
   
   private createMessagesModeChunkHandler(

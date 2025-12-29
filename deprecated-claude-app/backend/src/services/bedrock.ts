@@ -3,7 +3,6 @@ import { Message, getActiveBranch, ModelSettings } from '@deprecated-claude/shar
 import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import sharp from 'sharp';
-import { getMediaType, isImageAttachment, isPdfAttachment } from '../utils/media-utils.js';
 
 // Image size limit - Anthropic/Bedrock limit is 5MB, we target 4MB to have margin
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -171,9 +170,9 @@ export class BedrockService {
           
           console.log(`[Bedrock] Processing ${activeBranch.attachments.length} attachments for user message`);
           for (const attachment of activeBranch.attachments) {
-            const isImage = isImageAttachment(attachment.fileName);
-            const isPdf = isPdfAttachment(attachment.fileName);
-            const mediaType = getMediaType(attachment.fileName, (attachment as any).mimeType);
+            const isImage = this.isImageAttachment(attachment.fileName);
+            const isPdf = this.isPdfAttachment(attachment.fileName);
+            const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
             
             if (isImage) {
               // Resize image if needed (Anthropic/Bedrock has 5MB limit)
@@ -221,6 +220,36 @@ export class BedrockService {
     }
 
     return formattedMessages;
+  }
+
+  private isImageAttachment(fileName: string): boolean {
+    // Note: GIF excluded - Anthropic API has issues with some GIF formats
+    const imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    return imageExtensions.includes(extension);
+  }
+  
+  private isPdfAttachment(fileName: string): boolean {
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    return extension === 'pdf';
+  }
+  
+  private getMediaType(fileName: string, mimeType?: string): string {
+    // Use provided mimeType if available
+    if (mimeType) return mimeType;
+    
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    const mediaTypes: { [key: string]: string } = {
+      // Images
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      // Documents
+      'pdf': 'application/pdf',
+    };
+    return mediaTypes[extension] || 'application/octet-stream';
   }
   
   /**

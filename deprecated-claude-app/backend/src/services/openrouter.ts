@@ -3,7 +3,6 @@ import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import { Logger } from '../utils/logger.js';
 import { logOpenRouterRequest, logOpenRouterResponse } from '../utils/openrouterLogger.js';
-import { getMediaType } from '../utils/media-utils.js';
 
 interface OpenRouterMessage {
   role: 'user' | 'assistant' | 'system';
@@ -709,7 +708,7 @@ export class OpenRouterService {
             
             if (isImage) {
               // Add image - use Anthropic format for Claude, file format for others
-              const mediaType = getMediaType(attachment.fileName, (attachment as any).mimeType);
+              const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
               
               if (provider === 'anthropic') {
                 // Anthropic format for Claude models
@@ -754,7 +753,7 @@ export class OpenRouterService {
               console.log(`[OpenRouter] Added PDF attachment: ${attachment.fileName}`);
             } else if (['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'webm'].includes(extension)) {
               // Audio files - supported by Gemini, GPT-4o, etc.
-              const mediaType = getMediaType(attachment.fileName, (attachment as any).mimeType);
+              const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
               const fileData = `data:${mediaType};base64,${attachment.content}`;
               
               contentBlocks.push({
@@ -767,7 +766,7 @@ export class OpenRouterService {
               console.log(`[OpenRouter] Added audio attachment: ${attachment.fileName} (${mediaType})`);
             } else if (['mp4', 'mov', 'avi', 'mkv'].includes(extension)) {
               // Video files - supported by Gemini
-              const mediaType = getMediaType(attachment.fileName, (attachment as any).mimeType);
+              const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
               const fileData = `data:${mediaType};base64,${attachment.content}`;
               
               contentBlocks.push({
@@ -888,6 +887,37 @@ export class OpenRouterService {
    * Detect the underlying provider from the OpenRouter model ID
    * This helps us determine which cache syntax to use
    */
+  private getMediaType(fileName: string, mimeType?: string): string {
+    // Use provided mimeType if available
+    if (mimeType) return mimeType;
+    
+    const extension = fileName.split('.').pop()?.toLowerCase() || '';
+    const mediaTypes: { [key: string]: string } = {
+      // Images
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      // Documents
+      'pdf': 'application/pdf',
+      // Audio
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'flac': 'audio/flac',
+      'ogg': 'audio/ogg',
+      'm4a': 'audio/mp4',
+      'aac': 'audio/aac',
+      'webm': 'audio/webm',
+      // Video
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+      'avi': 'video/x-msvideo',
+      'mkv': 'video/x-matroska',
+    };
+    return mediaTypes[extension] || 'application/octet-stream';
+  }
+  
   private detectProviderFromModelId(modelId: string): string {
     const lowerId = modelId.toLowerCase();
     
