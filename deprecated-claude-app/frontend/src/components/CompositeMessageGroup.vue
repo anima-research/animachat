@@ -120,8 +120,10 @@ import DOMPurify from 'dompurify';
 import MessageComponent from './MessageComponent.vue';
 import AuthenticityIcon from './AuthenticityIcon.vue';
 import type { Message, Participant } from '@deprecated-claude/shared';
-import { getAvatarUrl, getParticipantColor } from '@/utils/avatars';
+import { getAvatarUrl } from '@/utils/avatars';
 import { type AuthenticityStatus, getAuthenticityLevel } from '@/utils/authenticity';
+import { getParticipantDisplayName, resolveParticipantColor } from '@/utils/participant-display';
+import { useStore } from '@/store';
 
 const props = defineProps<{
   messages: Message[];
@@ -157,32 +159,27 @@ const emit = defineEmits<{
   'stuck-clicked': [];
 }>();
 
+const store = useStore();
 const isExpanded = ref(false);
 
 const firstMessage = computed(() => props.messages[0]);
 
-const isUserMessage = computed(() => {
-  const branch = firstMessage.value?.branches?.find(b => b.id === firstMessage.value.activeBranchId);
-  return branch?.role === 'user';
+const activeBranch = computed(() => {
+  return firstMessage.value?.branches?.find(b => b.id === firstMessage.value.activeBranchId);
 });
 
+const isUserMessage = computed(() => activeBranch.value?.role === 'user');
+
 const participantName = computed(() => {
-  const branch = firstMessage.value?.branches?.find(b => b.id === firstMessage.value.activeBranchId);
-  if (!branch) return 'Unknown';
-  
-  if (branch.participantId) {
-    const participant = props.participants.find(p => p.id === branch.participantId);
-    if (participant) return participant.name;
-  }
-  return branch.role === 'user' ? 'User' : 'Assistant';
+  return getParticipantDisplayName(activeBranch.value, props.participants);
 });
 
 const participantColor = computed(() => {
-  const branch = firstMessage.value?.branches?.find(b => b.id === firstMessage.value.activeBranchId);
-  if (branch?.participantId) {
-    return getParticipantColor(branch.participantId, props.participants);
-  }
-  return undefined;
+  return resolveParticipantColor(
+    activeBranch.value,
+    props.participants,
+    store.state.models
+  );
 });
 
 const avatarUrl = computed(() => {

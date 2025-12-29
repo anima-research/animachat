@@ -343,6 +343,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
 import { api } from '@/services/api';
+import { getModelDisplayName as getModelDisplayNameUtil } from '@/utils/model-display';
 
 interface ModelCost {
   modelId: string;
@@ -575,8 +576,7 @@ function removeModelCost(provider: string, profileId: string, index: number) {
 }
 
 function getModelDisplayName(modelId: string): string {
-  const model = availableModels.value.find(m => m.id === modelId);
-  return model?.displayName || modelId;
+  return getModelDisplayNameUtil(modelId, availableModels.value);
 }
 
 function getProviderIcon(provider: string): string {

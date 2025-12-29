@@ -71,6 +71,7 @@ import type { Message, MessageBranch, Bookmark } from '@deprecated-claude/shared
 import { getModelColor } from '@/utils/modelColors';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
+import { getParticipantDisplayName } from '@/utils/participant-display';
 
 const props = defineProps<{
   messages: Message[];
@@ -142,34 +143,10 @@ const treeData = computed(() => {
     const content = branch.content || '';
     const preview = content.slice(0, 100) + (content.length > 100 ? '...' : '');
     
-    // Get participant name - similar to MessageComponent logic
-    let participantName: string;
-    
-    if (props.participants && props.participants.length > 0 && branch.participantId) {
-      // Look up participant by ID
-      const participant = props.participants.find(p => p.id === branch.participantId);
-      if (participant) {
-        // If participant has empty name, show appropriate continuation format
-        if (participant.name === '') {
-          if (participant.type === 'assistant' && participant.model) {
-            participantName = `${participant.model} (continue)`;
-          } else {
-            participantName = '(continue)';
-          }
-        } else {
-          participantName = participant.name;
-        }
-      } else {
-        // If we have participants but can't find this one, use role-based fallback
-        participantName = branch.role === 'user' ? 'User' : (branch.model || 'Assistant');
-      }
-    } else if (branch.participantId && !props.participants) {
-      // Participants not loaded yet - use role-based naming instead of showing ID
-      participantName = branch.role === 'user' ? 'User' : (branch.model || 'Assistant');
-    } else {
-      // Standard conversation - use role-based naming
-      participantName = branch.role === 'user' ? 'User' : (branch.model || 'Assistant');
-    }
+    // Get participant name using shared utility
+    const participantName = getParticipantDisplayName(branch, props.participants, {
+      includeModelInContinuation: true
+    });
     
     // Find bookmark for this branch
     const bookmark = bookmarks.value.find(b =>

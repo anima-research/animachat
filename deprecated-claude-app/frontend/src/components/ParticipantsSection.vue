@@ -162,7 +162,7 @@
                   </v-avatar>
                 </template>
                 <template v-slot:subtitle>
-                  {{ getModelDisplayName(item.raw.modelId) }}
+                  {{ getModelName(item.raw.modelId) }}
                 </template>
               </v-list-item>
             </template>
@@ -470,6 +470,8 @@ import { getModelColor } from '@/utils/modelColors';
 import { get as _get, set as _set, cloneDeep, isEqual } from 'lodash-es';
 import ModelSelector from './ModelSelector.vue';
 import ModelSpecificSettings from './ModelSpecificSettings.vue';
+import { getPersonaColor, filterActivePersonas } from '@/utils/persona-utils';
+import { getModelDisplayName } from '@/utils/model-display';
 
 const props = defineProps({
   modelValue: {
@@ -526,23 +528,12 @@ const newParticipant = ref<{
 const nameManuallyEdited = ref(false);
 const lastAutoName = ref('');
 
-// Color palette for personas
-const personaColors = ['primary', 'secondary', 'success', 'warning', 'info', 'error', 'purple', 'teal', 'orange', 'cyan'];
-
 // Filter out archived personas
-const personaItems = computed(() => {
-  return props.personas.filter(p => !p.archivedAt);
-});
+const personaItems = computed(() => filterActivePersonas(props.personas));
 
-function getPersonaColor(persona: Persona): string {
-  if (!persona || !persona.id) return 'primary';
-  const hash = persona.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return personaColors[hash % personaColors.length];
-}
-
-function getModelDisplayName(modelId: string): string {
-  const model = props.models.find(m => m.id === modelId);
-  return model?.displayName || model?.shortName || modelId;
+// Wrapper for template usage
+function getModelName(modelId: string): string {
+  return getModelDisplayName(modelId, props.models);
 }
 
 const defaultContextOverrideAppend = {
