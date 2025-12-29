@@ -38,8 +38,6 @@ interface StoreState {
   localBranchSelections: Map<string, string>; // messageId -> branchId
   // WebSocket connection state
   wsConnectionState: 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'failed';
-  // Track messages where we expect activeBranchId to change (user-initiated actions)
-  pendingBranchUpdates: Set<string>; // messageIds where next message_edited should update activeBranchId
 }
 
 export interface Store {
@@ -225,9 +223,7 @@ export function createStore(): {
     isDetachedFromMainBranch: false,
     localBranchSelections: new Map(),
     // WebSocket connection state
-    wsConnectionState: 'disconnected',
-    // Track messages expecting activeBranchId updates from user actions
-    pendingBranchUpdates: new Set()
+    wsConnectionState: 'disconnected'
   });
 
   const store: Store = {
@@ -641,9 +637,6 @@ export function createStore(): {
     async regenerateMessage(messageId: string, branchId: string, parentBranchId?: string) {
       if (!state.currentConversation || !state.wsService) return;
       
-      // Mark that we expect this message's activeBranchId to change
-      state.pendingBranchUpdates.add(messageId);
-      
       state.wsService.sendMessage({
         type: 'regenerate',
         conversationId: state.currentConversation.id,
@@ -670,25 +663,6 @@ export function createStore(): {
     
     async editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean) {
       if (!state.currentConversation || !state.wsService) return;
-      
-      // Mark that we expect this message's activeBranchId to change
-      state.pendingBranchUpdates.add(messageId);
-      
-      // If regenerating, also mark the NEXT message (assistant response) as expecting update
-      // This handles the case where the assistant response already exists and gets a new branch
-      if (!skipRegeneration) {
-        const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
-        const messageIndex = sortedMessages.findIndex(m => m.id === messageId);
-        if (messageIndex !== -1 && messageIndex < sortedMessages.length - 1) {
-          const nextMessage = sortedMessages[messageIndex + 1];
-          // Only mark assistant messages as expecting update
-          const activeBranch = nextMessage.branches.find(b => b.id === nextMessage.activeBranchId);
-          if (activeBranch?.role === 'assistant') {
-            state.pendingBranchUpdates.add(nextMessage.id);
-            console.log('Also expecting update for next message:', nextMessage.id.slice(0, 8));
-          }
-        }
-      }
       
       state.wsService.sendMessage({
         type: 'edit' as const,
@@ -1155,45 +1129,13 @@ export function createStore(): {
       });
       
       state.wsService.on('message_edited', (data: any) => {
-        console.log('=== MESSAGE_EDITED RECEIVED ===');
-        console.log('Message ID:', data.message.id.slice(0, 8));
-        console.log('Server activeBranchId:', data.message.activeBranchId?.slice(0, 8));
-        console.log('Branches:', data.message.branches.map((b: any) => ({
-          id: b.id.slice(0, 8),
-          parent: b.parentBranchId?.slice(0, 8) || 'root',
-          contentLen: b.content?.length || 0
-        })));
-        
+        // Simply accept the server's message including its activeBranchId
+        // The server handles preserveActiveBranch logic for parallel generation
         const index = state.allMessages.findIndex(m => m.id === data.message.id);
         if (index !== -1) {
-          const existingMessage = state.allMessages[index];
-          console.log('Found at index:', index, '- updating');
-          console.log('Current frontend activeBranchId:', existingMessage.activeBranchId?.slice(0, 8));
-          
-          // Check if this message was expecting an activeBranchId update (user action like edit/regenerate)
-          const expectingUpdate = state.pendingBranchUpdates.has(data.message.id);
-          console.log('Expecting activeBranchId update:', expectingUpdate);
-          
-          if (expectingUpdate) {
-            // User action - allow the new activeBranchId from server
-            state.pendingBranchUpdates.delete(data.message.id);
-            state.allMessages[index] = data.message;
-            console.log('Updated activeBranchId to:', data.message.activeBranchId?.slice(0, 8));
-          } else {
-            // Parallel generation update - preserve the frontend's activeBranchId
-            const preservedActiveBranchId = existingMessage.activeBranchId;
-            state.allMessages[index] = {
-              ...data.message,
-              activeBranchId: preservedActiveBranchId
-            };
-            console.log('Preserved activeBranchId:', preservedActiveBranchId?.slice(0, 8));
-          }
-          
+          state.allMessages[index] = data.message;
           state.messagesVersion++;
           invalidateSortCache();
-          console.log('messagesVersion now:', state.messagesVersion);
-        } else {
-          console.log('NOT FOUND in allMessages!');
         }
       });
       

@@ -559,6 +559,7 @@ async function handleChatMessage(
         attachments,
         ws.userId, // sentByUserId - actual user who sent this
         message.hiddenFromAi, // whether message is hidden from AI
+        false,     // preserveActiveBranch - select this new branch
         'human_edit' // creationSource - user messages are human-authored
       );
     } else {
@@ -695,6 +696,7 @@ async function handleChatMessage(
       undefined, // no attachments for assistant
       ws.userId, // user who triggered the generation
       undefined, // hiddenFromAi
+      false,     // preserveActiveBranch - select this new branch
       'inference' // creationSource - AI generated
     );
   } else {
@@ -1285,6 +1287,7 @@ async function handleRegenerate(
     undefined, // no attachments
     ws.userId, // user who triggered the regeneration
     undefined, // hiddenFromAi
+    false,     // preserveActiveBranch - select this new branch
     'regeneration' // creationSource - this is a regeneration
   );
 
@@ -1664,6 +1667,7 @@ async function handleEdit(
     undefined, // no attachments
     ws.userId, // user who made the edit
     undefined, // hiddenFromAi
+    false,     // preserveActiveBranch - select this new branch
     'human_edit' // creationSource - human edited this message
   );
 
@@ -1739,6 +1743,7 @@ async function handleEdit(
         undefined, // no attachments
         ws.userId, // user who triggered the generation
         undefined, // hiddenFromAi
+        false,     // preserveActiveBranch - select this new branch
         'inference' // creationSource - AI generated after user edit
       );
       
@@ -2142,6 +2147,7 @@ async function handleContinue(
           undefined, // no attachments
           ws.userId, // user who triggered the generation
           undefined, // hiddenFromAi
+          false,     // preserveActiveBranch - select this new branch
           'inference' // creationSource - AI generated (continue)
         );
       } else {
@@ -2286,6 +2292,7 @@ async function handleContinue(
           undefined, // no attachments
           ws.userId, // user who triggered the generation
           undefined, // hiddenFromAi
+          true,      // preserveActiveBranch - keep selection on first branch during parallel gen
           'inference' // creationSource - AI generated (sampling in continue)
         );
         
