@@ -59,14 +59,6 @@
       v-if="(isHovered || moreMenuOpen || touchActionsOpen) && !isEditing && !isStreaming" 
       class="action-bar"
     >
-      <!-- Branch navigation (if multiple siblings) -->
-      <template v-if="hasNavigableBranches">
-        <v-btn icon="mdi-chevron-left" size="x-small" variant="text" density="compact" :disabled="siblingIndex === 0" @click="navigateBranch(-1)" />
-        <span class="text-caption meta-text branch-counter">{{ siblingIndex + 1 }}/{{ siblingBranches.length }}</span>
-        <v-btn icon="mdi-chevron-right" size="x-small" variant="text" density="compact" :disabled="siblingIndex === siblingBranches.length - 1" @click="navigateBranch(1)" />
-        <v-divider vertical class="mx-1" style="height: 16px; opacity: 0.3;" />
-      </template>
-      
       <!-- Primary actions -->
       <span v-if="message.branches[branchIndex].role === 'assistant'" class="hover-tooltip" data-tooltip="Regenerate">
         <v-btn
@@ -269,15 +261,10 @@
           :color="participantColor"
           size="small"
         />
-        <!-- Show participant name: colored/bold for real names, gray for (continue) -->
-        <span v-if="participantDisplayName && participantDisplayName !== '(continue)'" class="message-name font-weight-medium" :style="participantColor ? `color: ${participantColor};` : ''">
+        <span v-if="participantDisplayName" class="message-name font-weight-medium" :style="participantColor ? `color: ${participantColor};` : ''">
           {{ participantDisplayName }}
         </span>
-        <span v-else-if="participantDisplayName === '(continue)'" class="text-caption meta-text">
-          (continue)
-        </span>
-        <!-- Only show sender attribution for user messages (not AI) since sentByUserId on AI means "triggered by" not "authored by" -->
-        <span v-if="currentBranch.role === 'user' && senderDisplayName && senderDisplayName !== participantDisplayName" class="text-caption meta-text">
+        <span v-if="senderDisplayName && senderDisplayName !== participantDisplayName && participantDisplayName !== '(continue)'" class="text-caption meta-text">
           ({{ senderDisplayName }})
         </span>
         <span v-if="modelIndicator" class="text-caption meta-text">
@@ -2007,7 +1994,7 @@ watch(() => currentBranch.value.id, async () => {
   /* Padding: top, left/right, and bottom. Bottom padding reserves space for the action bar
      to prevent layout shift/flicker when hovering near the last message.
      The action bar may slightly overlap content, but its semi-transparent background
-     keeps text readable.*/
+     keeps text readable. */
   padding: 12px 12px 28px 12px;
 }
 
@@ -2051,13 +2038,6 @@ watch(() => currentBranch.value.id, async () => {
 .branch-nav-row {
   display: flex;
   margin-bottom: 2px;
-}
-
-/* Branch counter in action bar */
-.branch-counter {
-  opacity: 0.8;
-  min-width: 28px;
-  text-align: center;
 }
 
 /* Hide inline branch nav on narrow screens */

@@ -270,9 +270,9 @@
           </div>
 
           <!-- Bookmark navigation section - shows if there are any bookmarks in the tree -->
-          <div v-if="bookmarks.length > 0" ref="bookmarkBarRef" class="d-flex align-center bookmarks-scroll-container">
+          <div v-if="bookmarks.length > 0" class="d-flex align-center bookmarks-scroll-container">
             <!-- Bookmark browser dropdown (using map marker icon) -->
-            <v-menu location="bottom start" :close-on-content-click="true" max-height="400" :width="bookmarkDropdownWidth">
+            <v-menu location="bottom" :close-on-content-click="true" max-height="400">
               <template v-slot:activator="{ props }">
                 <v-icon
                   v-bind="props"
@@ -282,7 +282,7 @@
                   :title="`Browse all bookmarks (${bookmarks.length})`"
                 />
               </template>
-              <v-list density="compact" class="bookmark-browser-list">
+              <v-list density="compact" class="bookmark-browser-list" min-width="300" max-width="400">
                 <v-list-subheader>All Bookmarks ({{ bookmarks.length }})</v-list-subheader>
                 <v-list-item
                   v-for="bookmark in allBookmarksWithPreviews"
@@ -291,19 +291,11 @@
                   :class="{ 'bookmark-in-path': isBookmarkInActivePath(bookmark) }"
                 >
                   <template v-slot:prepend>
-                    <v-icon size="small" :color="isBookmarkInActivePath(bookmark) ? 'primary' : bookmark.participantColor">
-                      {{ bookmark.role === 'user' ? 'mdi-account' : 'mdi-robot' }}
+                    <v-icon size="small" :color="isBookmarkInActivePath(bookmark) ? 'primary' : undefined">
+                      mdi-bookmark
                     </v-icon>
                   </template>
-                  <v-list-item-title class="font-weight-medium d-flex align-center flex-wrap" style="gap: 4px 8px;">
-                    <span>{{ bookmark.label }}</span>
-                    <span class="text-caption" :style="`color: ${bookmark.participantColor}; opacity: 0.8;`">
-                      {{ bookmark.participantName }}
-                    </span>
-                    <span v-if="bookmark.modelName" class="text-caption meta-text">
-                      {{ bookmark.modelName }}
-                    </span>
-                  </v-list-item-title>
+                  <v-list-item-title class="font-weight-medium">{{ bookmark.label }}</v-list-item-title>
                   <v-list-item-subtitle class="text-caption bookmark-preview">
                     {{ bookmark.preview }}
                   </v-list-item-subtitle>
@@ -622,152 +614,152 @@
           <!-- Bottom control row -->
           <div class="bottom-controls d-flex align-center mt-2">
             <!-- Left side controls -->
-            <div class="d-flex align-center input-bar-left">
-              <v-btn
-                icon="mdi-paperclip"
-                size="small"
-                variant="text"
-                color="grey"
-                @click.stop="triggerFileInput($event)"
-                title="Attach file"
-              />
-              
-              <!-- Hidden from AI toggle (for multiuser) -->
-              <v-btn
-                v-if="isMultiuserConversation"
-                icon="mdi-eye-off"
-                :color="hiddenFromAi ? 'warning' : 'grey'"
-                size="small"
-                :variant="hiddenFromAi ? 'tonal' : 'text'"
-                @click.stop="hiddenFromAi = !hiddenFromAi"
-                title="Hide this message from AI"
-              />
-              
-              <!-- Speaking as dropdown (for multi-participant) -->
-              <v-menu v-if="currentConversation?.format !== 'standard'" location="top">
-                <template v-slot:activator="{ props }">
-                  <v-btn
-                    v-bind="props"
-                    size="small"
-                    variant="text"
-                    color="grey"
-                    class="text-none"
-                  >
-                    <v-icon size="small" class="mr-1">mdi-account</v-icon>
-                    <span class="text-caption">Speaking as: {{ selectedParticipantName }}</span>
-                    <v-icon size="x-small" class="ml-1">mdi-chevron-down</v-icon>
-                  </v-btn>
-                </template>
-                <v-list density="compact">
-                  <v-list-item
-                    v-for="participant in allParticipants"
-                    :key="participant.id"
-                    @click="selectedParticipant = participant.id"
-                    :active="selectedParticipant === participant.id"
-                  >
-                    <template v-slot:prepend>
-                      <v-icon 
-                        :icon="participant.type === 'user' ? 'mdi-account' : 'mdi-robot'"
-                        :color="participant.type === 'user' ? '#bb86fc' : getModelColor(participant.model || '')"
-                        size="small"
-                      />
-                    </template>
-                    <v-list-item-title :style="`color: ${participant.type === 'user' ? '#bb86fc' : getModelColor(participant.model || '')}`">
-                      {{ participant.name }}
-                    </v-list-item-title>
-                  </v-list-item>
-                </v-list>
-              </v-menu>
-            </div>
+            <v-btn
+              icon="mdi-paperclip"
+              size="small"
+              variant="text"
+              color="grey"
+              @click.stop="triggerFileInput($event)"
+              title="Attach file"
+            />
+            
+            <!-- Hidden from AI toggle (for multiuser) -->
+            <v-btn
+              v-if="isMultiuserConversation"
+              :color="hiddenFromAi ? 'warning' : 'grey'"
+              size="small"
+              :variant="hiddenFromAi ? 'tonal' : 'text'"
+              @click.stop="hiddenFromAi = !hiddenFromAi"
+              title="Hide this message from AI"
+              class="ml-1"
+            >
+              <v-icon size="small">mdi-eye-off</v-icon>
+            </v-btn>
+            
+            <!-- Speaking as dropdown (for multi-participant) -->
+            <v-menu v-if="currentConversation?.format !== 'standard'" location="top">
+              <template v-slot:activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  size="small"
+                  variant="text"
+                  color="grey"
+                  class="ml-1 text-none"
+                >
+                  <v-icon size="small" class="mr-1">mdi-account</v-icon>
+                  <span class="text-caption">Speaking as: {{ selectedParticipantName }}</span>
+                  <v-icon size="x-small" class="ml-1">mdi-chevron-down</v-icon>
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item
+                  v-for="participant in allParticipants"
+                  :key="participant.id"
+                  @click="selectedParticipant = participant.id"
+                  :active="selectedParticipant === participant.id"
+                >
+                  <template v-slot:prepend>
+                    <v-icon 
+                      :icon="participant.type === 'user' ? 'mdi-account' : 'mdi-robot'"
+                      :color="participant.type === 'user' ? '#bb86fc' : getModelColor(participant.model || '')"
+                      size="small"
+                    />
+                  </template>
+                  <v-list-item-title :style="`color: ${participant.type === 'user' ? '#bb86fc' : getModelColor(participant.model || '')}`">
+                    {{ participant.name }}
+                  </v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
             
             <v-spacer />
             
-            <!-- Right side controls - consistent icon buttons -->
-            <div class="d-flex align-center input-bar-right">
-              <!-- Thinking toggle -->
-              <v-btn
-                v-if="modelSupportsThinking"
-                icon="mdi-head-lightbulb"
-                :color="thinkingEnabled ? 'info' : 'grey'"
-                size="small"
-                :variant="thinkingEnabled ? 'tonal' : 'text'"
-                @click.stop="toggleThinking"
-                :title="thinkingEnabled ? 'Disable extended thinking' : 'Enable extended thinking'"
-              />
-              
-              <!-- Detached branch mode toggle (for multi-user independent browsing) -->
-              <v-btn
-                v-if="isCollaborativeConversation"
-                :icon="isDetachedFromMainBranch ? 'mdi-link-off' : 'mdi-link'"
-                :color="isDetachedFromMainBranch ? 'warning' : 'grey'"
-                size="small"
-                :variant="isDetachedFromMainBranch ? 'tonal' : 'text'"
-                @click.stop="toggleDetachedMode"
-                :title="isDetachedFromMainBranch ? 'Detached: Branch navigation is local-only. Click to follow main branch.' : 'Following main branch. Click to browse independently.'"
-              />
-              
-              <!-- Sampling branches -->
-              <v-menu location="top">
-                <template v-slot:activator="{ props }">
-                  <v-btn
-                    v-bind="props"
-                    size="small"
-                    :variant="samplingBranches > 1 ? 'tonal' : 'text'"
-                    :color="samplingBranches > 1 ? 'secondary' : 'grey'"
-                    :title="`Generate ${samplingBranches} response${samplingBranches > 1 ? 's' : ''}`"
-                    class="sampling-btn"
-                  >
-                    <v-icon size="small">mdi-source-branch</v-icon>
-                    <span v-if="samplingBranches > 1" class="sampling-count">{{ samplingBranches }}</span>
-                  </v-btn>
-                </template>
-                <v-list density="compact" class="pa-0">
-                  <v-list-subheader class="text-caption">Response samples</v-list-subheader>
-                  <v-list-item
-                    v-for="n in 8"
-                    :key="n"
-                    :active="samplingBranches === n"
-                    @click="samplingBranches = n"
-                  >
-                    <v-list-item-title>{{ n }}{{ n > 1 ? ' branches' : '' }}</v-list-item-title>
-                  </v-list-item>
-                </v-list>
-              </v-menu>
-              
-              <!-- Settings -->
-              <v-btn
-                icon="mdi-cog-outline"
-                size="small"
-                variant="text"
-                color="grey"
-                @click.stop="conversationSettingsDialog = true"
-                title="Conversation settings"
-              />
-              
-              <!-- Send/Stop button -->
-              <v-btn
-                v-if="!isStreaming"
-                :disabled="!messageInput || !isWsConnected"
-                :color="isWsConnected ? 'primary' : 'grey'"
-                icon="mdi-send"
-                variant="flat"
-                size="small"
-                style="touch-action: manipulation;"
-                class="ml-1"
-                :title="isWsConnected ? 'Send message' : 'Waiting for connection...'"
-                @click="sendMessage"
-              />
-              <v-btn
-                v-else
-                color="error"
-                icon="mdi-stop"
-                variant="flat"
-                size="small"
-                title="Stop generation"
-                class="ml-1"
-                @click="abortGeneration"
-              />
-            </div>
+            <!-- Right side controls -->
+            <!-- Thinking toggle -->
+            <v-btn
+              v-if="modelSupportsThinking"
+              icon="mdi-head-lightbulb"
+              :color="thinkingEnabled ? 'info' : 'grey'"
+              size="small"
+              :variant="thinkingEnabled ? 'tonal' : 'text'"
+              @click.stop="toggleThinking"
+              :title="thinkingEnabled ? 'Disable extended thinking' : 'Enable extended thinking'"
+            />
+            
+            <!-- Detached branch mode toggle (for multi-user independent browsing) -->
+            <v-btn
+              v-if="isCollaborativeConversation"
+              :icon="isDetachedFromMainBranch ? 'mdi-link-off' : 'mdi-link'"
+              :color="isDetachedFromMainBranch ? 'warning' : 'grey'"
+              size="small"
+              :variant="isDetachedFromMainBranch ? 'tonal' : 'text'"
+              @click.stop="toggleDetachedMode"
+              :title="isDetachedFromMainBranch ? 'Detached: Branch navigation is local-only. Click to follow main branch.' : 'Following main branch. Click to browse independently.'"
+              class="ml-1"
+            />
+            
+            <!-- Sampling branches -->
+            <v-menu location="top">
+              <template v-slot:activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  size="small"
+                  :variant="samplingBranches > 1 ? 'tonal' : 'text'"
+                  :color="samplingBranches > 1 ? 'secondary' : 'grey'"
+                  class="ml-1"
+                  :title="`Generate ${samplingBranches} response${samplingBranches > 1 ? 's' : ''}`"
+                >
+                  <v-icon size="small" class="mr-1">mdi-source-branch</v-icon>
+                  <span v-if="samplingBranches > 1" class="text-caption">{{ samplingBranches }}</span>
+                </v-btn>
+              </template>
+              <v-list density="compact" class="pa-0">
+                <v-list-subheader class="text-caption">Response samples</v-list-subheader>
+                <v-list-item
+                  v-for="n in 8"
+                  :key="n"
+                  :active="samplingBranches === n"
+                  @click="samplingBranches = n"
+                >
+                  <v-list-item-title>{{ n }}{{ n > 1 ? ' branches' : '' }}</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+            
+            <!-- Settings -->
+            <v-btn
+              icon="mdi-cog-outline"
+              size="small"
+              variant="text"
+              color="grey"
+              @click.stop="conversationSettingsDialog = true"
+              title="Conversation settings"
+              class="ml-1"
+            />
+            
+            <!-- Send/Stop button -->
+            <v-btn
+              v-if="!isStreaming"
+              :disabled="!messageInput || !isWsConnected"
+              :color="isWsConnected ? 'primary' : 'grey'"
+              icon="mdi-send"
+              variant="flat"
+              size="small"
+              style="touch-action: manipulation;"
+              class="ml-2"
+              :title="isWsConnected ? 'Send message' : 'Waiting for connection...'"
+              @click="sendMessage"
+            />
+            <v-btn
+              v-else
+              color="error"
+              icon="mdi-stop"
+              variant="flat"
+              size="small"
+              title="Stop generation"
+              class="ml-2"
+              @click="abortGeneration"
+            />
           </div>
         </div>
         
@@ -1197,7 +1189,6 @@ const showMobileSpeakingAs = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
 const bookmarks = ref<Bookmark[]>([]);
 const bookmarksScrollRef = ref<HTMLElement>();
-const bookmarkBarRef = ref<HTMLElement>();
 const bookmarkRefs = ref<HTMLElement[]>([]);
 const isUserScrollingBookmarks = ref(false);
 const currentBookmarkIndex = ref(0);
@@ -1587,45 +1578,13 @@ const allBookmarksWithPreviews = computed(() => {
     const message = allMessages.value.find(m => m.id === bookmark.messageId);
     const branch = message?.branches.find(b => b.id === bookmark.branchId);
     
-    // Generate preview from message content (longer preview to fill wider dropdowns)
+    // Generate preview from message content
     const content = branch?.content || '';
-    const preview = content.slice(0, 250) + (content.length > 250 ? '...' : '');
-    
-    // Get participant info for color coding
-    let participantName = branch?.role === 'user' ? 'User' : 'Assistant';
-    let participantColor = branch?.role === 'user' ? '#bb86fc' : getModelColor(branch?.model);
-    let modelName: string | null = null;
-    
-    if (branch?.participantId) {
-      const participant = participants.value.find(p => p.id === branch.participantId);
-      if (participant) {
-        participantName = participant.name || (participant.type === 'user' ? '(continue)' : '(continue)');
-        if (participant.type === 'assistant') {
-          participantColor = getModelColor(participant.model || branch.model);
-        }
-      }
-    }
-    
-    // Get model display name for assistant messages
-    if (branch?.role === 'assistant' && branch.model) {
-      const modelObj = store.state.models?.find((m: any) => m.id === branch.model);
-      if (modelObj?.displayName) {
-        modelName = modelObj.displayName;
-      } else if (modelObj?.providerModelId) {
-        modelName = modelObj.providerModelId;
-      } else {
-        // Fallback to shortened model ID
-        modelName = branch.model.split('/').pop() || branch.model;
-      }
-    }
+    const preview = content.slice(0, 80) + (content.length > 80 ? '...' : '');
     
     return {
       ...bookmark,
-      preview,
-      participantName,
-      participantColor,
-      modelName,
-      role: branch?.role || 'user'
+      preview
     };
   });
 });
@@ -1636,43 +1595,6 @@ function isBookmarkInActivePath(bookmark: Bookmark): boolean {
     b => b.messageId === bookmark.messageId && b.branchId === bookmark.branchId
   );
 }
-
-// Track width of bookmark bar for dropdown (reactive to resize)
-const bookmarkDropdownWidth = ref(500);
-let bookmarkBarResizeObserver: ResizeObserver | null = null;
-
-function updateBookmarkDropdownWidth() {
-  if (bookmarkBarRef.value) {
-    bookmarkDropdownWidth.value = bookmarkBarRef.value.offsetWidth;
-  }
-}
-
-// Set up resize observer when bookmark bar is available
-watch(bookmarkBarRef, (newRef) => {
-  // Clean up old observer
-  if (bookmarkBarResizeObserver) {
-    bookmarkBarResizeObserver.disconnect();
-    bookmarkBarResizeObserver = null;
-  }
-  
-  if (newRef) {
-    // Initial measurement
-    updateBookmarkDropdownWidth();
-    
-    // Set up observer for future changes
-    bookmarkBarResizeObserver = new ResizeObserver(() => {
-      updateBookmarkDropdownWidth();
-    });
-    bookmarkBarResizeObserver.observe(newRef);
-  }
-}, { immediate: true });
-
-// Clean up observer on unmount
-onBeforeUnmount(() => {
-  if (bookmarkBarResizeObserver) {
-    bookmarkBarResizeObserver.disconnect();
-  }
-});
 
 // Navigate to a bookmark (switches branches if needed and scrolls to message)
 async function navigateToBookmark(messageId: string, branchId: string) {
@@ -4290,36 +4212,6 @@ function formatDate(date: Date | string): string {
 </script>
 
 <style scoped>
-/* Input bar button groups - consistent spacing */
-.input-bar-left,
-.input-bar-right {
-  gap: 4px;
-}
-
-/* Ensure icon buttons in input bar are consistent size */
-.input-bar-left :deep(.v-btn),
-.input-bar-right :deep(.v-btn) {
-  min-width: 32px;
-  height: 32px;
-}
-
-/* Sampling button - ensure consistent sizing whether showing count or not */
-.sampling-btn {
-  min-width: 32px !important;
-  padding: 0 6px !important;
-}
-
-.sampling-btn .sampling-count {
-  font-size: 11px;
-  margin-left: 2px;
-  font-weight: 600;
-}
-
-/* Send button gets a bit more margin for visual separation */
-.input-bar-right :deep(.v-btn.ml-1:last-child) {
-  margin-left: 8px !important;
-}
-
 /* Force multiline subtitles in content moderation dialog */
 .v-dialog :deep(.v-list-item-subtitle) {
   -webkit-line-clamp: unset !important;
@@ -4745,10 +4637,6 @@ function formatDate(date: Date | string): string {
   overflow-y: auto;
 }
 
-.bookmark-browser-list .meta-text {
-  color: rgba(255, 255, 255, 0.5);
-}
-
 .bookmark-browser-list .v-list-item {
   border-left: 3px solid transparent;
   transition: border-color 0.2s, background-color 0.2s;
@@ -4768,8 +4656,8 @@ function formatDate(date: Date | string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 350px;
   opacity: 0.7;
-  line-height: 1.4;
 }
 
 /* Drop zone styles for drag-and-drop attachments */
