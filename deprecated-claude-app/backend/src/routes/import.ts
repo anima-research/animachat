@@ -335,6 +335,7 @@ export function importRouter(db: Database): Router {
               branch.attachments,
               undefined, // sentByUserId
               undefined, // hiddenFromAi
+              false,     // preserveActiveBranch
               'import'   // creationSource - imported data
             );
             
@@ -419,6 +420,7 @@ export function importRouter(db: Database): Router {
               undefined, // attachments
               undefined, // sentByUserId
               undefined, // hiddenFromAi
+              false,     // preserveActiveBranch
               'import'   // creationSource - imported data
             );
             

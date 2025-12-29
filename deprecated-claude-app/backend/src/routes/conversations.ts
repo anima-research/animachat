@@ -264,6 +264,7 @@ export function conversationRouter(db: Database): Router {
               undefined, // attachments
               undefined, // sentByUserId
               undefined, // hiddenFromAi
+              false,     // preserveActiveBranch
               'import'   // creationSource - imported data
             );
           }
