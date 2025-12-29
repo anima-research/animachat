@@ -24,6 +24,7 @@ export interface FilterResult {
 export interface UserContext {
   isResearcher?: boolean;
   isAgeVerified?: boolean;
+  isAdmin?: boolean;
 }
 
 interface ModerationCategory {
@@ -108,6 +109,12 @@ function getOpenAIApiKey(): string | null {
  */
 export async function checkContent(content: string, userContext?: UserContext): Promise<FilterResult> {
   console.log(`[Content Filter] checkContent called with ${content?.length || 0} chars, context: ${JSON.stringify(userContext || {})}`);
+  
+  // Admins bypass all content filtering
+  if (userContext?.isAdmin) {
+    console.log(`[Content Filter] Admin user - bypassing all moderation`);
+    return { blocked: false };
+  }
   
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return { blocked: false };
