@@ -256,8 +256,6 @@ import type { Persona, PersonaHistoryBranch, PersonaParticipation, Model, Create
 import { api } from '@/services/api';
 import { useStore } from '@/store';
 import CreatePersonaDialog from '@/components/CreatePersonaDialog.vue';
-import { getPersonaColor } from '@/utils/persona-utils';
-import { getModelDisplayName } from '@/utils/model-display';
 
 const store = useStore();
 
@@ -280,8 +278,19 @@ const deleting = ref(false);
 
 const models = computed(() => store.state.models);
 
+// Color palette for personas
+const colors = ['primary', 'secondary', 'success', 'warning', 'info', 'error', 'purple', 'teal', 'orange', 'cyan'];
+
+function getPersonaColor(persona: Persona): string {
+  // Use persona id to deterministically pick a color
+  if (!persona || !persona.id) return 'primary';
+  const hash = persona.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return colors[hash % colors.length];
+}
+
 function getModelName(modelId: string): string {
-  return getModelDisplayName(modelId, models.value);
+  const model = models.value.find(m => m.id === modelId);
+  return model?.displayName || model?.shortName || modelId;
 }
 
 function getParticipationCount(personaId: string): number {

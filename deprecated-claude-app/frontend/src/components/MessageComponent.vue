@@ -810,14 +810,14 @@ import { ref, computed, onMounted, onUnmounted, onUpdated, watch } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Message, Participant } from '@deprecated-claude/shared';
+import { getModelColor } from '@/utils/modelColors';
 import { renderLatex, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
-import { getParticipantAvatarUrl, loadAvatarPacks } from '@/utils/avatars';
+import { getParticipantAvatarUrl, getAvatarColor, loadAvatarPacks } from '@/utils/avatars';
 import DebugMessageDialog from './DebugMessageDialog.vue';
 import AuthenticityIcon from './AuthenticityIcon.vue';
 import { getAuthenticityLevel } from '@/utils/authenticity';
-import { getParticipantDisplayName, resolveParticipantColor } from '@/utils/participant-display';
 import 'katex/dist/katex.min.css'; // KaTeX styles
 
 const store = useStore();
@@ -1084,9 +1084,25 @@ function scrollToTopOfMessage() {
 
 // Get participant display name (shown in UI)
 const participantDisplayName = computed(() => {
-  return getParticipantDisplayName(currentBranch.value, props.participants, {
-    userFallback: 'You'
-  });
+  const branch = currentBranch.value;
+  
+  // If no participants list provided or no participantId, fall back to default behavior
+  if (!props.participants || !branch.participantId) {
+    return branch.role === 'user' ? 'You' : 'Assistant';
+  }
+  
+  // Find the participant by ID
+  const participant = props.participants.find(p => p.id === branch.participantId);
+  if (participant && participant.name === '') {
+    // Empty-name participants are "continuation" participants - their messages
+    // don't have a username header in the log (raw continuations)
+    return '(continue)';
+  } else if (participant) {
+    return participant.name;
+  }
+  
+  // Fallback if participant not found
+  return branch.role === 'user' ? 'You' : 'Assistant';
 });
 
 // Get model indicator for assistant messages
@@ -1119,11 +1135,42 @@ const isHumanWrittenAI = computed(() => {
 });
 
 const participantColor = computed(() => {
-  return resolveParticipantColor(
-    currentBranch.value,
-    props.participants,
-    store.state.models
-  );
+  const branch = currentBranch.value;
+  
+  // Only color assistant messages
+  if (branch.role !== 'assistant') {
+    return '#bb86fc'
+  }
+  
+  // Try to get model from participant or branch
+  let model: string | undefined;
+  let modelObj: any = null;
+  
+  if (props.participants && branch.participantId) {
+    const participant = props.participants.find(p => p.id === branch.participantId);
+    model = participant?.model;
+  }
+  
+  // Fallback to branch model
+  if (!model) {
+    model = branch.model;
+  }
+  
+  // Look up model object to get canonicalId
+  if (model) {
+    modelObj = store.state.models?.find((m: any) => m.id === model);
+  }
+  
+  // First try avatar pack color
+  if (modelObj?.canonicalId) {
+    const avatarColor = getAvatarColor(modelObj.canonicalId);
+    if (avatarColor) {
+      return avatarColor;
+    }
+  }
+  
+  // Fall back to default model colors
+  return getModelColor(model);
 });
 
 // Avatar URL for the participant

@@ -125,8 +125,6 @@
 import { ref, computed, watch } from 'vue';
 import type { Model, Persona } from '@deprecated-claude/shared';
 import ModelSelector from '@/components/ModelSelector.vue';
-import { getPersonaColor, filterActivePersonas } from '@/utils/persona-utils';
-import { getModelDisplayName } from '@/utils/model-display';
 
 interface ModelAvailability {
   userProviders: string[];
@@ -163,8 +161,13 @@ const newParticipant = ref({
 const nameManuallyEdited = ref(false);
 const lastAutoName = ref('');
 
+// Color palette for personas (same as PersonasView)
+const colors = ['primary', 'secondary', 'success', 'warning', 'info', 'error', 'purple', 'teal', 'orange', 'cyan'];
+
 // Filter out archived personas
-const personaItems = computed(() => filterActivePersonas(props.personas));
+const personaItems = computed(() => {
+  return props.personas.filter(p => !p.archivedAt);
+});
 
 const isValid = computed(() => {
   if (newParticipant.value.type === 'assistant') {
@@ -176,8 +179,15 @@ const isValid = computed(() => {
   return true;
 });
 
+function getPersonaColor(persona: Persona): string {
+  if (!persona || !persona.id) return 'primary';
+  const hash = persona.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return colors[hash % colors.length];
+}
+
 function getModelName(modelId: string): string {
-  return getModelDisplayName(modelId, props.models);
+  const model = props.models.find(m => m.id === modelId);
+  return model?.displayName || model?.shortName || modelId;
 }
 
 // Reset form when dialog opens
