@@ -16,13 +16,19 @@ export function renderLatex(content: string): string {
   
   let result = content;
   
+  // Common KaTeX options - strict: false suppresses warnings about unknown Unicode chars
+  const katexOptions = {
+    throwOnError: false,
+    strict: false, // Suppress warnings about box-drawing chars, etc.
+    output: 'html' as const
+  };
+  
   // Display math: $$ ... $$ (must be processed before single $)
   result = result.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
     try {
       return katex.renderToString(latex.trim(), {
-        displayMode: true,
-        throwOnError: false,
-        output: 'html'
+        ...katexOptions,
+        displayMode: true
       });
     } catch (e) {
       console.warn('LaTeX render error (display):', e);
@@ -34,9 +40,8 @@ export function renderLatex(content: string): string {
   result = result.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
     try {
       return katex.renderToString(latex.trim(), {
-        displayMode: true,
-        throwOnError: false,
-        output: 'html'
+        ...katexOptions,
+        displayMode: true
       });
     } catch (e) {
       console.warn('LaTeX render error (display):', e);
@@ -49,9 +54,8 @@ export function renderLatex(content: string): string {
   result = result.replace(/(?<!\$)\$(?!\$)((?:[^$\\]|\\.)+?)\$/g, (match, latex) => {
     try {
       return katex.renderToString(latex.trim(), {
-        displayMode: false,
-        throwOnError: false,
-        output: 'html'
+        ...katexOptions,
+        displayMode: false
       });
     } catch (e) {
       console.warn('LaTeX render error (inline):', e);
@@ -63,9 +67,8 @@ export function renderLatex(content: string): string {
   result = result.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
     try {
       return katex.renderToString(latex.trim(), {
-        displayMode: false,
-        throwOnError: false,
-        output: 'html'
+        ...katexOptions,
+        displayMode: false
       });
     } catch (e) {
       console.warn('LaTeX render error (inline):', e);
