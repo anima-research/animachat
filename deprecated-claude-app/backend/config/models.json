@@ -861,13 +861,12 @@
     {
       "id": "gemini-2.5-flash-multimodal",
       "providerModelId": "gemini-2.5-flash-image",
-      "displayName": "Gemini 2.5 Flash (Image) [Legacy]",
+      "displayName": "Gemini 2.5 Flash (Multimodal) [Legacy]",
       "shortName": "Flash 2.5 🎨",
       "provider": "google",
       "hidden": true,
       "contextWindow": 32768,
       "outputTokenLimit": 4000,
-      "supportsThinking": true,
       "supportsPrefill": false,
       "capabilities": {
         "imageInput": true,
