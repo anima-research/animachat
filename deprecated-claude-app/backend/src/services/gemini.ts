@@ -171,14 +171,10 @@ export class GeminiService {
         requestBody.tools = [{ googleSearch: {} }];
       }
       
-      // Add thinking config if thinking is enabled (only for models that support it)
-      // Known thinking-capable models: gemini-2.5-*, gemini-3-* (but NOT image generation variants)
-      const isThinkingCapableModel = (
-        (modelId.includes('gemini-2.5') || modelId.includes('gemini-3')) && 
-        !modelId.includes('image') // Image generation models don't support thinking
-      );
-      
-      if (settings.thinking?.enabled && isThinkingCapableModel) {
+      // Add thinking config if thinking is enabled
+      // NOTE: The model's supportsThinking flag is already checked in inference.ts
+      // If settings.thinking.enabled reaches here, the model was validated to support thinking
+      if (settings.thinking?.enabled) {
         generationConfig.thinkingConfig = {
           includeThoughts: true,
         };
@@ -187,8 +183,6 @@ export class GeminiService {
           generationConfig.thinkingConfig.thinkingBudget = settings.thinking.budgetTokens;
         }
         console.log(`[Gemini API] 🧠 Thinking enabled with budget: ${settings.thinking.budgetTokens || 'auto'}`);
-      } else if (settings.thinking?.enabled && !isThinkingCapableModel) {
-        console.log(`[Gemini API] ⚠️ Thinking requested but model ${modelId} doesn't support it - skipping thinkingConfig`);
       }
       
       requestId = `gemini-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -474,13 +468,9 @@ export class GeminiService {
       requestBody.tools = [{ googleSearch: {} }];
     }
     
-    // Add thinking config if thinking is enabled (only for models that support it)
-    const isThinkingCapableModel = (
-      (modelId.includes('gemini-2.5') || modelId.includes('gemini-3')) && 
-      !modelId.includes('image')
-    );
-    
-    if (settings.thinking?.enabled && isThinkingCapableModel) {
+    // Add thinking config if thinking is enabled
+    // NOTE: The model's supportsThinking flag is already checked in inference.ts
+    if (settings.thinking?.enabled) {
       generationConfig.thinkingConfig = {
         includeThoughts: true,
       };
