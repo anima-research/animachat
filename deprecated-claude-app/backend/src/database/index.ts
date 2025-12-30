@@ -4367,10 +4367,11 @@ export class Database {
     // Resolve settings with validation
     let resolvedSettings = modelData.settings;
     if (!resolvedSettings) {
-      // Default settings for user models - cap maxTokens at outputTokenLimit
+      // Default settings for user models - use outputTokenLimit as default
+      // Users can adjust in settings if needed, most generations won't hit the limit
       resolvedSettings = {
         temperature: 1.0,
-        maxTokens: Math.min(4096, modelData.outputTokenLimit)
+        maxTokens: modelData.outputTokenLimit
       };
     } else {
       // Validate provided maxTokens doesn't exceed outputTokenLimit
@@ -4386,6 +4387,7 @@ export class Database {
       ...modelData,
       supportsThinking: modelData.supportsThinking || false,
       supportsPrefill: modelData.supportsPrefill ?? false,
+      capabilities: modelData.capabilities, // Include auto-detected capabilities
       hidden: false,
       settings: resolvedSettings,
       createdAt: new Date(),

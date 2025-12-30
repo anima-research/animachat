@@ -1232,7 +1232,7 @@
       "provider": "google",
       "hidden": false,
       "contextWindow": 32768,
-      "outputTokenLimit": 4000,
+      "outputTokenLimit": 32768,
       "supportsThinking": true,
       "thinkingDefaultEnabled": true,
       "supportsPrefill": false,
