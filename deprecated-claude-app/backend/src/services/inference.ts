@@ -319,7 +319,7 @@ export class InferenceService {
     // (the model is continuing a pre-filled response, not generating fresh)
     // Thinking is triggered via <think> tags in formatMessagesForConversation instead
     const effectiveSettings = { ...settings };
-    if (actualFormat === 'prefill' && effectiveSettings.thinking?.enabled && supportsPrefillThinkingTags) {
+    if (shouldTriggerPrefillThinking) {
       console.log('[InferenceService] Disabling API thinking for prefill format (using <think> tags instead)');
       effectiveSettings.thinking = { ...effectiveSettings.thinking, enabled: false };
     }
