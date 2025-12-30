@@ -982,7 +982,6 @@
       "hidden": false,
       "contextWindow": 32768,
       "outputTokenLimit": 65536,
-      "supportsThinking": true,
       "supportsPrefill": false,
       "capabilities": {
         "imageInput": true,

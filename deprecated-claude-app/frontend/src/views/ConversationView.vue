@@ -1520,7 +1520,8 @@ const thinkingBudgetTokens = computed(() => {
 const modelSupportsThinking = computed(() => {
   const format = currentConversation.value?.format;
   
-  if (format === 'standard') {
+  // Treat undefined format as standard (legacy/migrated conversations)
+  if (format === 'standard' || !format) {
     // Standard format - use conversation model
     const modelId = currentConversation.value?.model || '';
     const model = store.state.models.find(m => m.id === modelId);
