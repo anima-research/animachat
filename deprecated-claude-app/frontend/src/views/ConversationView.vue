@@ -1104,7 +1104,9 @@ const getStuckThresholdMs = () => {
 };
 
 // Console log collection for debugging
-const consoleLogs = ref<string[]>([]);
+// IMPORTANT: Use a plain array, NOT a ref, to avoid reactivity loops
+// (console.log -> push to ref -> reactivity -> re-render -> console.log -> ...)
+let consoleLogs: string[] = [];
 const MAX_CONSOLE_LOGS = 200;
 
 // General error snackbar (for non-streaming errors like pricing validation)
@@ -1871,9 +1873,9 @@ onMounted(async () => {
           return '[unserializable]';
         }
       }).join(' ');
-      consoleLogs.value.push(`[${timestamp}] [${level}] ${message}`);
-      if (consoleLogs.value.length > MAX_CONSOLE_LOGS) {
-        consoleLogs.value.shift();
+      consoleLogs.push(`[${timestamp}] [${level}] ${message}`);
+      if (consoleLogs.length > MAX_CONSOLE_LOGS) {
+        consoleLogs.shift();
       }
     };
     
@@ -2840,7 +2842,7 @@ async function submitStuckAnalytics() {
       firstTokenReceived: firstTokenReceived.value,
       wsConnected: store.state.wsService?.isConnected,
       userAgent: navigator.userAgent,
-      consoleLogs: consoleLogs.value.slice(-100), // Last 100 logs
+      consoleLogs: consoleLogs.slice(-100), // Last 100 logs
       currentUrl: window.location.href,
     };
     
