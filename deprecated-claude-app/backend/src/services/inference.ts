@@ -211,7 +211,10 @@ export class InferenceService {
     // For prefill format with Anthropic direct, pass cache marker indices to insert breakpoints
     const shouldInsertCacheBreakpoints = actualFormat === 'prefill' && model.provider === 'anthropic';
     // Trigger thinking via <think> tag in prefill mode if thinking was enabled AND model supports it
-    const shouldTriggerPrefillThinking = actualFormat === 'prefill' && settings.thinking?.enabled && model.supportsThinking;
+    // NOTE: In prefill mode, native thinking APIs don't work well (model is continuing a pre-filled response)
+    // So we use <think> tags to trigger pseudo-reasoning for all providers that support prefill
+    const supportsPrefillThinkingTags = model.provider === 'anthropic' || model.provider === 'bedrock' || (model.provider as string) === 'google';
+    const shouldTriggerPrefillThinking = actualFormat === 'prefill' && settings.thinking?.enabled && model.supportsThinking && supportsPrefillThinkingTags;
     const formattedMessages = this.formatMessagesForConversation(
       processedMessages,
       actualFormat,
@@ -312,10 +315,11 @@ export class InferenceService {
       ? this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId)
       : trackingOnChunk;
 
-    // In prefill mode, disable API thinking - it's incompatible with prefill format
-    // Thinking blocks are converted to <think> tags in formatMessagesForConversation instead
+    // In prefill mode, disable native API thinking - it's incompatible with prefill format
+    // (the model is continuing a pre-filled response, not generating fresh)
+    // Thinking is triggered via <think> tags in formatMessagesForConversation instead
     const effectiveSettings = { ...settings };
-    if (actualFormat === 'prefill' && effectiveSettings.thinking?.enabled) {
+    if (shouldTriggerPrefillThinking) {
       console.log('[InferenceService] Disabling API thinking for prefill format (using <think> tags instead)');
       effectiveSettings.thinking = { ...effectiveSettings.thinking, enabled: false };
     }

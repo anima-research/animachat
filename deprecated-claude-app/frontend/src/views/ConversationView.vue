@@ -1517,10 +1517,34 @@ const thinkingBudgetTokens = computed(() => {
 });
 
 // Check if current model supports thinking (from model config)
+// For standard conversations: check the conversation's model
+// For group chat (prefill/messages): check the selected responder's model
 const modelSupportsThinking = computed(() => {
-  const modelId = currentConversation.value?.model || '';
-  const model = store.state.models.find(m => m.id === modelId);
-  return model?.supportsThinking || false;
+  const format = currentConversation.value?.format;
+  
+  // Treat undefined format as standard (legacy/migrated conversations)
+  if (format === 'standard' || !format) {
+    // Standard format - use conversation model
+    const modelId = currentConversation.value?.model || '';
+    const model = store.state.models.find(m => m.id === modelId);
+    return model?.supportsThinking || false;
+  } else {
+    // Group chat (prefill/messages) - check selected responder's model
+    if (selectedResponder.value) {
+      const responder = participants.value.find(p => p.id === selectedResponder.value);
+      if (responder?.model) {
+        const model = store.state.models.find(m => m.id === responder.model);
+        return model?.supportsThinking || false;
+      }
+    }
+    // No responder selected - check if ANY assistant participant has a thinking-capable model
+    const anyAssistantSupportsThinking = participants.value.some(p => {
+      if (p.type !== 'assistant' || !p.model) return false;
+      const model = store.state.models.find(m => m.id === p.model);
+      return model?.supportsThinking || false;
+    });
+    return anyAssistantSupportsThinking;
+  }
 });
 
 async function toggleThinking() {
