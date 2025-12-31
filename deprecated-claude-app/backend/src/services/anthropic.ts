@@ -328,6 +328,14 @@ export class AnthropicService {
             lastChars: fullResponse.slice(-100)
           });
           
+          // DIAGNOSTIC: Detect when thinking happened but no text content followed
+          const hasThinkingBlocks = contentBlocks.some((b: any) => b.type === 'thinking' || b.type === 'redacted_thinking');
+          if (hasThinkingBlocks && fullResponse.length === 0) {
+            console.warn(`[Anthropic API] ⚠️ DIAGNOSTIC: Thinking blocks present but NO text content generated!`);
+            console.warn(`[Anthropic API] ⚠️ Stop reason: ${stopReason}, Usage: input=${usage.input_tokens}, output=${usage.output_tokens}`);
+            console.warn(`[Anthropic API] ⚠️ This may be a token budget issue - thinking may have consumed all output tokens.`);
+          }
+          
           // Calculate cost savings
           const costSaved = this.calculateCacheSavings(requestParams.model, cacheMetrics.cacheReadInputTokens);
           

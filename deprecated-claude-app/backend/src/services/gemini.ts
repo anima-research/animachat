@@ -330,11 +330,11 @@ export class GeminiService {
                 }
               }
               
-              // Extract usage
+              // Extract usage (with defensive defaults to prevent NaN)
               if (chunk.usageMetadata) {
                 usage = {
-                  inputTokens: chunk.usageMetadata.promptTokenCount,
-                  outputTokens: chunk.usageMetadata.candidatesTokenCount,
+                  inputTokens: chunk.usageMetadata.promptTokenCount ?? 0,
+                  outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0,
                 };
               }
             } catch (parseError) {
@@ -347,6 +347,12 @@ export class GeminiService {
       // Log thinking completion
       if (hasThinkingStarted) {
         console.log(`[Gemini API] 🧠 Thinking complete: ${thinkingContent.length} chars`);
+      }
+      
+      // DIAGNOSTIC: Detect when thinking happened but no text content followed
+      if (hasThinkingStarted && fullContent.length === 0) {
+        console.warn(`[Gemini API] ⚠️ DIAGNOSTIC: Thinking content received (${thinkingContent.length} chars) but NO text content generated!`);
+        console.warn(`[Gemini API] ⚠️ This may be a token budget issue or API limitation. Stream ended after ${chunkCount} chunks.`);
       }
       
       // Add text content block if we have text (with thought_signature if present)
