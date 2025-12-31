@@ -3277,8 +3277,8 @@ export class Database {
     // This is inefficient but acceptable for admin diagnostics
     for (const [userId] of this.users) {
       await this.loadUser(userId);
-      const userConvos = this.userConversations.get(userId) || [];
-      if (userConvos.includes(conversationId)) {
+      const userConvos = this.userConversations.get(userId) || new Set();
+      if (userConvos.has(conversationId)) {
         await this.loadConversation(conversationId, userId);
         const messageIds = this.conversationMessages.get(conversationId) || [];
         const messages = messageIds
@@ -3454,6 +3454,7 @@ export class Database {
         createdAt: string;
         model?: string;
         isDeleted: boolean;
+        contentBlocks?: any[];
       }>;
       isDeleted: boolean;
     }>();

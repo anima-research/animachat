@@ -328,7 +328,10 @@ export class InferenceService {
     const effectiveSettings = { ...settings };
     if (shouldTriggerPrefillThinking) {
       console.log('[InferenceService] Disabling API thinking for prefill format (using <think> tags instead)');
-      effectiveSettings.thinking = { ...effectiveSettings.thinking, enabled: false };
+      effectiveSettings.thinking = { 
+        enabled: false, 
+        budgetTokens: effectiveSettings.thinking?.budgetTokens ?? 0 
+      };
     }
     
     // Disable thinking if the model doesn't support it
