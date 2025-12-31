@@ -298,6 +298,7 @@ export const UserDefinedModelSchema = z.object({
   outputTokenLimit: z.number().min(100).max(1000000),
   supportsThinking: z.boolean().default(false),
   supportsPrefill: z.boolean().default(false), // Whether model supports prefill/completion mode
+  capabilities: ModelCapabilitiesSchema.optional(), // Multimodal capabilities (auto-detected from OpenRouter)
   hidden: z.boolean().default(false),
   settings: ModelSettingsSchema,
   createdAt: z.date(),
@@ -321,6 +322,7 @@ export const CreateUserModelSchema = z.object({
   outputTokenLimit: z.number().min(100).max(1000000),
   supportsThinking: z.boolean().optional(),
   supportsPrefill: z.boolean().optional(), // Whether model supports prefill/completion mode
+  capabilities: ModelCapabilitiesSchema.optional(), // Multimodal capabilities (auto-detected from OpenRouter)
   settings: ModelSettingsSchema.optional(),
   customEndpoint: z.object({
     baseUrl: z.string().url(),

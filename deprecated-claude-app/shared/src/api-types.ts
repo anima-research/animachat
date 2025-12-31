@@ -132,7 +132,10 @@ export const OpenRouterModelSchema = z.object({
   architecture: z.object({
     modality: z.string().optional(),
     tokenizer: z.string().optional(),
-    instruct_type: z.string().optional()
+    instruct_type: z.string().optional(),
+    // Modality arrays for capability detection
+    input_modalities: z.array(z.string()).optional(),
+    output_modalities: z.array(z.string()).optional()
   }).optional(),
   top_provider: z.object({
     context_length: z.number().optional(),
@@ -142,7 +145,9 @@ export const OpenRouterModelSchema = z.object({
   per_request_limits: z.object({
     prompt_tokens: z.string().or(z.number()).optional(),
     completion_tokens: z.string().or(z.number()).optional()
-  }).optional()
+  }).optional(),
+  // Supported parameters can indicate function calling, etc.
+  supported_parameters: z.array(z.string()).optional()
 });
 
 export type OpenRouterModel = z.infer<typeof OpenRouterModelSchema>;

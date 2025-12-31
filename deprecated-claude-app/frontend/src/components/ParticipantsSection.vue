@@ -282,17 +282,33 @@
             </template>
           </v-slider>
           
-          <v-text-field
-            :model-value="getParticipantSettingsField('maxTokens', 4096)"
-            @update:model-value="(val) => setParticipantSettingsField('maxTokens', Number(val))"
-            type="number"
-            label="Max Tokens"
-            variant="outlined"
-            hide-details
+          <v-slider
+            :model-value="getParticipantSettingsField('maxTokens', selectedParticipantModel?.settings?.maxTokens?.default || 4096)"
+            @update:model-value="(val) => setParticipantSettingsField('maxTokens', val)"
             :min="1"
             :max="selectedParticipantModel?.outputTokenLimit || 200000"
+            :step="1"
+            thumb-label
+            label="Max Tokens"
+            hide-details
             class="mb-4"
-          />
+            color="primary"
+          >
+            <template v-slot:append>
+              <v-text-field
+                :model-value="getParticipantSettingsField('maxTokens', selectedParticipantModel?.settings?.maxTokens?.default || 4096)"
+                @update:model-value="(val) => setParticipantSettingsField('maxTokens', Number(val))"
+                type="number"
+                density="compact"
+                style="width: 100px"
+                variant="outlined"
+                hide-details
+                single-line
+                :min="1"
+                :max="selectedParticipantModel?.outputTokenLimit || 200000"
+              />
+            </template>
+          </v-slider>
           
           <!-- Thinking Settings (for models that support it) -->
           <div v-if="selectedParticipantModel?.supportsThinking" class="mb-4">

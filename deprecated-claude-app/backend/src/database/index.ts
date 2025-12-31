@@ -4413,6 +4413,7 @@ export class Database {
       ...modelData,
       supportsThinking: modelData.supportsThinking || false,
       supportsPrefill: modelData.supportsPrefill ?? false,
+      capabilities: modelData.capabilities, // Include auto-detected capabilities
       hidden: false,
       settings: resolvedSettings,
       createdAt: new Date(),

@@ -303,7 +303,15 @@ const formData = ref({
   outputTokenLimit: 4096,
   supportsThinking: false,
   supportsPrefill: false,
-  canonicalId: '' as string | undefined
+  canonicalId: '' as string | undefined,
+  capabilities: {
+    imageInput: false,
+    pdfInput: false,
+    audioInput: false,
+    videoInput: false,
+    imageOutput: false,
+    audioOutput: false
+  }
 });
 
 const customEndpointData = ref({
@@ -353,7 +361,17 @@ function openEditDialog(model: UserDefinedModel) {
     contextWindow: model.contextWindow,
     outputTokenLimit: model.outputTokenLimit,
     supportsThinking: model.supportsThinking || false,
-    supportsPrefill: model.supportsPrefill || false
+    supportsPrefill: model.supportsPrefill || false,
+    canonicalId: model.canonicalId,
+    // Restore capabilities from existing model (preserves auto-detected values)
+    capabilities: model.capabilities || {
+      imageInput: false,
+      pdfInput: false,
+      audioInput: false,
+      videoInput: false,
+      imageOutput: false,
+      audioOutput: false
+    }
   };
   
   selectedProvider.value = model.provider;
@@ -382,7 +400,15 @@ function resetForm() {
     outputTokenLimit: 4096,
     supportsThinking: false,
     supportsPrefill: false,
-    canonicalId: undefined
+    canonicalId: undefined,
+    capabilities: {
+      imageInput: false,
+      pdfInput: false,
+      audioInput: false,
+      videoInput: false,
+      imageOutput: false,
+      audioOutput: false
+    }
   };
   
   customEndpointData.value = {
@@ -401,6 +427,33 @@ function onOpenRouterModelSelected(model: OpenRouterModel) {
   formData.value.outputTokenLimit = model.top_provider?.max_completion_tokens || 4096;
   // Auto-derive canonicalId for avatar lookup
   formData.value.canonicalId = deriveCanonicalId(model.id, model.name);
+  
+  // Auto-detect capabilities from OpenRouter API response
+  const inputModalities = model.architecture?.input_modalities || [];
+  const outputModalities = model.architecture?.output_modalities || [];
+  
+  // Also check the legacy modality string (e.g., "text+image->text" or "text->image")
+  const modalityStr = model.architecture?.modality || '';
+  const modalityParts = modalityStr.split('->');
+  const inputPart = modalityParts[0] || '';
+  const outputPart = modalityParts[1] || '';
+  
+  formData.value.capabilities = {
+    imageInput: inputModalities.includes('image') || inputPart.includes('image'),
+    pdfInput: inputModalities.includes('file') || inputPart.includes('file'), // PDFs often listed as 'file'
+    audioInput: inputModalities.includes('audio') || inputPart.includes('audio'),
+    videoInput: inputModalities.includes('video') || inputPart.includes('video'),
+    imageOutput: outputModalities.includes('image') || outputPart.includes('image'),
+    audioOutput: outputModalities.includes('audio') || outputPart.includes('audio')
+  };
+  
+  // Log detected capabilities for debugging
+  const detectedCaps = Object.entries(formData.value.capabilities)
+    .filter(([_, v]) => v)
+    .map(([k]) => k);
+  if (detectedCaps.length > 0) {
+    console.log(`[CustomModels] Auto-detected capabilities for ${model.id}:`, detectedCaps);
+  }
 }
 
 function extractShortName(name: string): string {

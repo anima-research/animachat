@@ -72,6 +72,8 @@ export class ModelLoader {
       supportsThinking: um.supportsThinking,
       // User-defined models always accept general credits
       currencies: { credit: true },
+      // Include auto-detected capabilities
+      capabilities: um.capabilities,
       settings: {
         temperature: {
           min: 0,
