@@ -18,25 +18,39 @@
       </v-card-title>
 
       <v-card-text class="pa-0">
-        <v-tabs v-model="activeTab">
-          <v-tab value="request">
-            <v-icon start>mdi-export</v-icon>
-            Request
-          </v-tab>
-          <v-tab value="response">
-            <v-icon start>mdi-import</v-icon>
-            Response
-          </v-tab>
-        </v-tabs>
+        <!-- Loading state -->
+        <div v-if="isLoading" class="text-center py-8">
+          <v-progress-circular indeterminate color="primary" />
+          <p class="mt-4 text-grey">Loading debug data...</p>
+        </div>
+        
+        <!-- Error state -->
+        <div v-else-if="loadError" class="text-center py-8">
+          <v-icon size="64" color="error">mdi-alert-circle</v-icon>
+          <p class="mt-4 text-error">{{ loadError }}</p>
+        </div>
+        
+        <!-- Content -->
+        <template v-else>
+          <v-tabs v-model="activeTab">
+            <v-tab value="request">
+              <v-icon start>mdi-export</v-icon>
+              Request
+            </v-tab>
+            <v-tab value="response">
+              <v-icon start>mdi-import</v-icon>
+              Response
+            </v-tab>
+          </v-tabs>
 
-        <v-window v-model="activeTab">
-          <!-- Request Tab -->
-          <v-window-item value="request" class="pa-4">
-            <div v-if="!debugRequest" class="text-center text-grey py-8">
-              <v-icon size="64" color="grey-lighten-1">mdi-information-outline</v-icon>
-              <p class="mt-4">No debug request data available for this message.</p>
-              <p class="text-caption">Debug data is only captured for new messages.</p>
-            </div>
+          <v-window v-model="activeTab">
+            <!-- Request Tab -->
+            <v-window-item value="request" class="pa-4">
+              <div v-if="!debugRequest" class="text-center text-grey py-8">
+                <v-icon size="64" color="grey-lighten-1">mdi-information-outline</v-icon>
+                <p class="mt-4">No debug request data available for this message.</p>
+                <p class="text-caption">Debug data is only captured for new messages.</p>
+              </div>
             <div v-else>
               <div class="d-flex mb-2">
                 <v-chip size="small" class="mr-2">
@@ -90,7 +104,8 @@
               </v-card>
             </div>
           </v-window-item>
-        </v-window>
+          </v-window>
+        </template>
       </v-card-text>
 
       <v-card-actions>
@@ -104,12 +119,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, watch } from 'vue';
+import { api } from '@/services/api';
 
 const props = defineProps<{
   modelValue: boolean;
-  debugRequest?: any;
-  debugResponse?: any;
+  conversationId: string;
+  messageId: string;
+  branchId: string;
 }>();
 
 const emit = defineEmits<{
@@ -117,6 +134,33 @@ const emit = defineEmits<{
 }>();
 
 const activeTab = ref('request');
+const isLoading = ref(false);
+const loadError = ref<string | null>(null);
+const debugRequest = ref<any>(null);
+const debugResponse = ref<any>(null);
+
+// Fetch debug data when dialog opens
+watch(() => props.modelValue, async (isOpen) => {
+  if (isOpen && props.conversationId && props.messageId && props.branchId) {
+    isLoading.value = true;
+    loadError.value = null;
+    debugRequest.value = null;
+    debugResponse.value = null;
+    
+    try {
+      const response = await api.get(
+        `/conversations/${props.conversationId}/messages/${props.messageId}/branches/${props.branchId}/debug`
+      );
+      debugRequest.value = response.data.debugRequest;
+      debugResponse.value = response.data.debugResponse;
+    } catch (error: any) {
+      console.error('Failed to load debug data:', error);
+      loadError.value = error.response?.data?.error || 'Failed to load debug data';
+    } finally {
+      isLoading.value = false;
+    }
+  }
+}, { immediate: true });
 
 function truncateLongStrings(obj: any, path: string = '', parentKey: string = ''): any {
   if (typeof obj === 'string') {

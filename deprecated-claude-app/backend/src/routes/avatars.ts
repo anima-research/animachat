@@ -1,6 +1,4 @@
 import { Router, Request, Response } from 'express';
-import { z } from 'zod';
-import { AvatarPackSchema } from '@deprecated-claude/shared';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';

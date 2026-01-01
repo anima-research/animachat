@@ -28,8 +28,10 @@ import { adminRouter } from './routes/admin.js';
 import { collaborationRouter } from './routes/collaboration.js';
 import { personaRouter } from './routes/personas.js';
 import avatarRouter from './routes/avatars.js';
+import blobRouter from './routes/blobs.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
+import { initBlobStore } from './database/blob-store.js';
 import { authenticateToken } from './middleware/auth.js';
 import { OpenRouterService } from './services/openrouter.js';
 import { updateOpenRouterModelsCache } from './services/pricing-cache.js';
@@ -139,6 +141,7 @@ app.use('/api/admin', adminRouter(db));
 app.use('/api/collaboration', collaborationRouter(db));
 app.use('/api/personas', authenticateToken, personaRouter(db));
 app.use('/api/avatars', authenticateToken, avatarRouter);
+app.use('/api/blobs', blobRouter); // No auth - blobs are served by ID (content-addressed)
 app.use('/api/system', systemRouter());
 
 // Health check
@@ -188,6 +191,10 @@ async function startServer() {
     // Initialize database
     await db.init();
     console.log('Database initialized');
+
+    // Initialize blob storage for images
+    await initBlobStore();
+    console.log('BlobStore initialized');
     
     // Initialize ModelLoader with database
     const modelLoader = ModelLoader.getInstance();

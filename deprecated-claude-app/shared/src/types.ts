@@ -450,10 +450,14 @@ export const RedactedThinkingContentBlockSchema = z.object({
 });
 
 // Image content block for model-generated images (GPT-4o, Gemini, etc.)
+// Supports two formats:
+// - Legacy: inline base64 data in 'data' field
+// - New: reference to BlobStore in 'blobId' field
 export const ImageContentBlockSchema = z.object({
   type: z.literal('image'),
   mimeType: z.string(), // image/png, image/jpeg, etc.
-  data: z.string(), // Base64 encoded image data
+  data: z.string().optional(), // Base64 encoded image data (legacy/inline)
+  blobId: z.string().optional(), // Reference to BlobStore (new format)
   revisedPrompt: z.string().optional(), // The prompt as revised by the model (GPT returns this)
   width: z.number().optional(),
   height: z.number().optional()
