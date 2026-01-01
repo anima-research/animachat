@@ -445,6 +445,70 @@ export function conversationRouter(db: Database): Router {
     }
   });
 
+  // ==================== PER-USER UI STATE ====================
+  // These are user-specific settings (speaking as, selected responder, detached mode)
+  // They are NEVER synced to other users in multi-user conversations
+
+  // Get user's UI state for a conversation
+  router.get('/:id/ui-state', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const state = await db.getUserConversationState(req.params.id, req.userId);
+      res.json(state);
+    } catch (error) {
+      console.error('Get UI state error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Update user's UI state for a conversation
+  router.patch('/:id/ui-state', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const { speakingAs, selectedResponder, isDetached, detachedBranch } = req.body;
+
+      // Update each field if provided
+      if (speakingAs !== undefined) {
+        await db.setUserSpeakingAs(req.params.id, req.userId, speakingAs || undefined);
+      }
+      if (selectedResponder !== undefined) {
+        await db.setUserSelectedResponder(req.params.id, req.userId, selectedResponder || undefined);
+      }
+      if (isDetached !== undefined) {
+        await db.setUserDetached(req.params.id, req.userId, isDetached);
+      }
+      if (detachedBranch) {
+        const { messageId, branchId } = detachedBranch;
+        if (messageId && branchId) {
+          await db.setUserDetachedBranch(req.params.id, req.userId, messageId, branchId);
+        }
+      }
+
+      // Return updated state
+      const state = await db.getUserConversationState(req.params.id, req.userId);
+      res.json(state);
+    } catch (error) {
+      console.error('Update UI state error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Get cache metrics for conversation
   router.get('/:id/cache-metrics', async (req: AuthRequest, res) => {
     try {

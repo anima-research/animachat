@@ -12,7 +12,7 @@ import { ModelLoader } from '../config/model-loader.js';
 import { SharesStore, SharedConversation } from './shares.js';
 import { CollaborationStore } from './collaboration.js';
 import { PersonaStore } from './persona.js';
-import { BranchStateStore } from './branch-state-store.js';
+import { ConversationUIStateStore } from './conversation-ui-state.js';
 import { SharePermission, ConversationShare, canChat, canDelete } from '@deprecated-claude/shared';
 import {
   Persona,
@@ -123,7 +123,7 @@ export class Database {
   private sharesStore: SharesStore;
   private collaborationStore: CollaborationStore;
   private personaStore: PersonaStore;
-  private branchStateStore: BranchStateStore;
+  private uiStateStore: ConversationUIStateStore;
   private initialized: boolean = false;
 
   constructor() {
@@ -134,7 +134,7 @@ export class Database {
     this.sharesStore = new SharesStore();
     this.collaborationStore = new CollaborationStore();
     this.personaStore = new PersonaStore();
-    this.branchStateStore = new BranchStateStore();
+    this.uiStateStore = new ConversationUIStateStore();
   }
   
   async init(): Promise<void> {
@@ -144,7 +144,7 @@ export class Database {
     await this.eventStore.init();
     await this.conversationEventStore.init();
     await this.userEventStore.init();
-    await this.branchStateStore.init();
+    await this.uiStateStore.init();
 
     // if needed
     await this.migrateDatabase();
@@ -254,10 +254,10 @@ export class Database {
         await this.replayEvent(event);
       }
       
-      // Apply saved branch selections from the mutable store
+      // Apply saved branch selections from the shared UI state store
       // (these are NOT in the event log to avoid bloat)
-      const branchState = await this.branchStateStore.load(conversationId);
-      for (const [messageId, branchId] of branchState) {
+      const sharedState = await this.uiStateStore.loadShared(conversationId);
+      for (const [messageId, branchId] of Object.entries(sharedState.activeBranches)) {
         const message = this.messages.get(messageId);
         if (message) {
           const branch = message.branches.find(b => b.id === branchId);
@@ -279,8 +279,8 @@ export class Database {
     this.conversationMessages.delete(conversationId);;
     this.conversationMetrics.delete(conversationId);
 
-    // Clear cached branch state
-    this.branchStateStore.clearCache(conversationId);
+    // Clear cached UI state
+    this.uiStateStore.clearCache(conversationId);
 
     this.conversationsLastAccessedTimes.delete(conversationId);
   }
@@ -2614,9 +2614,9 @@ export class Database {
     const updated = { ...message, activeBranchId: branchId };
     this.messages.set(messageId, updated);
 
-    // Save to mutable branch state store (NOT the append-only event log)
+    // Save to shared UI state store (NOT the append-only event log)
     // This prevents branch navigation from bloating the conversation history
-    await this.branchStateStore.setActiveBranch(conversationId, messageId, branchId);
+    await this.uiStateStore.setSharedActiveBranch(conversationId, messageId, branchId);
 
     // Don't update conversation timestamp for branch switches - it's just navigation
     // await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
@@ -2625,6 +2625,29 @@ export class Database {
     // Branch selections are stored in a separate mutable store to avoid event log bloat.
 
     return true;
+  }
+
+  // ==================== USER-SPECIFIC UI STATE ====================
+  // These are per-user settings that are NEVER synced to other users
+
+  async getUserConversationState(conversationId: string, userId: string) {
+    return this.uiStateStore.loadUser(conversationId, userId);
+  }
+
+  async setUserSpeakingAs(conversationId: string, userId: string, participantId: string | undefined): Promise<void> {
+    await this.uiStateStore.setSpeakingAs(conversationId, userId, participantId);
+  }
+
+  async setUserSelectedResponder(conversationId: string, userId: string, participantId: string | undefined): Promise<void> {
+    await this.uiStateStore.setSelectedResponder(conversationId, userId, participantId);
+  }
+
+  async setUserDetached(conversationId: string, userId: string, isDetached: boolean): Promise<void> {
+    await this.uiStateStore.setDetached(conversationId, userId, isDetached);
+  }
+
+  async setUserDetachedBranch(conversationId: string, userId: string, messageId: string, branchId: string): Promise<void> {
+    await this.uiStateStore.setDetachedBranch(conversationId, userId, messageId, branchId);
   }
   
   async updateMessage(messageId: string, conversationId: string, conversationOwnerUserId: string, message: Message, updatedByUserId?: string): Promise<boolean> {
