@@ -3374,8 +3374,17 @@ export class Database {
       }
     }
     
+    // Filter out noise events that shouldn't appear in the event history panel
+    const filteredEvents = events.filter((event: any) => {
+      // active_branch_changed events are now stored separately and shouldn't clutter history
+      if (event.type === 'active_branch_changed') return false;
+      // message_order_changed events are internal bookkeeping
+      if (event.type === 'message_order_changed') return false;
+      return true;
+    });
+
     // Enrich events with user info where available
-    const enrichedEvents = await Promise.all(events.map(async (event: any) => {
+    const enrichedEvents = await Promise.all(filteredEvents.map(async (event: any) => {
       const enriched: any = {
         type: event.type,
         timestamp: event.timestamp,
