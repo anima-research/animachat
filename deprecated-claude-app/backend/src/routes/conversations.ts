@@ -882,13 +882,16 @@ export function conversationRouter(db: Database): Router {
   });
 
   // Fork conversation at a specific message - creates new conversation with history up to that point
+  // Options:
+  //   compressHistory: boolean - if true, compress all previous messages into prefixHistory of the first message
+  //                              if false (default), copy all messages individually
   router.post('/:id/fork', async (req: AuthRequest, res) => {
     try {
       if (!req.userId) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const { messageId, branchId, includeSubtree } = req.body;
+      const { messageId, branchId, compressHistory = false } = req.body;
       if (!messageId || !branchId) {
         return res.status(400).json({ error: 'messageId and branchId are required' });
       }
@@ -972,67 +975,145 @@ export function conversationRouter(db: Database): Router {
         prefillUserMessage: conversation.prefillUserMessage,
       });
 
-      // Copy messages along the path
-      let prevBranchId: string | undefined = undefined;
-      const branchIdMapping = new Map<string, string>(); // old branchId -> new branchId
+      // Get participants for name resolution
+      const originalParticipants = await db.getConversationParticipants(req.params.id, conversation.userId);
+      const participantNameMap = new Map(originalParticipants.map(p => [p.id, p.name]));
 
-      for (const { message, branchId: activeBranchId } of pathToRoot) {
-        const branch = message.branches.find(b => b.id === activeBranchId);
-        if (!branch) continue;
-
-        // Create message with the branch content
-        // createMessage signature: (conversationId, ownerUserId, content, role, model?, parentBranchId?, participantId?, attachments?, sentByUserId?, hiddenFromAi?, creationSource?)
-        const newMessage = await db.createMessage(
-          newConversation.id,
-          req.userId,
-          branch.content,
-          branch.role,
-          branch.model,           // model
-          prevBranchId,           // explicitParentBranchId
-          branch.participantId,   // participantId
-          undefined,              // attachments (not copying binary data)
-          branch.sentByUserId,    // sentByUserId
-          branch.hiddenFromAi,    // hiddenFromAi
-          'fork'                  // creationSource
-        );
-
-        // Copy content blocks to the new branch if present
-        if (branch.contentBlocks && branch.contentBlocks.length > 0) {
+      if (compressHistory && pathToRoot.length > 1) {
+        // COMPRESSED MODE: Put all previous messages into prefixHistory of the first/only message
+        // Only copy the target message itself as the actual message
+        
+        // Build prefixHistory from all messages except the last one
+        const prefixHistory: Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantName?: string; model?: string }> = [];
+        
+        for (let i = 0; i < pathToRoot.length - 1; i++) {
+          const { message, branchId: activeBranchId } = pathToRoot[i];
+          const branch = message.branches.find(b => b.id === activeBranchId);
+          if (!branch) continue;
+          
+          prefixHistory.push({
+            role: branch.role,
+            content: branch.content,
+            participantName: branch.participantId ? participantNameMap.get(branch.participantId) : undefined,
+            model: branch.model,
+          });
+        }
+        
+        // Create the target message (last in path) with prefixHistory
+        const lastEntry = pathToRoot[pathToRoot.length - 1];
+        const lastBranch = lastEntry.message.branches.find(b => b.id === lastEntry.branchId);
+        
+        if (lastBranch) {
+          const newMessage = await db.createMessage(
+            newConversation.id,
+            req.userId,
+            lastBranch.content,
+            lastBranch.role,
+            lastBranch.model,
+            undefined,               // No parent - this is the first message
+            lastBranch.participantId,
+            undefined,
+            lastBranch.sentByUserId,
+            lastBranch.hiddenFromAi,
+            'fork'
+          );
+          
+          // Add prefixHistory and content blocks
+          const updates: any = { prefixHistory };
+          if (lastBranch.contentBlocks && lastBranch.contentBlocks.length > 0) {
+            updates.contentBlocks = lastBranch.contentBlocks;
+          }
           await db.updateMessageBranch(
             newMessage.id,
             req.userId,
             newMessage.branches[0].id,
-            { contentBlocks: branch.contentBlocks }
+            updates
           );
         }
+        
+        // Copy participants for group chats
+        if (conversation.format === 'prefill') {
+          for (const p of originalParticipants) {
+            await db.createParticipant(
+              newConversation.id,
+              req.userId,
+              p.name,
+              p.type,
+              p.model,
+              p.personaId,
+              p.isActive,
+              p.systemPrompt
+            );
+          }
+        }
+        
+        res.json({ 
+          success: true, 
+          conversation: newConversation,
+          messageCount: 1,
+          prefixHistoryCount: prefixHistory.length,
+          compressed: true
+        });
+        
+      } else {
+        // NORMAL MODE: Copy all messages individually
+        let prevBranchId: string | undefined = undefined;
+        const branchIdMapping = new Map<string, string>();
 
-        // Map old branch ID to new
-        branchIdMapping.set(activeBranchId, newMessage.branches[0].id);
-        prevBranchId = newMessage.branches[0].id;
-      }
+        for (const { message, branchId: activeBranchId } of pathToRoot) {
+          const branch = message.branches.find(b => b.id === activeBranchId);
+          if (!branch) continue;
 
-      // Optionally copy participants for group chats
-      if (conversation.format === 'prefill') {
-        const participants = await db.getConversationParticipants(req.params.id, conversation.userId);
-        for (const p of participants) {
-          await db.createParticipant(
+          const newMessage = await db.createMessage(
             newConversation.id,
             req.userId,
-            p.name,
-            p.type,
-            p.model,
-            p.personaId,
-            p.isActive,
-            p.systemPrompt // Use systemPrompt directly from participant
+            branch.content,
+            branch.role,
+            branch.model,
+            prevBranchId,
+            branch.participantId,
+            undefined,
+            branch.sentByUserId,
+            branch.hiddenFromAi,
+            'fork'
           );
-        }
-      }
 
-      res.json({ 
-        success: true, 
-        conversation: newConversation,
-        messageCount: pathToRoot.length
-      });
+          if (branch.contentBlocks && branch.contentBlocks.length > 0) {
+            await db.updateMessageBranch(
+              newMessage.id,
+              req.userId,
+              newMessage.branches[0].id,
+              { contentBlocks: branch.contentBlocks }
+            );
+          }
+
+          branchIdMapping.set(activeBranchId, newMessage.branches[0].id);
+          prevBranchId = newMessage.branches[0].id;
+        }
+
+        // Copy participants for group chats
+        if (conversation.format === 'prefill') {
+          for (const p of originalParticipants) {
+            await db.createParticipant(
+              newConversation.id,
+              req.userId,
+              p.name,
+              p.type,
+              p.model,
+              p.personaId,
+              p.isActive,
+              p.systemPrompt
+            );
+          }
+        }
+
+        res.json({ 
+          success: true, 
+          conversation: newConversation,
+          messageCount: pathToRoot.length,
+          compressed: false
+        });
+      }
     } catch (error) {
       console.error('Fork conversation error:', error);
       res.status(500).json({ error: 'Internal server error' });

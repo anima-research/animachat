@@ -515,6 +515,15 @@ export const CreationSourceSchema = z.enum([
 ]);
 export type CreationSource = z.infer<typeof CreationSourceSchema>;
 
+// Prefix history entry - represents a message from prior context that's embedded in a fork
+export const PrefixHistoryEntrySchema = z.object({
+  role: z.enum(['user', 'assistant', 'system']),
+  content: z.string(),
+  participantName: z.string().optional(), // Name of who spoke (for display/context)
+  model: z.string().optional(),
+});
+export type PrefixHistoryEntry = z.infer<typeof PrefixHistoryEntrySchema>;
+
 // Message types
 export const MessageBranchSchema = z.object({
   id: z.string().uuid(),
@@ -536,7 +545,10 @@ export const MessageBranchSchema = z.object({
   postHocOperation: PostHocOperationSchema.optional(),
   // How this branch was created - for authenticity verification
   // undefined means legacy data (pre-tracking), should be treated as unknown
-  creationSource: CreationSourceSchema.optional()
+  creationSource: CreationSourceSchema.optional(),
+  // Prefix history - prior context that should be prepended when building LLM context
+  // Used for compressed forks where history is embedded in the first message
+  prefixHistory: z.array(PrefixHistoryEntrySchema).optional()
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;

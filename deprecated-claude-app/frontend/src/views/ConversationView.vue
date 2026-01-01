@@ -999,6 +999,39 @@
       </v-card>
     </v-dialog>
     
+    <!-- Fork Conversation Dialog -->
+    <v-dialog v-model="showForkDialog" max-width="500">
+      <v-card>
+        <v-card-title class="text-h6">
+          <v-icon start color="primary">mdi-source-fork</v-icon>
+          Fork to New Conversation
+        </v-card-title>
+        <v-card-text>
+          <p class="mb-4">
+            Create a new conversation containing all messages up to this point.
+          </p>
+          
+          <v-checkbox
+            v-model="forkCompressHistory"
+            label="Compress history into first message"
+            hint="Instead of copying all messages, embed the history as context in the first message. The LLM will see the same context, but the new conversation will only have one message."
+            persistent-hint
+            density="compact"
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showForkDialog = false" :disabled="forkIsLoading">
+            Cancel
+          </v-btn>
+          <v-btn color="primary" variant="elevated" @click="executeFork" :loading="forkIsLoading">
+            <v-icon start>mdi-source-fork</v-icon>
+            Fork
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+    
     <!-- Stuck button is now shown inline next to the generating indicator in MessageComponent -->
 
     <!-- Error snackbar for non-streaming errors (pricing validation, etc.) -->
@@ -1198,6 +1231,13 @@ const selectedResponder = ref<string>('');
 const noResponseMode = ref(false);  // For standard conversations: disable AI response
 const isLoadingUIState = ref(false); // Prevents saving during load
 const showMobileSpeakingAs = ref(false);
+
+// Fork dialog state
+const showForkDialog = ref(false);
+const forkTargetMessageId = ref('');
+const forkTargetBranchId = ref('');
+const forkCompressHistory = ref(false);
+const forkIsLoading = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
 const bookmarks = ref<Bookmark[]>([]);
 const bookmarksScrollRef = ref<HTMLElement>();
@@ -3549,18 +3589,31 @@ async function handleSplit(messageId: string, branchId: string, splitPosition: n
   }
 }
 
-async function handleFork(messageId: string, branchId: string) {
+function handleFork(messageId: string, branchId: string) {
   if (!currentConversation.value) return;
   
-  if (!confirm('Fork this branch to a new conversation? The new conversation will contain all messages up to this point.')) return;
+  // Open the fork dialog
+  forkTargetMessageId.value = messageId;
+  forkTargetBranchId.value = branchId;
+  forkCompressHistory.value = false;
+  showForkDialog.value = true;
+}
+
+async function executeFork() {
+  if (!currentConversation.value) return;
+  
+  forkIsLoading.value = true;
   
   try {
     const response = await api.post(`/conversations/${currentConversation.value.id}/fork`, {
-      messageId,
-      branchId
+      messageId: forkTargetMessageId.value,
+      branchId: forkTargetBranchId.value,
+      compressHistory: forkCompressHistory.value
     });
     
     if (response.data.success && response.data.conversation) {
+      showForkDialog.value = false;
+      
       // Reload conversations list
       await store.loadConversations();
       
@@ -3571,6 +3624,8 @@ async function handleFork(messageId: string, branchId: string) {
     console.error('Failed to fork conversation:', error);
     errorSnackbarMessage.value = 'Failed to fork conversation';
     errorSnackbar.value = true;
+  } finally {
+    forkIsLoading.value = false;
   }
 }
 
