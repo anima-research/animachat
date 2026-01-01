@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getBlobStore, BlobStore } from '../database/blob-store.js';
+import { getBlobStore } from '../database/blob-store.js';
 
 const router = Router();
 

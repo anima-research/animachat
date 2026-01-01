@@ -5,7 +5,6 @@ import {
   PersonaParticipation,
   PersonaShare,
   PersonaPermission,
-  PersonaContextStrategy,
   CreatePersonaRequest,
   UpdatePersonaRequest,
   DEFAULT_PERSONA_CONTEXT_STRATEGY

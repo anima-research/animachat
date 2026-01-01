@@ -1,4 +1,4 @@
-import { User, Conversation, Message, Participant, ApiKey } from '@deprecated-claude/shared';
+import { Conversation, Message, Participant } from '@deprecated-claude/shared';
 import { EventStore, Event } from './persistence.js';
 import { BulkEventStore } from './bulk-event-store.js';
 

@@ -4,7 +4,7 @@ import { Database } from '../database/index.js';
 import { getBlobStore } from '../database/blob-store.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { roomManager } from '../websocket/room-manager.js';
-import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, PostHocOperationSchema, ContentBlockSchema, Message } from '@deprecated-claude/shared';
+import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, ContentBlockSchema, Message } from '@deprecated-claude/shared';
 
 /**
  * Prepare messages for client by:

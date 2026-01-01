@@ -4,10 +4,7 @@ import {
   ContextWindow,
   CacheMarker,
   AppendContextStrategy,
-  RollingContextStrategy,
-  LegacyRollingContextStrategy,
-  StaticContextStrategy,
-  AdaptiveContextStrategy
+  RollingContextStrategy
 } from './context-strategies.js';
 import { Logger } from '../utils/logger.js';
 import { PersonaContextBuilder } from './persona-context-builder.js';
