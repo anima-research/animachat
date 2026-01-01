@@ -301,6 +301,12 @@ export class GeminiService {
                     // Find existing image block index - Gemini may send preview then final image
                     const existingImageIndex = contentBlocks.findIndex((b: any) => b.type === 'image');
                     if (existingImageIndex >= 0) {
+                      // Delete the old blob to prevent orphans
+                      const oldBlock = contentBlocks[existingImageIndex] as any;
+                      if (oldBlock.blobId && oldBlock.blobId !== blobId) {
+                        await blobStore.deleteBlob(oldBlock.blobId);
+                        console.log(`[Gemini API] Deleted old preview blob ${oldBlock.blobId.substring(0, 8)}...`);
+                      }
                       // Replace preview with final high-res version
                       console.log(`[Gemini API] Replacing image with newer version: ${part.inlineData.mimeType}, blobId: ${blobId.substring(0, 8)}...`);
                       contentBlocks[existingImageIndex] = imageBlock;

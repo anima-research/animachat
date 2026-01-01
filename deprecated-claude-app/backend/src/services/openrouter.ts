@@ -429,6 +429,12 @@ export class OpenRouterService {
                 };
                 
                 if (existingImageIndex >= 0) {
+                  // Delete the old blob to prevent orphans
+                  const oldBlock = contentBlocks[existingImageIndex] as any;
+                  if (oldBlock.blobId && oldBlock.blobId !== blobId) {
+                    await blobStore.deleteBlob(oldBlock.blobId);
+                    console.log(`[OpenRouter] 🖼️ Deleted old preview blob ${oldBlock.blobId.substring(0, 8)}...`);
+                  }
                   // Replace existing image with the newer version
                   console.log(`[OpenRouter] 🖼️ Replacing image with blob ${blobId.substring(0, 8)}...`);
                   contentBlocks[existingImageIndex] = imageBlock;
