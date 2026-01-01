@@ -969,24 +969,52 @@ export function conversationRouter(db: Database): Router {
         }
       }
 
-      // Collect subtree from target onwards (following active branches)
-      const subtreePath: Array<{ message: Message; branchId: string }> = [];
-      let walkBranchId: string | undefined = branchId;
+      // Collect ALL descendants from target onwards using BFS
+      // We need the entire subtree, not just one path
+      const subtreeMessages: Array<{ message: Message; branchId: string }> = [];
+      const visitedMessages = new Set<string>();
       
-      // Start from target message
-      subtreePath.push({ message: targetMessage, branchId });
+      // Start from target message with the specified branch
+      subtreeMessages.push({ message: targetMessage, branchId });
+      visitedMessages.add(targetMessage.id);
+      console.log(`[Fork] Starting subtree collection from message ${messageId.substring(0, 8)}... branch ${branchId.substring(0, 8)}...`);
+      console.log(`[Fork] childrenMap has ${childrenMap.size} entries`);
       
-      // Walk down following active branches
-      while (walkBranchId) {
-        const children = childrenMap.get(walkBranchId);
-        if (!children || children.length === 0) break;
-        
-        // Find the child that's on the active branch path
-        // For now, take the first child (could be made smarter to follow activeBranchId)
-        const nextChild = children[0];
-        subtreePath.push(nextChild);
-        walkBranchId = nextChild.branchId;
+      // BFS to collect all descendants
+      // Queue contains branch IDs to explore
+      const branchQueue: string[] = [];
+      
+      // Add all branches of the target message to the queue
+      for (const branch of targetMessage.branches) {
+        branchQueue.push(branch.id);
       }
+      
+      while (branchQueue.length > 0) {
+        const currentBranchId = branchQueue.shift()!;
+        const children = childrenMap.get(currentBranchId);
+        
+        if (!children || children.length === 0) continue;
+        
+        for (const child of children) {
+          if (visitedMessages.has(child.message.id)) continue;
+          
+          console.log(`[Fork] Adding descendant message ${child.message.id.substring(0, 8)}... branch ${child.branchId.substring(0, 8)}...`);
+          subtreeMessages.push(child);
+          visitedMessages.add(child.message.id);
+          
+          // Add ALL branches of this message to explore their children too
+          for (const branch of child.message.branches) {
+            branchQueue.push(branch.id);
+          }
+        }
+      }
+      
+      // Sort by order to maintain message sequence
+      subtreeMessages.sort((a, b) => a.message.order - b.message.order);
+      const subtreePath = subtreeMessages;
+      
+      console.log(`[Fork] Subtree has ${subtreePath.length} messages`);
+      console.log(`[Fork] History before target has ${historyPath.length - 1} messages`);
 
       // History = everything before the target (excluding target itself)
       const historyBeforeTarget = historyPath.slice(0, -1);
@@ -1033,52 +1061,111 @@ export function conversationRouter(db: Database): Router {
         }
       }
 
-      // Helper to copy a message
-      const userId = req.userId!; // Already checked above
-      const copyMessage = async (
-        entry: { message: Message; branchId: string },
-        parentBranchId: string | undefined,
+      // Build mapping from old branch IDs to new branch IDs
+      const branchIdMap = new Map<string, string>(); // old ID -> new ID
+      const userId = req.userId!;
+      let messagesCopied = 0;
+
+      // Helper to copy a message with ALL its branches, preserving tree structure
+      const copyMessageWithBranches = async (
+        message: Message,
         prefixHistory?: Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantName?: string; model?: string }>
       ) => {
-        const branch = entry.message.branches.find(b => b.id === entry.branchId);
-        if (!branch) return null;
-
-        const newMessage = await db.createMessage(
-          newConversation.id,
-          userId,
-          branch.content,
-          branch.role,
-          branch.model,
-          parentBranchId,
-          branch.participantId ? newParticipantMap.get(branch.participantId) || branch.participantId : undefined,
-          undefined,
-          branch.sentByUserId,
-          branch.hiddenFromAi,
-          'fork'
-        );
-
-        // Add content blocks and optionally prefixHistory
-        const updates: any = {};
-        if (branch.contentBlocks && branch.contentBlocks.length > 0) {
-          updates.contentBlocks = branch.contentBlocks;
+        let newMessage: Message | null = null;
+        
+        for (let i = 0; i < message.branches.length; i++) {
+          const branch = message.branches[i];
+          
+          // Look up the mapped parent branch ID
+          let mappedParentBranchId: string | undefined = undefined;
+          if (branch.parentBranchId && branch.parentBranchId !== 'root') {
+            mappedParentBranchId = branchIdMap.get(branch.parentBranchId);
+            if (!mappedParentBranchId) {
+              // Parent not in map - might be from outside the fork
+              console.log(`[Fork] Warning: parent ${branch.parentBranchId.substring(0, 8)}... not found in map, skipping branch`);
+              continue;
+            }
+          }
+          
+          if (i === 0) {
+            // First branch: create the message
+            newMessage = await db.createMessage(
+              newConversation.id,
+              userId,
+              branch.content,
+              branch.role,
+              branch.model,
+              mappedParentBranchId,
+              branch.participantId ? newParticipantMap.get(branch.participantId) || branch.participantId : undefined,
+              undefined,
+              branch.sentByUserId,
+              branch.hiddenFromAi,
+              'fork'
+            );
+            
+            if (newMessage) {
+              // Map old branch ID to new branch ID
+              branchIdMap.set(branch.id, newMessage.branches[0].id);
+              
+              // Add content blocks and optionally prefixHistory
+              const updates: any = {};
+              if (branch.contentBlocks && branch.contentBlocks.length > 0) {
+                updates.contentBlocks = branch.contentBlocks;
+              }
+              if (prefixHistory && prefixHistory.length > 0) {
+                updates.prefixHistory = prefixHistory;
+              }
+              if (Object.keys(updates).length > 0) {
+                await db.updateMessageBranch(
+                  newMessage.id,
+                  userId,
+                  newMessage.branches[0].id,
+                  updates
+                );
+              }
+            }
+          } else {
+            // Additional branches: add as regenerations
+            if (newMessage) {
+              const updatedMessage = await db.addMessageBranch(
+                newMessage.id,
+                newConversation.id,
+                userId,
+                branch.content,
+                branch.role,
+                mappedParentBranchId,
+                branch.model,
+                branch.participantId ? newParticipantMap.get(branch.participantId) || branch.participantId : undefined,
+                undefined, // attachments
+                branch.sentByUserId,
+                branch.hiddenFromAi,
+                false, // preserveActiveBranch
+                'fork'
+              );
+              
+              if (updatedMessage) {
+                // Map the new branch ID
+                const newBranch = updatedMessage.branches[updatedMessage.branches.length - 1];
+                branchIdMap.set(branch.id, newBranch.id);
+                
+                // Update content blocks if present
+                if (branch.contentBlocks && branch.contentBlocks.length > 0) {
+                  await db.updateMessageBranch(
+                    updatedMessage.id,
+                    userId,
+                    newBranch.id,
+                    { contentBlocks: branch.contentBlocks }
+                  );
+                }
+                
+                newMessage = updatedMessage;
+              }
+            }
+          }
         }
-        if (prefixHistory && prefixHistory.length > 0) {
-          updates.prefixHistory = prefixHistory;
-        }
-        if (Object.keys(updates).length > 0) {
-          await db.updateMessageBranch(
-            newMessage.id,
-            userId,
-            newMessage.branches[0].id,
-            updates
-          );
-        }
-
+        
         return newMessage;
       };
-
-      let prevBranchId: string | undefined = undefined;
-      let messagesCopied = 0;
 
       if (compressHistory && historyBeforeTarget.length > 0) {
         // COMPRESSED MODE: Embed history before target as prefixHistory
@@ -1098,19 +1185,28 @@ export function conversationRouter(db: Database): Router {
           });
         }
         
-        // Copy subtree with prefixHistory on first message
+        // Copy subtree with prefixHistory on first message, preserving tree structure
         for (let i = 0; i < subtreePath.length; i++) {
           const entry = subtreePath[i];
           const isFirst = i === 0;
           
-          const newMessage = await copyMessage(
-            entry,
-            prevBranchId,
+          // For first message in compressed mode, we need to set up the root parent
+          if (isFirst) {
+            // The target's parent needs to be set to undefined (root) since history is compressed
+            // We temporarily modify the branchIdMap so the first message's parent resolves correctly
+            for (const branch of entry.message.branches) {
+              if (branch.parentBranchId) {
+                branchIdMap.set(branch.parentBranchId, undefined as any); // Mark as root
+              }
+            }
+          }
+          
+          const newMessage = await copyMessageWithBranches(
+            entry.message,
             isFirst ? prefixHistory : undefined
           );
           
           if (newMessage) {
-            prevBranchId = newMessage.branches[0].id;
             messagesCopied++;
           }
         }
@@ -1127,20 +1223,52 @@ export function conversationRouter(db: Database): Router {
         // NORMAL MODE: Copy history before target, then subtree
         // (If no history, just copy subtree)
         
-        // First, copy history before target
-        for (const entry of historyBeforeTarget) {
-          const newMessage = await copyMessage(entry, prevBranchId);
+        // First, copy history before target (linear chain)
+        for (const { message, branchId } of historyBeforeTarget) {
+          // For history, we only copy the active branch (linear path)
+          const branch = message.branches.find(b => b.id === branchId);
+          if (!branch) continue;
+          
+          // Look up parent
+          let mappedParentBranchId: string | undefined = undefined;
+          if (branch.parentBranchId && branch.parentBranchId !== 'root') {
+            mappedParentBranchId = branchIdMap.get(branch.parentBranchId);
+          }
+          
+          const newMessage = await db.createMessage(
+            newConversation.id,
+            userId,
+            branch.content,
+            branch.role,
+            branch.model,
+            mappedParentBranchId,
+            branch.participantId ? newParticipantMap.get(branch.participantId) || branch.participantId : undefined,
+            undefined,
+            branch.sentByUserId,
+            branch.hiddenFromAi,
+            'fork'
+          );
+          
           if (newMessage) {
-            prevBranchId = newMessage.branches[0].id;
+            branchIdMap.set(branch.id, newMessage.branches[0].id);
+            
+            if (branch.contentBlocks && branch.contentBlocks.length > 0) {
+              await db.updateMessageBranch(
+                newMessage.id,
+                userId,
+                newMessage.branches[0].id,
+                { contentBlocks: branch.contentBlocks }
+              );
+            }
+            
             messagesCopied++;
           }
         }
         
-        // Then copy subtree (target + descendants)
+        // Then copy subtree (target + descendants) with ALL branches preserved
         for (const entry of subtreePath) {
-          const newMessage = await copyMessage(entry, prevBranchId);
+          const newMessage = await copyMessageWithBranches(entry.message);
           if (newMessage) {
-            prevBranchId = newMessage.branches[0].id;
             messagesCopied++;
           }
         }
