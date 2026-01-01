@@ -13,8 +13,12 @@ import { CreateConversationRequestSchema, ImportConversationRequestSchema, Conve
  * 
  * IMPORTANT: This function creates clones to avoid mutating the cached database objects.
  * The database returns objects from an in-memory cache, so mutations would be permanent.
+ * 
+ * When images are converted, the change is PERSISTED to the database to avoid:
+ * - Duplicate blobs after server restarts (hashToId map is in-memory only)
+ * - Repeated conversion work on every fetch
  */
-async function prepareMessagesForClient(messages: Message[]): Promise<Message[]> {
+async function prepareMessagesForClient(messages: Message[], db: Database, conversationOwnerUserId: string): Promise<Message[]> {
   const blobStore = getBlobStore();
   const result: Message[] = [];
   
@@ -27,10 +31,12 @@ async function prepareMessagesForClient(messages: Message[]): Promise<Message[]>
       const { debugRequest, debugResponse, ...branchWithoutDebug } = branch as any;
       const clonedBranch = { ...branchWithoutDebug };
       
+      // Track if we need to persist changes for this branch
+      let needsPersist = false;
+      const updatedContentBlocks: any[] = [];
+      
       // Process content blocks for images (clone the array too)
       if (branch.contentBlocks && branch.contentBlocks.length > 0) {
-        clonedBranch.contentBlocks = [];
-        
         for (const block of branch.contentBlocks) {
           const typedBlock = block as any;
           
@@ -41,7 +47,7 @@ async function prepareMessagesForClient(messages: Message[]): Promise<Message[]>
               console.log(`[prepareMessages] Converted inline image to blob ${blobId.substring(0, 8)}...`);
               
               // Create new block with blobId instead of data
-              clonedBranch.contentBlocks.push({
+              const newBlock = {
                 type: 'image',
                 mimeType: typedBlock.mimeType || 'image/png',
                 blobId,
@@ -49,15 +55,32 @@ async function prepareMessagesForClient(messages: Message[]): Promise<Message[]>
                 ...(typedBlock.revisedPrompt && { revisedPrompt: typedBlock.revisedPrompt }),
                 ...(typedBlock.width && { width: typedBlock.width }),
                 ...(typedBlock.height && { height: typedBlock.height }),
-              });
+              };
+              updatedContentBlocks.push(newBlock);
+              needsPersist = true;
             } catch (error) {
               console.error(`[prepareMessages] Failed to convert image to blob:`, error);
               // Keep original block if conversion fails
-              clonedBranch.contentBlocks.push({ ...typedBlock });
+              updatedContentBlocks.push({ ...typedBlock });
             }
           } else {
             // Clone other blocks as-is
-            clonedBranch.contentBlocks.push({ ...typedBlock });
+            updatedContentBlocks.push({ ...typedBlock });
+          }
+        }
+        
+        clonedBranch.contentBlocks = updatedContentBlocks;
+        
+        // Persist the conversion to the database so it's not repeated
+        if (needsPersist) {
+          try {
+            await db.updateMessageBranch(message.id, conversationOwnerUserId, branch.id, {
+              contentBlocks: updatedContentBlocks
+            });
+            console.log(`[prepareMessages] Persisted image conversion for message ${message.id.substring(0, 8)}... branch ${branch.id.substring(0, 8)}...`);
+          } catch (error) {
+            console.error(`[prepareMessages] Failed to persist image conversion:`, error);
+            // Continue anyway - the client will still get the converted data
           }
         }
       }
@@ -275,10 +298,11 @@ export function conversationRouter(db: Database): Router {
 
       // Note: Access control is handled in getConversation
       const messages = await db.getConversationMessages(req.params.id, conversation.userId);
-      
+
       // Prepare messages for client: strip debug data, convert old images to blob refs
-      const preparedMessages = await prepareMessagesForClient(messages);
-      
+      // Pass db and userId so conversions can be persisted (avoiding duplicate blobs after restart)
+      const preparedMessages = await prepareMessagesForClient(messages, db, conversation.userId);
+
       res.json(preparedMessages);
     } catch (error) {
       console.error('Get messages error:', error);
