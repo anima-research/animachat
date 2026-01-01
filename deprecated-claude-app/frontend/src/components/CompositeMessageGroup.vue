@@ -108,6 +108,7 @@
         @post-hoc-unhide="(msgId: string, branchId: string) => emit('post-hoc-unhide', msgId, branchId)"
         @delete-post-hoc-operation="(msgId: string) => emit('delete-post-hoc-operation', msgId)"
         @split="(msgId: string, branchId: string, position: number) => emit('split', msgId, branchId, position)"
+        @fork="(msgId: string, branchId: string) => emit('fork', msgId, branchId)"
       />
     </template>
   </div>
@@ -154,6 +155,7 @@ const emit = defineEmits<{
   'post-hoc-unhide': [msgId: string, branchId: string];
   'delete-post-hoc-operation': [msgId: string];
   split: [msgId: string, branchId: string, position: number];
+  fork: [msgId: string, branchId: string];
   'stuck-clicked': [];
 }>();
 

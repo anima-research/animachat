@@ -435,6 +435,7 @@
               @post-hoc-unhide="handlePostHocUnhide"
               @delete-post-hoc-operation="handleDeletePostHocOperation"
               @split="handleSplit"
+              @fork="handleFork"
             />
           </div>
         </v-container>
@@ -3545,6 +3546,31 @@ async function handleSplit(messageId: string, branchId: string, splitPosition: n
     }
   } catch (error) {
     console.error('Failed to split message:', error);
+  }
+}
+
+async function handleFork(messageId: string, branchId: string) {
+  if (!currentConversation.value) return;
+  
+  if (!confirm('Fork this branch to a new conversation? The new conversation will contain all messages up to this point.')) return;
+  
+  try {
+    const response = await api.post(`/conversations/${currentConversation.value.id}/fork`, {
+      messageId,
+      branchId
+    });
+    
+    if (response.data.success && response.data.conversation) {
+      // Reload conversations list
+      await store.loadConversations();
+      
+      // Navigate to the new conversation
+      router.push(`/conversation/${response.data.conversation.id}`);
+    }
+  } catch (error) {
+    console.error('Failed to fork conversation:', error);
+    errorSnackbarMessage.value = 'Failed to fork conversation';
+    errorSnackbar.value = true;
   }
 }
 

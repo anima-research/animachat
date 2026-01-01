@@ -881,5 +881,163 @@ export function conversationRouter(db: Database): Router {
     }
   });
 
+  // Fork conversation at a specific message - creates new conversation with history up to that point
+  router.post('/:id/fork', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { messageId, branchId, includeSubtree } = req.body;
+      if (!messageId || !branchId) {
+        return res.status(400).json({ error: 'messageId and branchId are required' });
+      }
+
+      // Check access
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Get all messages
+      const messages = await db.getConversationMessages(req.params.id, conversation.userId);
+      if (!messages.length) {
+        return res.status(400).json({ error: 'No messages to fork' });
+      }
+
+      // Build message index and parent map
+      const messageById = new Map(messages.map(m => [m.id, m]));
+      const parentMap = new Map<string, { messageId: string; branchId: string }>();
+      
+      for (const msg of messages) {
+        for (const branch of msg.branches) {
+          if (branch.parentBranchId) {
+            // Find parent message by its branch
+            for (const parentMsg of messages) {
+              const parentBranch = parentMsg.branches.find(b => b.id === branch.parentBranchId);
+              if (parentBranch) {
+                parentMap.set(msg.id, { messageId: parentMsg.id, branchId: parentBranch.id });
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      // Walk path from target message to root
+      const targetMessage = messageById.get(messageId);
+      if (!targetMessage) {
+        return res.status(404).json({ error: 'Message not found' });
+      }
+
+      const targetBranch = targetMessage.branches.find(b => b.id === branchId);
+      if (!targetBranch) {
+        return res.status(404).json({ error: 'Branch not found' });
+      }
+
+      // Collect path from root to target
+      const pathToRoot: Array<{ message: Message; branchId: string }> = [];
+      let currentMsgId: string | undefined = messageId;
+      let currentBranchId: string | undefined = branchId;
+
+      while (currentMsgId) {
+        const msg = messageById.get(currentMsgId);
+        if (!msg) break;
+        pathToRoot.unshift({ message: msg, branchId: currentBranchId! });
+        
+        const parent = parentMap.get(currentMsgId);
+        if (parent) {
+          currentMsgId = parent.messageId;
+          currentBranchId = parent.branchId;
+        } else {
+          break;
+        }
+      }
+
+      // Create new conversation with same settings
+      const newConversation = await db.createConversation(
+        req.userId,
+        `Fork: ${conversation.title}`,
+        conversation.model,
+        conversation.systemPrompt
+      );
+
+      // Apply additional settings
+      await db.updateConversation(newConversation.id, req.userId, {
+        format: conversation.format,
+        combineConsecutiveMessages: conversation.combineConsecutiveMessages,
+        cliModePrompt: conversation.cliModePrompt,
+        contextManagement: conversation.contextManagement,
+        settings: conversation.settings,
+        prefillUserMessage: conversation.prefillUserMessage,
+      });
+
+      // Copy messages along the path
+      let prevBranchId: string | undefined = undefined;
+      const branchIdMapping = new Map<string, string>(); // old branchId -> new branchId
+
+      for (const { message, branchId: activeBranchId } of pathToRoot) {
+        const branch = message.branches.find(b => b.id === activeBranchId);
+        if (!branch) continue;
+
+        // Create message with the branch content
+        // createMessage signature: (conversationId, ownerUserId, content, role, model?, parentBranchId?, participantId?, attachments?, sentByUserId?, hiddenFromAi?, creationSource?)
+        const newMessage = await db.createMessage(
+          newConversation.id,
+          req.userId,
+          branch.content,
+          branch.role,
+          branch.model,           // model
+          prevBranchId,           // explicitParentBranchId
+          branch.participantId,   // participantId
+          undefined,              // attachments (not copying binary data)
+          branch.sentByUserId,    // sentByUserId
+          branch.hiddenFromAi,    // hiddenFromAi
+          'fork'                  // creationSource
+        );
+
+        // Copy content blocks to the new branch if present
+        if (branch.contentBlocks && branch.contentBlocks.length > 0) {
+          await db.updateMessageBranch(
+            newMessage.id,
+            req.userId,
+            newMessage.branches[0].id,
+            { contentBlocks: branch.contentBlocks }
+          );
+        }
+
+        // Map old branch ID to new
+        branchIdMapping.set(activeBranchId, newMessage.branches[0].id);
+        prevBranchId = newMessage.branches[0].id;
+      }
+
+      // Optionally copy participants for group chats
+      if (conversation.format === 'prefill') {
+        const participants = await db.getConversationParticipants(req.params.id, conversation.userId);
+        for (const p of participants) {
+          await db.createParticipant(
+            newConversation.id,
+            req.userId,
+            p.name,
+            p.type,
+            p.model,
+            p.personaId,
+            p.isActive,
+            p.systemPrompt // Use systemPrompt directly from participant
+          );
+        }
+      }
+
+      res.json({ 
+        success: true, 
+        conversation: newConversation,
+        messageCount: pathToRoot.length
+      });
+    } catch (error) {
+      console.error('Fork conversation error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }

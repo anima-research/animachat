@@ -510,7 +510,8 @@ export const CreationSourceSchema = z.enum([
   'human_edit',     // Human edited/wrote this content
   'regeneration',   // AI regeneration of a previous attempt
   'split',          // Result of message split operation
-  'import'          // Imported from external source
+  'import',         // Imported from external source
+  'fork'            // Copied from another conversation via fork
 ]);
 export type CreationSource = z.infer<typeof CreationSourceSchema>;
 

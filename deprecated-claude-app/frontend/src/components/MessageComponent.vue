@@ -220,6 +220,12 @@
             </v-list-item>
           </template>
           <v-divider class="my-0" />
+          <v-list-item density="compact" @click="$emit('fork', message.id, currentBranch.id)">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-source-fork" />
+            </template>
+            <v-list-item-title class="text-caption">Fork to new chat</v-list-item-title>
+          </v-list-item>
           <v-list-item v-if="message.branches.length > 1" density="compact" @click="$emit('delete-all-branches', message.id)">
             <template v-slot:prepend>
               <v-icon size="16" icon="mdi-delete-sweep-outline" color="error" />
@@ -858,6 +864,7 @@ const emit = defineEmits<{
   'post-hoc-unhide': [messageId: string, branchId: string];
   'delete-post-hoc-operation': [messageId: string];
   'split': [messageId: string, branchId: string, splitPosition: number];
+  'fork': [messageId: string, branchId: string];
 }>();
 
 const isEditing = ref(false);
