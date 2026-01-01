@@ -1,9 +1,75 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
+import { getBlobStore } from '../database/blob-store.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { roomManager } from '../websocket/room-manager.js';
-import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, PostHocOperationSchema, ContentBlockSchema } from '@deprecated-claude/shared';
+import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, PostHocOperationSchema, ContentBlockSchema, Message } from '@deprecated-claude/shared';
+
+/**
+ * Prepare messages for client by:
+ * 1. Stripping debug data (debugRequest, debugResponse) - loaded on demand
+ * 2. Converting old inline images to blob references - for memory efficiency
+ * 
+ * IMPORTANT: This function creates clones to avoid mutating the cached database objects.
+ * The database returns objects from an in-memory cache, so mutations would be permanent.
+ */
+async function prepareMessagesForClient(messages: Message[]): Promise<Message[]> {
+  const blobStore = getBlobStore();
+  const result: Message[] = [];
+  
+  for (const message of messages) {
+    // Clone the message and its branches array
+    const clonedMessage = { ...message, branches: [] as typeof message.branches };
+    
+    for (const branch of message.branches) {
+      // Clone the branch, explicitly omitting debug data
+      const { debugRequest, debugResponse, ...branchWithoutDebug } = branch as any;
+      const clonedBranch = { ...branchWithoutDebug };
+      
+      // Process content blocks for images (clone the array too)
+      if (branch.contentBlocks && branch.contentBlocks.length > 0) {
+        clonedBranch.contentBlocks = [];
+        
+        for (const block of branch.contentBlocks) {
+          const typedBlock = block as any;
+          
+          if (typedBlock.type === 'image' && typedBlock.data && !typedBlock.blobId) {
+            // OLD FORMAT: Convert inline base64 to blob
+            try {
+              const blobId = await blobStore.saveBlob(typedBlock.data, typedBlock.mimeType || 'image/png');
+              console.log(`[prepareMessages] Converted inline image to blob ${blobId.substring(0, 8)}...`);
+              
+              // Create new block with blobId instead of data
+              clonedBranch.contentBlocks.push({
+                type: 'image',
+                mimeType: typedBlock.mimeType || 'image/png',
+                blobId,
+                // Preserve other fields like revisedPrompt, width, height
+                ...(typedBlock.revisedPrompt && { revisedPrompt: typedBlock.revisedPrompt }),
+                ...(typedBlock.width && { width: typedBlock.width }),
+                ...(typedBlock.height && { height: typedBlock.height }),
+              });
+            } catch (error) {
+              console.error(`[prepareMessages] Failed to convert image to blob:`, error);
+              // Keep original block if conversion fails
+              clonedBranch.contentBlocks.push({ ...typedBlock });
+            }
+          } else {
+            // Clone other blocks as-is
+            clonedBranch.contentBlocks.push({ ...typedBlock });
+          }
+        }
+      }
+      
+      clonedMessage.branches.push(clonedBranch);
+    }
+    
+    result.push(clonedMessage);
+  }
+  
+  return result;
+}
 
 // Schema for creating a post-hoc operation
 const CreatePostHocOperationSchema = z.object({
@@ -209,9 +275,52 @@ export function conversationRouter(db: Database): Router {
 
       // Note: Access control is handled in getConversation
       const messages = await db.getConversationMessages(req.params.id, conversation.userId);
-      res.json(messages);
+      
+      // Prepare messages for client: strip debug data, convert old images to blob refs
+      const preparedMessages = await prepareMessagesForClient(messages);
+      
+      res.json(preparedMessages);
     } catch (error) {
       console.error('Get messages error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Get debug data for a specific message branch
+  // This endpoint returns the full debugRequest and debugResponse that were stripped from the messages response
+  router.get('/:id/messages/:messageId/branches/:branchId/debug', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { id: conversationId, messageId, branchId } = req.params;
+
+      // Verify conversation access
+      const conversation = await db.getConversation(conversationId, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Get the message
+      const message = await db.getMessage(messageId, conversationId, conversation.userId);
+      if (!message) {
+        return res.status(404).json({ error: 'Message not found' });
+      }
+
+      // Find the branch
+      const branch = message.branches.find(b => b.id === branchId);
+      if (!branch) {
+        return res.status(404).json({ error: 'Branch not found' });
+      }
+
+      // Return debug data (may be undefined if not captured)
+      res.json({
+        debugRequest: (branch as any).debugRequest || null,
+        debugResponse: (branch as any).debugResponse || null,
+      });
+    } catch (error) {
+      console.error('Get debug data error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

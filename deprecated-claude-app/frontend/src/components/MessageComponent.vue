@@ -434,10 +434,11 @@
       <div v-if="imageBlocks.length > 0" class="generated-images mt-3">
         <div v-for="(block, index) in imageBlocks" :key="'img-' + index" class="generated-image-container mb-2">
           <img 
-            :src="`data:${(block as any).mimeType || 'image/png'};base64,${(block as any).data}`"
+            :src="getImageBlockSrc(block)"
             :alt="(block as any).revisedPrompt || 'Generated image'"
             class="generated-image"
             style="max-width: 100%; max-height: 600px; border-radius: 8px; cursor: pointer;"
+            loading="lazy"
             @click="openImagePreview(block)"
           />
           <div v-if="(block as any).revisedPrompt" class="text-caption text-grey mt-1">
@@ -596,8 +597,9 @@
     <!-- Debug Dialog -->
     <DebugMessageDialog
       v-model="showDebugDialog"
-      :debug-request="currentBranch.debugRequest"
-      :debug-response="currentBranch.debugResponse"
+      :conversation-id="message.conversationId"
+      :message-id="message.id"
+      :branch-id="currentBranch.id"
     />
     
     
@@ -1697,9 +1699,25 @@ function openImageInNewTab(attachment: any): void {
   }
 }
 
+/**
+ * Get the image source URL for a content block.
+ * Supports both old format (inline base64 data) and new format (blobId reference).
+ */
+function getImageBlockSrc(block: any): string {
+  if (block.blobId) {
+    // NEW FORMAT: Load from blob endpoint
+    return `/api/blobs/${block.blobId}`;
+  } else if (block.data) {
+    // OLD FORMAT: Inline base64 data
+    return `data:${block.mimeType || 'image/png'};base64,${block.data}`;
+  }
+  return '';
+}
+
 function openImagePreview(block: any): void {
-  if (block.data) {
-    previewImageSrc.value = `data:${block.mimeType || 'image/png'};base64,${block.data}`;
+  const src = getImageBlockSrc(block);
+  if (src) {
+    previewImageSrc.value = src;
     previewImageAlt.value = block.revisedPrompt || 'Generated image';
     imagePreviewDialog.value = true;
   }

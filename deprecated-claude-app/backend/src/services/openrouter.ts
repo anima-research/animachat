@@ -1,5 +1,6 @@
 import { Message, getActiveBranch, ModelSettings, TokenUsage } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
+import { getBlobStore } from '../database/blob-store.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import { Logger } from '../utils/logger.js';
 import { logOpenRouterRequest, logOpenRouterResponse } from '../utils/openrouterLogger.js';
@@ -414,22 +415,26 @@ export class OpenRouterService {
               // Handle image generation responses (OpenRouter/Gemini image models)
               // OpenRouter returns images in delta.images array: [{type: "image_url", image_url: {url: "data:..."}}]
               // OpenRouter may send multiple versions of the same image - we keep only the latest one
-              const addOrReplaceImage = (mimeType: string, base64Data: string) => {
+              const addOrReplaceImage = async (mimeType: string, base64Data: string) => {
+                // Save image to BlobStore
+                const blobStore = getBlobStore();
+                const blobId = await blobStore.saveBlob(base64Data, mimeType);
+                
                 // Find existing image block index
                 const existingImageIndex = contentBlocks.findIndex((b: any) => b.type === 'image');
                 const imageBlock = {
                   type: 'image',
                   mimeType,
-                  data: base64Data
+                  blobId // Reference to blob instead of inline data
                 };
                 
                 if (existingImageIndex >= 0) {
                   // Replace existing image with the newer version
-                  console.log(`[OpenRouter] 🖼️ Replacing image with newer version: ${mimeType}, ${base64Data.length} bytes`);
+                  console.log(`[OpenRouter] 🖼️ Replacing image with blob ${blobId.substring(0, 8)}...`);
                   contentBlocks[existingImageIndex] = imageBlock;
                 } else {
                   // Add new image
-                  console.log(`[OpenRouter] 🖼️ Received generated image: ${mimeType}, ${base64Data.length} bytes`);
+                  console.log(`[OpenRouter] 🖼️ Saved generated image to blob: ${blobId.substring(0, 8)}... (${mimeType})`);
                   contentBlocks.push(imageBlock as any);
                 }
               };
@@ -442,7 +447,7 @@ export class OpenRouterService {
                     const dataUrl = img.image_url.url;
                     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
                     if (match) {
-                      addOrReplaceImage(match[1], match[2]);
+                      await addOrReplaceImage(match[1], match[2]);
                     }
                   }
                 }
@@ -458,7 +463,7 @@ export class OpenRouterService {
                     const dataUrl = img.image_url.url;
                     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
                     if (match) {
-                      addOrReplaceImage(match[1], match[2]);
+                      await addOrReplaceImage(match[1], match[2]);
                     }
                   }
                 }
@@ -467,12 +472,14 @@ export class OpenRouterService {
               
               // Also check for inlineData format (direct Gemini-style response)
               if (delta?.inlineData) {
+                const blobStore = getBlobStore();
+                const blobId = await blobStore.saveBlob(delta.inlineData.data, delta.inlineData.mimeType || 'image/png');
                 contentBlocks.push({
                   type: 'image',
                   mimeType: delta.inlineData.mimeType || 'image/png',
-                  data: delta.inlineData.data
+                  blobId
                 } as any);
-                console.log(`[OpenRouter] 🖼️ Received inline image: ${delta.inlineData.mimeType || 'image/png'}`);
+                console.log(`[OpenRouter] 🖼️ Saved inline image to blob: ${blobId.substring(0, 8)}...`);
                 await onChunk('', false, contentBlocks);
               }
               
