@@ -1000,7 +1000,7 @@
     </v-dialog>
     
     <!-- Fork Conversation Dialog -->
-    <v-dialog v-model="showForkDialog" max-width="520">
+    <v-dialog v-model="showForkDialog" max-width="560">
       <v-card>
         <v-card-title class="text-h6">
           <v-icon start color="primary">mdi-source-fork</v-icon>
@@ -1008,25 +1008,66 @@
         </v-card-title>
         <v-card-text>
           <p class="mb-4">
-            Create a new conversation containing this message and all messages after it.
-            Prior context will be preserved.
+            Create a new conversation starting from this message, including all branches below it.
           </p>
           
-          <v-checkbox
-            v-model="forkCompressHistory"
-            label="Compress prior history"
-            density="compact"
-            class="mb-0"
-          />
-          <div class="text-caption text-medium-emphasis ml-8 mt-n2">
-            <template v-if="forkCompressHistory">
-              Messages <em>before</em> this point will be embedded as invisible context.
-              The AI sees the full history, but you'll only see messages from here onwards.
-            </template>
-            <template v-else>
-              All messages will be copied as separate, editable messages.
-            </template>
-          </div>
+          <div class="text-subtitle-2 mb-2">History handling:</div>
+          <v-radio-group v-model="forkMode" density="compact" hide-details class="mb-2">
+            <v-radio value="full" class="mb-1">
+              <template v-slot:label>
+                <div>
+                  <span class="font-weight-medium">Full</span>
+                  <span class="text-caption text-medium-emphasis ml-2">Copy all prior messages</span>
+                </div>
+              </template>
+            </v-radio>
+            <v-radio value="compressed" class="mb-1">
+              <template v-slot:label>
+                <div>
+                  <span class="font-weight-medium">Compressed</span>
+                  <span class="text-caption text-medium-emphasis ml-2">Embed history as invisible context</span>
+                </div>
+              </template>
+            </v-radio>
+            <v-radio value="truncated" class="mb-1">
+              <template v-slot:label>
+                <div>
+                  <span class="font-weight-medium">Truncated</span>
+                  <span class="text-caption text-medium-emphasis ml-2">Start fresh (no prior context)</span>
+                </div>
+              </template>
+            </v-radio>
+          </v-radio-group>
+          
+          <v-alert 
+            v-if="forkMode === 'full'" 
+            type="info" 
+            density="compact" 
+            variant="tonal"
+            class="text-caption"
+          >
+            All messages before this point will be copied as separate, editable messages.
+            The full subtree (including branches) is preserved.
+          </v-alert>
+          <v-alert 
+            v-if="forkMode === 'compressed'" 
+            type="info" 
+            density="compact" 
+            variant="tonal"
+            class="text-caption"
+          >
+            Prior messages are embedded as invisible context the AI can see.
+            You'll only see messages from this point onwards.
+          </v-alert>
+          <v-alert 
+            v-if="forkMode === 'truncated'" 
+            type="warning" 
+            density="compact" 
+            variant="tonal"
+            class="text-caption"
+          >
+            The AI will have no memory of prior context. Use when you want a clean break.
+          </v-alert>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -1245,7 +1286,7 @@ const showMobileSpeakingAs = ref(false);
 const showForkDialog = ref(false);
 const forkTargetMessageId = ref('');
 const forkTargetBranchId = ref('');
-const forkCompressHistory = ref(false);
+const forkMode = ref<'full' | 'compressed' | 'truncated'>('full');
 const forkIsLoading = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
 const bookmarks = ref<Bookmark[]>([]);
@@ -3604,7 +3645,7 @@ function handleFork(messageId: string, branchId: string) {
   // Open the fork dialog
   forkTargetMessageId.value = messageId;
   forkTargetBranchId.value = branchId;
-  forkCompressHistory.value = false;
+  forkMode.value = 'full';
   showForkDialog.value = true;
 }
 
@@ -3617,7 +3658,7 @@ async function executeFork() {
     const response = await api.post(`/conversations/${currentConversation.value.id}/fork`, {
       messageId: forkTargetMessageId.value,
       branchId: forkTargetBranchId.value,
-      compressHistory: forkCompressHistory.value
+      mode: forkMode.value  // 'full' | 'compressed' | 'truncated'
     });
     
     if (response.data.success && response.data.conversation) {

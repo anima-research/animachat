@@ -881,17 +881,23 @@ export function conversationRouter(db: Database): Router {
     }
   });
 
-  // Fork conversation at a specific message - creates new conversation with history up to that point
+  // Fork conversation at a specific message - creates new conversation with subtree from that point
   // Options:
-  //   compressHistory: boolean - if true, compress all previous messages into prefixHistory of the first message
-  //                              if false (default), copy all messages individually
+  //   mode: 'full' | 'compressed' | 'truncated'
+  //     - 'full': Copy all prior messages (active branch) + full subtree with all branches
+  //     - 'compressed': Embed prior messages as prefixHistory + full subtree
+  //     - 'truncated': No prior context, just the subtree (clean break)
   router.post('/:id/fork', async (req: AuthRequest, res) => {
     try {
       if (!req.userId) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const { messageId, branchId, compressHistory = false } = req.body;
+      // Support both old (compressHistory) and new (mode) API
+      const { messageId, branchId, mode: rawMode, compressHistory } = req.body;
+      const mode: 'full' | 'compressed' | 'truncated' = 
+        rawMode || (compressHistory ? 'compressed' : 'full');
+      
       if (!messageId || !branchId) {
         return res.status(400).json({ error: 'messageId and branchId are required' });
       }
@@ -1061,9 +1067,10 @@ export function conversationRouter(db: Database): Router {
         }
       }
 
-      // Build mapping from old branch IDs to new branch IDs
+      // Build mapping from old IDs to new IDs
       // Special value '__ROOT__' means the parent should be undefined (for branches whose parent is in history)
-      const branchIdMap = new Map<string, string>(); // old ID -> new ID (or '__ROOT__')
+      const branchIdMap = new Map<string, string>(); // old branchId -> new branchId (or '__ROOT__')
+      const messageIdMap = new Map<string, string>(); // old messageId -> new messageId
       const userId = req.userId!;
       let messagesCopied = 0;
 
@@ -1110,8 +1117,9 @@ export function conversationRouter(db: Database): Router {
             );
             
             if (newMessage) {
-              // Map old branch ID to new branch ID
+              // Map old IDs to new IDs
               branchIdMap.set(branch.id, newMessage.branches[0].id);
+              messageIdMap.set(message.id, newMessage.id);
               
               // Add content blocks and optionally prefixHistory
               const updates: any = {};
@@ -1173,22 +1181,84 @@ export function conversationRouter(db: Database): Router {
         return newMessage;
       };
 
-      if (compressHistory && historyBeforeTarget.length > 0) {
-        // COMPRESSED MODE: Embed history before target as prefixHistory
-        // Then copy target + subtree as normal messages
+      // Helper to copy bookmarks from original conversation to new conversation
+      const copyBookmarks = async () => {
+        const originalBookmarks = await db.getConversationBookmarks(req.params.id);
+        let bookmarksCopied = 0;
         
-        const prefixHistory: Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantName?: string; model?: string }> = [];
+        for (const bookmark of originalBookmarks) {
+          const newMessageId = messageIdMap.get(bookmark.messageId);
+          const newBranchId = branchIdMap.get(bookmark.branchId);
+          
+          if (newMessageId && newBranchId && newBranchId !== '__ROOT__') {
+            await db.createOrUpdateBookmark(
+              newConversation.id,
+              newMessageId,
+              newBranchId,
+              bookmark.label
+            );
+            bookmarksCopied++;
+          }
+        }
         
-        // Collect ALL branch IDs from ALL history messages - these become "root" in the fork
-        // (not just active branches, since subtree messages might branch from non-active history branches)
+        if (bookmarksCopied > 0) {
+          console.log(`[Fork] Copied ${bookmarksCopied} bookmarks`);
+        }
+        return bookmarksCopied;
+      };
+
+      // Helper to mark all history branches as root (for compressed/truncated modes)
+      const markHistoryAsRoot = () => {
         const historyBranchIds = new Set<string>();
-        for (const { message, branchId: activeBranchId } of historyBeforeTarget) {
-          // Mark ALL branches of this message as root (in case subtree branches from non-active)
+        for (const { message } of historyBeforeTarget) {
           for (const branch of message.branches) {
             historyBranchIds.add(branch.id);
           }
-          
-          // But only include the active branch in prefixHistory
+        }
+        for (const histBranchId of historyBranchIds) {
+          branchIdMap.set(histBranchId, '__ROOT__');
+        }
+        console.log(`[Fork] Marked ${historyBranchIds.size} history branches as root`);
+      };
+
+      if (mode === 'truncated') {
+        // TRUNCATED MODE: No prior context, just the subtree (clean break)
+        console.log(`[Fork] Truncated mode: discarding ${historyBeforeTarget.length} history messages`);
+        
+        // Mark history branches as root so subtree can resolve parents
+        markHistoryAsRoot();
+        
+        // Copy only subtree
+        for (const entry of subtreePath) {
+          const newMessage = await copyMessageWithBranches(entry.message);
+          if (newMessage) {
+            messagesCopied++;
+          }
+        }
+        
+        // Copy bookmarks
+        const bookmarksCopied = await copyBookmarks();
+        
+        res.json({ 
+          success: true, 
+          conversation: newConversation,
+          messageCount: messagesCopied,
+          bookmarksCopied,
+          mode: 'truncated'
+        });
+        
+      } else if (mode === 'compressed' && historyBeforeTarget.length > 0) {
+        // COMPRESSED MODE: Embed history before target as prefixHistory
+        // Then copy target + subtree as normal messages
+        console.log(`[Fork] Compressed mode: embedding ${historyBeforeTarget.length} history messages as prefixHistory`);
+        
+        const prefixHistory: Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantName?: string; model?: string }> = [];
+        
+        // Mark history branches as root
+        markHistoryAsRoot();
+        
+        // Build prefixHistory from active branches only
+        for (const { message, branchId: activeBranchId } of historyBeforeTarget) {
           const activeBranch = message.branches.find(b => b.id === activeBranchId);
           if (activeBranch) {
             prefixHistory.push({
@@ -1200,13 +1270,7 @@ export function conversationRouter(db: Database): Router {
           }
         }
         
-        // Mark all history branch IDs as '__ROOT__' so subtree branches parented to them resolve correctly
-        for (const histBranchId of historyBranchIds) {
-          branchIdMap.set(histBranchId, '__ROOT__');
-        }
-        console.log(`[Fork] Compressed mode: marked ${historyBranchIds.size} history branches as root`);
-        
-        // Copy subtree with prefixHistory on first message, preserving tree structure
+        // Copy subtree with prefixHistory on first message
         for (let i = 0; i < subtreePath.length; i++) {
           const entry = subtreePath[i];
           const isFirst = i === 0;
@@ -1221,25 +1285,27 @@ export function conversationRouter(db: Database): Router {
           }
         }
         
+        // Copy bookmarks
+        const bookmarksCopied = await copyBookmarks();
+        
         res.json({ 
           success: true, 
           conversation: newConversation,
           messageCount: messagesCopied,
           prefixHistoryCount: prefixHistory.length,
-          compressed: true
+          bookmarksCopied,
+          mode: 'compressed'
         });
         
       } else {
-        // NORMAL MODE: Copy history before target, then subtree
-        // (If no history, just copy subtree)
+        // FULL MODE (default): Copy history before target, then subtree
+        console.log(`[Fork] Full mode: copying ${historyBeforeTarget.length} history messages + ${subtreePath.length} subtree messages`);
         
-        // First, copy history before target (linear chain)
+        // First, copy history before target (linear chain, active branch only)
         for (const { message, branchId } of historyBeforeTarget) {
-          // For history, we only copy the active branch (linear path)
           const branch = message.branches.find(b => b.id === branchId);
           if (!branch) continue;
           
-          // Look up parent
           let mappedParentBranchId: string | undefined = undefined;
           if (branch.parentBranchId && branch.parentBranchId !== 'root') {
             mappedParentBranchId = branchIdMap.get(branch.parentBranchId);
@@ -1261,6 +1327,7 @@ export function conversationRouter(db: Database): Router {
           
           if (newMessage) {
             branchIdMap.set(branch.id, newMessage.branches[0].id);
+            messageIdMap.set(message.id, newMessage.id);
             
             if (branch.contentBlocks && branch.contentBlocks.length > 0) {
               await db.updateMessageBranch(
@@ -1283,11 +1350,15 @@ export function conversationRouter(db: Database): Router {
           }
         }
 
+        // Copy bookmarks
+        const bookmarksCopied = await copyBookmarks();
+        
         res.json({ 
           success: true, 
           conversation: newConversation,
           messageCount: messagesCopied,
-          compressed: false
+          bookmarksCopied,
+          mode: 'full'
         });
       }
     } catch (error) {
