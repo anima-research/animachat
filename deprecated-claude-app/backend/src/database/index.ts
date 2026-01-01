@@ -12,6 +12,7 @@ import { ModelLoader } from '../config/model-loader.js';
 import { SharesStore, SharedConversation } from './shares.js';
 import { CollaborationStore } from './collaboration.js';
 import { PersonaStore } from './persona.js';
+import { BranchStateStore } from './branch-state-store.js';
 import { SharePermission, ConversationShare, canChat, canDelete } from '@deprecated-claude/shared';
 import {
   Persona,
@@ -122,6 +123,7 @@ export class Database {
   private sharesStore: SharesStore;
   private collaborationStore: CollaborationStore;
   private personaStore: PersonaStore;
+  private branchStateStore: BranchStateStore;
   private initialized: boolean = false;
 
   constructor() {
@@ -132,6 +134,7 @@ export class Database {
     this.sharesStore = new SharesStore();
     this.collaborationStore = new CollaborationStore();
     this.personaStore = new PersonaStore();
+    this.branchStateStore = new BranchStateStore();
   }
   
   async init(): Promise<void> {
@@ -141,6 +144,7 @@ export class Database {
     await this.eventStore.init();
     await this.conversationEventStore.init();
     await this.userEventStore.init();
+    await this.branchStateStore.init();
 
     // if needed
     await this.migrateDatabase();
@@ -249,6 +253,20 @@ export class Database {
       for (const event of await this.conversationEventStore.loadEvents(conversationId)) {
         await this.replayEvent(event);
       }
+      
+      // Apply saved branch selections from the mutable store
+      // (these are NOT in the event log to avoid bloat)
+      const branchState = await this.branchStateStore.load(conversationId);
+      for (const [messageId, branchId] of branchState) {
+        const message = this.messages.get(messageId);
+        if (message) {
+          const branch = message.branches.find(b => b.id === branchId);
+          if (branch) {
+            const updated = { ...message, activeBranchId: branchId };
+            this.messages.set(messageId, updated);
+          }
+        }
+      }
     }
     this.conversationsLastAccessedTimes.set(conversationId, new Date());
   }
@@ -260,6 +278,9 @@ export class Database {
     });
     this.conversationMessages.delete(conversationId);;
     this.conversationMetrics.delete(conversationId);
+
+    // Clear cached branch state
+    this.branchStateStore.clearCache(conversationId);
 
     this.conversationsLastAccessedTimes.delete(conversationId);
   }
@@ -2593,12 +2614,15 @@ export class Database {
     const updated = { ...message, activeBranchId: branchId };
     this.messages.set(messageId, updated);
 
-    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'active_branch_changed', { 
-      messageId, 
-      branchId,
-      userId: changedByUserId || conversationOwnerUserId
-    });
+    // Save to mutable branch state store (NOT the append-only event log)
+    // This prevents branch navigation from bloating the conversation history
+    await this.branchStateStore.setActiveBranch(conversationId, messageId, branchId);
+
+    // Don't update conversation timestamp for branch switches - it's just navigation
+    // await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    
+    // NOTE: We intentionally do NOT log active_branch_changed events anymore.
+    // Branch selections are stored in a separate mutable store to avoid event log bloat.
 
     return true;
   }
