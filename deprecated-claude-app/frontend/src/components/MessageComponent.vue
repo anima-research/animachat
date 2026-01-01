@@ -351,6 +351,49 @@
           <v-icon size="x-small" start>mdi-bookmark</v-icon>
           {{ bookmarkLabel }}
         </v-chip>
+        
+        <!-- Prefix History Indicator (for forked conversations with compressed history) -->
+        <v-menu v-if="hasPrefixHistory" location="bottom" :close-on-content-click="false">
+          <template v-slot:activator="{ props }">
+            <v-chip 
+              v-bind="props" 
+              size="x-small" 
+              color="deep-purple" 
+              variant="tonal" 
+              density="compact" 
+              style="cursor: pointer;"
+            >
+              <v-icon size="x-small" start>mdi-archive-arrow-down</v-icon>
+              {{ prefixHistoryCount }} prior {{ prefixHistoryCount === 1 ? 'message' : 'messages' }}
+              <v-icon size="x-small" end>mdi-chevron-down</v-icon>
+            </v-chip>
+          </template>
+          <v-card max-width="500" class="prefix-history-card">
+            <v-card-title class="text-caption py-2">
+              <v-icon size="small" class="mr-1">mdi-archive</v-icon>
+              Compressed History ({{ prefixHistoryCount }} messages)
+            </v-card-title>
+            <v-divider />
+            <v-card-text class="pa-2" style="max-height: 400px; overflow-y: auto;">
+              <div 
+                v-for="(entry, index) in currentBranch.prefixHistory" 
+                :key="index"
+                class="prefix-history-entry mb-2 pa-2 rounded"
+                :class="entry.role === 'assistant' ? 'bg-grey-darken-3' : 'bg-grey-darken-4'"
+              >
+                <div class="d-flex align-center gap-2 mb-1">
+                  <v-chip size="x-small" :color="entry.role === 'assistant' ? 'primary' : entry.role === 'user' ? 'success' : 'grey'" variant="flat">
+                    {{ entry.participantName || entry.role }}
+                  </v-chip>
+                  <span v-if="entry.model" class="text-caption text-grey">{{ entry.model }}</span>
+                </div>
+                <div class="text-body-2" style="white-space: pre-wrap; word-break: break-word;">
+                  {{ truncateText(entry.content, 500) }}
+                </div>
+              </div>
+            </v-card-text>
+          </v-card>
+        </v-menu>
       </div>
       
       <!-- Center: Branch navigation (desktop only) -->
@@ -1043,6 +1086,15 @@ const senderDisplayName = computed(() => {
 
 const hasBookmark = computed(() => {
   return bookmarkLabel.value !== null && bookmarkLabel.value !== '';
+});
+
+// Check if message has prefix history (compressed fork history)
+const hasPrefixHistory = computed(() => {
+  return currentBranch.value?.prefixHistory && currentBranch.value.prefixHistory.length > 0;
+});
+
+const prefixHistoryCount = computed(() => {
+  return currentBranch.value?.prefixHistory?.length || 0;
 });
 
 // Check if message is long enough to need scroll button
@@ -2347,6 +2399,19 @@ watch(() => currentBranch.value.id, async () => {
 .touch-toggle-btn:hover,
 .touch-toggle-btn:focus {
   opacity: 0.8;
+}
+
+/* Prefix history card for forked conversations */
+.prefix-history-card {
+  background: rgb(var(--v-theme-surface)) !important;
+}
+
+.prefix-history-entry {
+  border-left: 3px solid rgba(var(--v-theme-primary), 0.5);
+}
+
+.prefix-history-entry.bg-grey-darken-3 {
+  border-left-color: rgba(var(--v-theme-primary), 0.7);
 }
 </style>
 

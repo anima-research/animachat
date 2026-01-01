@@ -1062,7 +1062,8 @@ export function conversationRouter(db: Database): Router {
       }
 
       // Build mapping from old branch IDs to new branch IDs
-      const branchIdMap = new Map<string, string>(); // old ID -> new ID
+      // Special value '__ROOT__' means the parent should be undefined (for branches whose parent is in history)
+      const branchIdMap = new Map<string, string>(); // old ID -> new ID (or '__ROOT__')
       const userId = req.userId!;
       let messagesCopied = 0;
 
@@ -1079,8 +1080,13 @@ export function conversationRouter(db: Database): Router {
           // Look up the mapped parent branch ID
           let mappedParentBranchId: string | undefined = undefined;
           if (branch.parentBranchId && branch.parentBranchId !== 'root') {
-            mappedParentBranchId = branchIdMap.get(branch.parentBranchId);
-            if (!mappedParentBranchId) {
+            const mapped = branchIdMap.get(branch.parentBranchId);
+            if (mapped === '__ROOT__') {
+              // Parent is in history which was compressed - treat as root
+              mappedParentBranchId = undefined;
+            } else if (mapped) {
+              mappedParentBranchId = mapped;
+            } else {
               // Parent not in map - might be from outside the fork
               console.log(`[Fork] Warning: parent ${branch.parentBranchId.substring(0, 8)}... not found in map, skipping branch`);
               continue;
@@ -1173,33 +1179,37 @@ export function conversationRouter(db: Database): Router {
         
         const prefixHistory: Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantName?: string; model?: string }> = [];
         
+        // Collect ALL branch IDs from ALL history messages - these become "root" in the fork
+        // (not just active branches, since subtree messages might branch from non-active history branches)
+        const historyBranchIds = new Set<string>();
         for (const { message, branchId: activeBranchId } of historyBeforeTarget) {
-          const branch = message.branches.find(b => b.id === activeBranchId);
-          if (!branch) continue;
+          // Mark ALL branches of this message as root (in case subtree branches from non-active)
+          for (const branch of message.branches) {
+            historyBranchIds.add(branch.id);
+          }
           
-          prefixHistory.push({
-            role: branch.role,
-            content: branch.content,
-            participantName: branch.participantId ? participantNameMap.get(branch.participantId) : undefined,
-            model: branch.model,
-          });
+          // But only include the active branch in prefixHistory
+          const activeBranch = message.branches.find(b => b.id === activeBranchId);
+          if (activeBranch) {
+            prefixHistory.push({
+              role: activeBranch.role,
+              content: activeBranch.content,
+              participantName: activeBranch.participantId ? participantNameMap.get(activeBranch.participantId) : undefined,
+              model: activeBranch.model,
+            });
+          }
         }
+        
+        // Mark all history branch IDs as '__ROOT__' so subtree branches parented to them resolve correctly
+        for (const histBranchId of historyBranchIds) {
+          branchIdMap.set(histBranchId, '__ROOT__');
+        }
+        console.log(`[Fork] Compressed mode: marked ${historyBranchIds.size} history branches as root`);
         
         // Copy subtree with prefixHistory on first message, preserving tree structure
         for (let i = 0; i < subtreePath.length; i++) {
           const entry = subtreePath[i];
           const isFirst = i === 0;
-          
-          // For first message in compressed mode, we need to set up the root parent
-          if (isFirst) {
-            // The target's parent needs to be set to undefined (root) since history is compressed
-            // We temporarily modify the branchIdMap so the first message's parent resolves correctly
-            for (const branch of entry.message.branches) {
-              if (branch.parentBranchId) {
-                branchIdMap.set(branch.parentBranchId, undefined as any); // Mark as root
-              }
-            }
-          }
           
           const newMessage = await copyMessageWithBranches(
             entry.message,
