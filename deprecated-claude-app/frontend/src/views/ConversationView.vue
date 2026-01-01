@@ -1195,6 +1195,7 @@ const participants = ref<Participant[]>([]);
 const selectedParticipant = ref<string>('');
 const selectedResponder = ref<string>('');
 const noResponseMode = ref(false);  // For standard conversations: disable AI response
+const isLoadingUIState = ref(false); // Prevents saving during load
 const showMobileSpeakingAs = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
 const bookmarks = ref<Bookmark[]>([]);
@@ -2390,6 +2391,26 @@ watch(() => route.params.id, async (newId, oldId) => {
   } else {
     // Navigating away from a conversation - clear input
     messageInput.value = '';
+  }
+});
+
+// Save UI state when speaking as or responder changes
+watch(selectedParticipant, (newValue) => {
+  if (newValue && !isLoadingUIState.value) {
+    saveUserUIState({ speakingAs: newValue });
+  }
+});
+
+watch(selectedResponder, (newValue) => {
+  if (newValue && !isLoadingUIState.value) {
+    saveUserUIState({ selectedResponder: newValue });
+  }
+});
+
+// Save detached mode changes
+watch(() => store.state.isDetachedFromMainBranch, (newValue) => {
+  if (!isLoadingUIState.value) {
+    saveUserUIState({ isDetached: newValue });
   }
 });
 
@@ -3807,6 +3828,61 @@ function getParticipantIcon(participant: Participant): string {
   return 'mdi-robot-outline';
 }
 
+// ==================== PER-USER UI STATE ====================
+// These persist speakingAs, selectedResponder, and detached mode per-user
+
+async function loadUserUIState() {
+  if (!currentConversation.value) return;
+  
+  try {
+    isLoadingUIState.value = true;
+    const response = await api.get(`/conversations/${currentConversation.value.id}/ui-state`);
+    const state = response.data;
+    
+    console.log('[ConversationView] Loaded UI state:', state);
+    
+    // Apply saved values if they exist and the participants are still valid
+    if (state.speakingAs) {
+      const participant = participants.value.find(p => p.id === state.speakingAs);
+      if (participant) {
+        selectedParticipant.value = state.speakingAs;
+      }
+    }
+    
+    if (state.selectedResponder) {
+      const participant = participants.value.find(p => p.id === state.selectedResponder);
+      if (participant) {
+        selectedResponder.value = state.selectedResponder;
+      }
+    }
+    
+    if (state.isDetached) {
+      store.setDetachedMode(true);
+      if (state.detachedBranches) {
+        for (const [messageId, branchId] of Object.entries(state.detachedBranches)) {
+          store.setLocalBranchSelection(messageId, branchId as string);
+        }
+      }
+    }
+  } catch (error) {
+    // Ignore errors - just use defaults
+    console.debug('[ConversationView] No saved UI state found');
+  } finally {
+    isLoadingUIState.value = false;
+  }
+}
+
+async function saveUserUIState(updates: { speakingAs?: string; selectedResponder?: string; isDetached?: boolean; detachedBranch?: { messageId: string; branchId: string } }) {
+  if (!currentConversation.value || isLoadingUIState.value) return;
+  
+  try {
+    await api.patch(`/conversations/${currentConversation.value.id}/ui-state`, updates);
+  } catch (error) {
+    // Non-critical - just log
+    console.debug('[ConversationView] Failed to save UI state:', error);
+  }
+}
+
 async function loadParticipants() {
   if (!currentConversation.value) return;
   
@@ -3832,6 +3908,9 @@ async function loadParticipants() {
       console.log('[ConversationView] Setting selectedResponder to:', defaultAssistant.id, 'model:', defaultAssistant.model);
       selectedResponder.value = defaultAssistant.id;
     }
+    
+    // Load saved UI state (may override defaults)
+    await loadUserUIState();
     return;
   }
   
@@ -3857,6 +3936,9 @@ async function loadParticipants() {
       console.log('[ConversationView] Setting selectedResponder to:', defaultAssistant.id, 'model:', defaultAssistant.model);
       selectedResponder.value = defaultAssistant.id;
     }
+    
+    // Load saved UI state (may override defaults)
+    await loadUserUIState();
   } catch (error) {
     console.error('Failed to load participants:', error);
   }
