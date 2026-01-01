@@ -1000,7 +1000,7 @@
     </v-dialog>
     
     <!-- Fork Conversation Dialog -->
-    <v-dialog v-model="showForkDialog" max-width="500">
+    <v-dialog v-model="showForkDialog" max-width="520">
       <v-card>
         <v-card-title class="text-h6">
           <v-icon start color="primary">mdi-source-fork</v-icon>
@@ -1008,16 +1008,25 @@
         </v-card-title>
         <v-card-text>
           <p class="mb-4">
-            Create a new conversation containing all messages up to this point.
+            Create a new conversation containing this message and all messages after it.
+            Prior context will be preserved.
           </p>
           
           <v-checkbox
             v-model="forkCompressHistory"
-            label="Compress history into first message"
-            hint="Instead of copying all messages, embed the history as context in the first message. The LLM will see the same context, but the new conversation will only have one message."
-            persistent-hint
+            label="Compress prior history"
             density="compact"
+            class="mb-0"
           />
+          <div class="text-caption text-medium-emphasis ml-8 mt-n2">
+            <template v-if="forkCompressHistory">
+              Messages <em>before</em> this point will be embedded as invisible context.
+              The AI sees the full history, but you'll only see messages from here onwards.
+            </template>
+            <template v-else>
+              All messages will be copied as separate, editable messages.
+            </template>
+          </div>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
