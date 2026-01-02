@@ -297,7 +297,8 @@ export function conversationRouter(db: Database): Router {
       }
 
       // Note: Access control is handled in getConversation
-      const messages = await db.getConversationMessages(req.params.id, conversation.userId);
+      // Pass requesting user to filter private branches
+      const messages = await db.getConversationMessages(req.params.id, conversation.userId, req.userId);
 
       // Prepare messages for client: strip debug data, convert old images to blob refs
       // Pass db and userId so conversions can be persisted (avoiding duplicate blobs after restart)
@@ -881,6 +882,140 @@ export function conversationRouter(db: Database): Router {
     }
   });
 
+  // Set branch privacy - make a branch visible only to a specific user
+  // Owner and editors can set privacy on any branch
+  router.post('/:id/messages/:messageId/branches/:branchId/privacy', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { privateToUserId } = req.body; // null/undefined to make public, userId to make private
+
+      // Check access (owner or editor)
+      const canChat = await db.canUserChatInConversation(req.params.id, req.userId);
+      if (!canChat) {
+        return res.status(403).json({ error: 'Only owner or editors can set branch privacy' });
+      }
+
+      // Get the conversation to find owner
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Update the branch
+      const updated = await db.updateMessageBranch(
+        req.params.messageId,
+        conversation.userId,
+        req.params.branchId,
+        { privateToUserId: privateToUserId || undefined }
+      );
+
+      if (!updated) {
+        return res.status(404).json({ error: 'Branch not found' });
+      }
+
+      // Broadcast visibility change to all users in the room
+      roomManager.broadcastToRoom(req.params.id, {
+        type: 'branch_visibility_changed',
+        conversationId: req.params.id,
+        messageId: req.params.messageId,
+        branchId: req.params.branchId,
+        privateToUserId: privateToUserId || null,
+        changedByUserId: req.userId
+      });
+
+      res.json({ success: true, privateToUserId: privateToUserId || null });
+    } catch (error) {
+      console.error('Set branch privacy error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Get subtree from a specific branch (used after unhiding to fetch newly visible content)
+  router.get('/:id/subtree/:branchId', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Check access
+      const canAccess = await db.canUserAccessConversation(req.params.id, req.userId);
+      if (!canAccess) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      
+      // Get all messages (filtered by privacy for this user)
+      const allMessages = await db.getConversationMessages(
+        req.params.id, 
+        conversation?.userId || req.userId,
+        req.userId
+      );
+
+      // Build subtree from the specified branch using BFS
+      const childrenMap = new Map<string, Array<{ message: Message; branchId: string }>>();
+      for (const msg of allMessages) {
+        for (const branch of msg.branches) {
+          if (branch.parentBranchId && branch.parentBranchId !== 'root') {
+            const children = childrenMap.get(branch.parentBranchId) || [];
+            children.push({ message: msg, branchId: branch.id });
+            childrenMap.set(branch.parentBranchId, children);
+          }
+        }
+      }
+
+      // Find the message containing the target branch
+      let targetMessage: Message | null = null;
+      for (const msg of allMessages) {
+        if (msg.branches.some(b => b.id === req.params.branchId)) {
+          targetMessage = msg;
+          break;
+        }
+      }
+
+      if (!targetMessage) {
+        return res.status(404).json({ error: 'Branch not found' });
+      }
+
+      // BFS to collect subtree
+      const subtreeMessages: Message[] = [targetMessage];
+      const visitedMessages = new Set<string>([targetMessage.id]);
+      const branchQueue: string[] = [];
+
+      // Add all branches of target to queue
+      for (const branch of targetMessage.branches) {
+        branchQueue.push(branch.id);
+      }
+
+      while (branchQueue.length > 0) {
+        const currentBranchId = branchQueue.shift()!;
+        const children = childrenMap.get(currentBranchId);
+        if (!children) continue;
+
+        for (const child of children) {
+          if (visitedMessages.has(child.message.id)) continue;
+          subtreeMessages.push(child.message);
+          visitedMessages.add(child.message.id);
+
+          for (const branch of child.message.branches) {
+            branchQueue.push(branch.id);
+          }
+        }
+      }
+
+      // Sort by order
+      subtreeMessages.sort((a, b) => a.order - b.order);
+
+      res.json({ messages: subtreeMessages });
+    } catch (error) {
+      console.error('Get subtree error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Fork conversation at a specific message - creates new conversation with subtree from that point
   // Options:
   //   mode: 'full' | 'compressed' | 'truncated'
@@ -894,7 +1029,7 @@ export function conversationRouter(db: Database): Router {
       }
 
       // Support both old (compressHistory) and new (mode) API
-      const { messageId, branchId, mode: rawMode, compressHistory } = req.body;
+      const { messageId, branchId, mode: rawMode, compressHistory, includePrivateBranches = true } = req.body;
       const mode: 'full' | 'compressed' | 'truncated' = 
         rawMode || (compressHistory ? 'compressed' : 'full');
       
@@ -908,8 +1043,8 @@ export function conversationRouter(db: Database): Router {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
-      // Get all messages
-      const messages = await db.getConversationMessages(req.params.id, conversation.userId);
+      // Get all messages (include requester's private branches for forking)
+      const messages = await db.getConversationMessages(req.params.id, conversation.userId, req.userId);
       if (!messages.length) {
         return res.status(400).json({ error: 'No messages to fork' });
       }
@@ -1084,6 +1219,14 @@ export function conversationRouter(db: Database): Router {
         for (let i = 0; i < message.branches.length; i++) {
           const branch = message.branches[i];
           
+          // Skip private branches if not including them
+          if (branch.privateToUserId && !includePrivateBranches) {
+            console.log(`[Fork] Skipping private branch ${branch.id.substring(0, 8)}...`);
+            // Mark as skipped so descendants know to skip themselves
+            branchIdMap.set(branch.id, '__SKIPPED__');
+            continue;
+          }
+          
           // Look up the mapped parent branch ID
           let mappedParentBranchId: string | undefined = undefined;
           if (branch.parentBranchId && branch.parentBranchId !== 'root') {
@@ -1091,11 +1234,17 @@ export function conversationRouter(db: Database): Router {
             if (mapped === '__ROOT__') {
               // Parent is in history which was compressed - treat as root
               mappedParentBranchId = undefined;
+            } else if (mapped === '__SKIPPED__') {
+              // Parent was skipped (private or descendant of private) - skip this too
+              console.log(`[Fork] Skipping branch ${branch.id.substring(0, 8)}... (parent was skipped)`);
+              branchIdMap.set(branch.id, '__SKIPPED__');
+              continue;
             } else if (mapped) {
               mappedParentBranchId = mapped;
             } else {
-              // Parent not in map - might be from outside the fork
-              console.log(`[Fork] Warning: parent ${branch.parentBranchId.substring(0, 8)}... not found in map, skipping branch`);
+              // Parent not in map - might be from outside the fork or a bug
+              console.log(`[Fork] Warning: parent ${branch.parentBranchId.substring(0, 8)}... not found in map, skipping branch ${branch.id.substring(0, 8)}...`);
+              branchIdMap.set(branch.id, '__SKIPPED__');
               continue;
             }
           }

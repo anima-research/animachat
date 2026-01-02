@@ -226,6 +226,14 @@
             </template>
             <v-list-item-title class="text-caption">Fork to new chat</v-list-item-title>
           </v-list-item>
+          <v-list-item density="compact" @click="toggleBranchPrivacy">
+            <template v-slot:prepend>
+              <v-icon size="16" :icon="isPrivateBranch ? 'mdi-eye' : 'mdi-eye-off'" />
+            </template>
+            <v-list-item-title class="text-caption">
+              {{ isPrivateBranch ? 'Make visible to all' : 'Make private (only me)' }}
+            </v-list-item-title>
+          </v-list-item>
           <v-list-item v-if="message.branches.length > 1" density="compact" @click="$emit('delete-all-branches', message.id)">
             <template v-slot:prepend>
               <v-icon size="16" icon="mdi-delete-sweep-outline" color="error" />
@@ -308,6 +316,10 @@
         </v-chip>
         
         <!-- Badges -->
+        <v-chip v-if="isPrivateBranch" size="x-small" color="deep-purple" variant="tonal" density="compact" class="mr-1">
+          <v-icon size="x-small" start>mdi-incognito</v-icon>
+          Private
+        </v-chip>
         <v-chip v-if="currentBranch?.hiddenFromAi" size="x-small" color="warning" variant="tonal" density="compact">
           <v-icon size="x-small" start>mdi-eye-off</v-icon>
           Hidden
@@ -1195,6 +1207,10 @@ const isHumanWrittenAI = computed(() => {
   return props.authenticityStatus?.isHumanWrittenAI ?? false;
 });
 
+const isPrivateBranch = computed(() => {
+  return !!currentBranch.value?.privateToUserId;
+});
+
 const participantColor = computed(() => {
   const branch = currentBranch.value;
   
@@ -1472,6 +1488,23 @@ function startEdit() {
   isEditing.value = true;
   isPostHocEditing.value = false;
   editContent.value = currentBranch.value.content;
+}
+
+async function toggleBranchPrivacy() {
+  const branch = currentBranch.value;
+  if (!branch) return;
+  
+  const newPrivacy = branch.privateToUserId ? null : store.state.user?.id;
+  
+  try {
+    await api.post(
+      `/conversations/${props.message.conversationId}/messages/${props.message.id}/branches/${branch.id}/privacy`,
+      { privateToUserId: newPrivacy }
+    );
+    // The WebSocket will broadcast the update
+  } catch (error) {
+    console.error('Failed to toggle branch privacy:', error);
+  }
 }
 
 function startPostHocEdit() {

@@ -3293,17 +3293,28 @@ export class Database {
     return sortedIndices.map(i => messages[i]);
   }
 
-  async getConversationMessages(conversationId: string, conversationOwnerUserId: string): Promise<Message[]> {
+  async getConversationMessages(conversationId: string, conversationOwnerUserId: string, requestingUserId?: string): Promise<Message[]> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
     const messageIds = this.conversationMessages.get(conversationId) || [];
+    
+    // Get messages and filter branches by privacy
+    const viewerId = requestingUserId || conversationOwnerUserId;
     const messages = messageIds
       .map(id => this.messages.get(id))
-      .filter((msg): msg is Message => msg !== undefined && msg.branches.length > 0); // Filter out messages with no branches
+      .filter((msg): msg is Message => msg !== undefined)
+      .map(msg => {
+        // Filter out branches that are private to other users
+        const visibleBranches = msg.branches.filter(
+          b => !b.privateToUserId || b.privateToUserId === viewerId
+        );
+        return { ...msg, branches: visibleBranches };
+      })
+      .filter(msg => msg.branches.length > 0); // Remove messages with no visible branches
     
     // Only log if there's a potential issue
     if (messageIds.length !== messages.length) {
-      console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found (some may have no branches)`);
+      console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found (some may have no visible branches for user ${viewerId})`);
     }
     
     // Sort by tree order (parents before children) instead of order field

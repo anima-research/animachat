@@ -548,7 +548,10 @@ export const MessageBranchSchema = z.object({
   creationSource: CreationSourceSchema.optional(),
   // Prefix history - prior context that should be prepended when building LLM context
   // Used for compressed forks where history is embedded in the first message
-  prefixHistory: z.array(PrefixHistoryEntrySchema).optional()
+  prefixHistory: z.array(PrefixHistoryEntrySchema).optional(),
+  // Branch privacy - if set, only this user can see this branch (and its descendants)
+  // Used for private notes, drafts, or content not meant to be shared with collaborators
+  privateToUserId: z.string().uuid().optional()
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;

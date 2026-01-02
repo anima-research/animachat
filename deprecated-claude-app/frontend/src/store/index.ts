@@ -1242,6 +1242,54 @@ export function createStore(): {
         invalidateSortCache();
       });
       
+      state.wsService.on('branch_visibility_changed', async (data: any) => {
+        console.log('Store handling branch_visibility_changed:', data);
+        const { messageId, branchId, privateToUserId } = data;
+        
+        // Update the branch's privateToUserId
+        const message = state.allMessages.find(m => m.id === messageId);
+        if (message) {
+          const branch = message.branches.find((b: any) => b.id === branchId);
+          if (branch) {
+            if (privateToUserId && privateToUserId !== state.user?.id) {
+              // Branch is now private to someone else - remove it from our view
+              message.branches = message.branches.filter((b: any) => b.id !== branchId);
+              console.log(`Branch ${branchId} is now private to another user, removed from view`);
+            } else {
+              // Update the privacy field
+              branch.privateToUserId = privateToUserId || undefined;
+            }
+          }
+        }
+        
+        // If branch became visible to us (was private to us or became public), we might need to fetch subtree
+        if (!privateToUserId || privateToUserId === state.user?.id) {
+          // The branch is now visible - check if we need to fetch its subtree
+          if (!message) {
+            // We don't have this message at all, need to fetch subtree
+            console.log(`Fetching newly visible subtree from branch ${branchId}`);
+            try {
+              const response = await api.get(`/conversations/${state.currentConversation?.id}/subtree/${branchId}`);
+              if (response.data.messages) {
+                for (const newMsg of response.data.messages) {
+                  const existingIndex = state.allMessages.findIndex(m => m.id === newMsg.id);
+                  if (existingIndex === -1) {
+                    state.allMessages.push(newMsg);
+                  } else {
+                    state.allMessages[existingIndex] = newMsg;
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('Failed to fetch subtree:', error);
+            }
+          }
+        }
+        
+        state.messagesVersion++;
+        invalidateSortCache();
+      });
+      
       state.wsService.on('generation_aborted', (data: any) => {
         console.log('Store handling generation_aborted:', data);
         // The ConversationView will handle resetting isStreaming via the stream event with aborted flag

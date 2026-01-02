@@ -1033,7 +1033,7 @@
               <template v-slot:label>
                 <div>
                   <span class="font-weight-medium">Truncated</span>
-                  <span class="text-caption text-medium-emphasis ml-2">Start fresh (no prior context)</span>
+                  <span class="text-caption text-medium-emphasis ml-2">Messages earlier than the fork point are discarded</span>
                 </div>
               </template>
             </v-radio>
@@ -1046,7 +1046,7 @@
             variant="tonal"
             class="text-caption"
           >
-            All messages before this point will be copied as separate, editable messages.
+            All messages on the active path before this point will be copied as separate, editable messages.
             The full subtree (including branches) is preserved.
           </v-alert>
           <v-alert 
@@ -1056,8 +1056,8 @@
             variant="tonal"
             class="text-caption"
           >
-            Prior messages are embedded as invisible context the AI can see.
-            You'll only see messages from this point onwards.
+            Prior messages are embedded as a part of the first message.
+            You'll only see messages from this point onwards. Use this when you want to reduce message count.
           </v-alert>
           <v-alert 
             v-if="forkMode === 'truncated'" 
@@ -1066,8 +1066,24 @@
             variant="tonal"
             class="text-caption"
           >
-            The AI will have no memory of prior context. Use when you want a clean break.
+            The AI will have no memory of the context before the fork point. Use when you want a remove earlier conversation history.
           </v-alert>
+          
+          <v-divider class="my-3" />
+          
+          <v-checkbox
+            v-model="forkIncludePrivateBranches"
+            density="compact"
+            hide-details
+            class="mt-0"
+          >
+            <template v-slot:label>
+              <span class="text-body-2">Include my private branches</span>
+            </template>
+          </v-checkbox>
+          <div class="text-caption text-medium-emphasis ml-8 mt-n1">
+            Private branches are normally excluded from forks.
+          </div>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -1287,6 +1303,7 @@ const showForkDialog = ref(false);
 const forkTargetMessageId = ref('');
 const forkTargetBranchId = ref('');
 const forkMode = ref<'full' | 'compressed' | 'truncated'>('full');
+const forkIncludePrivateBranches = ref(false);
 const forkIsLoading = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
 const bookmarks = ref<Bookmark[]>([]);
@@ -3646,6 +3663,7 @@ function handleFork(messageId: string, branchId: string) {
   forkTargetMessageId.value = messageId;
   forkTargetBranchId.value = branchId;
   forkMode.value = 'full';
+  forkIncludePrivateBranches.value = false;
   showForkDialog.value = true;
 }
 
@@ -3658,7 +3676,8 @@ async function executeFork() {
     const response = await api.post(`/conversations/${currentConversation.value.id}/fork`, {
       messageId: forkTargetMessageId.value,
       branchId: forkTargetBranchId.value,
-      mode: forkMode.value  // 'full' | 'compressed' | 'truncated'
+      mode: forkMode.value,  // 'full' | 'compressed' | 'truncated'
+      includePrivateBranches: forkIncludePrivateBranches.value
     });
     
     if (response.data.success && response.data.conversation) {
