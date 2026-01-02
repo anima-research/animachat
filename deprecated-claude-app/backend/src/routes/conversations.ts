@@ -5,6 +5,7 @@ import { getBlobStore } from '../database/blob-store.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { roomManager } from '../websocket/room-manager.js';
 import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, ContentBlockSchema, Message } from '@deprecated-claude/shared';
+import { applyBlindModeRedactions } from '../utils/message-visibility.js';
 
 /**
  * Prepare messages for client by:
@@ -303,7 +304,10 @@ export function conversationRouter(db: Database): Router {
       // Pass db and userId so conversions can be persisted (avoiding duplicate blobs after restart)
       const preparedMessages = await prepareMessagesForClient(messages, db, conversation.userId);
 
-      res.json(preparedMessages);
+      // Apply blind mode redactions (replaces hidden messages with placeholders)
+      const redactedMessages = applyBlindModeRedactions(preparedMessages, req.userId, conversation.visibility);
+
+      res.json(redactedMessages);
     } catch (error) {
       console.error('Get messages error:', error);
       res.status(500).json({ error: 'Internal server error' });

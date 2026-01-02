@@ -182,6 +182,23 @@
               </v-tooltip>
             </template>
           </v-checkbox>
+
+          <v-checkbox
+            v-model="blindMode"
+            label="Blind mode (users can't see each other's messages)"
+            density="compact"
+            class="mt-2"
+          >
+            <template v-slot:append>
+              <v-tooltip location="top" open-on-click open-on-focus max-width="300">
+                <template v-slot:activator="{ props }">
+                  <v-icon v-bind="props" size="small" class="tooltip-icon">mdi-help-circle-outline</v-icon>
+                </template>
+                In blind mode, users can only see their own messages and all assistant responses.
+                Other users' messages are hidden, but the AI can see everything.
+              </v-tooltip>
+            </template>
+          </v-checkbox>
         </div>
         
         <div v-if="selectedModel && settings.format === 'standard'">
@@ -648,6 +665,7 @@ const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
 const cliModeEnabled = ref(true);
 const cliModeThreshold = ref(10);
 const combineConsecutiveMessages = ref(true);
+const blindMode = ref(false);
 
 const formatOptions = [
   {
@@ -811,7 +829,10 @@ watch(() => props.conversation, async (conversation) => {
     
     // Load combine consecutive messages setting
     combineConsecutiveMessages.value = conversation.combineConsecutiveMessages ?? true;
-    
+
+    // Load blind mode setting
+    blindMode.value = conversation.visibility === 'blind';
+
     // Load participants if in multi-participant mode
     await loadParticipants();
   }
@@ -1054,7 +1075,8 @@ function save() {
     contextManagement,
     prefillUserMessage,
     cliModePrompt,
-    combineConsecutiveMessages: combineConsecutiveMessages.value
+    combineConsecutiveMessages: combineConsecutiveMessages.value,
+    visibility: blindMode.value ? 'blind' : 'normal'
   });
   
   // If in multi-participant mode, emit participants for parent to update

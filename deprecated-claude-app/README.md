@@ -12,6 +12,7 @@ A web application that allows users to continue using deprecated Claude models t
 - **API Key Management**: Use your own AWS Bedrock credentials or pay at cost
 - **Export/Import**: Full conversation backup and restore functionality
 - **Modern UI**: Dark mode support with Vuetify Material Design
+- **Blind Mode**: Multi-user conversations where participants can't see each other's messages, but Claude sees everything for full context
 
 ## Architecture
 

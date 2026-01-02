@@ -142,17 +142,37 @@ class RoomManager {
   /**
    * Broadcast a message to all users in a room.
    * @param exclude - Optional WebSocket to exclude from broadcast (e.g., the sender)
+   * @param transformForUser - Optional transformer: (userId, message) => transformedMessage | null.
+   *                           If null is returned, the message is not sent to that user.
+   *                           If undefined, sends the original message to all users.
    */
-  broadcastToRoom(conversationId: string, message: any, exclude?: AuthenticatedWebSocket): void {
+  broadcastToRoom(
+    conversationId: string,
+    message: any,
+    exclude?: AuthenticatedWebSocket,
+    transformForUser?: (userId: string, message: any) => any | null
+  ): void {
     const room = this.rooms.get(conversationId);
     if (!room) return;
-    
-    const payload = JSON.stringify(message);
-    
+
+    // Pre-stringify if no transform needed
+    const defaultPayload = transformForUser ? null : JSON.stringify(message);
+
     for (const member of room.members.values()) {
       if (member.ws !== exclude && member.ws.readyState === WebSocket.OPEN) {
+        let payload = defaultPayload;
+
+        // Apply optional per-user transform
+        if (transformForUser) {
+          const transformed = transformForUser(member.userId, message);
+          if (transformed === null) {
+            continue; // Skip this user
+          }
+          payload = JSON.stringify(transformed);
+        }
+
         try {
-          member.ws.send(payload);
+          member.ws.send(payload!);
         } catch (error) {
           console.error(`[RoomManager] Failed to send to user ${member.userId}:`, error);
         }
@@ -261,7 +281,7 @@ class RoomManager {
     for (const connections of this.userConnections.values()) {
       totalConnections += connections.size;
     }
-    
+
     return {
       totalRooms: this.rooms.size,
       totalConnections,

@@ -592,7 +592,8 @@ export const ConversationSchema = z.object({
     enabled: z.boolean().default(true),
     messageThreshold: z.number().default(10) // Apply CLI prompt for conversations under this many messages
   }).optional(),
-  combineConsecutiveMessages: z.boolean().default(true).optional() // Combine consecutive same-role messages when building context (default: true)
+  combineConsecutiveMessages: z.boolean().default(true).optional(), // Combine consecutive same-role messages when building context (default: true)
+  visibility: z.enum(['normal', 'blind']).default('normal').optional() // Blind mode: users can't see each other's messages, but Claude sees all
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;

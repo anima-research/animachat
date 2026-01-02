@@ -1,6 +1,6 @@
 import { WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
-import { WsMessageSchema, WsMessage, Message, Participant } from '@deprecated-claude/shared';
+import { WsMessageSchema, WsMessage, Message, Participant, Conversation } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { verifyToken } from '../middleware/auth.js';
 import { InferenceService } from '../services/inference.js';
@@ -12,6 +12,7 @@ import { ModelLoader } from '../config/model-loader.js';
 import { roomManager } from './room-manager.js';
 import { USER_FACING_ERRORS } from '../utils/error-messages.js';
 import { checkContent, type UserContext } from '../services/content-filter.js';
+import { transformMessageForUser } from '../utils/message-visibility.js';
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -849,12 +850,18 @@ async function handleChatMessage(
     message: userMessage
   }));
   
-  // Broadcast user message to all other users in the room
-  roomManager.broadcastToRoom(message.conversationId, {
-    type: 'message_created',
-    message: userMessage,
-    fromUserId: ws.userId
-  }, ws); // Exclude sender
+  // Broadcast user message to other users (respects blind mode visibility)
+  roomManager.broadcastToRoom(
+    message.conversationId,
+    { type: 'message_created', message: userMessage, fromUserId: ws.userId },
+    ws,
+    conversation.visibility === 'blind'
+      ? (userId, payload) => ({
+          ...payload,
+          message: transformMessageForUser(payload.message, userId, conversation.visibility)
+        })
+      : undefined
+  );
 
   // If message is hidden from AI, don't trigger AI generation
   if (message.hiddenFromAi) {
@@ -1678,9 +1685,19 @@ async function handleEdit(
     message: updatedMessage
   };
   ws.send(JSON.stringify(userEditEvent));
-  
-  // Broadcast to other users in the room
-  roomManager.broadcastToRoom(message.conversationId, userEditEvent, ws);
+
+  // Broadcast to other users (respects blind mode visibility)
+  roomManager.broadcastToRoom(
+    message.conversationId,
+    { type: 'message_edited', message: updatedMessage },
+    ws,
+    conversation.visibility === 'blind'
+      ? (userId, payload) => ({
+          ...payload,
+          message: transformMessageForUser(payload.message, userId, conversation.visibility)
+        })
+      : undefined
+  );
 
   // If this was a user message, automatically generate an assistant response (unless skipped)
   if (branch.role === 'user' && !message.skipRegeneration) {
