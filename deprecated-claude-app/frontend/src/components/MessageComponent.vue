@@ -26,6 +26,15 @@
     />
   </div>
 
+  <!-- Blind mode redacted messages render as compact system status messages -->
+  <div
+    v-else-if="isBlindModeRedacted"
+    class="blind-mode-status-marker"
+  >
+    <v-icon size="14" icon="mdi-eye-off" class="mr-1" />
+    <span>Message hidden (blind mode)</span>
+  </div>
+
   <!-- Regular messages -->
   <div
     v-else
@@ -455,9 +464,9 @@
       </div>
       
       <!-- Message content or edit mode -->
-      <div 
-        v-if="!isEditing" 
-        :class="['message-content', { 'monospace-mode': isMonospace }]" 
+      <div
+        v-if="!isEditing"
+        :class="['message-content', { 'monospace-mode': isMonospace }]"
         v-html="renderedContent"
         @contextmenu="handleContentContextMenu"
       />
@@ -1026,6 +1035,11 @@ const currentBranch = computed(() => {
 // Check if this message is a post-hoc operation
 const isPostHocOperation = computed(() => {
   return !!currentBranch.value?.postHocOperation;
+});
+
+// Check if this message is redacted due to blind mode
+const isBlindModeRedacted = computed(() => {
+  return !!(props.message as any).blindModeRedacted || !!(currentBranch.value as any)?.blindModeRedacted;
 });
 
 // Truncate text for display
@@ -2445,6 +2459,19 @@ watch(() => currentBranch.value.id, async () => {
 
 .prefix-history-entry.bg-grey-darken-3 {
   border-left-color: rgba(var(--v-theme-primary), 0.7);
+}
+
+/* Blind mode status marker - centered inline system message */
+.blind-mode-status-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 12px;
+  margin: 8px auto;
+  font-size: 0.75rem;
+  font-style: italic;
+  color: rgba(var(--v-theme-on-surface), 0.4);
+  opacity: 0.7;
 }
 </style>
 
