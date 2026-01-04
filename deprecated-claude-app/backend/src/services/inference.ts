@@ -273,9 +273,14 @@ export class InferenceService {
       }
     }
     
-    // Build post-facto stop sequences for prefill thinking mode
+    // Build post-facto stop sequences for ALL prefill/messages modes
+    // This is critical because:
+    // 1. Gemini only supports 5 stop sequences max
+    // 2. Native API stop sequences may not work reliably with all providers
+    // 3. We need a fallback to catch when models simulate other participants
     // Since this is applied in our code, not the API, we can check for ALL participants
-    const postFactoStopSequences = shouldTriggerPrefillThinking ? (() => {
+    const needsPostFactoStopSequences = (actualFormat === 'prefill' || actualFormat === 'messages') && participants.length > 0;
+    const postFactoStopSequences = needsPostFactoStopSequences ? (() => {
       const baseStopSequences = ['User:', 'A:', "Claude:"];
       const participantStopSequences = participants
         .filter(p => p.name !== '' && p.id !== responderId)
@@ -376,6 +381,12 @@ export class InferenceService {
       }
       return null;
     };
+    
+    // Build the chunk handler based on mode
+    // Three cases:
+    // 1. Prefill + thinking: Full thinking handling with stop sequences
+    // 2. Prefill/messages without thinking but needs stop sequences: Just stop sequence handling
+    // 3. Standard mode: Just pass through to baseOnChunk
     
     const finalOnChunk = shouldTriggerPrefillThinking 
       ? async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
@@ -494,7 +505,53 @@ export class InferenceService {
             }
           }
         }
-      : baseOnChunk;
+      // Case 2: Prefill/messages without thinking - just apply post-facto stop sequences
+      : (needsPostFactoStopSequences && postFactoStopSequences.length > 0)
+        ? async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+            // If we already hit a stop sequence, ignore further chunks (except completion)
+            if (responseHitStopSequence && !isComplete) return;
+            
+            if (isComplete) {
+              // Skip if we already sent early completion due to stop sequence
+              if (earlyCompletionSent) {
+                console.log(`[InferenceService] Skipping duplicate completion (early completion already sent)`);
+                return;
+              }
+              await baseOnChunk('', true, contentBlocks, usage);
+              return;
+            }
+            
+            if (!chunk) {
+              await baseOnChunk(chunk, isComplete, contentBlocks, usage);
+              return;
+            }
+            
+            // Buffer content to detect stop sequences
+            responseBuffer += chunk;
+            
+            // Check for stop sequence in accumulated response
+            const stopMatch = findStopSequence(responseBuffer);
+            if (stopMatch) {
+              responseHitStopSequence = true;
+              console.log(`[InferenceService] Stop sequence "${stopMatch.sequence}" found at position ${stopMatch.index}, truncating response`);
+              // Calculate how much of this chunk to send
+              const totalBefore = responseBuffer.length - chunk.length;
+              const cutPoint = stopMatch.index - totalBefore;
+              if (cutPoint > 0) {
+                await baseOnChunk(chunk.substring(0, cutPoint).trimEnd(), false, contentBlocks);
+              }
+              // Send early completion to avoid waiting for API stream to finish
+              if (!earlyCompletionSent) {
+                console.log(`[InferenceService] Sending early completion (stop sequence in response)`);
+                earlyCompletionSent = true;
+                await baseOnChunk('', true, contentBlocks);
+              }
+            } else {
+              await baseOnChunk(chunk, false, contentBlocks);
+            }
+          }
+        // Case 3: Standard mode - just pass through
+        : baseOnChunk;
 
     let usageResult: { usage?: any; rawRequest?: any } = {};
 
@@ -853,6 +910,8 @@ export class InferenceService {
         console.log(`[InferenceService] Expanding ${prefixHistory.length} prefixHistory entries for fork context`);
         
         // Create synthetic messages from prefixHistory
+        // IMPORTANT: We store _displayName on the branch so prefill formatting can use actual
+        // participant names instead of defaulting to 'User'/'Assistant'
         const syntheticMessages: Message[] = prefixHistory.map((entry, index) => ({
           id: `prefix-history-${index}`,
           conversationId: firstMessage.conversationId,
@@ -862,9 +921,9 @@ export class InferenceService {
             role: entry.role,
             createdAt: new Date(0), // Epoch - these are historical
             model: entry.model,
-            // Note: participantName is for context but we don't have participant IDs here
-            // The prefill format will use the name from the content if needed
-          }],
+            // Store participant name for prefill formatting (no participantId available)
+            _displayName: entry.participantName,
+          } as any],
           activeBranchId: `prefix-history-branch-${index}`,
           order: index
         }));
@@ -885,6 +944,13 @@ export class InferenceService {
     if (format === 'prefill') {
       // Convert to prefill format with participant names
       const prefillMessages: Message[] = [];
+      
+      // Log prefill setup for debugging "wrong prefill" issues
+      console.log(`[PREFILL] Setup: responderId=${responderId?.substring(0, 8) || 'none'}, participants=${participants.length}, messages=${expandedMessages.length}`);
+      if (responderId && participants.length > 0) {
+        const targetResponder = participants.find(p => p.id === responderId);
+        console.log(`[PREFILL] Target responder: ${targetResponder ? `"${targetResponder.name}" (${targetResponder.id.substring(0, 8)})` : 'NOT FOUND!'}`);
+      }
       
       // Convert cache marker indices to a Set for fast lookup
       const cacheBreakpointIndices = new Set(cacheMarkerIndices || []);
@@ -971,12 +1037,19 @@ export class InferenceService {
         if (!activeBranch) continue;
         
         // Find participant name
+        // Priority: 1. participantId lookup, 2. _displayName (from prefixHistory), 3. role default
         let participantName = activeBranch.role === 'user' ? 'User' : 'Assistant';
         if (activeBranch.participantId) {
           const participant = participants.find(p => p.id === activeBranch.participantId);
           if (participant) {
             participantName = participant.name;
+          } else {
+            // participantId doesn't match any participant - log for debugging
+            console.warn(`[PREFILL] Branch participantId "${activeBranch.participantId.substring(0, 8)}" not found, using default "${participantName}"`);
           }
+        } else if ((activeBranch as any)._displayName) {
+          // Synthetic message from prefixHistory - use stored display name
+          participantName = (activeBranch as any)._displayName;
         }
         
         // Track if this is an empty assistant message
@@ -1084,7 +1157,18 @@ export class InferenceService {
           } else {
             conversationContent = conversationContent.trim() + `\n\n${responder.name}:${thinkingPrefix}`;
           }
+        } else {
+          // CRITICAL: responderId was provided but doesn't match any participant
+          // This can cause the model to respond without a name prefix, leading to wrong character
+          console.warn(`[PREFILL] ⚠️ responderId "${responderId}" not found in participants! Available: ${participants.map(p => `${p.id.substring(0, 8)}:${p.name}`).join(', ')}`);
+          // Fall back to using just thinking prefix without name - better than silent failure
+          // The model will respond but may not identify as the correct character
+          conversationContent = conversationContent.trim() + thinkingPrefix;
         }
+      } else if (responderId) {
+        // responderId provided but no participants - unusual state
+        console.warn(`[PREFILL] ⚠️ responderId "${responderId}" provided but participants array is empty`);
+        conversationContent = conversationContent.trim() + thinkingPrefix;
       }
       
       // Flush final assistant content
@@ -1137,12 +1221,16 @@ export class InferenceService {
         if (!activeBranch || activeBranch.content === '') continue;
         
         // Find participant name
+        // Priority: 1. participantId lookup, 2. _displayName (from prefixHistory), 3. role default
         let participantName = activeBranch.role === 'user' ? 'User' : 'Assistant';
         if (activeBranch.participantId) {
           const participant = participants.find(p => p.id === activeBranch.participantId);
           if (participant) {
             participantName = participant.name;
           }
+        } else if ((activeBranch as any)._displayName) {
+          // Synthetic message from prefixHistory - use stored display name
+          participantName = (activeBranch as any)._displayName;
         }
         
         // Determine role based on whether this is the responder
