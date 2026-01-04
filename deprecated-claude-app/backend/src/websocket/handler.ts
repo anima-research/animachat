@@ -191,6 +191,13 @@ function applyIdentityPromptIfNeeded(params: IdentityPromptParams): string {
  * Build conversation history by following the active branch path backwards
  * from a given branch ID to the root.
  * 
+ * CRITICAL: This function sets activeBranchId on each message to match
+ * the branch we're actually traversing through. This is essential because:
+ * - The database's activeBranchId might point to a different branch
+ * - If the user switched branches before regenerating, we need to use
+ *   the branch in the actual path, not the "currently selected" branch
+ * - formatMessagesForConversation uses activeBranchId to determine content
+ * 
  * @param allMessages - All messages in the conversation
  * @param fromBranchId - The branch ID to start from (going backwards)
  * @param includeMessage - Optional message to include/replace in the history
@@ -222,9 +229,22 @@ function buildConversationHistory(
     }
     
     // Use the provided message if this is the one to replace
-    const messageToAdd = includeMessage && message.id === includeMessage.messageId 
+    let messageToAdd = includeMessage && message.id === includeMessage.messageId 
       ? includeMessage.message 
       : message;
+    
+    // CRITICAL FIX: Ensure activeBranchId matches the branch we're traversing
+    // This prevents using content from a different branch than the path we're following
+    // Without this fix, if user switched branches before regenerating, the prefill
+    // would contain content from the wrong branch!
+    if (messageToAdd.activeBranchId !== currentBranchId) {
+      // Clone the message and update activeBranchId to match our traversal path
+      messageToAdd = {
+        ...messageToAdd,
+        activeBranchId: currentBranchId
+      };
+      Logger.debug(`[buildConversationHistory] Fixed activeBranchId mismatch for message ${message.id.substring(0, 8)}: was ${message.activeBranchId?.substring(0, 8)}, now ${currentBranchId.substring(0, 8)}`);
+    }
     
     // Add to beginning of history (we're building backwards)
     history.unshift(messageToAdd);
@@ -407,9 +427,17 @@ async function runParallelBranchInference(params: ParallelInferenceParams): Prom
     try {
       if (ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify(data));
+      } else {
+        // Log when we can't send important messages
+        if (data.isComplete) {
+          console.warn(`[WebSocket] Could not send isComplete for branch ${data.branchId?.substring(0, 8)}... - connection state: ${ws.readyState}`);
+        }
       }
     } catch (e) {
-      // User disconnected, ignore
+      // Log the error with context
+      if (data.isComplete) {
+        console.error(`[WebSocket] Error sending isComplete for branch ${data.branchId?.substring(0, 8)}...:`, e);
+      }
     }
   };
   
@@ -2380,7 +2408,7 @@ async function handleContinue(
 }
 
 // Heartbeat interval to keep connections alive
+// Runs every 30 seconds, terminates connections that don't respond to ping
 setInterval(() => {
-  // This would need to be implemented with a WebSocket server instance
-  // to track all connections
+  roomManager.performHeartbeat();
 }, 30000);

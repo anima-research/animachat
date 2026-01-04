@@ -19,10 +19,12 @@ export class WebSocketService {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectTimeout: number | null = null;
+  private connectionTimeout: number | null = null; // Timeout for connection attempts
   private eventHandlers: Map<string, Set<EventHandler>> = new Map();
   private messageQueue: WsMessage[] = [];
   private currentRoomId: string | null = null;
   private visibilityHandler: (() => void) | null = null;
+  private intentionalDisconnect = false; // Track if disconnect was intentional
   
   constructor(token: string) {
     this.token = token;
@@ -55,9 +57,23 @@ export class WebSocketService {
   }
   
   connect(): void {
+    // Don't create a new connection if one is already open or connecting
     if (this.ws?.readyState === WebSocket.OPEN) {
       return;
     }
+    if (this.ws?.readyState === WebSocket.CONNECTING) {
+      console.log('[WS] Connection already in progress, waiting...');
+      return;
+    }
+    
+    // Clear any existing connection timeout
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
+    }
+    
+    // Mark as not intentionally disconnected
+    this.intentionalDisconnect = false;
     
     const wsUrl = new URL('/ws', window.location.href);
     wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -70,11 +86,36 @@ export class WebSocketService {
       wsUrl.pathname = '/';
     }
     
-    console.log('WebSocket connecting to:', wsUrl.toString());
+    console.log('[WS] Connecting to:', wsUrl.toString());
+    this.emit('connection_state', { state: 'connecting' });
+    
+    // Close any existing WebSocket before creating new one
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch (e) {
+        // Ignore errors when closing
+      }
+    }
+    
     this.ws = new WebSocket(wsUrl.toString());
     
+    // Set connection timeout (15 seconds) to avoid hanging in "connecting" state
+    this.connectionTimeout = window.setTimeout(() => {
+      if (this.ws?.readyState === WebSocket.CONNECTING) {
+        console.warn('[WS] Connection timeout, closing and retrying...');
+        this.ws.close();
+        // onclose will handle the reconnect
+      }
+    }, 15000);
+    
     this.ws.onopen = () => {
-      console.log('WebSocket connected');
+      console.log('[WS] Connected');
+      // Clear connection timeout
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
       this.reconnectAttempts = 0;
       this.emit('connection_state', { state: 'connected' });
       
@@ -93,25 +134,41 @@ export class WebSocketService {
         // console.log('WebSocket received:', data.type, data);
         this.emit(data.type, data);
       } catch (error) {
-        console.error('Failed to parse WebSocket message:', error);
+        console.error('[WS] Failed to parse message:', error);
       }
     };
     
-    this.ws.onclose = () => {
-      console.log('WebSocket disconnected');
+    this.ws.onclose = (event) => {
+      console.log('[WS] Disconnected', event.code, event.reason);
+      // Clear connection timeout
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
       this.emit('connection_state', { state: 'disconnected' });
-      this.attemptReconnect();
+      // Only attempt reconnect if not intentionally disconnected
+      if (!this.intentionalDisconnect) {
+        this.attemptReconnect();
+      }
     };
     
     this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
+      console.error('[WS] Error:', error);
     };
   }
   
   disconnect(): void {
+    // Mark as intentional to prevent auto-reconnect
+    this.intentionalDisconnect = true;
+    
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
+    }
+    
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
     }
     
     if (this.ws) {
