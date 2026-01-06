@@ -1039,6 +1039,8 @@ export class InferenceService {
           console.log(`[PREFILL] Inserted user message with ${imageAttachments.length} image(s) at order ${messageOrder - 1}`);
           // Reset participant tracking after image insertion
           lastParticipantName = participantName;
+          // Reset empty assistant tracking - this is a non-empty message
+          lastMessageWasEmptyAssistant = false;
         } else {
           // No images - add to conversation content as usual
           if (participantName === '') {
@@ -1050,6 +1052,8 @@ export class InferenceService {
             conversationContent += `${participantName}: ${messageContent}\n\n`;
           }
           lastParticipantName = participantName;
+          // Reset empty assistant tracking - this is a non-empty message
+          lastMessageWasEmptyAssistant = false;
         }
         
         // Insert cache breakpoint marker if needed
