@@ -71,6 +71,7 @@ export interface Store {
   abortGeneration(): void;
   editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean, samplingBranches?: number): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
+  switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>): void;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
   getVisibleMessages(): Message[];
   
@@ -792,6 +793,87 @@ export function createStore(): {
       invalidateSortCache();
       const newVisible = this.getVisibleMessages();
       console.log('After switch, visible messages:', newVisible.length);
+    },
+    
+    // Batch switch multiple branches at once - much faster for tree navigation
+    // Does all the expensive work once instead of per-branch
+    switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>) {
+      if (switches.length === 0) return;
+      
+      console.log(`=== BATCH SWITCH ${switches.length} BRANCHES ===`);
+      
+      // Apply all local state changes first (no reactivity triggers yet)
+      const changedMessages = new Set<string>();
+      for (const { messageId, branchId } of switches) {
+        const message = state.allMessages.find(m => m.id === messageId);
+        if (!message) continue;
+        
+        if (message.activeBranchId !== branchId) {
+          message.activeBranchId = branchId;
+          changedMessages.add(messageId);
+        }
+      }
+      
+      if (changedMessages.size === 0) {
+        console.log('No branches needed switching');
+        return;
+      }
+      
+      console.log(`Changed ${changedMessages.size} message branches`);
+      
+      // Now do the expensive tree order fixup ONCE
+      const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
+      const lastSwitchIndex = Math.max(
+        ...switches.map(s => sortedMessages.findIndex(m => m.id === s.messageId))
+      );
+      
+      // Build path up to the last switched message
+      const branchPath: string[] = [];
+      for (let i = 0; i <= lastSwitchIndex; i++) {
+        const msg = sortedMessages[i];
+        const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+        if (activeBranch) {
+          branchPath.push(activeBranch.id);
+        }
+      }
+      
+      // Update subsequent messages to follow the correct path
+      for (let i = lastSwitchIndex + 1; i < sortedMessages.length; i++) {
+        const msg = sortedMessages[i];
+        for (const branch of msg.branches) {
+          if (branch.parentBranchId && branchPath.includes(branch.parentBranchId)) {
+            if (msg.activeBranchId !== branch.id) {
+              msg.activeBranchId = branch.id;
+              changedMessages.add(msg.id);
+            }
+            const parentIndex = branchPath.indexOf(branch.parentBranchId);
+            branchPath.length = parentIndex + 1;
+            branchPath.push(branch.id);
+            break;
+          }
+        }
+      }
+      
+      // Batch API calls - fire and forget
+      if (state.currentConversation) {
+        for (const msgId of changedMessages) {
+          const msg = state.allMessages.find(m => m.id === msgId);
+          if (msg) {
+            api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
+              messageId: msgId,
+              branchId: msg.activeBranchId
+            }).catch(error => {
+              console.error('Failed to persist batch branch switch:', error);
+            });
+          }
+        }
+      }
+      
+      // Invalidate cache and recompute ONCE at the end
+      state.messagesVersion++;
+      invalidateSortCache();
+      const newVisible = this.getVisibleMessages();
+      console.log('After batch switch, visible messages:', newVisible.length);
     },
     
     async deleteMessage(messageId: string, branchId: string) {

@@ -3104,13 +3104,16 @@ async function navigateToTreeBranch(messageId: string, branchId: string) {
   // Set flag to prevent auto-scrolling during branch switches
   isSwitchingBranch.value = true;
   
-  // Switch branches along the path
-  for (const { messageId: msgId, branchId: brId } of pathToRoot) {
+  // Collect all branches that need switching
+  const branchesToSwitch = pathToRoot.filter(({ messageId: msgId, branchId: brId }) => {
     const message = allMessages.value.find(m => m.id === msgId);
-    if (message && message.activeBranchId !== brId) {
-      console.log('Switching branch:', msgId, brId);
-      store.switchBranch(msgId, brId);
-    }
+    return message && message.activeBranchId !== brId;
+  });
+  
+  // Use batch switch for much faster navigation
+  if (branchesToSwitch.length > 0) {
+    console.log(`Batch switching ${branchesToSwitch.length} branches`);
+    store.switchBranchesBatch(branchesToSwitch);
   }
   
   // Reset the flag after branches are switched
@@ -3874,10 +3877,10 @@ async function handleEventNavigate(messageId: string, branchId?: string) {
     currentParentBranchId = parentBranch?.parentBranchId || null;
   }
   
-  // Switch branches in order (from root to target)
-  for (const { messageId: msgId, branchId: bId } of branchesToActivate) {
-    console.log(`[handleEventNavigate] Switching message ${msgId} to branch ${bId}`);
-    await switchBranch(msgId, bId);
+  // Switch branches in batch for faster navigation
+  if (branchesToActivate.length > 0) {
+    console.log(`[handleEventNavigate] Batch switching ${branchesToActivate.length} branches`);
+    store.switchBranchesBatch(branchesToActivate);
   }
   
   // Wait for DOM to update
