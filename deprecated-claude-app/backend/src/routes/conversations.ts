@@ -313,7 +313,8 @@ export function conversationRouter(db: Database): Router {
   });
 
   // Get debug data for a specific message branch
-  // This endpoint returns the full debugRequest and debugResponse that were stripped from the messages response
+  // This endpoint returns the full debugRequest and debugResponse
+  // Debug data is stored on disk as blobs - loaded here on demand, never kept in memory
   router.get('/:id/messages/:messageId/branches/:branchId/debug', async (req: AuthRequest, res) => {
     try {
       if (!req.userId) {
@@ -340,11 +341,36 @@ export function conversationRouter(db: Database): Router {
         return res.status(404).json({ error: 'Branch not found' });
       }
 
-      // Return debug data (may be undefined if not captured)
-      res.json({
-        debugRequest: (branch as any).debugRequest || null,
-        debugResponse: (branch as any).debugResponse || null,
-      });
+      const branchAny = branch as any;
+      const blobStore = getBlobStore();
+      
+      // Load debug data from blobs if blob IDs exist
+      let debugRequest = null;
+      let debugResponse = null;
+      
+      if (branchAny.debugRequestBlobId) {
+        try {
+          debugRequest = await blobStore.loadJsonBlob(branchAny.debugRequestBlobId);
+        } catch (err) {
+          console.warn(`[Debug] Failed to load debugRequest blob ${branchAny.debugRequestBlobId}:`, err);
+        }
+      } else if (branchAny.debugRequest) {
+        // Fallback for old inline data (pre-blob migration)
+        debugRequest = branchAny.debugRequest;
+      }
+      
+      if (branchAny.debugResponseBlobId) {
+        try {
+          debugResponse = await blobStore.loadJsonBlob(branchAny.debugResponseBlobId);
+        } catch (err) {
+          console.warn(`[Debug] Failed to load debugResponse blob ${branchAny.debugResponseBlobId}:`, err);
+        }
+      } else if (branchAny.debugResponse) {
+        // Fallback for old inline data (pre-blob migration)
+        debugResponse = branchAny.debugResponse;
+      }
+
+      res.json({ debugRequest, debugResponse });
     } catch (error) {
       console.error('Get debug data error:', error);
       res.status(500).json({ error: 'Internal server error' });

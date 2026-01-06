@@ -903,30 +903,18 @@ export class Database {
         const { messageId, branchId, updates } = event.data;
         const message = this.messages.get(messageId);
         if (message) {
-          // Resolve blob references for debug data if present
-          let resolvedUpdates = { ...updates };
-          const blobStore = getBlobStore();
-          
-          if (updates.debugRequestBlobId && !updates.debugRequest) {
-            try {
-              resolvedUpdates.debugRequest = await blobStore.loadJsonBlob(updates.debugRequestBlobId);
-            } catch (err) {
-              console.warn(`[Database] Failed to load debugRequest blob ${updates.debugRequestBlobId}:`, err);
-            }
-          }
-          
-          if (updates.debugResponseBlobId && !updates.debugResponse) {
-            try {
-              resolvedUpdates.debugResponse = await blobStore.loadJsonBlob(updates.debugResponseBlobId);
-            } catch (err) {
-              console.warn(`[Database] Failed to load debugResponse blob ${updates.debugResponseBlobId}:`, err);
-            }
-          }
+          // DON'T load blob contents - just store blob IDs in memory
+          // Debug data will be loaded on-demand from disk when requested
+          // Strip any inline debug data that might exist in old events
+          const updatesForMemory = { ...updates };
+          delete updatesForMemory.debugRequest;
+          delete updatesForMemory.debugResponse;
+          // Keep blob IDs: debugRequestBlobId, debugResponseBlobId
           
           // Apply partial updates to the specified branch
           const updatedBranches = message.branches.map(branch =>
             branch.id === branchId
-              ? { ...branch, ...resolvedUpdates }
+              ? { ...branch, ...updatesForMemory }
               : branch
           );
           const updated = { ...message, branches: updatedBranches };
@@ -3109,42 +3097,43 @@ export class Database {
     const branch = message.branches.find(b => b.id === branchId);
     if (!branch) return false;
 
-    // Create new message object with updated branch
+    // Store debug data as blobs - NEVER keep in memory
+    // The full debugRequest includes the entire conversation context and can be 8+ MB
+    const updatesForMemory = { ...updates } as any;
+    const blobStore = getBlobStore();
+    
+    // Strip debug data from memory, save to blobs, store only blob IDs
+    if (updatesForMemory.debugRequest) {
+      try {
+        const debugRequestBlobId = await blobStore.saveJsonBlob(updatesForMemory.debugRequest);
+        updatesForMemory.debugRequestBlobId = debugRequestBlobId;
+      } catch (err) {
+        console.warn('[Database] Failed to save debugRequest as blob:', err);
+      }
+      delete updatesForMemory.debugRequest; // Never store in memory
+    }
+    
+    if (updatesForMemory.debugResponse) {
+      try {
+        const debugResponseBlobId = await blobStore.saveJsonBlob(updatesForMemory.debugResponse);
+        updatesForMemory.debugResponseBlobId = debugResponseBlobId;
+      } catch (err) {
+        console.warn('[Database] Failed to save debugResponse as blob:', err);
+      }
+      delete updatesForMemory.debugResponse; // Never store in memory
+    }
+
+    // Create new message object with updated branch (debug data stripped, only blob IDs)
     const updatedBranches = message.branches.map(b =>
       b.id === branchId
-        ? { ...b, ...updates }
+        ? { ...b, ...updatesForMemory }
         : b
     );
     const updated = { ...message, branches: updatedBranches };
     this.messages.set(messageId, updated);
 
-    // Store debug data as blobs to avoid bloating the event log
-    // The full debugRequest includes the entire conversation context and can be 8+ MB
-    const updatesForEvent = { ...updates } as any;
-    const blobStore = getBlobStore();
-    
-    if (updatesForEvent.debugRequest) {
-      try {
-        const debugRequestBlobId = await blobStore.saveJsonBlob(updatesForEvent.debugRequest);
-        updatesForEvent.debugRequestBlobId = debugRequestBlobId;
-        delete updatesForEvent.debugRequest;
-      } catch (err) {
-        console.warn('[Database] Failed to save debugRequest as blob, storing inline:', err);
-      }
-    }
-    
-    if (updatesForEvent.debugResponse) {
-      try {
-        const debugResponseBlobId = await blobStore.saveJsonBlob(updatesForEvent.debugResponse);
-        updatesForEvent.debugResponseBlobId = debugResponseBlobId;
-        delete updatesForEvent.debugResponse;
-      } catch (err) {
-        console.warn('[Database] Failed to save debugResponse as blob, storing inline:', err);
-      }
-    }
-
-    // Log event with blob references instead of inline debug data
-    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates: updatesForEvent });
+    // Log event with blob references (same as memory state)
+    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates: updatesForMemory });
 
     return true;
   }
