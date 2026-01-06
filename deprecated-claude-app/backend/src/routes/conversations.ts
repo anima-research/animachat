@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
 import { getBlobStore } from '../database/blob-store.js';
+import { compactConversation, getConversationFilePath, formatCompactionResult } from '../database/compaction.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { roomManager } from '../websocket/room-manager.js';
 import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, ContentBlockSchema, Message } from '@deprecated-claude/shared';
@@ -1513,6 +1514,70 @@ export function conversationRouter(db: Database): Router {
     } catch (error) {
       console.error('Fork conversation error:', error);
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Compact a conversation's event log (admin only for now)
+  // This removes redundant events (branch changes, order changes) and strips/moves debug data to blobs
+  router.post('/:id/compact', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { id: conversationId } = req.params;
+      const { stripDebugData = true, moveDebugToBlobs = false } = req.body;
+
+      // Verify conversation access - must be owner
+      const conversation = await db.getConversation(conversationId, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Only owner can compact (this modifies the underlying file)
+      if (conversation.userId !== req.userId) {
+        // Check if user is admin
+        const isAdmin = await db.userHasActiveGrantCapability(req.userId, 'admin');
+        if (!isAdmin) {
+          return res.status(403).json({ error: 'Only the conversation owner or an admin can compact' });
+        }
+      }
+
+      const filePath = getConversationFilePath(conversationId);
+      console.log(`[Compaction] Starting compaction for conversation ${conversationId}`);
+      console.log(`[Compaction] File path: ${filePath}`);
+
+      const result = await compactConversation(filePath, {
+        removeActiveBranchChanged: true,
+        removeMessageOrderChanged: true,
+        stripDebugData,
+        moveDebugToBlobs,
+        createBackup: true,
+      });
+
+      console.log(formatCompactionResult(result));
+
+      // The conversation data is now stale in memory - need to reload
+      // For now, just notify the client that a reload is needed
+      res.json({
+        success: true,
+        result: {
+          originalSizeMB: (result.originalSize / 1024 / 1024).toFixed(2),
+          compactedSizeMB: (result.compactedSize / 1024 / 1024).toFixed(2),
+          reductionPercent: ((1 - result.compactedSize / result.originalSize) * 100).toFixed(1),
+          originalEventCount: result.originalEventCount,
+          compactedEventCount: result.compactedEventCount,
+          removedEvents: result.removedEvents,
+          strippedDebugData: result.strippedDebugData,
+          movedToBlobs: result.movedToBlobs,
+          backupPath: result.backupPath,
+        },
+        reloadRequired: true,
+        message: 'Conversation compacted. Server restart may be required to reload the compacted data.',
+      });
+    } catch (error) {
+      console.error('Compact conversation error:', error);
+      res.status(500).json({ error: 'Failed to compact conversation', details: String(error) });
     }
   });
 

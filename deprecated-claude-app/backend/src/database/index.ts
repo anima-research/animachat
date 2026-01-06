@@ -10,6 +10,7 @@ import { EventStore, Event } from './persistence.js';
 import { BulkEventStore } from './bulk-event-store.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { SharesStore, SharedConversation } from './shares.js';
+import { getBlobStore } from './blob-store.js';
 import { CollaborationStore } from './collaboration.js';
 import { PersonaStore } from './persona.js';
 import { ConversationUIStateStore } from './conversation-ui-state.js';
@@ -902,10 +903,30 @@ export class Database {
         const { messageId, branchId, updates } = event.data;
         const message = this.messages.get(messageId);
         if (message) {
+          // Resolve blob references for debug data if present
+          let resolvedUpdates = { ...updates };
+          const blobStore = getBlobStore();
+          
+          if (updates.debugRequestBlobId && !updates.debugRequest) {
+            try {
+              resolvedUpdates.debugRequest = await blobStore.loadJsonBlob(updates.debugRequestBlobId);
+            } catch (err) {
+              console.warn(`[Database] Failed to load debugRequest blob ${updates.debugRequestBlobId}:`, err);
+            }
+          }
+          
+          if (updates.debugResponseBlobId && !updates.debugResponse) {
+            try {
+              resolvedUpdates.debugResponse = await blobStore.loadJsonBlob(updates.debugResponseBlobId);
+            } catch (err) {
+              console.warn(`[Database] Failed to load debugResponse blob ${updates.debugResponseBlobId}:`, err);
+            }
+          }
+          
           // Apply partial updates to the specified branch
           const updatedBranches = message.branches.map(branch =>
             branch.id === branchId
-              ? { ...branch, ...updates }
+              ? { ...branch, ...resolvedUpdates }
               : branch
           );
           const updated = { ...message, branches: updatedBranches };
@@ -3097,8 +3118,33 @@ export class Database {
     const updated = { ...message, branches: updatedBranches };
     this.messages.set(messageId, updated);
 
-    // Log the actual updates, not just the keys - needed for event replay to restore debug data
-    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates });
+    // Store debug data as blobs to avoid bloating the event log
+    // The full debugRequest includes the entire conversation context and can be 8+ MB
+    const updatesForEvent = { ...updates } as any;
+    const blobStore = getBlobStore();
+    
+    if (updatesForEvent.debugRequest) {
+      try {
+        const debugRequestBlobId = await blobStore.saveJsonBlob(updatesForEvent.debugRequest);
+        updatesForEvent.debugRequestBlobId = debugRequestBlobId;
+        delete updatesForEvent.debugRequest;
+      } catch (err) {
+        console.warn('[Database] Failed to save debugRequest as blob, storing inline:', err);
+      }
+    }
+    
+    if (updatesForEvent.debugResponse) {
+      try {
+        const debugResponseBlobId = await blobStore.saveJsonBlob(updatesForEvent.debugResponse);
+        updatesForEvent.debugResponseBlobId = debugResponseBlobId;
+        delete updatesForEvent.debugResponse;
+      } catch (err) {
+        console.warn('[Database] Failed to save debugResponse as blob, storing inline:', err);
+      }
+    }
+
+    // Log event with blob references instead of inline debug data
+    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates: updatesForEvent });
 
     return true;
   }

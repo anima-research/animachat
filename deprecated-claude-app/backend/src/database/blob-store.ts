@@ -212,6 +212,25 @@ export class BlobStore {
     };
     return mimeToExt[mimeType] || 'bin';
   }
+
+  /**
+   * Save JSON data as a blob (for debug data, etc.)
+   * Returns the blob ID (UUID)
+   */
+  async saveJsonBlob(data: any): Promise<string> {
+    const jsonString = JSON.stringify(data);
+    const base64 = Buffer.from(jsonString, 'utf-8').toString('base64');
+    return this.saveBlob(base64, 'application/json');
+  }
+
+  /**
+   * Load JSON data from a blob
+   */
+  async loadJsonBlob(id: string): Promise<any | null> {
+    const result = await this.loadBlob(id);
+    if (!result) return null;
+    return JSON.parse(result.data.toString('utf-8'));
+  }
 }
 
 // Singleton instance

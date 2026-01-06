@@ -130,6 +130,11 @@
                       title="Archive"
                       @click="archiveConversation(conversation.id)"
                     />
+                    <v-list-item
+                      prepend-icon="mdi-package-variant"
+                      title="Compact (reduce file size)"
+                      @click="compactConversation(conversation.id)"
+                    />
                   </v-list>
                 </v-menu>
               </template>
@@ -3516,6 +3521,23 @@ async function archiveConversation(id: string) {
     await store.archiveConversation(id);
     if (currentConversation.value?.id === id) {
       router.push('/conversation');
+    }
+  }
+}
+
+async function compactConversation(id: string) {
+  if (confirm('This will compact the conversation\'s event log to reduce file size. Debug data will be stripped. Continue?')) {
+    try {
+      const result = await store.compactConversation(id);
+      if (result.success) {
+        const r = result.result;
+        alert(`Compaction complete!\n\nSize: ${r.originalSizeMB} MB → ${r.compactedSizeMB} MB (${r.reductionPercent}% reduction)\nEvents: ${r.originalEventCount} → ${r.compactedEventCount}\n\n${result.message}`);
+      } else {
+        alert('Compaction failed: ' + result.message);
+      }
+    } catch (error: any) {
+      console.error('Compaction error:', error);
+      alert('Compaction failed: ' + (error.response?.data?.error || error.message || 'Unknown error'));
     }
   }
 }

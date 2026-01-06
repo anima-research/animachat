@@ -62,6 +62,7 @@ export interface Store {
   updateConversation(id: string, updates: Partial<Conversation>): Promise<void>;
   archiveConversation(id: string): Promise<void>;
   duplicateConversation(id: string): Promise<Conversation>;
+  compactConversation(id: string): Promise<{ success: boolean; result: any; message: string }>;
   
   loadMessages(conversationId: string): Promise<void>;
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number): Promise<void>;
@@ -484,6 +485,19 @@ export function createStore(): {
         return duplicate;
       } catch (error) {
         console.error('Failed to duplicate conversation:', error);
+        throw error;
+      }
+    },
+    
+    async compactConversation(id: string) {
+      try {
+        const response = await api.post(`/conversations/${id}/compact`, {
+          stripDebugData: true,
+          moveDebugToBlobs: false, // Just strip for now, faster
+        });
+        return response.data;
+      } catch (error) {
+        console.error('Failed to compact conversation:', error);
         throw error;
       }
     },
