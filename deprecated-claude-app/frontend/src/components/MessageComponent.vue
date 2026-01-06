@@ -755,11 +755,11 @@
                 </tr>
                 <tr>
                   <td class="font-weight-medium">Has Debug Request</td>
-                  <td>{{ !!currentBranch.debugRequest }}</td>
+                  <td>{{ !!(currentBranch.debugRequest || currentBranch.debugRequestBlobId) }}</td>
                 </tr>
                 <tr>
                   <td class="font-weight-medium">Has Debug Response</td>
-                  <td>{{ !!currentBranch.debugResponse }}</td>
+                  <td>{{ !!(currentBranch.debugResponse || currentBranch.debugResponseBlobId) }}</td>
                 </tr>
                 <tr>
                   <td class="font-weight-medium">Created At</td>
@@ -815,14 +815,20 @@
             </v-expansion-panels>
           </div>
           
-          <div v-if="currentBranch.debugRequest" class="mb-4">
+          <div v-if="currentBranch.debugRequest || currentBranch.debugRequestBlobId" class="mb-4">
             <h4 class="text-subtitle-1 mb-2">Debug Request</h4>
-            <pre class="debug-json pa-2 rounded" style="max-height: 300px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugRequest, null, 2) }}</pre>
+            <p v-if="currentBranch.debugRequestBlobId && !currentBranch.debugRequest" class="text-caption text-grey">
+              Debug data stored as blob. Open debug panel to load.
+            </p>
+            <pre v-else class="debug-json pa-2 rounded" style="max-height: 300px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugRequest, null, 2) }}</pre>
           </div>
           
-          <div v-if="currentBranch.debugResponse" class="mb-4">
+          <div v-if="currentBranch.debugResponse || currentBranch.debugResponseBlobId" class="mb-4">
             <h4 class="text-subtitle-1 mb-2">Debug Response</h4>
-            <pre class="debug-json pa-2 rounded" style="max-height: 200px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugResponse, null, 2) }}</pre>
+            <p v-if="currentBranch.debugResponseBlobId && !currentBranch.debugResponse" class="text-caption text-grey">
+              Debug data stored as blob. Open debug panel to load.
+            </p>
+            <pre v-else class="debug-json pa-2 rounded" style="max-height: 200px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugResponse, null, 2) }}</pre>
           </div>
         </v-card-text>
         <v-card-actions>
