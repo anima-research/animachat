@@ -176,7 +176,7 @@
           </v-list-item>
           <v-divider v-if="(message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)) || canViewMetadata" class="my-0" />
           <v-list-item
-            v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)"
+            v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse || currentBranch.debugRequestBlobId || currentBranch.debugResponseBlobId)"
             density="compact"
             @click="showDebugDialog = true"
           >
