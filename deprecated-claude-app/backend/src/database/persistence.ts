@@ -1,4 +1,6 @@
 import fs from 'fs/promises';
+import { createReadStream } from 'fs';
+import { createInterface } from 'readline';
 import path from 'path';
 
 export interface Event {
@@ -40,19 +42,8 @@ export class EventStore {
   
   async loadEvents(): Promise<Event[]> {
     try {
-      const content = await fs.readFile(this.filePath, 'utf-8');
-      if (!content.trim()) return [];
-      
-      return content
-        .trim()
-        .split('\n')
-        .map(line => {
-          const event = JSON.parse(line);
-          return {
-            ...event,
-            timestamp: new Date(event.timestamp)
-          };
-        });
+      // Check if file exists
+      await fs.access(this.filePath);
     } catch (error: any) {
       if (error.code === 'ENOENT') {
         // File doesn't exist yet
@@ -60,6 +51,43 @@ export class EventStore {
       }
       throw error;
     }
+    
+    // Use streaming to handle large files (> 2GB)
+    // fs.readFile() fails for files larger than 2GB due to Node.js string size limits
+    return new Promise((resolve, reject) => {
+      const events: Event[] = [];
+      const stream = createReadStream(this.filePath, { encoding: 'utf-8' });
+      const rl = createInterface({
+        input: stream,
+        crlfDelay: Infinity
+      });
+      
+      rl.on('line', (line) => {
+        if (line.trim()) {
+          try {
+            const event = JSON.parse(line);
+            events.push({
+              ...event,
+              timestamp: new Date(event.timestamp)
+            });
+          } catch (parseError) {
+            console.warn(`[EventStore] Skipping malformed line: ${parseError}`);
+          }
+        }
+      });
+      
+      rl.on('close', () => {
+        resolve(events);
+      });
+      
+      rl.on('error', (error) => {
+        reject(error);
+      });
+      
+      stream.on('error', (error) => {
+        reject(error);
+      });
+    });
   }
   
   async close(): Promise<void> {
