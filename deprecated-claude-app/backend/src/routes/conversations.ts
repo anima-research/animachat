@@ -1428,19 +1428,20 @@ export function conversationRouter(db: Database): Router {
         // Then copy target + subtree as normal messages
         console.log(`[Fork] Compressed mode: embedding ${historyBeforeTarget.length} history messages as prefixHistory`);
         
-        const prefixHistory: Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantName?: string; model?: string }> = [];
+        const prefixHistory: Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantId?: string; model?: string }> = [];
         
         // Mark history branches as root
         markHistoryAsRoot();
         
         // Build prefixHistory from active branches only
+        // Use NEW participant IDs (participants are copied during fork) so name lookup works properly
         for (const { message, branchId: activeBranchId } of historyBeforeTarget) {
           const activeBranch = message.branches.find(b => b.id === activeBranchId);
           if (activeBranch) {
             prefixHistory.push({
               role: activeBranch.role,
               content: activeBranch.content,
-              participantName: activeBranch.participantId ? participantNameMap.get(activeBranch.participantId) : undefined,
+              participantId: activeBranch.participantId ? newParticipantMap.get(activeBranch.participantId) : undefined,
               model: activeBranch.model,
             });
           }

@@ -847,12 +847,13 @@ export class InferenceService {
     if (messages.length > 0) {
       const firstMessage = messages[0];
       const firstBranch = firstMessage.branches.find(b => b.id === firstMessage.activeBranchId);
-      const prefixHistory = (firstBranch as any)?.prefixHistory as Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantName?: string; model?: string }> | undefined;
+      const prefixHistory = (firstBranch as any)?.prefixHistory as Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantId?: string; model?: string }> | undefined;
       
       if (prefixHistory && prefixHistory.length > 0) {
         console.log(`[InferenceService] Expanding ${prefixHistory.length} prefixHistory entries for fork context`);
         
         // Create synthetic messages from prefixHistory
+        // Use participantId for proper name lookup (participants are copied during fork)
         const syntheticMessages: Message[] = prefixHistory.map((entry, index) => ({
           id: `prefix-history-${index}`,
           conversationId: firstMessage.conversationId,
@@ -862,9 +863,8 @@ export class InferenceService {
             role: entry.role,
             createdAt: new Date(0), // Epoch - these are historical
             model: entry.model,
-            // Note: participantName is for context but we don't have participant IDs here
-            // The prefill format will use the name from the content if needed
-          }],
+            participantId: entry.participantId, // Use ID for proper lookup
+          } as any],
           activeBranchId: `prefix-history-branch-${index}`,
           order: index
         }));
