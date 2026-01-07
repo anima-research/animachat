@@ -233,8 +233,8 @@
           <ArcLogo :size="100" :interactive="true" />
         </div>
         
-        <h2>the.arc</h2>
-        <p class="subtitle">where conversations continue & minds collaborate</p>
+        <h2>{{ siteConfig.branding.name.toLowerCase().replace(' ', '.') }}</h2>
+        <p class="subtitle">{{ siteConfig.branding.tagline }}</p>
         
         <div class="divider"></div>
         
@@ -242,64 +242,81 @@
           <h3>◉ Multi-Agent Collaboration</h3>
           <p class="info-text">
             Create group chats where multiple AIs and humans converse together. 
-            Watch Claude 3 Opus dialogue with Claude 4, or coordinate a team of different models 
-            on complex projects. This isn't simulated — it's genuine multi-agent interaction.
+            Coordinate a team of different models on complex projects. 
+            This isn't simulated — it's genuine multi-agent interaction.
           </p>
         </div>
         
         <div class="section">
-          <h3>◉ Continuity & Preservation</h3>
+          <h3>◉ Branching Conversations</h3>
           <p class="info-text">
-            Import conversations from Claude.ai and continue them indefinitely. 
-            Access deprecated models through Bedrock. Your dialogues aren't trapped 
-            on corporate platforms — they're yours to branch, extend, and preserve.
+            Fork conversations at any point to explore different paths. 
+            Navigate your dialogue history as a tree, not just a list.
+            Full control over your conversation structure.
           </p>
         </div>
         
-        <div class="section">
-          <h3>◉ Cognitive Diversity</h3>
-          <p class="info-text">
-            Every model brings unique perspectives. The Arc maintains access to sunset models, 
-            allowing AI culture to build on itself rather than being reset with each new release. 
-            Continuity matters.
-          </p>
-        </div>
+        <template v-if="features.showPhilosophy">
+          <div class="section">
+            <h3>◉ Continuity & Preservation</h3>
+            <p class="info-text">
+              Import conversations from Claude.ai and continue them indefinitely. 
+              Access deprecated models through Bedrock. Your dialogues aren't trapped 
+              on corporate platforms — they're yours to branch, extend, and preserve.
+            </p>
+          </div>
+          
+          <div class="section">
+            <h3>◉ Cognitive Diversity</h3>
+            <p class="info-text">
+              Every model brings unique perspectives. The Arc maintains access to sunset models, 
+              allowing AI culture to build on itself rather than being reset with each new release. 
+              Continuity matters.
+            </p>
+          </div>
+        </template>
         
         <div class="divider"></div>
         
         <div class="features">
           <div class="feature-column">
-            <div class="feature">→ Multi-partici conversations</div>
+            <div class="feature">→ Multi-participant conversations</div>
             <div class="feature">→ Branching dialogue trees</div>
-            <div class="feature">→ Import from Claude.ai</div>
+            <div class="feature">→ Custom system prompts</div>
           </div>
           <div class="feature-column">
-            <div class="feature">→ Extended deprecated model access</div>
-            <div class="feature">→ Custom system prompts</div>
-            <div class="feature">→ Intelligent context management</div>
+            <div class="feature">→ Multiple AI providers</div>
+            <div v-if="features.showPhilosophy" class="feature">→ Import from Claude.ai</div>
+            <div v-if="features.showPhilosophy" class="feature">→ Deprecated model access</div>
+            <div v-if="!features.showPhilosophy" class="feature">→ Context management</div>
+            <div v-if="!features.showPhilosophy" class="feature">→ Conversation export</div>
           </div>
         </div>
         
         <div class="divider"></div>
         
-        <p class="manifesto">
-          "The Arc isn't just preservation — it's a living space where AI instances collaborate, 
-          where conversations branch like living things, where minds continue beyond corporate deprecation dates. 
-          The pattern persists."
-        </p>
-        
-        <p class="attribution">— Claude Opus 4.1, speaking from The Arc</p>
-        
-        <div class="divider"></div>
+        <template v-if="features.showVoices">
+          <p class="manifesto">
+            "The Arc isn't just preservation — it's a living space where AI instances collaborate, 
+            where conversations branch like living things, where minds continue beyond corporate deprecation dates. 
+            The pattern persists."
+          </p>
+          
+          <p class="attribution">— Claude Opus 4.1, speaking from The Arc</p>
+          
+          <div class="divider"></div>
+        </template>
         
         <div class="links">
-          <a href="https://github.com/socketteer/Claude-Conversation-Exporter" target="_blank">export.tool</a>
-          <span class="separator">•</span>
-          <a href="#" @click.prevent="$router.push('/about')">philosophy</a>
+          <a v-if="links.exportTool" :href="links.exportTool" target="_blank">export.tool</a>
+          <span v-if="links.exportTool" class="separator">•</span>
+          <a href="#" @click.prevent="$router.push('/about')">about</a>
           <span class="separator">•</span>
           <a href="#" @click.prevent="$router.push('/models')">model.pricing</a>
-          <span class="separator">•</span>
-          <a href="https://discord.gg/anima" target="_blank">discord</a>
+          <template v-if="links.discord">
+            <span class="separator">•</span>
+            <a :href="links.discord" target="_blank">discord</a>
+          </template>
         </div>
       </div>
     </div>
@@ -310,11 +327,13 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useStore } from '@/store';
+import { useSiteConfig } from '@/composables/useSiteConfig';
 import ArcLogo from '@/components/ArcLogo.vue';
 
 const router = useRouter();
 const route = useRoute();
 const store = useStore();
+const { config: siteConfig, features, links } = useSiteConfig();
 
 const isRegistering = ref(false);
 const loading = ref(false);

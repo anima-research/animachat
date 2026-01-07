@@ -24,5 +24,9 @@ certs/
 *.crt
 *.csr
 
+# Site configuration (deployment-specific)
+backend/config/siteConfig.json
+backend/config/siteConfig.production.json
+
 *.md
 *.txt

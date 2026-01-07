@@ -29,6 +29,7 @@ import { collaborationRouter } from './routes/collaboration.js';
 import { personaRouter } from './routes/personas.js';
 import avatarRouter from './routes/avatars.js';
 import blobRouter from './routes/blobs.js';
+import siteConfigRouter from './routes/site-config.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
 import { initBlobStore } from './database/blob-store.js';
@@ -143,6 +144,7 @@ app.use('/api/personas', authenticateToken, personaRouter(db));
 app.use('/api/avatars', authenticateToken, avatarRouter);
 app.use('/api/blobs', blobRouter); // No auth - blobs are served by ID (content-addressed)
 app.use('/api/system', systemRouter());
+app.use('/api/site-config', siteConfigRouter); // No auth - public site configuration
 
 // Health check
 app.get('/api/health', (req, res) => {

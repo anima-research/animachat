@@ -1,0 +1,274 @@
+name: Deploy Arc Chat
+
+on:
+  push:
+    # Staging: auto-deploy from main when app changes
+    branches: [ main ]
+    # Production: deploy from version tags
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+    # Only trigger on app changes (for branch pushes; tags always trigger)
+    paths:
+      - 'deprecated-claude-app/**'
+      - '.github/workflows/deploy-site.yml'
+
+  # Manual deployment to any environment
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment target'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production-a
+          - production-b
+        default: 'staging'
+
+concurrency:
+  group: deployment-${{ github.event.inputs.environment || (startsWith(github.ref, 'refs/tags/') && 'production' || 'staging') }}
+  cancel-in-progress: false  # Don't cancel production deploys
+
+jobs:
+  # Determine which environments to deploy to
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.set-envs.outputs.environments }}
+    steps:
+      - id: set-envs
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # Manual: deploy to selected environment
+            echo "environments=[\"${{ github.event.inputs.environment }}\"]" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Tag push: deploy to both production environments
+            echo "environments=[\"production-a\",\"production-b\"]" >> $GITHUB_OUTPUT
+          else
+            # Branch push: deploy to staging only
+            echo "environments=[\"staging\"]" >> $GITHUB_OUTPUT
+          fi
+
+  deploy:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: ${{ fromJson(needs.prepare.outputs.environments) }}
+      fail-fast: false  # Don't stop other deploys if one fails
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22.14.0'
+        cache: 'npm'
+        cache-dependency-path: deprecated-claude-app/package-lock.json
+
+    - name: Install dependencies
+      working-directory: deprecated-claude-app
+      run: npm ci
+
+    - name: Build all workspaces
+      working-directory: deprecated-claude-app
+      run: |
+        npm run build -w shared
+        npm run build -w backend
+        npm run build -w frontend
+
+    - name: Prepare deployment artifacts
+      working-directory: deprecated-claude-app
+      run: |
+        mkdir -p deploy/backend deploy/frontend deploy/shared
+        
+        cp -r frontend/dist/* deploy/frontend/
+        cp -r backend/dist/* deploy/backend/
+        cp backend/package.json deploy/backend/
+        
+        mkdir -p deploy/backend/config
+        cp backend/config/models.json deploy/backend/config/
+        
+        cp -r shared/dist/* deploy/shared/
+        cp shared/package.json deploy/shared/
+
+    - name: Write site config from secret
+      working-directory: deprecated-claude-app
+      env:
+        SITE_CONFIG_STAGING: ${{ secrets.SITE_CONFIG_STAGING }}
+        SITE_CONFIG_PRODUCTION_A: ${{ secrets.SITE_CONFIG_PRODUCTION_A }}
+        SITE_CONFIG_PRODUCTION_B: ${{ secrets.SITE_CONFIG_PRODUCTION_B }}
+      run: |
+        # Map environment to secret name
+        case "${{ matrix.environment }}" in
+          staging)
+            CONFIG_VALUE="$SITE_CONFIG_STAGING"
+            ;;
+          production-a)
+            CONFIG_VALUE="$SITE_CONFIG_PRODUCTION_A"
+            ;;
+          production-b)
+            CONFIG_VALUE="$SITE_CONFIG_PRODUCTION_B"
+            ;;
+        esac
+        
+        if [ -n "$CONFIG_VALUE" ]; then
+          echo "$CONFIG_VALUE" > deploy/backend/config/siteConfig.json
+          echo "✅ Site config written for ${{ matrix.environment }}"
+        else
+          echo "⚠️ No site config secret found for ${{ matrix.environment }}, using defaults"
+          cp backend/config/siteConfig.example.json deploy/backend/config/siteConfig.json
+        fi
+
+    - name: Set deployment variables
+      id: vars
+      run: |
+        case "${{ matrix.environment }}" in
+          staging)
+            echo "deploy_path=/var/www/arc-staging" >> $GITHUB_OUTPUT
+            echo "config_path=/etc/arc-staging" >> $GITHUB_OUTPUT
+            echo "service_name=arc-staging" >> $GITHUB_OUTPUT
+            echo "port=3012" >> $GITHUB_OUTPUT
+            echo "health_url=https://arcstaging.animalabs.ai" >> $GITHUB_OUTPUT
+            ;;
+          production-a)
+            echo "deploy_path=/var/www/deprecated-claude-app" >> $GITHUB_OUTPUT
+            echo "config_path=/etc/claude-app" >> $GITHUB_OUTPUT
+            echo "service_name=claude-app" >> $GITHUB_OUTPUT
+            echo "port=3010" >> $GITHUB_OUTPUT
+            echo "health_url=https://arc.animalabs.ai" >> $GITHUB_OUTPUT
+            ;;
+          production-b)
+            echo "deploy_path=/var/www/arc-production-b" >> $GITHUB_OUTPUT
+            echo "config_path=/etc/arc-production-b" >> $GITHUB_OUTPUT
+            echo "service_name=arc-production-b" >> $GITHUB_OUTPUT
+            echo "port=3011" >> $GITHUB_OUTPUT
+            echo "health_url=https://arc.at-hub.com" >> $GITHUB_OUTPUT
+            ;;
+        esac
+
+    - name: Deploy to server
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        script: |
+          DEPLOY_PATH="${{ steps.vars.outputs.deploy_path }}"
+          SERVICE_NAME="${{ steps.vars.outputs.service_name }}"
+          
+          echo "🚀 Deploying to $DEPLOY_PATH (${{ matrix.environment }})"
+          
+          # Stop the service
+          sudo -n systemctl stop $SERVICE_NAME 2>/dev/null || true
+          
+          # Backup data directory
+          if [ -d "$DEPLOY_PATH/backend/data" ]; then
+            echo "Backing up data directory..."
+            cp -r "$DEPLOY_PATH/backend/data" /tmp/${SERVICE_NAME}-data-backup
+          fi
+          
+          # Clean deployment directory
+          rm -rf "$DEPLOY_PATH/backend/"* 2>/dev/null || true
+          rm -rf "$DEPLOY_PATH/frontend/"* 2>/dev/null || true
+          rm -rf "$DEPLOY_PATH/shared/"* 2>/dev/null || true
+          
+          # Ensure directories exist
+          mkdir -p "$DEPLOY_PATH/backend" "$DEPLOY_PATH/frontend" "$DEPLOY_PATH/shared"
+          
+          # Restore data directory
+          if [ -d /tmp/${SERVICE_NAME}-data-backup ]; then
+            echo "Restoring data directory..."
+            mv /tmp/${SERVICE_NAME}-data-backup "$DEPLOY_PATH/backend/data"
+          fi
+
+    - name: Copy files to server
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        source: "deprecated-claude-app/deploy/backend,deprecated-claude-app/deploy/frontend,deprecated-claude-app/deploy/shared"
+        target: "${{ steps.vars.outputs.deploy_path }}"
+        strip_components: 2
+
+    - name: Install dependencies and start service
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        script: |
+          DEPLOY_PATH="${{ steps.vars.outputs.deploy_path }}"
+          CONFIG_PATH="${{ steps.vars.outputs.config_path }}"
+          SERVICE_NAME="${{ steps.vars.outputs.service_name }}"
+          
+          cd "$DEPLOY_PATH/backend"
+          
+          # Install production dependencies
+          npm install --omit=dev --no-audit --no-fund
+          
+          # Copy shared module
+          rm -rf node_modules/@deprecated-claude/shared
+          mkdir -p node_modules/@deprecated-claude/shared
+          cp -r "$DEPLOY_PATH/shared/"* node_modules/@deprecated-claude/shared/
+          
+          # Create config directory and copy configs
+          sudo -n mkdir -p "$CONFIG_PATH"
+          sudo -n cp "$DEPLOY_PATH/backend/config/models.json" "$CONFIG_PATH/models.json"
+          sudo -n cp "$DEPLOY_PATH/backend/config/siteConfig.json" "$CONFIG_PATH/siteConfig.json"
+          
+          # Only copy config.json if it doesn't exist (preserve server-managed secrets)
+          if [ ! -f "$CONFIG_PATH/config.json" ]; then
+            if [ -f "$DEPLOY_PATH/backend/config/config.example.json" ]; then
+              echo "⚠️ No config.json found - copying example. Manual setup required!"
+              sudo -n cp "$DEPLOY_PATH/backend/config/config.example.json" "$CONFIG_PATH/config.json"
+            fi
+          else
+            echo "✅ Preserving existing config.json (server-managed)"
+          fi
+          
+          sudo -n chown www-data:www-data "$CONFIG_PATH/"* 2>/dev/null || true
+          sudo -n chmod 644 "$CONFIG_PATH/"* 2>/dev/null || true
+          echo "✅ Copied configs to $CONFIG_PATH"
+          
+          # Start the service
+          sudo -n systemctl start $SERVICE_NAME
+          
+          # Verify
+          sleep 2
+          if sudo -n systemctl is-active --quiet $SERVICE_NAME; then
+            echo "✅ $SERVICE_NAME is running"
+          else
+            echo "❌ $SERVICE_NAME failed to start"
+            sudo -n journalctl -u $SERVICE_NAME -n 30 --no-pager
+            exit 1
+          fi
+
+    - name: Health check
+      if: steps.vars.outputs.health_url != ''
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        script: |
+          PORT="${{ steps.vars.outputs.port }}"
+          
+          if curl -f -s "http://localhost:$PORT/api/health" > /dev/null 2>&1; then
+            echo "✅ API health check passed on port $PORT"
+          else
+            echo "⚠️ API health check failed on port $PORT"
+          fi
+
+    - name: Announce deployment
+      if: success()
+      run: |
+        echo "## ✅ Deployed ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Ref:** ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Port:** ${{ steps.vars.outputs.port }}" >> $GITHUB_STEP_SUMMARY

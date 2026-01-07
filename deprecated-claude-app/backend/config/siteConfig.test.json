@@ -1,0 +1,27 @@
+{
+  "branding": {
+    "name": "Test Chat",
+    "tagline": "Testing deployment configs",
+    "logoVariant": "arc"
+  },
+  "links": {
+    "discord": "https://discord.gg/test",
+    "github": "https://github.com/test/repo",
+    "parentSite": null,
+    "documentation": "https://docs.example.com",
+    "exportTool": null
+  },
+  "operator": {
+    "name": "Test Operator Inc",
+    "contactEmail": "test@example.com",
+    "contactDiscord": null
+  },
+  "features": {
+    "showTestimonials": false,
+    "showPhilosophy": false,
+    "showEcosystem": false,
+    "showVoices": false
+  },
+  "content": {}
+}
+

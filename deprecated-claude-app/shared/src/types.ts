@@ -948,6 +948,123 @@ export const UpdateShareRequestSchema = z.object({
 
 export type UpdateShareRequest = z.infer<typeof UpdateShareRequestSchema>;
 
+// =============================================================================
+// Site Configuration Types
+// =============================================================================
+
+/**
+ * Link configuration with optional label
+ */
+export const SiteLinkSchema = z.object({
+  url: z.string(),
+  label: z.string(),
+});
+export type SiteLink = z.infer<typeof SiteLinkSchema>;
+
+/**
+ * Content section for customizable pages
+ */
+export const ContentSectionSchema = z.object({
+  id: z.string(),
+  title: z.string().optional(),
+  content: z.string(), // Can be markdown or plain text
+  icon: z.string().optional(),
+});
+export type ContentSection = z.infer<typeof ContentSectionSchema>;
+
+/**
+ * Testimonial/voice entry
+ */
+export const TestimonialSchema = z.object({
+  id: z.string(),
+  author: z.string(),
+  attribution: z.string().optional(),
+  content: z.string(),
+  timestamp: z.string().optional(),
+});
+export type Testimonial = z.infer<typeof TestimonialSchema>;
+
+/**
+ * Site configuration schema - deployment-specific settings
+ * Loaded from /etc/claude-app/siteConfig.json (production) or config/siteConfig.json (dev)
+ */
+export const SiteConfigSchema = z.object({
+  // Branding
+  branding: z.object({
+    name: z.string().default('Arc Chat'),
+    tagline: z.string().default('Multi-agent conversations'),
+    logoVariant: z.enum(['arc', 'constellation', 'custom']).default('arc'),
+  }).default({}),
+  
+  // External links (null = don't show)
+  links: z.object({
+    discord: z.string().nullable().default(null),
+    github: z.string().nullable().default(null),
+    parentSite: SiteLinkSchema.nullable().default(null),
+    documentation: z.string().nullable().default(null),
+    exportTool: z.string().nullable().default(null),
+  }).default({}),
+  
+  // Operator/legal info
+  operator: z.object({
+    name: z.string().default('Arc Chat Team'),
+    contactEmail: z.string().nullable().default(null),
+    contactDiscord: z.string().nullable().default(null),
+  }).default({}),
+  
+  // Feature flags for optional content sections
+  features: z.object({
+    showTestimonials: z.boolean().default(false),
+    showPhilosophy: z.boolean().default(false),
+    showEcosystem: z.boolean().default(false),
+    showVoices: z.boolean().default(false), // Claude testimonials on about page
+  }).default({}),
+  
+  // Custom content sections (optional, for full customization)
+  content: z.object({
+    // About page sections
+    aboutSections: z.array(ContentSectionSchema).optional(),
+    // Testimonials/voices
+    testimonials: z.array(TestimonialSchema).optional(),
+    // Terms of service (markdown)
+    termsMarkdown: z.string().optional(),
+    // Privacy policy (markdown)
+    privacyMarkdown: z.string().optional(),
+  }).default({}),
+});
+
+export type SiteConfig = z.infer<typeof SiteConfigSchema>;
+
+/**
+ * Default site configuration - generic open-source defaults
+ */
+export const defaultSiteConfig: SiteConfig = {
+  branding: {
+    name: 'Arc Chat',
+    tagline: 'Multi-agent conversations',
+    logoVariant: 'arc',
+  },
+  links: {
+    discord: null,
+    github: null,
+    parentSite: null,
+    documentation: null,
+    exportTool: null,
+  },
+  operator: {
+    name: 'Arc Chat Team',
+    contactEmail: null,
+    contactDiscord: null,
+  },
+  features: {
+    showTestimonials: false,
+    showPhilosophy: false,
+    showEcosystem: false,
+    showVoices: false,
+  },
+  content: {},
+};
+
 /**
  * Derives a canonical model ID from model information.
  * This is used to match models across providers for avatar lookup.
