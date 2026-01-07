@@ -52,18 +52,42 @@ export function authRouter(db: Database): Router {
     return false;
   }
 
+  // Public endpoint to get registration requirements
+  router.get('/registration-info', async (req, res) => {
+    try {
+      const config = await ConfigLoader.getInstance().loadConfig();
+      res.json({
+        requireInviteCode: (config as any).features?.requireInviteCode === true
+      });
+    } catch (error) {
+      res.json({ requireInviteCode: false });
+    }
+  });
+
   // Register - now requires email verification
   router.post('/register', async (req, res) => {
     try {
       const data = RegisterSchema.parse(req.body);
       
+      // Check config for invite code requirement
+      const config = await ConfigLoader.getInstance().loadConfig();
+      const requireInviteCode = (config as any).features?.requireInviteCode === true;
+      
+      // Validate invite code if required
+      if (requireInviteCode) {
+        if (!data.inviteCode) {
+          return res.status(400).json({ error: 'Invite code is required for registration' });
+        }
+        const validation = db.validateInvite(data.inviteCode);
+        if (!validation.valid) {
+          return res.status(400).json({ error: validation.error || 'Invalid invite code' });
+        }
+      }
+      
       const existingUser = await db.getUserByEmail(data.email);
       if (existingUser) {
         return res.status(400).json({ error: 'User already exists' });
       }
-
-      // Check if email verification is required
-      const config = await ConfigLoader.getInstance().loadConfig();
       const requireEmailVerification = (config as any).requireEmailVerification !== false && !!process.env.RESEND_API_KEY;
       
       // Create user with emailVerified based on config, and ageVerified/tosAccepted from registration

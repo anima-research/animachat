@@ -173,14 +173,20 @@
             </div>
             
             <div v-if="isRegistering" class="field-group">
-              <label for="inviteCode">invite code <span class="optional">(optional)</span></label>
+              <label for="inviteCode">
+                invite code 
+                <span v-if="!requireInviteCode" class="optional">(optional)</span>
+                <span v-else class="required">*</span>
+              </label>
               <input
                 id="inviteCode"
                 v-model="inviteCode"
                 type="text"
-                placeholder="enter invite code for credits"
+                :placeholder="requireInviteCode ? 'invite code required' : 'enter invite code for credits'"
+                :required="requireInviteCode"
               />
-              <div v-if="inviteCode" class="hint">credits will be added to your account</div>
+              <div v-if="inviteCode && !requireInviteCode" class="hint">credits will be added to your account</div>
+              <div v-if="requireInviteCode && !inviteCode" class="hint required-hint">an invite code is required to register</div>
             </div>
             
             <div v-if="error" class="alert-error">
@@ -328,6 +334,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useStore } from '@/store';
 import { useSiteConfig } from '@/composables/useSiteConfig';
+import { api } from '@/services/api';
 import ArcLogo from '@/components/ArcLogo.vue';
 
 const router = useRouter();
@@ -364,9 +371,19 @@ const email = ref('');
 const password = ref('');
 const confirmPassword = ref('');
 const inviteCode = ref('');
+const requireInviteCode = ref(false);
 
 // Check for invite code in URL and auto-switch to registration mode
-onMounted(() => {
+onMounted(async () => {
+  // Fetch registration requirements
+  try {
+    const response = await api.get<{ requireInviteCode: boolean }>('/auth/registration-info');
+    requireInviteCode.value = response.data.requireInviteCode;
+  } catch (e) {
+    // Default to not requiring invite code if fetch fails
+    requireInviteCode.value = false;
+  }
+  
   const urlInvite = route.query.invite as string;
   if (urlInvite) {
     inviteCode.value = urlInvite;
@@ -711,10 +728,20 @@ async function sendResetEmail() {
   font-weight: 300;
 }
 
+.required {
+  color: #c9a553;
+  font-weight: 400;
+}
+
 .hint {
   font-size: 10px;
   color: #979853;
   opacity: 0.7;
+}
+
+.required-hint {
+  color: #c9a553;
+  opacity: 0.9;
 }
 
 .alert-error {
