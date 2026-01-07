@@ -775,6 +775,9 @@ export const InviteSchema = z.object({
   amount: z.number().positive(),
   currency: z.string().default('credit'),
   expiresAt: z.string().optional(),
+  maxUses: z.number().positive().optional(), // undefined = unlimited uses
+  useCount: z.number().default(0),
+  // Legacy fields for backwards compatibility (stores last claimer for single-use)
   claimedBy: z.string().uuid().optional(),
   claimedAt: z.string().optional()
 });

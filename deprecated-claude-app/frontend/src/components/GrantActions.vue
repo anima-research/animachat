@@ -36,20 +36,22 @@
                 <span class="text-grey ml-2">{{ invite.amount }} {{ invite.currency === 'credit' ? 'cr' : invite.currency }}</span>
               </v-list-item-title>
               <v-list-item-subtitle class="text-caption">
-                <span v-if="invite.claimedBy">
-                  Claimed {{ formatDate(invite.claimedAt!) }}
+                <span v-if="isFullyUsed(invite)">
+                  Fully used ({{ invite.useCount }}/{{ invite.maxUses }})
                 </span>
                 <span v-else-if="isExpired(invite)">
                   Expired {{ formatDate(invite.expiresAt!) }}
                 </span>
                 <span v-else>
-                  Pending
+                  <span v-if="invite.maxUses">{{ invite.useCount ?? 0 }}/{{ invite.maxUses }} uses</span>
+                  <span v-else-if="(invite.useCount ?? 0) > 0">{{ invite.useCount }} uses (unlimited)</span>
+                  <span v-else>Pending (unlimited)</span>
                   <span v-if="invite.expiresAt"> · expires {{ formatDate(invite.expiresAt) }}</span>
                 </span>
               </v-list-item-subtitle>
               <template #append>
                 <v-btn 
-                  v-if="!invite.claimedBy && !isExpired(invite)"
+                  v-if="!isFullyUsed(invite) && !isExpired(invite)"
                   size="x-small" 
                   variant="text" 
                   @click.stop="copyInviteLink(invite.code)"
@@ -113,7 +115,8 @@
           density="comfortable"
         />
         <v-text-field v-model="inviteForm.code" label="Custom code (optional)" placeholder="auto-generated if empty" variant="outlined" density="comfortable" />
-        <v-text-field v-model.number="inviteForm.expiresInDays" label="Expires in days (optional)" type="number" min="1" placeholder="no expiration" variant="outlined" density="comfortable" />
+        <v-text-field v-model.number="inviteForm.maxUses" label="Max uses (optional)" type="number" min="1" placeholder="unlimited" variant="outlined" density="comfortable" hint="Leave empty for unlimited uses" persistent-hint />
+        <v-text-field v-model.number="inviteForm.expiresInDays" label="Expires in days (optional)" type="number" min="1" placeholder="no expiration" variant="outlined" density="comfortable" class="mt-2" />
         
         <!-- Success state: show generated invite -->
         <div v-if="createdInvite" class="invite-success mt-4">
@@ -141,6 +144,8 @@
           </div>
           <div class="invite-details mt-2 text-caption text-grey">
             {{ createdInvite.amount }} {{ createdInvite.currency === 'credit' ? 'credits' : createdInvite.currency }}
+            <span v-if="createdInvite.maxUses"> · {{ createdInvite.maxUses }} uses max</span>
+            <span v-else> · unlimited uses</span>
             <span v-if="createdInvite.expiresAt"> · expires {{ formatDate(createdInvite.expiresAt) }}</span>
           </div>
         </div>
@@ -167,7 +172,9 @@ interface Invite {
   currency: string;
   createdAt: string;
   expiresAt?: string;
-  claimedBy?: string;
+  maxUses?: number; // undefined = unlimited
+  useCount: number;
+  claimedBy?: string; // legacy: last claimer
   claimedAt?: string;
 }
 const myInvites = ref<Invite[]>([]);
@@ -187,15 +194,26 @@ async function loadMyInvites() {
 }
 
 function inviteStatusColor(invite: Invite): string {
-  if (invite.claimedBy) return 'success';
+  const useCount = invite.useCount ?? 0;
+  const isFullyUsed = invite.maxUses !== undefined && useCount >= invite.maxUses;
+  if (isFullyUsed) return 'success';
   if (isExpired(invite)) return 'grey';
-  return 'warning';
+  if (useCount > 0) return 'info'; // Partially used
+  return 'warning'; // Unused
 }
 
 function inviteStatusIcon(invite: Invite): string {
-  if (invite.claimedBy) return 'mdi-check-circle';
+  const useCount = invite.useCount ?? 0;
+  const isFullyUsed = invite.maxUses !== undefined && useCount >= invite.maxUses;
+  if (isFullyUsed) return 'mdi-check-circle';
   if (isExpired(invite)) return 'mdi-clock-alert-outline';
+  if (useCount > 0) return 'mdi-checkbox-marked-circle-outline'; // Partially used
   return 'mdi-clock-outline';
+}
+
+function isFullyUsed(invite: Invite): boolean {
+  const useCount = invite.useCount ?? 0;
+  return invite.maxUses !== undefined && useCount >= invite.maxUses;
 }
 
 function isExpired(invite: Invite): boolean {
@@ -333,7 +351,7 @@ async function submit() {
 }
 
 // Invite functionality
-interface CreatedInvite { code: string; amount: number; currency: string; expiresAt?: string }
+interface CreatedInvite { code: string; amount: number; currency: string; expiresAt?: string; maxUses?: number; useCount: number }
 const inviteDialogVisible = ref(false);
 const inviteSubmitting = ref(false);
 const createdInvite = ref<CreatedInvite | null>(null);
@@ -342,7 +360,8 @@ const inviteForm = reactive({
   amount: 100,
   currency: defaultCurrency(),
   code: '',
-  expiresInDays: 30
+  expiresInDays: 30,
+  maxUses: null as number | null // null = unlimited
 });
 
 const inviteLink = computed(() => {
@@ -359,6 +378,7 @@ function openInvite() {
   inviteForm.currency = defaultCurrency();
   inviteForm.code = '';
   inviteForm.expiresInDays = 30;
+  inviteForm.maxUses = null;
   inviteDialogVisible.value = true;
 }
 
@@ -380,6 +400,8 @@ async function submitInvite() {
     };
     if (inviteForm.code.trim()) payload.code = inviteForm.code.trim();
     if (inviteForm.expiresInDays > 0) payload.expiresInDays = inviteForm.expiresInDays;
+    if (inviteForm.maxUses !== null && inviteForm.maxUses > 0) payload.maxUses = inviteForm.maxUses;
+    // Note: if maxUses is null/undefined, the invite has unlimited uses
     
     const response = await api.post('/invites', payload);
     createdInvite.value = response.data;

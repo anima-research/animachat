@@ -599,7 +599,7 @@ export class Database {
   }
 
   // Invite methods
-  async createInvite(code: string, createdBy: string, amount: number, currency: string, expiresAt?: string): Promise<Invite> {
+  async createInvite(code: string, createdBy: string, amount: number, currency: string, expiresAt?: string, maxUses?: number): Promise<Invite> {
     if (this.invites.has(code)) {
       throw new Error('Invite code already exists');
     }
@@ -610,7 +610,9 @@ export class Database {
       createdAt: new Date().toISOString(),
       amount,
       currency,
-      expiresAt
+      expiresAt,
+      maxUses,
+      useCount: 0
     };
 
     this.invites.set(code, invite);
@@ -630,7 +632,14 @@ export class Database {
       return { valid: false, error: 'Invalid invite code' };
     }
 
-    if (invite.claimedBy) {
+    // Check if max uses reached (undefined maxUses = unlimited)
+    const useCount = invite.useCount ?? 0;
+    if (invite.maxUses !== undefined && useCount >= invite.maxUses) {
+      return { valid: false, error: 'This invite has reached its maximum uses' };
+    }
+
+    // Legacy check for old single-use invites without useCount
+    if (invite.maxUses === undefined && invite.claimedBy) {
       return { valid: false, error: 'This invite has already been used' };
     }
 
@@ -648,10 +657,21 @@ export class Database {
     }
 
     const invite = validation.invite;
+    const claimedAt = new Date().toISOString();
+    
+    // Increment use count
+    invite.useCount = (invite.useCount ?? 0) + 1;
+    // Store last claimer info (for backwards compatibility and tracking)
     invite.claimedBy = claimedBy;
-    invite.claimedAt = new Date().toISOString();
+    invite.claimedAt = claimedAt;
 
-    await this.logEvent('invite_claimed', { code, claimedBy, claimedAt: invite.claimedAt });
+    await this.logEvent('invite_claimed', { 
+      code, 
+      claimedBy, 
+      claimedAt,
+      useCount: invite.useCount,
+      maxUses: invite.maxUses 
+    });
 
     // Mint the credits to the user
     await this.recordGrantInfo({

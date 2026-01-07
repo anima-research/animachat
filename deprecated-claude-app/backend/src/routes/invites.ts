@@ -30,7 +30,8 @@ export function createInvitesRouter(db: Database): Router {
         code: z.string().min(1).max(50).optional(),
         amount: z.number().positive(),
         currency: z.string().min(1).max(50).default('credit'),
-        expiresInDays: z.number().positive().optional()
+        expiresInDays: z.number().positive().optional(),
+        maxUses: z.number().positive().optional() // undefined = unlimited uses
       });
 
       const data = schema.parse(req.body);
@@ -50,7 +51,8 @@ export function createInvitesRouter(db: Database): Router {
         req.userId,
         data.amount,
         data.currency,
-        expiresAt
+        expiresAt,
+        data.maxUses
       );
 
       res.json({
@@ -58,6 +60,8 @@ export function createInvitesRouter(db: Database): Router {
         amount: invite.amount,
         currency: invite.currency,
         expiresAt: invite.expiresAt,
+        maxUses: invite.maxUses,
+        useCount: invite.useCount ?? 0,
         createdAt: invite.createdAt
       });
     } catch (error) {
