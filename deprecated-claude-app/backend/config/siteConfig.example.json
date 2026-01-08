@@ -1,0 +1,27 @@
+{
+  "branding": {
+    "name": "Arc Chat",
+    "tagline": "Multi-agent conversations",
+    "logoVariant": "arc"
+  },
+  "links": {
+    "discord": null,
+    "github": null,
+    "parentSite": null,
+    "documentation": null,
+    "exportTool": null
+  },
+  "operator": {
+    "name": "Arc Chat Team",
+    "contactEmail": null,
+    "contactDiscord": null
+  },
+  "features": {
+    "showTestimonials": false,
+    "showPhilosophy": false,
+    "showEcosystem": false,
+    "showVoices": false
+  },
+  "content": {}
+}
+

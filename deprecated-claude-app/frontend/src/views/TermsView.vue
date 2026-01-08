@@ -15,11 +15,11 @@
       <div class="section" data-label="overview">
         <h2>◉ agreement overview</h2>
         <p>
-          By accessing or using Arc Chat ("the Service"), you agree to be bound by these Terms of Service. 
+          By accessing or using {{ siteConfig.branding.name }} ("the Service"), you agree to be bound by these Terms of Service. 
           If you do not agree to these terms, please do not use the Service.
         </p>
         <p>
-          Arc Chat is operated by Anima Labs ("we", "us", "our"). The Service provides a platform for 
+          {{ siteConfig.branding.name }} is operated by {{ operator.name }} ("we", "us", "our"). The Service provides a platform for 
           AI-assisted conversations, multi-agent dialogues, and conversation management.
         </p>
       </div>
@@ -178,7 +178,7 @@
       <div class="section" data-label="governing-law">
         <h2>◉ governing law</h2>
         <p>
-          These terms are governed by the laws of the jurisdiction in which Anima Labs operates. 
+          These terms are governed by the laws of the jurisdiction in which {{ operator.name }} operates. 
           Any disputes shall be resolved through binding arbitration or in the courts of that jurisdiction.
         </p>
       </div>
@@ -189,9 +189,13 @@
           For questions about these terms or to report violations:
         </p>
         <ul>
-          <li>Discord: <a href="https://discord.gg/anima" target="_blank">discord.gg/anima</a></li>
-          <li>GitHub: <a href="https://github.com/socketteer" target="_blank">github.com/socketteer</a></li>
+          <li v-if="links.discord">Discord: <a :href="links.discord" target="_blank">{{ operator.contactDiscord || links.discord.replace('https://', '') }}</a></li>
+          <li v-if="links.github">GitHub: <a :href="links.github" target="_blank">{{ links.github.replace('https://', '') }}</a></li>
+          <li v-if="operator.contactEmail">Email: <a :href="'mailto:' + operator.contactEmail">{{ operator.contactEmail }}</a></li>
         </ul>
+        <p v-if="!links.discord && !links.github && !operator.contactEmail" class="no-contact">
+          Contact information is not currently configured.
+        </p>
       </div>
 
       <div class="navigation-footer">
@@ -204,8 +208,10 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router';
+import { useSiteConfig } from '@/composables/useSiteConfig';
 
 const router = useRouter();
+const { config: siteConfig, links, operator } = useSiteConfig();
 </script>
 
 <style scoped>

@@ -176,7 +176,7 @@
           </v-list-item>
           <v-divider v-if="(message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)) || canViewMetadata" class="my-0" />
           <v-list-item
-            v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)"
+            v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse || currentBranch.debugRequestBlobId || currentBranch.debugResponseBlobId)"
             density="compact"
             @click="showDebugDialog = true"
           >
@@ -220,6 +220,20 @@
             </v-list-item>
           </template>
           <v-divider class="my-0" />
+          <v-list-item density="compact" @click="$emit('fork', message.id, currentBranch.id)">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-source-fork" />
+            </template>
+            <v-list-item-title class="text-caption">Fork to new chat</v-list-item-title>
+          </v-list-item>
+          <v-list-item density="compact" @click="toggleBranchPrivacy">
+            <template v-slot:prepend>
+              <v-icon size="16" :icon="isPrivateBranch ? 'mdi-eye' : 'mdi-eye-off'" />
+            </template>
+            <v-list-item-title class="text-caption">
+              {{ isPrivateBranch ? 'Make visible to all' : 'Make private (only me)' }}
+            </v-list-item-title>
+          </v-list-item>
           <v-list-item v-if="message.branches.length > 1" density="compact" @click="$emit('delete-all-branches', message.id)">
             <template v-slot:prepend>
               <v-icon size="16" icon="mdi-delete-sweep-outline" color="error" />
@@ -302,6 +316,10 @@
         </v-chip>
         
         <!-- Badges -->
+        <v-chip v-if="isPrivateBranch" size="x-small" color="deep-purple" variant="tonal" density="compact" class="mr-1">
+          <v-icon size="x-small" start>mdi-incognito</v-icon>
+          Private
+        </v-chip>
         <v-chip v-if="currentBranch?.hiddenFromAi" size="x-small" color="warning" variant="tonal" density="compact">
           <v-icon size="x-small" start>mdi-eye-off</v-icon>
           Hidden
@@ -345,6 +363,49 @@
           <v-icon size="x-small" start>mdi-bookmark</v-icon>
           {{ bookmarkLabel }}
         </v-chip>
+        
+        <!-- Prefix History Indicator (for forked conversations with compressed history) -->
+        <v-menu v-if="hasPrefixHistory" location="bottom" :close-on-content-click="false">
+          <template v-slot:activator="{ props }">
+            <v-chip 
+              v-bind="props" 
+              size="x-small" 
+              color="deep-purple" 
+              variant="tonal" 
+              density="compact" 
+              style="cursor: pointer;"
+            >
+              <v-icon size="x-small" start>mdi-archive-arrow-down</v-icon>
+              {{ prefixHistoryCount }} prior {{ prefixHistoryCount === 1 ? 'message' : 'messages' }}
+              <v-icon size="x-small" end>mdi-chevron-down</v-icon>
+            </v-chip>
+          </template>
+          <v-card max-width="500" class="prefix-history-card">
+            <v-card-title class="text-caption py-2">
+              <v-icon size="small" class="mr-1">mdi-archive</v-icon>
+              Compressed History ({{ prefixHistoryCount }} messages)
+            </v-card-title>
+            <v-divider />
+            <v-card-text class="pa-2" style="max-height: 400px; overflow-y: auto;">
+              <div 
+                v-for="(entry, index) in currentBranch.prefixHistory" 
+                :key="index"
+                class="prefix-history-entry mb-2 pa-2 rounded"
+                :class="entry.role === 'assistant' ? 'bg-grey-darken-3' : 'bg-grey-darken-4'"
+              >
+                <div class="d-flex align-center gap-2 mb-1">
+                  <v-chip size="x-small" :color="entry.role === 'assistant' ? 'primary' : entry.role === 'user' ? 'success' : 'grey'" variant="flat">
+                    {{ entry.participantName || entry.role }}
+                  </v-chip>
+                  <span v-if="entry.model" class="text-caption text-grey">{{ entry.model }}</span>
+                </div>
+                <div class="text-body-2" style="white-space: pre-wrap; word-break: break-word;">
+                  {{ truncateText(entry.content, 500) }}
+                </div>
+              </div>
+            </v-card-text>
+          </v-card>
+        </v-menu>
       </div>
       
       <!-- Center: Branch navigation (desktop only) -->
@@ -434,10 +495,11 @@
       <div v-if="imageBlocks.length > 0" class="generated-images mt-3">
         <div v-for="(block, index) in imageBlocks" :key="'img-' + index" class="generated-image-container mb-2">
           <img 
-            :src="`data:${(block as any).mimeType || 'image/png'};base64,${(block as any).data}`"
+            :src="getImageBlockSrc(block)"
             :alt="(block as any).revisedPrompt || 'Generated image'"
             class="generated-image"
             style="max-width: 100%; max-height: 600px; border-radius: 8px; cursor: pointer;"
+            loading="lazy"
             @click="openImagePreview(block)"
           />
           <div v-if="(block as any).revisedPrompt" class="text-caption text-grey mt-1">
@@ -596,8 +658,9 @@
     <!-- Debug Dialog -->
     <DebugMessageDialog
       v-model="showDebugDialog"
-      :debug-request="currentBranch.debugRequest"
-      :debug-response="currentBranch.debugResponse"
+      :conversation-id="message.conversationId"
+      :message-id="message.id"
+      :branch-id="currentBranch.id"
     />
     
     
@@ -692,11 +755,11 @@
                 </tr>
                 <tr>
                   <td class="font-weight-medium">Has Debug Request</td>
-                  <td>{{ !!currentBranch.debugRequest }}</td>
+                  <td>{{ !!(currentBranch.debugRequest || currentBranch.debugRequestBlobId) }}</td>
                 </tr>
                 <tr>
                   <td class="font-weight-medium">Has Debug Response</td>
-                  <td>{{ !!currentBranch.debugResponse }}</td>
+                  <td>{{ !!(currentBranch.debugResponse || currentBranch.debugResponseBlobId) }}</td>
                 </tr>
                 <tr>
                   <td class="font-weight-medium">Created At</td>
@@ -752,14 +815,20 @@
             </v-expansion-panels>
           </div>
           
-          <div v-if="currentBranch.debugRequest" class="mb-4">
+          <div v-if="currentBranch.debugRequest || currentBranch.debugRequestBlobId" class="mb-4">
             <h4 class="text-subtitle-1 mb-2">Debug Request</h4>
-            <pre class="debug-json pa-2 rounded" style="max-height: 300px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugRequest, null, 2) }}</pre>
+            <p v-if="currentBranch.debugRequestBlobId && !currentBranch.debugRequest" class="text-caption text-grey">
+              Debug data stored as blob. Open debug panel to load.
+            </p>
+            <pre v-else class="debug-json pa-2 rounded" style="max-height: 300px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugRequest, null, 2) }}</pre>
           </div>
           
-          <div v-if="currentBranch.debugResponse" class="mb-4">
+          <div v-if="currentBranch.debugResponse || currentBranch.debugResponseBlobId" class="mb-4">
             <h4 class="text-subtitle-1 mb-2">Debug Response</h4>
-            <pre class="debug-json pa-2 rounded" style="max-height: 200px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugResponse, null, 2) }}</pre>
+            <p v-if="currentBranch.debugResponseBlobId && !currentBranch.debugResponse" class="text-caption text-grey">
+              Debug data stored as blob. Open debug panel to load.
+            </p>
+            <pre v-else class="debug-json pa-2 rounded" style="max-height: 200px; overflow: auto; font-size: 11px;">{{ JSON.stringify(currentBranch.debugResponse, null, 2) }}</pre>
           </div>
         </v-card-text>
         <v-card-actions>
@@ -856,6 +925,7 @@ const emit = defineEmits<{
   'post-hoc-unhide': [messageId: string, branchId: string];
   'delete-post-hoc-operation': [messageId: string];
   'split': [messageId: string, branchId: string, splitPosition: number];
+  'fork': [messageId: string, branchId: string];
 }>();
 
 const isEditing = ref(false);
@@ -1036,6 +1106,15 @@ const hasBookmark = computed(() => {
   return bookmarkLabel.value !== null && bookmarkLabel.value !== '';
 });
 
+// Check if message has prefix history (compressed fork history)
+const hasPrefixHistory = computed(() => {
+  return currentBranch.value?.prefixHistory && currentBranch.value.prefixHistory.length > 0;
+});
+
+const prefixHistoryCount = computed(() => {
+  return currentBranch.value?.prefixHistory?.length || 0;
+});
+
 // Check if message is long enough to need scroll button
 onMounted(async () => {
   checkMessageHeight();
@@ -1132,6 +1211,10 @@ const authenticityLevel = computed(() => {
 // Check if this is a human-written AI message (for special styling)
 const isHumanWrittenAI = computed(() => {
   return props.authenticityStatus?.isHumanWrittenAI ?? false;
+});
+
+const isPrivateBranch = computed(() => {
+  return !!currentBranch.value?.privateToUserId;
 });
 
 const participantColor = computed(() => {
@@ -1411,6 +1494,23 @@ function startEdit() {
   isEditing.value = true;
   isPostHocEditing.value = false;
   editContent.value = currentBranch.value.content;
+}
+
+async function toggleBranchPrivacy() {
+  const branch = currentBranch.value;
+  if (!branch) return;
+  
+  const newPrivacy = branch.privateToUserId ? null : store.state.user?.id;
+  
+  try {
+    await api.post(
+      `/conversations/${props.message.conversationId}/messages/${props.message.id}/branches/${branch.id}/privacy`,
+      { privateToUserId: newPrivacy }
+    );
+    // The WebSocket will broadcast the update
+  } catch (error) {
+    console.error('Failed to toggle branch privacy:', error);
+  }
 }
 
 function startPostHocEdit() {
@@ -1697,9 +1797,25 @@ function openImageInNewTab(attachment: any): void {
   }
 }
 
+/**
+ * Get the image source URL for a content block.
+ * Supports both old format (inline base64 data) and new format (blobId reference).
+ */
+function getImageBlockSrc(block: any): string {
+  if (block.blobId) {
+    // NEW FORMAT: Load from blob endpoint
+    return `/api/blobs/${block.blobId}`;
+  } else if (block.data) {
+    // OLD FORMAT: Inline base64 data
+    return `data:${block.mimeType || 'image/png'};base64,${block.data}`;
+  }
+  return '';
+}
+
 function openImagePreview(block: any): void {
-  if (block.data) {
-    previewImageSrc.value = `data:${block.mimeType || 'image/png'};base64,${block.data}`;
+  const src = getImageBlockSrc(block);
+  if (src) {
+    previewImageSrc.value = src;
     previewImageAlt.value = block.revisedPrompt || 'Generated image';
     imagePreviewDialog.value = true;
   }
@@ -2322,6 +2438,19 @@ watch(() => currentBranch.value.id, async () => {
 .touch-toggle-btn:hover,
 .touch-toggle-btn:focus {
   opacity: 0.8;
+}
+
+/* Prefix history card for forked conversations */
+.prefix-history-card {
+  background: rgb(var(--v-theme-surface)) !important;
+}
+
+.prefix-history-entry {
+  border-left: 3px solid rgba(var(--v-theme-primary), 0.5);
+}
+
+.prefix-history-entry.bg-grey-darken-3 {
+  border-left-color: rgba(var(--v-theme-primary), 0.7);
 }
 </style>
 

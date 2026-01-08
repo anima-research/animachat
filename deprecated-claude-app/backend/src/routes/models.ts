@@ -4,8 +4,6 @@ import { ConfigLoader } from '../config/loader.js';
 import { OpenRouterService } from '../services/openrouter.js';
 import { updateOpenRouterModelsCache, getOpenRouterModelsCache } from '../services/pricing-cache.js';
 
-const CACHE_TTL = 60 * 60 * 1000; // 1 hour
-
 export function modelRouter(db: any): Router {
   const router = Router();
   const modelLoader = ModelLoader.getInstance();

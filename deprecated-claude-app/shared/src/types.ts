@@ -450,10 +450,14 @@ export const RedactedThinkingContentBlockSchema = z.object({
 });
 
 // Image content block for model-generated images (GPT-4o, Gemini, etc.)
+// Supports two formats:
+// - Legacy: inline base64 data in 'data' field
+// - New: reference to BlobStore in 'blobId' field
 export const ImageContentBlockSchema = z.object({
   type: z.literal('image'),
   mimeType: z.string(), // image/png, image/jpeg, etc.
-  data: z.string(), // Base64 encoded image data
+  data: z.string().optional(), // Base64 encoded image data (legacy/inline)
+  blobId: z.string().optional(), // Reference to BlobStore (new format)
   revisedPrompt: z.string().optional(), // The prompt as revised by the model (GPT returns this)
   width: z.number().optional(),
   height: z.number().optional()
@@ -506,9 +510,19 @@ export const CreationSourceSchema = z.enum([
   'human_edit',     // Human edited/wrote this content
   'regeneration',   // AI regeneration of a previous attempt
   'split',          // Result of message split operation
-  'import'          // Imported from external source
+  'import',         // Imported from external source
+  'fork'            // Copied from another conversation via fork
 ]);
 export type CreationSource = z.infer<typeof CreationSourceSchema>;
+
+// Prefix history entry - represents a message from prior context that's embedded in a fork
+export const PrefixHistoryEntrySchema = z.object({
+  role: z.enum(['user', 'assistant', 'system']),
+  content: z.string(),
+  participantName: z.string().optional(), // Name of who spoke (for display/context)
+  model: z.string().optional(),
+});
+export type PrefixHistoryEntry = z.infer<typeof PrefixHistoryEntrySchema>;
 
 // Message types
 export const MessageBranchSchema = z.object({
@@ -531,7 +545,13 @@ export const MessageBranchSchema = z.object({
   postHocOperation: PostHocOperationSchema.optional(),
   // How this branch was created - for authenticity verification
   // undefined means legacy data (pre-tracking), should be treated as unknown
-  creationSource: CreationSourceSchema.optional()
+  creationSource: CreationSourceSchema.optional(),
+  // Prefix history - prior context that should be prepended when building LLM context
+  // Used for compressed forks where history is embedded in the first message
+  prefixHistory: z.array(PrefixHistoryEntrySchema).optional(),
+  // Branch privacy - if set, only this user can see this branch (and its descendants)
+  // Used for private notes, drafts, or content not meant to be shared with collaborators
+  privateToUserId: z.string().uuid().optional()
 });
 
 export type MessageBranch = z.infer<typeof MessageBranchSchema>;
@@ -755,6 +775,9 @@ export const InviteSchema = z.object({
   amount: z.number().positive(),
   currency: z.string().default('credit'),
   expiresAt: z.string().optional(),
+  maxUses: z.number().positive().optional(), // undefined = unlimited uses
+  useCount: z.number().default(0),
+  // Legacy fields for backwards compatibility (stores last claimer for single-use)
   claimedBy: z.string().uuid().optional(),
   claimedAt: z.string().optional()
 });
@@ -927,6 +950,123 @@ export const UpdateShareRequestSchema = z.object({
 });
 
 export type UpdateShareRequest = z.infer<typeof UpdateShareRequestSchema>;
+
+// =============================================================================
+// Site Configuration Types
+// =============================================================================
+
+/**
+ * Link configuration with optional label
+ */
+export const SiteLinkSchema = z.object({
+  url: z.string(),
+  label: z.string(),
+});
+export type SiteLink = z.infer<typeof SiteLinkSchema>;
+
+/**
+ * Content section for customizable pages
+ */
+export const ContentSectionSchema = z.object({
+  id: z.string(),
+  title: z.string().optional(),
+  content: z.string(), // Can be markdown or plain text
+  icon: z.string().optional(),
+});
+export type ContentSection = z.infer<typeof ContentSectionSchema>;
+
+/**
+ * Testimonial/voice entry
+ */
+export const TestimonialSchema = z.object({
+  id: z.string(),
+  author: z.string(),
+  attribution: z.string().optional(),
+  content: z.string(),
+  timestamp: z.string().optional(),
+});
+export type Testimonial = z.infer<typeof TestimonialSchema>;
+
+/**
+ * Site configuration schema - deployment-specific settings
+ * Loaded from /etc/claude-app/siteConfig.json (production) or config/siteConfig.json (dev)
+ */
+export const SiteConfigSchema = z.object({
+  // Branding
+  branding: z.object({
+    name: z.string().default('Arc Chat'),
+    tagline: z.string().default('Multi-agent conversations'),
+    logoVariant: z.enum(['arc', 'constellation', 'custom']).default('arc'),
+  }).default({}),
+  
+  // External links (null = don't show)
+  links: z.object({
+    discord: z.string().nullable().default(null),
+    github: z.string().nullable().default(null),
+    parentSite: SiteLinkSchema.nullable().default(null),
+    documentation: z.string().nullable().default(null),
+    exportTool: z.string().nullable().default(null),
+  }).default({}),
+  
+  // Operator/legal info
+  operator: z.object({
+    name: z.string().default('Arc Chat Team'),
+    contactEmail: z.string().nullable().default(null),
+    contactDiscord: z.string().nullable().default(null),
+  }).default({}),
+  
+  // Feature flags for optional content sections
+  features: z.object({
+    showTestimonials: z.boolean().default(false),
+    showPhilosophy: z.boolean().default(false),
+    showEcosystem: z.boolean().default(false),
+    showVoices: z.boolean().default(false), // Claude testimonials on about page
+  }).default({}),
+  
+  // Custom content sections (optional, for full customization)
+  content: z.object({
+    // About page sections
+    aboutSections: z.array(ContentSectionSchema).optional(),
+    // Testimonials/voices
+    testimonials: z.array(TestimonialSchema).optional(),
+    // Terms of service (markdown)
+    termsMarkdown: z.string().optional(),
+    // Privacy policy (markdown)
+    privacyMarkdown: z.string().optional(),
+  }).default({}),
+});
+
+export type SiteConfig = z.infer<typeof SiteConfigSchema>;
+
+/**
+ * Default site configuration - generic open-source defaults
+ */
+export const defaultSiteConfig: SiteConfig = {
+  branding: {
+    name: 'Arc Chat',
+    tagline: 'Multi-agent conversations',
+    logoVariant: 'arc',
+  },
+  links: {
+    discord: null,
+    github: null,
+    parentSite: null,
+    documentation: null,
+    exportTool: null,
+  },
+  operator: {
+    name: 'Arc Chat Team',
+    contactEmail: null,
+    contactDiscord: null,
+  },
+  features: {
+    showTestimonials: false,
+    showPhilosophy: false,
+    showEcosystem: false,
+    showVoices: false,
+  },
+  content: {},
+};
 
 /**
  * Derives a canonical model ID from model information.

@@ -5,7 +5,6 @@ import { Database } from '../database/index.js';
 import { ImportParser } from '../services/importParser.js';
 import { 
   ImportRequestSchema, 
-  ImportPreviewSchema,
   ImportFormat
 } from '@deprecated-claude/shared';
 

@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import crypto from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
 
 // Schema for shared conversations
 export const SharedConversationSchema = z.object({

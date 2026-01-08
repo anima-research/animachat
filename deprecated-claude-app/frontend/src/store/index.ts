@@ -62,6 +62,7 @@ export interface Store {
   updateConversation(id: string, updates: Partial<Conversation>): Promise<void>;
   archiveConversation(id: string): Promise<void>;
   duplicateConversation(id: string): Promise<Conversation>;
+  compactConversation(id: string): Promise<{ success: boolean; result: any; message: string }>;
   
   loadMessages(conversationId: string): Promise<void>;
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number): Promise<void>;
@@ -70,6 +71,7 @@ export interface Store {
   abortGeneration(): void;
   editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean, samplingBranches?: number): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
+  switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>): void;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
   getVisibleMessages(): Message[];
   
@@ -488,6 +490,19 @@ export function createStore(): {
       }
     },
     
+    async compactConversation(id: string) {
+      try {
+        const response = await api.post(`/conversations/${id}/compact`, {
+          stripDebugData: true,
+          moveDebugToBlobs: false, // Just strip for now, faster
+        });
+        return response.data;
+      } catch (error) {
+        console.error('Failed to compact conversation:', error);
+        throw error;
+      }
+    },
+    
     // Message actions
     async loadMessages(conversationId: string, retryCount = 0) {
       const maxRetries = 3;
@@ -778,6 +793,87 @@ export function createStore(): {
       invalidateSortCache();
       const newVisible = this.getVisibleMessages();
       console.log('After switch, visible messages:', newVisible.length);
+    },
+    
+    // Batch switch multiple branches at once - much faster for tree navigation
+    // Does all the expensive work once instead of per-branch
+    switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>) {
+      if (switches.length === 0) return;
+      
+      console.log(`=== BATCH SWITCH ${switches.length} BRANCHES ===`);
+      
+      // Apply all local state changes first (no reactivity triggers yet)
+      const changedMessages = new Set<string>();
+      for (const { messageId, branchId } of switches) {
+        const message = state.allMessages.find(m => m.id === messageId);
+        if (!message) continue;
+        
+        if (message.activeBranchId !== branchId) {
+          message.activeBranchId = branchId;
+          changedMessages.add(messageId);
+        }
+      }
+      
+      if (changedMessages.size === 0) {
+        console.log('No branches needed switching');
+        return;
+      }
+      
+      console.log(`Changed ${changedMessages.size} message branches`);
+      
+      // Now do the expensive tree order fixup ONCE
+      const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
+      const lastSwitchIndex = Math.max(
+        ...switches.map(s => sortedMessages.findIndex(m => m.id === s.messageId))
+      );
+      
+      // Build path up to the last switched message
+      const branchPath: string[] = [];
+      for (let i = 0; i <= lastSwitchIndex; i++) {
+        const msg = sortedMessages[i];
+        const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+        if (activeBranch) {
+          branchPath.push(activeBranch.id);
+        }
+      }
+      
+      // Update subsequent messages to follow the correct path
+      for (let i = lastSwitchIndex + 1; i < sortedMessages.length; i++) {
+        const msg = sortedMessages[i];
+        for (const branch of msg.branches) {
+          if (branch.parentBranchId && branchPath.includes(branch.parentBranchId)) {
+            if (msg.activeBranchId !== branch.id) {
+              msg.activeBranchId = branch.id;
+              changedMessages.add(msg.id);
+            }
+            const parentIndex = branchPath.indexOf(branch.parentBranchId);
+            branchPath.length = parentIndex + 1;
+            branchPath.push(branch.id);
+            break;
+          }
+        }
+      }
+      
+      // Batch API calls - fire and forget
+      if (state.currentConversation) {
+        for (const msgId of changedMessages) {
+          const msg = state.allMessages.find(m => m.id === msgId);
+          if (msg) {
+            api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
+              messageId: msgId,
+              branchId: msg.activeBranchId
+            }).catch(error => {
+              console.error('Failed to persist batch branch switch:', error);
+            });
+          }
+        }
+      }
+      
+      // Invalidate cache and recompute ONCE at the end
+      state.messagesVersion++;
+      invalidateSortCache();
+      const newVisible = this.getVisibleMessages();
+      console.log('After batch switch, visible messages:', newVisible.length);
     },
     
     async deleteMessage(messageId: string, branchId: string) {
@@ -1264,6 +1360,54 @@ export function createStore(): {
               ? newMessage.order
               : state.allMessages.length;
             state.allMessages.splice(insertIndex, 0, newMessage);
+          }
+        }
+        
+        state.messagesVersion++;
+        invalidateSortCache();
+      });
+      
+      state.wsService.on('branch_visibility_changed', async (data: any) => {
+        console.log('Store handling branch_visibility_changed:', data);
+        const { messageId, branchId, privateToUserId } = data;
+        
+        // Update the branch's privateToUserId
+        const message = state.allMessages.find(m => m.id === messageId);
+        if (message) {
+          const branch = message.branches.find((b: any) => b.id === branchId);
+          if (branch) {
+            if (privateToUserId && privateToUserId !== state.user?.id) {
+              // Branch is now private to someone else - remove it from our view
+              message.branches = message.branches.filter((b: any) => b.id !== branchId);
+              console.log(`Branch ${branchId} is now private to another user, removed from view`);
+            } else {
+              // Update the privacy field
+              branch.privateToUserId = privateToUserId || undefined;
+            }
+          }
+        }
+        
+        // If branch became visible to us (was private to us or became public), we might need to fetch subtree
+        if (!privateToUserId || privateToUserId === state.user?.id) {
+          // The branch is now visible - check if we need to fetch its subtree
+          if (!message) {
+            // We don't have this message at all, need to fetch subtree
+            console.log(`Fetching newly visible subtree from branch ${branchId}`);
+            try {
+              const response = await api.get(`/conversations/${state.currentConversation?.id}/subtree/${branchId}`);
+              if (response.data.messages) {
+                for (const newMsg of response.data.messages) {
+                  const existingIndex = state.allMessages.findIndex(m => m.id === newMsg.id);
+                  if (existingIndex === -1) {
+                    state.allMessages.push(newMsg);
+                  } else {
+                    state.allMessages[existingIndex] = newMsg;
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('Failed to fetch subtree:', error);
+            }
           }
         }
         

@@ -10,8 +10,10 @@ import { EventStore, Event } from './persistence.js';
 import { BulkEventStore } from './bulk-event-store.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { SharesStore, SharedConversation } from './shares.js';
+import { getBlobStore } from './blob-store.js';
 import { CollaborationStore } from './collaboration.js';
 import { PersonaStore } from './persona.js';
+import { ConversationUIStateStore } from './conversation-ui-state.js';
 import { SharePermission, ConversationShare, canChat, canDelete } from '@deprecated-claude/shared';
 import {
   Persona,
@@ -122,6 +124,7 @@ export class Database {
   private sharesStore: SharesStore;
   private collaborationStore: CollaborationStore;
   private personaStore: PersonaStore;
+  private uiStateStore: ConversationUIStateStore;
   private initialized: boolean = false;
 
   constructor() {
@@ -132,6 +135,7 @@ export class Database {
     this.sharesStore = new SharesStore();
     this.collaborationStore = new CollaborationStore();
     this.personaStore = new PersonaStore();
+    this.uiStateStore = new ConversationUIStateStore();
   }
   
   async init(): Promise<void> {
@@ -141,6 +145,7 @@ export class Database {
     await this.eventStore.init();
     await this.conversationEventStore.init();
     await this.userEventStore.init();
+    await this.uiStateStore.init();
 
     // if needed
     await this.migrateDatabase();
@@ -249,6 +254,20 @@ export class Database {
       for (const event of await this.conversationEventStore.loadEvents(conversationId)) {
         await this.replayEvent(event);
       }
+      
+      // Apply saved branch selections from the shared UI state store
+      // (these are NOT in the event log to avoid bloat)
+      const sharedState = await this.uiStateStore.loadShared(conversationId);
+      for (const [messageId, branchId] of Object.entries(sharedState.activeBranches)) {
+        const message = this.messages.get(messageId);
+        if (message) {
+          const branch = message.branches.find(b => b.id === branchId);
+          if (branch) {
+            const updated = { ...message, activeBranchId: branchId };
+            this.messages.set(messageId, updated);
+          }
+        }
+      }
     }
     this.conversationsLastAccessedTimes.set(conversationId, new Date());
   }
@@ -260,6 +279,9 @@ export class Database {
     });
     this.conversationMessages.delete(conversationId);;
     this.conversationMetrics.delete(conversationId);
+
+    // Clear cached UI state
+    this.uiStateStore.clearCache(conversationId);
 
     this.conversationsLastAccessedTimes.delete(conversationId);
   }
@@ -577,7 +599,7 @@ export class Database {
   }
 
   // Invite methods
-  async createInvite(code: string, createdBy: string, amount: number, currency: string, expiresAt?: string): Promise<Invite> {
+  async createInvite(code: string, createdBy: string, amount: number, currency: string, expiresAt?: string, maxUses?: number): Promise<Invite> {
     if (this.invites.has(code)) {
       throw new Error('Invite code already exists');
     }
@@ -588,7 +610,9 @@ export class Database {
       createdAt: new Date().toISOString(),
       amount,
       currency,
-      expiresAt
+      expiresAt,
+      maxUses,
+      useCount: 0
     };
 
     this.invites.set(code, invite);
@@ -608,7 +632,14 @@ export class Database {
       return { valid: false, error: 'Invalid invite code' };
     }
 
-    if (invite.claimedBy) {
+    // Check if max uses reached (undefined maxUses = unlimited)
+    const useCount = invite.useCount ?? 0;
+    if (invite.maxUses !== undefined && useCount >= invite.maxUses) {
+      return { valid: false, error: 'This invite has reached its maximum uses' };
+    }
+
+    // Legacy check for old single-use invites without useCount
+    if (invite.maxUses === undefined && invite.claimedBy) {
       return { valid: false, error: 'This invite has already been used' };
     }
 
@@ -626,10 +657,21 @@ export class Database {
     }
 
     const invite = validation.invite;
+    const claimedAt = new Date().toISOString();
+    
+    // Increment use count
+    invite.useCount = (invite.useCount ?? 0) + 1;
+    // Store last claimer info (for backwards compatibility and tracking)
     invite.claimedBy = claimedBy;
-    invite.claimedAt = new Date().toISOString();
+    invite.claimedAt = claimedAt;
 
-    await this.logEvent('invite_claimed', { code, claimedBy, claimedAt: invite.claimedAt });
+    await this.logEvent('invite_claimed', { 
+      code, 
+      claimedBy, 
+      claimedAt,
+      useCount: invite.useCount,
+      maxUses: invite.maxUses 
+    });
 
     // Mint the credits to the user
     await this.recordGrantInfo({
@@ -881,10 +923,18 @@ export class Database {
         const { messageId, branchId, updates } = event.data;
         const message = this.messages.get(messageId);
         if (message) {
+          // DON'T load blob contents - just store blob IDs in memory
+          // Debug data will be loaded on-demand from disk when requested
+          // Strip any inline debug data that might exist in old events
+          const updatesForMemory = { ...updates };
+          delete updatesForMemory.debugRequest;
+          delete updatesForMemory.debugResponse;
+          // Keep blob IDs: debugRequestBlobId, debugResponseBlobId
+          
           // Apply partial updates to the specified branch
           const updatedBranches = message.branches.map(branch =>
             branch.id === branchId
-              ? { ...branch, ...updates }
+              ? { ...branch, ...updatesForMemory }
               : branch
           );
           const updated = { ...message, branches: updatedBranches };
@@ -2485,7 +2535,7 @@ export class Database {
   }
 
   // Message methods
-  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, creationSource?: 'inference' | 'human_edit' | 'regeneration' | 'split' | 'import'): Promise<Message> {
+  async createMessage(conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', model?: string, explicitParentBranchId?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, creationSource?: 'inference' | 'human_edit' | 'regeneration' | 'split' | 'import' | 'fork'): Promise<Message> {
     const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) throw new Error("Conversation not found");
     // Get conversation messages to determine parent
@@ -2666,7 +2716,7 @@ export class Database {
     return message;
   }
 
-  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, preserveActiveBranch?: boolean, creationSource?: 'inference' | 'human_edit' | 'regeneration' | 'split' | 'import'): Promise<Message | null> {
+  async addMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, content: string, role: 'user' | 'assistant' | 'system', parentBranchId?: string, model?: string, participantId?: string, attachments?: any[], sentByUserId?: string, hiddenFromAi?: boolean, preserveActiveBranch?: boolean, creationSource?: 'inference' | 'human_edit' | 'regeneration' | 'split' | 'import' | 'fork'): Promise<Message | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
     
@@ -2725,14 +2775,40 @@ export class Database {
     const updated = { ...message, activeBranchId: branchId };
     this.messages.set(messageId, updated);
 
-    await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'active_branch_changed', { 
-      messageId, 
-      branchId,
-      userId: changedByUserId || conversationOwnerUserId
-    });
+    // Save to shared UI state store (NOT the append-only event log)
+    // This prevents branch navigation from bloating the conversation history
+    await this.uiStateStore.setSharedActiveBranch(conversationId, messageId, branchId);
+
+    // Don't update conversation timestamp for branch switches - it's just navigation
+    // await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
+    
+    // NOTE: We intentionally do NOT log active_branch_changed events anymore.
+    // Branch selections are stored in a separate mutable store to avoid event log bloat.
 
     return true;
+  }
+
+  // ==================== USER-SPECIFIC UI STATE ====================
+  // These are per-user settings that are NEVER synced to other users
+
+  async getUserConversationState(conversationId: string, userId: string) {
+    return this.uiStateStore.loadUser(conversationId, userId);
+  }
+
+  async setUserSpeakingAs(conversationId: string, userId: string, participantId: string | undefined): Promise<void> {
+    await this.uiStateStore.setSpeakingAs(conversationId, userId, participantId);
+  }
+
+  async setUserSelectedResponder(conversationId: string, userId: string, participantId: string | undefined): Promise<void> {
+    await this.uiStateStore.setSelectedResponder(conversationId, userId, participantId);
+  }
+
+  async setUserDetached(conversationId: string, userId: string, isDetached: boolean): Promise<void> {
+    await this.uiStateStore.setDetached(conversationId, userId, isDetached);
+  }
+
+  async setUserDetachedBranch(conversationId: string, userId: string, messageId: string, branchId: string): Promise<void> {
+    await this.uiStateStore.setDetachedBranch(conversationId, userId, messageId, branchId);
   }
   
   async updateMessage(messageId: string, conversationId: string, conversationOwnerUserId: string, message: Message, updatedByUserId?: string): Promise<boolean> {
@@ -3173,17 +3249,43 @@ export class Database {
     const branch = message.branches.find(b => b.id === branchId);
     if (!branch) return false;
 
-    // Create new message object with updated branch
+    // Store debug data as blobs - NEVER keep in memory
+    // The full debugRequest includes the entire conversation context and can be 8+ MB
+    const updatesForMemory = { ...updates } as any;
+    const blobStore = getBlobStore();
+    
+    // Strip debug data from memory, save to blobs, store only blob IDs
+    if (updatesForMemory.debugRequest) {
+      try {
+        const debugRequestBlobId = await blobStore.saveJsonBlob(updatesForMemory.debugRequest);
+        updatesForMemory.debugRequestBlobId = debugRequestBlobId;
+      } catch (err) {
+        console.warn('[Database] Failed to save debugRequest as blob:', err);
+      }
+      delete updatesForMemory.debugRequest; // Never store in memory
+    }
+    
+    if (updatesForMemory.debugResponse) {
+      try {
+        const debugResponseBlobId = await blobStore.saveJsonBlob(updatesForMemory.debugResponse);
+        updatesForMemory.debugResponseBlobId = debugResponseBlobId;
+      } catch (err) {
+        console.warn('[Database] Failed to save debugResponse as blob:', err);
+      }
+      delete updatesForMemory.debugResponse; // Never store in memory
+    }
+
+    // Create new message object with updated branch (debug data stripped, only blob IDs)
     const updatedBranches = message.branches.map(b =>
       b.id === branchId
-        ? { ...b, ...updates }
+        ? { ...b, ...updatesForMemory }
         : b
     );
     const updated = { ...message, branches: updatedBranches };
     this.messages.set(messageId, updated);
 
-    // Log the actual updates, not just the keys - needed for event replay to restore debug data
-    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates });
+    // Log event with blob references (same as memory state)
+    await this.logConversationEvent(message.conversationId, 'message_branch_updated', { messageId, branchId, updates: updatesForMemory });
 
     return true;
   }
@@ -3378,17 +3480,28 @@ export class Database {
     return sortedIndices.map(i => messages[i]);
   }
 
-  async getConversationMessages(conversationId: string, conversationOwnerUserId: string): Promise<Message[]> {
+  async getConversationMessages(conversationId: string, conversationOwnerUserId: string, requestingUserId?: string): Promise<Message[]> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
     const messageIds = this.conversationMessages.get(conversationId) || [];
+    
+    // Get messages and filter branches by privacy
+    const viewerId = requestingUserId || conversationOwnerUserId;
     const messages = messageIds
       .map(id => this.messages.get(id))
-      .filter((msg): msg is Message => msg !== undefined && msg.branches.length > 0); // Filter out messages with no branches
+      .filter((msg): msg is Message => msg !== undefined)
+      .map(msg => {
+        // Filter out branches that are private to other users
+        const visibleBranches = msg.branches.filter(
+          b => !b.privateToUserId || b.privateToUserId === viewerId
+        );
+        return { ...msg, branches: visibleBranches };
+      })
+      .filter(msg => msg.branches.length > 0); // Remove messages with no visible branches
     
     // Only log if there's a potential issue
     if (messageIds.length !== messages.length) {
-      console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found (some may have no branches)`);
+      console.warn(`Message mismatch for conversation ${conversationId}: ${messageIds.length} IDs but only ${messages.length} messages found (some may have no visible branches for user ${viewerId})`);
     }
     
     // Sort by tree order (parents before children) instead of order field
@@ -3459,8 +3572,17 @@ export class Database {
       }
     }
     
+    // Filter out noise events that shouldn't appear in the event history panel
+    const filteredEvents = events.filter((event: any) => {
+      // active_branch_changed events are now stored separately and shouldn't clutter history
+      if (event.type === 'active_branch_changed') return false;
+      // message_order_changed events are internal bookkeeping
+      if (event.type === 'message_order_changed') return false;
+      return true;
+    });
+
     // Enrich events with user info where available
-    const enrichedEvents = await Promise.all(events.map(async (event: any) => {
+    const enrichedEvents = await Promise.all(filteredEvents.map(async (event: any) => {
       const enriched: any = {
         type: event.type,
         timestamp: event.timestamp,

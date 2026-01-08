@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, TokenUsage, Conversation, Model, PostHocOperation, MessageBranch, ContentBlock } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, Conversation, Model, PostHocOperation, MessageBranch, ContentBlock } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
@@ -841,9 +841,45 @@ export class InferenceService {
     cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints
     triggerThinking?: boolean  // Add opening <think> tag for prefill thinking mode
   ): Message[] {
+    // Expand prefixHistory from the first message into synthetic messages
+    // This handles forked conversations with compressed history
+    let expandedMessages = messages;
+    if (messages.length > 0) {
+      const firstMessage = messages[0];
+      const firstBranch = firstMessage.branches.find(b => b.id === firstMessage.activeBranchId);
+      const prefixHistory = (firstBranch as any)?.prefixHistory as Array<{ role: 'user' | 'assistant' | 'system'; content: string; participantId?: string; model?: string }> | undefined;
+      
+      if (prefixHistory && prefixHistory.length > 0) {
+        console.log(`[InferenceService] Expanding ${prefixHistory.length} prefixHistory entries for fork context`);
+        
+        // Create synthetic messages from prefixHistory
+        // Use participantId for proper name lookup (participants are copied during fork)
+        const syntheticMessages: Message[] = prefixHistory.map((entry, index) => ({
+          id: `prefix-history-${index}`,
+          conversationId: firstMessage.conversationId,
+          branches: [{
+            id: `prefix-history-branch-${index}`,
+            content: entry.content,
+            role: entry.role,
+            createdAt: new Date(0), // Epoch - these are historical
+            model: entry.model,
+            participantId: entry.participantId, // Use ID for proper lookup
+          } as any],
+          activeBranchId: `prefix-history-branch-${index}`,
+          order: index
+        }));
+        
+        // Prepend synthetic messages, then the actual messages (with adjusted orders)
+        expandedMessages = [
+          ...syntheticMessages,
+          ...messages.map((m, i) => ({ ...m, order: prefixHistory.length + i }))
+        ];
+      }
+    }
+    
     if (format === 'standard') {
-      // Standard format - pass through as-is
-      return messages;
+      // Standard format - pass through (with expanded prefixHistory if present)
+      return expandedMessages;
     }
     
     if (format === 'prefill') {
@@ -866,7 +902,7 @@ export class InferenceService {
       if (prefillSettings.enabled) {
         const cmdMessage: Message = {
           id: 'prefill-cmd',
-          conversationId: messages[0]?.conversationId || '',
+          conversationId: expandedMessages[0]?.conversationId || '',
           branches: [{
             id: 'prefill-cmd-branch',
             content: prefillSettings.content,
@@ -930,7 +966,7 @@ export class InferenceService {
         }
       };
       
-      for (const message of messages) {
+      for (const message of expandedMessages) {
         const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
         if (!activeBranch) continue;
         
@@ -1003,6 +1039,8 @@ export class InferenceService {
           console.log(`[PREFILL] Inserted user message with ${imageAttachments.length} image(s) at order ${messageOrder - 1}`);
           // Reset participant tracking after image insertion
           lastParticipantName = participantName;
+          // Reset empty assistant tracking - this is a non-empty message
+          lastMessageWasEmptyAssistant = false;
         } else {
           // No images - add to conversation content as usual
           if (participantName === '') {
@@ -1014,6 +1052,8 @@ export class InferenceService {
             conversationContent += `${participantName}: ${messageContent}\n\n`;
           }
           lastParticipantName = participantName;
+          // Reset empty assistant tracking - this is a non-empty message
+          lastMessageWasEmptyAssistant = false;
         }
         
         // Insert cache breakpoint marker if needed
@@ -1096,7 +1136,7 @@ export class InferenceService {
         }
       }
       
-      for (const message of messages) {
+      for (const message of expandedMessages) {
         const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
         if (!activeBranch || activeBranch.content === '') continue;
         

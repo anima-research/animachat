@@ -130,6 +130,11 @@
                       title="Archive"
                       @click="archiveConversation(conversation.id)"
                     />
+                    <v-list-item
+                      prepend-icon="mdi-package-variant"
+                      title="Compact (reduce file size)"
+                      @click="compactConversation(conversation.id)"
+                    />
                   </v-list>
                 </v-menu>
               </template>
@@ -435,6 +440,7 @@
               @post-hoc-unhide="handlePostHocUnhide"
               @delete-post-hoc-operation="handleDeletePostHocOperation"
               @split="handleSplit"
+              @fork="handleFork"
             />
           </div>
         </v-container>
@@ -998,6 +1004,105 @@
       </v-card>
     </v-dialog>
     
+    <!-- Fork Conversation Dialog -->
+    <v-dialog v-model="showForkDialog" max-width="560">
+      <v-card>
+        <v-card-title class="text-h6">
+          <v-icon start color="primary">mdi-source-fork</v-icon>
+          Fork to New Conversation
+        </v-card-title>
+        <v-card-text>
+          <p class="mb-4">
+            Create a new conversation starting from this message, including all branches below it.
+          </p>
+          
+          <div class="text-subtitle-2 mb-2">History handling:</div>
+          <v-radio-group v-model="forkMode" density="compact" hide-details class="mb-2">
+            <v-radio value="full" class="mb-1">
+              <template v-slot:label>
+                <div>
+                  <span class="font-weight-medium">Full</span>
+                  <span class="text-caption text-medium-emphasis ml-2">Copy all prior messages</span>
+                </div>
+              </template>
+            </v-radio>
+            <v-radio value="compressed" class="mb-1">
+              <template v-slot:label>
+                <div>
+                  <span class="font-weight-medium">Compressed</span>
+                  <span class="text-caption text-medium-emphasis ml-2">Embed history as invisible context</span>
+                </div>
+              </template>
+            </v-radio>
+            <v-radio value="truncated" class="mb-1">
+              <template v-slot:label>
+                <div>
+                  <span class="font-weight-medium">Truncated</span>
+                  <span class="text-caption text-medium-emphasis ml-2">Messages earlier than the fork point are discarded</span>
+                </div>
+              </template>
+            </v-radio>
+          </v-radio-group>
+          
+          <v-alert 
+            v-if="forkMode === 'full'" 
+            type="info" 
+            density="compact" 
+            variant="tonal"
+            class="text-caption"
+          >
+            All messages on the active path before this point will be copied as separate, editable messages.
+            The full subtree (including branches) is preserved.
+          </v-alert>
+          <v-alert 
+            v-if="forkMode === 'compressed'" 
+            type="info" 
+            density="compact" 
+            variant="tonal"
+            class="text-caption"
+          >
+            Prior messages are embedded as a part of the first message.
+            You'll only see messages from this point onwards. Use this when you want to reduce message count.
+          </v-alert>
+          <v-alert 
+            v-if="forkMode === 'truncated'" 
+            type="warning" 
+            density="compact" 
+            variant="tonal"
+            class="text-caption"
+          >
+            The AI will have no memory of the context before the fork point. Use when you want a remove earlier conversation history.
+          </v-alert>
+          
+          <v-divider class="my-3" />
+          
+          <v-checkbox
+            v-model="forkIncludePrivateBranches"
+            density="compact"
+            hide-details
+            class="mt-0"
+          >
+            <template v-slot:label>
+              <span class="text-body-2">Include my private branches</span>
+            </template>
+          </v-checkbox>
+          <div class="text-caption text-medium-emphasis ml-8 mt-n1">
+            Private branches are normally excluded from forks.
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showForkDialog = false" :disabled="forkIsLoading">
+            Cancel
+          </v-btn>
+          <v-btn color="primary" variant="elevated" @click="executeFork" :loading="forkIsLoading">
+            <v-icon start>mdi-source-fork</v-icon>
+            Fork
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+    
     <!-- Stuck button is now shown inline next to the generating indicator in MessageComponent -->
 
     <!-- Error snackbar for non-streaming errors (pricing validation, etc.) -->
@@ -1195,7 +1300,16 @@ const participants = ref<Participant[]>([]);
 const selectedParticipant = ref<string>('');
 const selectedResponder = ref<string>('');
 const noResponseMode = ref(false);  // For standard conversations: disable AI response
+const isLoadingUIState = ref(false); // Prevents saving during load
 const showMobileSpeakingAs = ref(false);
+
+// Fork dialog state
+const showForkDialog = ref(false);
+const forkTargetMessageId = ref('');
+const forkTargetBranchId = ref('');
+const forkMode = ref<'full' | 'compressed' | 'truncated'>('full');
+const forkIncludePrivateBranches = ref(false);
+const forkIsLoading = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
 const bookmarks = ref<Bookmark[]>([]);
 const bookmarksScrollRef = ref<HTMLElement>();
@@ -2393,6 +2507,26 @@ watch(() => route.params.id, async (newId, oldId) => {
   }
 });
 
+// Save UI state when speaking as or responder changes
+watch(selectedParticipant, (newValue) => {
+  if (newValue && !isLoadingUIState.value) {
+    saveUserUIState({ speakingAs: newValue });
+  }
+});
+
+watch(selectedResponder, (newValue) => {
+  if (newValue && !isLoadingUIState.value) {
+    saveUserUIState({ selectedResponder: newValue });
+  }
+});
+
+// Save detached mode changes
+watch(() => store.state.isDetachedFromMainBranch, (newValue) => {
+  if (!isLoadingUIState.value) {
+    saveUserUIState({ isDetached: newValue });
+  }
+});
+
 // Watch for new messages to scroll
 watch(messages, () => {
   // Don't auto-scroll if:
@@ -2970,13 +3104,16 @@ async function navigateToTreeBranch(messageId: string, branchId: string) {
   // Set flag to prevent auto-scrolling during branch switches
   isSwitchingBranch.value = true;
   
-  // Switch branches along the path
-  for (const { messageId: msgId, branchId: brId } of pathToRoot) {
+  // Collect all branches that need switching
+  const branchesToSwitch = pathToRoot.filter(({ messageId: msgId, branchId: brId }) => {
     const message = allMessages.value.find(m => m.id === msgId);
-    if (message && message.activeBranchId !== brId) {
-      console.log('Switching branch:', msgId, brId);
-      store.switchBranch(msgId, brId);
-    }
+    return message && message.activeBranchId !== brId;
+  });
+  
+  // Use batch switch for much faster navigation
+  if (branchesToSwitch.length > 0) {
+    console.log(`Batch switching ${branchesToSwitch.length} branches`);
+    store.switchBranchesBatch(branchesToSwitch);
   }
   
   // Reset the flag after branches are switched
@@ -3391,6 +3528,23 @@ async function archiveConversation(id: string) {
   }
 }
 
+async function compactConversation(id: string) {
+  if (confirm('This will compact the conversation\'s event log to reduce file size. Debug data will be stripped. Continue?')) {
+    try {
+      const result = await store.compactConversation(id);
+      if (result.success) {
+        const r = result.result;
+        alert(`Compaction complete!\n\nSize: ${r.originalSizeMB} MB → ${r.compactedSizeMB} MB (${r.reductionPercent}% reduction)\nEvents: ${r.originalEventCount} → ${r.compactedEventCount}\n\n${result.message}`);
+      } else {
+        alert('Compaction failed: ' + result.message);
+      }
+    } catch (error: any) {
+      console.error('Compaction error:', error);
+      alert('Compaction failed: ' + (error.response?.data?.error || error.message || 'Unknown error'));
+    }
+  }
+}
+
 function openDuplicateDialog(conversation: Conversation) {
   duplicateConversationTarget.value = conversation;
   duplicateDialog.value = true;
@@ -3524,6 +3678,48 @@ async function handleSplit(messageId: string, branchId: string, splitPosition: n
     }
   } catch (error) {
     console.error('Failed to split message:', error);
+  }
+}
+
+function handleFork(messageId: string, branchId: string) {
+  if (!currentConversation.value) return;
+  
+  // Open the fork dialog
+  forkTargetMessageId.value = messageId;
+  forkTargetBranchId.value = branchId;
+  forkMode.value = 'full';
+  forkIncludePrivateBranches.value = false;
+  showForkDialog.value = true;
+}
+
+async function executeFork() {
+  if (!currentConversation.value) return;
+  
+  forkIsLoading.value = true;
+  
+  try {
+    const response = await api.post(`/conversations/${currentConversation.value.id}/fork`, {
+      messageId: forkTargetMessageId.value,
+      branchId: forkTargetBranchId.value,
+      mode: forkMode.value,  // 'full' | 'compressed' | 'truncated'
+      includePrivateBranches: forkIncludePrivateBranches.value
+    });
+    
+    if (response.data.success && response.data.conversation) {
+      showForkDialog.value = false;
+      
+      // Reload conversations list
+      await store.loadConversations();
+      
+      // Navigate to the new conversation
+      router.push(`/conversation/${response.data.conversation.id}`);
+    }
+  } catch (error) {
+    console.error('Failed to fork conversation:', error);
+    errorSnackbarMessage.value = 'Failed to fork conversation';
+    errorSnackbar.value = true;
+  } finally {
+    forkIsLoading.value = false;
   }
 }
 
@@ -3681,10 +3877,10 @@ async function handleEventNavigate(messageId: string, branchId?: string) {
     currentParentBranchId = parentBranch?.parentBranchId || null;
   }
   
-  // Switch branches in order (from root to target)
-  for (const { messageId: msgId, branchId: bId } of branchesToActivate) {
-    console.log(`[handleEventNavigate] Switching message ${msgId} to branch ${bId}`);
-    await switchBranch(msgId, bId);
+  // Switch branches in batch for faster navigation
+  if (branchesToActivate.length > 0) {
+    console.log(`[handleEventNavigate] Batch switching ${branchesToActivate.length} branches`);
+    store.switchBranchesBatch(branchesToActivate);
   }
   
   // Wait for DOM to update
@@ -3807,6 +4003,61 @@ function getParticipantIcon(participant: Participant): string {
   return 'mdi-robot-outline';
 }
 
+// ==================== PER-USER UI STATE ====================
+// These persist speakingAs, selectedResponder, and detached mode per-user
+
+async function loadUserUIState() {
+  if (!currentConversation.value) return;
+  
+  try {
+    isLoadingUIState.value = true;
+    const response = await api.get(`/conversations/${currentConversation.value.id}/ui-state`);
+    const state = response.data;
+    
+    console.log('[ConversationView] Loaded UI state:', state);
+    
+    // Apply saved values if they exist and the participants are still valid
+    if (state.speakingAs) {
+      const participant = participants.value.find(p => p.id === state.speakingAs);
+      if (participant) {
+        selectedParticipant.value = state.speakingAs;
+      }
+    }
+    
+    if (state.selectedResponder) {
+      const participant = participants.value.find(p => p.id === state.selectedResponder);
+      if (participant) {
+        selectedResponder.value = state.selectedResponder;
+      }
+    }
+    
+    if (state.isDetached) {
+      store.setDetachedMode(true);
+      if (state.detachedBranches) {
+        for (const [messageId, branchId] of Object.entries(state.detachedBranches)) {
+          store.setLocalBranchSelection(messageId, branchId as string);
+        }
+      }
+    }
+  } catch (error) {
+    // Ignore errors - just use defaults
+    console.debug('[ConversationView] No saved UI state found');
+  } finally {
+    isLoadingUIState.value = false;
+  }
+}
+
+async function saveUserUIState(updates: { speakingAs?: string; selectedResponder?: string; isDetached?: boolean; detachedBranch?: { messageId: string; branchId: string } }) {
+  if (!currentConversation.value || isLoadingUIState.value) return;
+  
+  try {
+    await api.patch(`/conversations/${currentConversation.value.id}/ui-state`, updates);
+  } catch (error) {
+    // Non-critical - just log
+    console.debug('[ConversationView] Failed to save UI state:', error);
+  }
+}
+
 async function loadParticipants() {
   if (!currentConversation.value) return;
   
@@ -3832,6 +4083,9 @@ async function loadParticipants() {
       console.log('[ConversationView] Setting selectedResponder to:', defaultAssistant.id, 'model:', defaultAssistant.model);
       selectedResponder.value = defaultAssistant.id;
     }
+    
+    // Load saved UI state (may override defaults)
+    await loadUserUIState();
     return;
   }
   
@@ -3857,6 +4111,9 @@ async function loadParticipants() {
       console.log('[ConversationView] Setting selectedResponder to:', defaultAssistant.id, 'model:', defaultAssistant.model);
       selectedResponder.value = defaultAssistant.id;
     }
+    
+    // Load saved UI state (may override defaults)
+    await loadUserUIState();
   } catch (error) {
     console.error('Failed to load participants:', error);
   }

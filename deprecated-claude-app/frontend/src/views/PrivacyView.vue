@@ -15,7 +15,7 @@
       <div class="section" data-label="overview">
         <h2>◉ overview</h2>
         <p>
-          This Privacy Notice explains how Arc Chat ("the Service"), operated by Anima Labs 
+          This Privacy Notice explains how {{ siteConfig.branding.name }} ("the Service"), operated by {{ operator.name }} 
           ("we", "us", "our"), collects, uses, and protects your information.
         </p>
         <p>
@@ -263,9 +263,13 @@
           For privacy-related questions or to exercise your rights:
         </p>
         <ul>
-          <li>Discord: <a href="https://discord.gg/anima" target="_blank">discord.gg/anima</a></li>
-          <li>GitHub: <a href="https://github.com/socketteer" target="_blank">github.com/socketteer</a></li>
+          <li v-if="links.discord">Discord: <a :href="links.discord" target="_blank">{{ operator.contactDiscord || links.discord.replace('https://', '') }}</a></li>
+          <li v-if="links.github">GitHub: <a :href="links.github" target="_blank">{{ links.github.replace('https://', '') }}</a></li>
+          <li v-if="operator.contactEmail">Email: <a :href="'mailto:' + operator.contactEmail">{{ operator.contactEmail }}</a></li>
         </ul>
+        <p v-if="!links.discord && !links.github && !operator.contactEmail" class="no-contact">
+          Contact information is not currently configured.
+        </p>
       </div>
 
       <div class="navigation-footer">
@@ -278,8 +282,10 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router';
+import { useSiteConfig } from '@/composables/useSiteConfig';
 
 const router = useRouter();
+const { config: siteConfig, links, operator } = useSiteConfig();
 </script>
 
 <style scoped>
