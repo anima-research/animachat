@@ -83,25 +83,18 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-sonnet': 3.00,
   'claude-3-haiku': 0.25,
   
+  // Bedrock model IDs (shorthand)
   'claude-3-opus-bedrock': 15.00,
   'claude-3-sonnet-bedrock': 3.00,
   'claude-3-haiku-bedrock': 0.25,
-  'claude-3.5-sonnet-bedrock': 9.00,
-  'claude-3.6-sonnet-bedrock': 9.00,  // Same as 3.5 sonnet v2
-  'claude-3.5-haiku-bedrock': 0.80,
+  'claude-3.5-sonnet-bedrock': 3.00,
   'claude-3.6-sonnet-bedrock': 3.00,
+  'claude-3.5-haiku-bedrock': 0.80,
   
   // Bedrock providerModelId format (anthropic.model-version:variant)
   'anthropic.claude-3-5-sonnet-20241022-v2:0': 3.00,
   'anthropic.claude-3-5-sonnet-20240620-v1:0': 3.00,
   'anthropic.claude-3-5-haiku-20241022-v1:0': 0.80,
-  'anthropic.claude-3-opus-20240229-v1:0': 15.00,
-  'anthropic.claude-3-sonnet-20240229-v1:0': 3.00,
-  'anthropic.claude-3-haiku-20240307-v1:0': 0.25,
-  
-  // Bedrock provider model IDs (AWS format)
-  'anthropic.claude-3-5-sonnet-20241022-v2:0': 9.00,
-  'anthropic.claude-3-5-sonnet-20240620-v1:0': 9.00,
   'anthropic.claude-3-opus-20240229-v1:0': 15.00,
   'anthropic.claude-3-sonnet-20240229-v1:0': 3.00,
   'anthropic.claude-3-haiku-20240307-v1:0': 0.25,
@@ -167,13 +160,13 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-sonnet': 15.00,
   'claude-3-haiku': 1.25,
   
+  // Bedrock model IDs (shorthand)
   'claude-3-opus-bedrock': 75.00,
   'claude-3-sonnet-bedrock': 45.00, // legacy pricing because of the deprecation
   'claude-3-haiku-bedrock': 1.25,
-  'claude-3.5-sonnet-bedrock': 45.00,
-  'claude-3.6-sonnet-bedrock': 45.00,  // Same as 3.5 sonnet v2
-  'claude-3.5-haiku-bedrock': 4.00,
+  'claude-3.5-sonnet-bedrock': 15.00,
   'claude-3.6-sonnet-bedrock': 15.00,
+  'claude-3.5-haiku-bedrock': 4.00,
   
   // Bedrock providerModelId format (anthropic.model-version:variant)
   'anthropic.claude-3-5-sonnet-20241022-v2:0': 15.00,
@@ -181,13 +174,6 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'anthropic.claude-3-5-haiku-20241022-v1:0': 4.00,
   'anthropic.claude-3-opus-20240229-v1:0': 75.00,
   'anthropic.claude-3-sonnet-20240229-v1:0': 15.00,
-  'anthropic.claude-3-haiku-20240307-v1:0': 1.25,
-  
-  // Bedrock provider model IDs (AWS format)
-  'anthropic.claude-3-5-sonnet-20241022-v2:0': 45.00,
-  'anthropic.claude-3-5-sonnet-20240620-v1:0': 45.00,
-  'anthropic.claude-3-opus-20240229-v1:0': 75.00,
-  'anthropic.claude-3-sonnet-20240229-v1:0': 45.00,
   'anthropic.claude-3-haiku-20240307-v1:0': 1.25,
   
   // OpenRouter model IDs (anthropic/*)

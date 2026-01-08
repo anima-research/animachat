@@ -2349,7 +2349,139 @@ export class Database {
       await this.logConversationEvent(duplicate.id, 'message_created', newMessage);
     }
     
+    // Align active branch path to ensure consistent visibility
+    // This is crucial for conversations with multiple roots (e.g., from looming/branching)
+    await this.alignActiveBranchPath(duplicate.id, duplicateOwnerUserId);
+    
     return duplicate;
+  }
+
+  /**
+   * Align activeBranchId values to form a consistent path from one root to one leaf.
+   * This is needed after duplicate or import to ensure getVisibleMessages works correctly,
+   * especially for conversations with multiple roots (from looming/parallel exploration).
+   */
+  async alignActiveBranchPath(conversationId: string, userId: string): Promise<void> {
+    const messages = await this.getConversationMessages(conversationId, userId);
+    if (messages.length === 0) return;
+    
+    // Build lookup maps
+    const branchToMessage = new Map<string, Message>();
+    const parentToChildren = new Map<string, Message[]>(); // parentBranchId -> child messages
+    
+    for (const msg of messages) {
+      for (const branch of msg.branches) {
+        branchToMessage.set(branch.id, msg);
+        const parentId = branch.parentBranchId || 'root';
+        if (!parentToChildren.has(parentId)) {
+          parentToChildren.set(parentId, []);
+        }
+        parentToChildren.get(parentId)!.push(msg);
+      }
+    }
+    
+    // Find all root messages (branches with no parent or parent='root')
+    const rootMessages = messages.filter(msg => {
+      const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+      return activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root');
+    });
+    
+    console.log(`[AlignActivePath] Found ${rootMessages.length} root messages`);
+    
+    if (rootMessages.length === 0) {
+      console.warn(`[AlignActivePath] No root messages found, cannot align`);
+      return;
+    }
+    
+    // Pick the canonical root: the one whose subtree contains the most recent message
+    // (by createdAt of the deepest leaf)
+    let canonicalRoot: Message | undefined;
+    let latestLeafTime = 0;
+    
+    for (const root of rootMessages) {
+      // Find the deepest/latest leaf in this root's subtree
+      const leafTime = this.findLatestLeafTime(root, parentToChildren, branchToMessage);
+      if (leafTime > latestLeafTime) {
+        latestLeafTime = leafTime;
+        canonicalRoot = root;
+      }
+    }
+    
+    if (!canonicalRoot) {
+      canonicalRoot = rootMessages[0]; // Fallback to first
+    }
+    
+    console.log(`[AlignActivePath] Canonical root: ${canonicalRoot.id.slice(0, 8)}`);
+    
+    // Now propagate from the canonical root forward, ensuring activeBranchIds align
+    const activePath: string[] = []; // Branch IDs on the active path
+    const canonicalBranch = canonicalRoot.branches.find(b => b.id === canonicalRoot!.activeBranchId);
+    if (canonicalBranch) {
+      activePath.push(canonicalBranch.id);
+    }
+    
+    // Walk forward through messages, updating activeBranchId to continue from our path
+    const sortedMessages = this.sortMessagesByTreeOrder(messages);
+    
+    for (const msg of sortedMessages) {
+      if (msg.id === canonicalRoot.id) continue; // Skip the root we already handled
+      
+      // Find a branch that continues from our active path
+      const continuingBranch = msg.branches.find(branch => 
+        branch.parentBranchId && activePath.includes(branch.parentBranchId)
+      );
+      
+      if (continuingBranch) {
+        // This message is on the active path
+        if (msg.activeBranchId !== continuingBranch.id) {
+          console.log(`[AlignActivePath] Updating message ${msg.id.slice(0, 8)} activeBranchId: ${msg.activeBranchId.slice(0, 8)} -> ${continuingBranch.id.slice(0, 8)}`);
+          msg.activeBranchId = continuingBranch.id;
+          this.messages.set(msg.id, msg);
+        }
+        
+        // Extend the path
+        const parentIndex = activePath.indexOf(continuingBranch.parentBranchId!);
+        activePath.length = parentIndex + 1;
+        activePath.push(continuingBranch.id);
+      }
+      // Messages not on the active path keep their activeBranchId as-is
+    }
+    
+    console.log(`[AlignActivePath] Done, active path has ${activePath.length} branches`);
+  }
+  
+  /**
+   * Find the timestamp of the latest leaf in a subtree rooted at the given message
+   */
+  private findLatestLeafTime(
+    root: Message, 
+    parentToChildren: Map<string, Message[]>,
+    branchToMessage: Map<string, Message>
+  ): number {
+    let latestTime = 0;
+    const visited = new Set<string>();
+    
+    const visit = (msg: Message) => {
+      if (visited.has(msg.id)) return;
+      visited.add(msg.id);
+      
+      const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+      if (activeBranch?.createdAt) {
+        const time = new Date(activeBranch.createdAt).getTime();
+        if (time > latestTime) latestTime = time;
+      }
+      
+      // Visit children
+      for (const branch of msg.branches) {
+        const children = parentToChildren.get(branch.id) || [];
+        for (const child of children) {
+          visit(child);
+        }
+      }
+    };
+    
+    visit(root);
+    return latestTime;
   }
 
   // Message methods

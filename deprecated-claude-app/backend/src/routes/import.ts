@@ -184,13 +184,57 @@ export function importRouter(db: Database): Router {
       
       console.log(`Importing ${preview.messages.length} messages to conversation ${conversation.id}`);
       
-      // Special handling for Arc Chat format - recreate full branch structure
+      // Special handling for Arc Chat format - filter out orphaned messages, import all legitimate content
       if (importRequest.format === 'arc_chat' && preview.metadata?.conversation) {
-        const exportedMessages = JSON.parse(importRequest.content).messages || [];
+        const allExportedMessages = JSON.parse(importRequest.content).messages || [];
         const branchIdMapping = new Map<string, string>(); // old branch ID -> new branch ID
         
         console.log('Arc Chat import - participants map:', Array.from(participantMap.entries()));
-        console.log(`Arc Chat import - processing ${exportedMessages.length} messages`);
+        console.log(`Arc Chat import - total messages in export: ${allExportedMessages.length}`);
+        
+        // === FILTER OUT ORPHANED MESSAGES ===
+        // An orphaned message is one whose activeBranch.parentBranchId points to a branch
+        // that is NOT the activeBranchId of any message (i.e., was deleted but cascade failed)
+        
+        // Step 1: Build set of all "active" branch IDs
+        const activeBranchIds = new Set<string>();
+        for (const msg of allExportedMessages) {
+          if (msg.activeBranchId) {
+            activeBranchIds.add(msg.activeBranchId);
+          }
+        }
+        console.log(`Arc Chat import - found ${activeBranchIds.size} active branch IDs`);
+        
+        // Step 2: Filter messages - keep only those whose parent is active (or is a root)
+        const legitimateMessages = allExportedMessages.filter((msg: any) => {
+          const activeBranch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
+          if (!activeBranch) {
+            console.log(`Arc Chat import - ORPHAN (no active branch): ${msg.id?.slice(0, 8)}`);
+            return false;
+          }
+          
+          const parentBranchId = activeBranch.parentBranchId;
+          
+          // Root messages (no parent) are always legitimate
+          if (!parentBranchId || parentBranchId === 'root') {
+            return true;
+          }
+          
+          // Check if parent branch is active in some message
+          if (activeBranchIds.has(parentBranchId)) {
+            return true;
+          }
+          
+          // Parent exists but is not active - this is an orphan from failed cascade delete
+          console.log(`Arc Chat import - ORPHAN (parent not active): ${msg.id?.slice(0, 8)}, parent: ${parentBranchId?.slice(0, 8)}`);
+          return false;
+        });
+        
+        const orphanCount = allExportedMessages.length - legitimateMessages.length;
+        console.log(`Arc Chat import - filtered out ${orphanCount} orphaned messages, keeping ${legitimateMessages.length} legitimate`);
+        
+        // Use legitimate messages for import
+        const exportedMessages = legitimateMessages;
         
         // Build a map of branch ID -> message index for dependency resolution
         const branchToMsgIndex = new Map<string, number>();
@@ -237,15 +281,16 @@ export function importRouter(db: Database): Router {
           visit(i);
         }
         
-        console.log(`Arc Chat import - sorted ${sortedIndices.length} messages (original order vs tree order)`);
+        console.log(`Arc Chat import - sorted ${sortedIndices.length} messages for processing`);
         console.log(`First 5 original indices: ${[0,1,2,3,4].map(i => exportedMessages[i]?.order || 'N/A').join(', ')}`);
         console.log(`First 5 sorted indices: ${sortedIndices.slice(0,5).map(i => exportedMessages[i]?.order || 'N/A').join(', ')}`);
         
         // Process messages in topologically sorted order
+        // Import ALL branches of each legitimate message (orphans were already filtered out)
         for (const msgIndex of sortedIndices) {
           const exportedMsg = exportedMessages[msgIndex];
           
-          // Create message with all branches
+          // Get the first branch to create the message
           const firstBranch = exportedMsg.branches?.[0];
           if (!firstBranch) {
             console.log(`Message ${msgIndex} has no branches, skipping`);
@@ -254,22 +299,17 @@ export function importRouter(db: Database): Router {
           
           // Determine participant for first branch
           let sourceName = firstBranch.participantName;
-          
-          // If no participant name in branch, try to find from participant ID
           if (!sourceName && firstBranch.participantId) {
             const participant = preview.metadata.participants?.find((p: any) => p.id === firstBranch.participantId);
             if (participant) {
               sourceName = participant.name;
             }
           }
-          
-          // Fallback to default names
           if (!sourceName) {
             sourceName = firstBranch.role === 'user' ? 'User' : 'Assistant';
           }
           
           const participantId = participantMap.get(sourceName);
-          console.log(`Message ${msgIndex}: role=${firstBranch.role}, participant=${sourceName}, participantId=${participantId}`);
           
           // Map parent branch ID from previous message
           let mappedParentBranchId = undefined;
@@ -282,14 +322,14 @@ export function importRouter(db: Database): Router {
             conversation.id,
             conversation.userId,
             firstBranch.content,
-            firstBranch.role, // Use role from the branch
+            firstBranch.role,
             firstBranch.model,
             mappedParentBranchId,
             participantId,
             firstBranch.attachments,
             undefined, // sentByUserId
             undefined, // hiddenFromAi
-            'import'   // creationSource - imported data
+            'import'   // creationSource
           );
           
           // Map the first branch ID
@@ -297,8 +337,11 @@ export function importRouter(db: Database): Router {
             branchIdMapping.set(firstBranch.id, message.branches[0].id);
           }
           
-          // Track which branch index corresponds to the active branch
+          // Track which branch is the active one
           let activeBranchIndex = 0;
+          if (firstBranch.id === exportedMsg.activeBranchId) {
+            activeBranchIndex = 0;
+          }
           
           // Add remaining branches
           for (let i = 1; i < exportedMsg.branches.length; i++) {
@@ -306,16 +349,12 @@ export function importRouter(db: Database): Router {
             
             // Determine participant for this branch
             let branchParticipantName = branch.participantName;
-            
-            // If no participant name in branch, try to find from participant ID
             if (!branchParticipantName && branch.participantId) {
               const participant = preview.metadata.participants?.find((p: any) => p.id === branch.participantId);
               if (participant) {
                 branchParticipantName = participant.name;
               }
             }
-            
-            // Fallback to default names
             if (!branchParticipantName) {
               branchParticipantName = branch.role === 'user' ? 'User' : 'Assistant';
             }
@@ -323,12 +362,10 @@ export function importRouter(db: Database): Router {
             const branchParticipantId = participantMap.get(branchParticipantName);
             
             // Map parent branch ID for this branch
+            // Only map if parent is in our mapping - otherwise leave undefined (orphan within message)
             let branchParentId = undefined;
             if (branch.parentBranchId && branchIdMapping.has(branch.parentBranchId)) {
               branchParentId = branchIdMapping.get(branch.parentBranchId);
-            } else if (mappedParentBranchId) {
-              // Use the same parent as the first branch if not specified
-              branchParentId = mappedParentBranchId;
             }
             
             const updatedMessage = await db.addMessageBranch(
@@ -336,7 +373,7 @@ export function importRouter(db: Database): Router {
               message.conversationId,
               conversation.userId,
               branch.content,
-              branch.role, // Use role from the branch
+              branch.role,
               branchParentId,
               branch.model,
               branchParticipantId,
@@ -344,7 +381,7 @@ export function importRouter(db: Database): Router {
               undefined, // sentByUserId
               undefined, // hiddenFromAi
               false,     // preserveActiveBranch
-              'import'   // creationSource - imported data
+              'import'   // creationSource
             );
             
             // Map this branch ID
@@ -361,7 +398,7 @@ export function importRouter(db: Database): Router {
             }
           }
           
-          // Set active branch if different from default
+          // Set active branch if it's not the first one
           if (exportedMsg.activeBranchId && activeBranchIndex > 0) {
             const refetchedMessage = await db.getMessage(message.id, message.conversationId, conversation.userId);
             if (refetchedMessage && refetchedMessage.branches[activeBranchIndex]) {
@@ -369,6 +406,10 @@ export function importRouter(db: Database): Router {
             }
           }
         }
+        
+        // Align active branch path for multi-root conversations
+        // This ensures getVisibleMessages will find the canonical path correctly
+        await db.alignActiveBranchPath(conversation.id, conversation.userId);
         
         res.json({ conversationId: conversation.id });
         return;

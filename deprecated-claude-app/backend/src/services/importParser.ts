@@ -371,13 +371,16 @@ export class ImportParser {
     const participants = data.participants || [];
     
     // Sort messages by tree order (parents before children) instead of array order
-    // This ensures the preview shows messages in correct conversation order
     const sortedMessages = this.sortMessagesByTreeOrder(exportedMessages);
+    
+    // For preview, we need to show only ONE active path, not all messages
+    // This handles multi-root conversations (e.g., from looming/branching)
+    const visibleMessages = this.getVisibleMessagesFromExport(sortedMessages);
     
     const messages: ParsedMessage[] = [];
     
-    // Process messages - they already have the branch structure
-    for (const msg of sortedMessages) {
+    // Process only visible messages (those on the active path)
+    for (const msg of visibleMessages) {
       // Get the active branch content
       const activeBranch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
       
@@ -425,6 +428,116 @@ export class ImportParser {
         version: data.version
       }
     };
+  }
+  
+  /**
+   * Get visible messages following ONE active path from a single root.
+   * Handles multi-root conversations by picking the root with the most recent activity.
+   */
+  private getVisibleMessagesFromExport(sortedMessages: any[]): any[] {
+    if (sortedMessages.length === 0) return [];
+    
+    // Build lookup maps
+    const parentToChildren = new Map<string, any[]>(); // parentBranchId -> child messages
+    
+    for (const msg of sortedMessages) {
+      for (const branch of (msg.branches || [])) {
+        const parentId = branch.parentBranchId || 'root';
+        if (!parentToChildren.has(parentId)) {
+          parentToChildren.set(parentId, []);
+        }
+        parentToChildren.get(parentId)!.push(msg);
+      }
+    }
+    
+    // Find all root messages (branches with no parent or parent='root')
+    const rootMessages = sortedMessages.filter(msg => {
+      const activeBranch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
+      return activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root');
+    });
+    
+    if (rootMessages.length === 0) {
+      console.warn('[parseArcChat] No root messages found');
+      return sortedMessages; // Fallback to all
+    }
+    
+    // Pick the canonical root: the one whose subtree has the most recent message
+    let canonicalRoot: any = rootMessages[0];
+    let latestTime = 0;
+    
+    for (const root of rootMessages) {
+      const leafTime = this.findLatestLeafTimeInExport(root, parentToChildren);
+      if (leafTime > latestTime) {
+        latestTime = leafTime;
+        canonicalRoot = root;
+      }
+    }
+    
+    console.log(`[parseArcChat] Found ${rootMessages.length} roots, using canonical root with latest activity`);
+    
+    // Walk from canonical root, building visible path
+    const visibleMessages: any[] = [];
+    const branchPath: string[] = [];
+    
+    for (const msg of sortedMessages) {
+      const activeBranch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
+      if (!activeBranch) continue;
+      
+      // Case 1: This is the canonical root
+      if (msg === canonicalRoot) {
+        visibleMessages.push(msg);
+        branchPath.push(activeBranch.id);
+        continue;
+      }
+      
+      // Case 2: This is a root but not the canonical one - skip
+      if (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root') {
+        continue;
+      }
+      
+      // Case 3: Active branch continues from our path
+      if (branchPath.includes(activeBranch.parentBranchId)) {
+        visibleMessages.push(msg);
+        const parentIndex = branchPath.indexOf(activeBranch.parentBranchId);
+        branchPath.length = parentIndex + 1;
+        branchPath.push(activeBranch.id);
+        continue;
+      }
+      
+      // Case 4: Not on our path - skip
+    }
+    
+    return visibleMessages;
+  }
+  
+  /**
+   * Find the timestamp of the latest leaf in a subtree
+   */
+  private findLatestLeafTimeInExport(root: any, parentToChildren: Map<string, any[]>): number {
+    let latestTime = 0;
+    const visited = new Set<string>();
+    
+    const visit = (msg: any) => {
+      if (visited.has(msg.id)) return;
+      visited.add(msg.id);
+      
+      const activeBranch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
+      if (activeBranch?.createdAt) {
+        const time = new Date(activeBranch.createdAt).getTime();
+        if (time > latestTime) latestTime = time;
+      }
+      
+      // Visit children
+      for (const branch of (msg.branches || [])) {
+        const children = parentToChildren.get(branch.id) || [];
+        for (const child of children) {
+          visit(child);
+        }
+      }
+    };
+    
+    visit(root);
+    return latestTime;
   }
 
   private async parseOpenAI(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
