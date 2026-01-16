@@ -109,6 +109,115 @@ const CreatePostHocOperationSchema = z.object({
 export function conversationRouter(db: Database): Router {
   const router = Router();
 
+  // Get unread counts for all user's conversations (owned AND shared)
+  // Reads from state files - does NOT load full conversation events
+  router.get('/unread-counts', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Get owned conversations (lightweight - just metadata from user events)
+      const ownedConversations = await db.getUserConversationsWithSummary(req.userId);
+
+      // Get shared conversations (conversations where user is a collaborator)
+      const shares = db.getConversationsSharedWithUser(req.userId);
+
+      console.log(`[unread-counts] User ${req.userId}: ${ownedConversations.length} owned, ${shares.length} shared conversations`);
+
+      // Collect all conversation IDs (owned + shared, deduplicated)
+      const conversationIds = new Set<string>();
+      for (const conv of ownedConversations) {
+        conversationIds.add(conv.id);
+      }
+      for (const share of shares) {
+        conversationIds.add(share.conversationId);
+        console.log(`[unread-counts] Shared conversation: ${share.conversationId}`);
+      }
+
+      const unreadCounts: Record<string, number> = {};
+
+      for (const convId of conversationIds) {
+        // Read totalBranchCount from state file (NOT loading full conversation)
+        const totalBranches = await db.getTotalBranchCount(convId);
+
+        // Get read branch IDs for this user (small per-user state file)
+        const readBranchIds = await db.getReadBranchIds(convId, req.userId);
+
+        // Unread = total non-system branches minus read branches
+        const unreadCount = Math.max(0, totalBranches - readBranchIds.length);
+        console.log(`[unread-counts] Conv ${convId}: total=${totalBranches}, read=${readBranchIds.length}, unread=${unreadCount}`);
+        if (unreadCount > 0) {
+          unreadCounts[convId] = unreadCount;
+        }
+      }
+
+      console.log(`[unread-counts] Final counts:`, unreadCounts);
+      res.json(unreadCounts);
+    } catch (error) {
+      console.error('Get unread counts error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Backfill totalBranchCount for existing conversations (run once after migration)
+  // This loads each conversation's events and saves the computed count to state file
+  router.post('/backfill-branch-counts', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Get owned conversations
+      const ownedConversations = await db.getUserConversationsWithSummary(req.userId);
+
+      // Get shared conversations
+      const shares = db.getConversationsSharedWithUser(req.userId);
+
+      const results: Record<string, number> = {};
+
+      // Process owned conversations
+      for (const conv of ownedConversations) {
+        // Load conversation events (computes totalBranchCount via event replay)
+        await db.ensureConversationLoaded(conv.id, conv.userId);
+
+        // Get the computed count from the in-memory conversation
+        const updatedConv = await db.getConversation(conv.id, conv.userId);
+        const count = updatedConv?.totalBranchCount ?? 0;
+
+        // Save to state file for future fast access
+        if (count > 0) {
+          await db.backfillBranchCount(conv.id, count);
+        }
+
+        results[conv.id] = count;
+      }
+
+      // Process shared conversations (use owner's ID from share)
+      for (const share of shares) {
+        // Skip if already processed (user might own and be shared the same conversation somehow)
+        if (results[share.conversationId] !== undefined) continue;
+
+        // Load conversation using the owner's ID (sharedByUserId)
+        await db.ensureConversationLoaded(share.conversationId, share.sharedByUserId);
+
+        const conv = await db.getConversation(share.conversationId, share.sharedByUserId);
+        const count = conv?.totalBranchCount ?? 0;
+
+        if (count > 0) {
+          await db.backfillBranchCount(share.conversationId, count);
+        }
+
+        results[share.conversationId] = count;
+      }
+
+      res.json({ message: 'Backfill complete', counts: results });
+    } catch (error) {
+      console.error('Backfill branch counts error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Get all conversations for user
   router.get('/', async (req: AuthRequest, res) => {
     try {
@@ -533,6 +642,31 @@ export function conversationRouter(db: Database): Router {
       res.json(state);
     } catch (error) {
       console.error('Update UI state error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Mark branches as read for the current user
+  router.post('/:id/mark-read', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const { branchIds } = req.body;
+      if (!Array.isArray(branchIds)) {
+        return res.status(400).json({ error: 'branchIds must be an array' });
+      }
+
+      await db.markBranchesAsRead(req.params.id, req.userId, branchIds);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Mark branches read error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
