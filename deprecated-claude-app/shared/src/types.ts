@@ -595,7 +595,8 @@ export const ConversationSchema = z.object({
     enabled: z.boolean().default(true),
     messageThreshold: z.number().default(10) // Apply CLI prompt for conversations under this many messages
   }).optional(),
-  combineConsecutiveMessages: z.boolean().default(true).optional() // Combine consecutive same-role messages when building context (default: true)
+  combineConsecutiveMessages: z.boolean().default(true).optional(), // Combine consecutive same-role messages when building context (default: true)
+  totalBranchCount: z.number().default(0).optional() // Cached count of non-system branches (calculated during event replay)
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;

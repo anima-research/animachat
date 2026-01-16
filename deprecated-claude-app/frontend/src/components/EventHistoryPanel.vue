@@ -14,16 +14,65 @@
     </div>
     
     <div class="panel-content">
+      <!-- Unread Section -->
+      <div v-if="unreadBranches.length > 0" class="unread-section">
+        <div class="section-header">
+          <span class="section-title">
+            <v-icon size="14" color="warning" class="mr-1">mdi-circle</v-icon>
+            Unread ({{ unreadBranches.length }})
+          </span>
+          <v-btn
+            size="x-small"
+            variant="text"
+            color="warning"
+            @click="markAllAsRead"
+          >
+            Mark all read
+          </v-btn>
+        </div>
+        <div class="unread-list">
+          <div
+            v-for="branch in unreadBranches"
+            :key="branch.branchId"
+            class="unread-item"
+            @click="handleUnreadClick(branch)"
+          >
+            <div class="unread-icon">
+              <v-icon size="16" color="warning">
+                {{ branch.role === 'user' ? 'mdi-account' : 'mdi-robot' }}
+              </v-icon>
+            </div>
+            <div class="unread-content">
+              <div class="unread-header">
+                <span class="unread-name">{{ getUnreadBranchName(branch) }}</span>
+                <span class="unread-time">{{ formatTime(branch.createdAt) }}</span>
+              </div>
+              <div v-if="branch.content" class="unread-preview">
+                {{ branch.content.slice(0, 80) }}{{ branch.content.length > 80 ? '...' : '' }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History Section -->
+      <div v-if="unreadBranches.length > 0 && events.length > 0" class="section-header history-header">
+        <span class="section-title">
+          <v-icon size="14" class="mr-1">mdi-history</v-icon>
+          History
+        </span>
+      </div>
+
       <div v-if="loading" class="loading-state">
         <v-progress-circular indeterminate size="24" />
       </div>
-      
-      <div v-else-if="events.length === 0" class="empty-state">
+
+      <div v-else-if="events.length === 0 && unreadBranches.length === 0" class="empty-state">
         <v-icon size="32" color="grey">mdi-history</v-icon>
         <p>No events yet</p>
       </div>
-      
-      <div v-else class="events-list">
+
+      <div v-else-if="events.length > 0" class="events-list">
         <div 
           v-for="(event, index) in events" 
           :key="index"
@@ -67,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
 
@@ -80,6 +129,17 @@ interface ConversationEvent {
   messageId?: string;
   branchId?: string;
   participantName?: string;
+}
+
+interface UnreadBranch {
+  messageId: string;
+  branchId: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  participantId?: string;
+  participantName?: string;
+  model?: string;
+  createdAt: string;
 }
 
 const props = defineProps<{
@@ -315,6 +375,86 @@ watch(() => props.conversationId, () => {
 
 const store = useStore();
 
+// Compute unread branches from store state
+const unreadBranches = computed<UnreadBranch[]>(() => {
+  const readIds = store.state.readBranchIds;
+  const messages = store.state.allMessages;
+  const conversation = store.state.currentConversation;
+
+  if (!messages || messages.length === 0) return [];
+
+  const unread: UnreadBranch[] = [];
+
+  for (const message of messages) {
+    for (const branch of message.branches) {
+      // Skip if already read or if it's a system message
+      if (readIds.has(branch.id) || branch.role === 'system') continue;
+
+      // Look up participant name if available
+      let participantName: string | undefined;
+      if (branch.participantId && conversation?.participants) {
+        const participant = conversation.participants.find(p => p.id === branch.participantId);
+        participantName = participant?.name;
+      }
+
+      unread.push({
+        messageId: message.id,
+        branchId: branch.id,
+        role: branch.role,
+        content: branch.content || '',
+        participantId: branch.participantId,
+        participantName,
+        model: branch.model,
+        createdAt: branch.createdAt || message.createdAt
+      });
+    }
+  }
+
+  // Sort by createdAt descending (newest first)
+  unread.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return unread;
+});
+
+// Get display name for unread branch
+function getUnreadBranchName(branch: UnreadBranch): string {
+  // For assistant messages, prioritize model name
+  if (branch.role === 'assistant') {
+    if (branch.model) {
+      const modelName = branch.model.split('/').pop() || branch.model;
+      return modelName.length > 25 ? modelName.slice(0, 22) + '...' : modelName;
+    }
+    // Only use participantName if it doesn't look like a UUID
+    if (branch.participantName && !branch.participantName.match(/^[0-9a-f]{8}-/i)) {
+      return branch.participantName;
+    }
+    return 'AI';
+  }
+
+  // For user messages, use participantName if it's not a UUID
+  if (branch.participantName && !branch.participantName.match(/^[0-9a-f]{8}-/i)) {
+    return branch.participantName;
+  }
+
+  return branch.role === 'user' ? 'User' : 'Unknown';
+}
+
+// Handle clicking on unread branch - navigate and mark as read
+function handleUnreadClick(branch: UnreadBranch) {
+  emit('navigateToMessage', branch.messageId, branch.branchId);
+  store.markBranchesAsRead([branch.branchId]);
+
+  if (props.isMobile) {
+    emit('close');
+  }
+}
+
+// Mark all unread as read
+function markAllAsRead() {
+  const branchIds = unreadBranches.value.map(b => b.branchId);
+  store.markBranchesAsRead(branchIds);
+}
+
 // Refresh events when new messages arrive
 function handleWsMessage() {
   loadEvents();
@@ -470,6 +610,101 @@ onUnmounted(() => {
   font-size: 10px !important;
   height: 20px !important;
   padding: 0 6px !important;
+}
+
+// Unread section styles
+.unread-section {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+}
+
+.history-header {
+  margin-top: 8px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.unread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.unread-item {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: rgba(var(--v-theme-warning), 0.08);
+  border-left: 3px solid rgb(var(--v-theme-warning));
+  transition: background 0.15s;
+
+  &:hover {
+    background: rgba(var(--v-theme-warning), 0.15);
+  }
+}
+
+.unread-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--v-theme-warning), 0.2);
+  border-radius: 4px;
+}
+
+.unread-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.unread-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.unread-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.unread-time {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  flex-shrink: 0;
+}
+
+.unread-preview {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 4px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>
 
