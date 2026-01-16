@@ -1215,11 +1215,18 @@ export class Database {
       }
 
       case 'invite_claimed': {
-        const { code, claimedBy, claimedAt } = event.data || {};
+        const { code, claimedBy, claimedAt, useCount } = event.data || {};
         const invite = this.invites.get(code);
         if (invite) {
           invite.claimedBy = claimedBy;
           invite.claimedAt = claimedAt;
+          // Restore useCount from event (tracks total uses across server restarts)
+          if (useCount !== undefined) {
+            invite.useCount = useCount;
+          } else {
+            // Legacy events without useCount - increment manually
+            invite.useCount = (invite.useCount ?? 0) + 1;
+          }
         }
         break;
       }
