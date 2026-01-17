@@ -375,45 +375,11 @@ watch(() => props.conversationId, () => {
 
 const store = useStore();
 
-// Compute unread branches from store state
+// STUBBED: Unread branches calculation disabled pending architecture review
+// See .workshop/proposal-realtime-notifications.md
+// The calculation has migration issues (everything shows as unread for existing users)
 const unreadBranches = computed<UnreadBranch[]>(() => {
-  const readIds = store.state.readBranchIds;
-  const messages = store.state.allMessages;
-  const conversation = store.state.currentConversation;
-
-  if (!messages || messages.length === 0) return [];
-
-  const unread: UnreadBranch[] = [];
-
-  for (const message of messages) {
-    for (const branch of message.branches) {
-      // Skip if already read or if it's a system message
-      if (readIds.has(branch.id) || branch.role === 'system') continue;
-
-      // Look up participant name if available
-      let participantName: string | undefined;
-      if (branch.participantId && conversation?.participants) {
-        const participant = conversation.participants.find(p => p.id === branch.participantId);
-        participantName = participant?.name;
-      }
-
-      unread.push({
-        messageId: message.id,
-        branchId: branch.id,
-        role: branch.role,
-        content: branch.content || '',
-        participantId: branch.participantId,
-        participantName,
-        model: branch.model,
-        createdAt: branch.createdAt || message.createdAt
-      });
-    }
-  }
-
-  // Sort by createdAt descending (newest first)
-  unread.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  return unread;
+  return [];
 });
 
 // Get display name for unread branch

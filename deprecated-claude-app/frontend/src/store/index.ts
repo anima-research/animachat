@@ -447,18 +447,10 @@ export function createStore(): {
         const visibleBranchIds = this.getVisibleMessages().map(m => m.activeBranchId);
         this.markBranchesAsRead(visibleBranchIds);
 
-        // Always sync the unreadCounts Map with actual state
-        // (markBranchesAsRead might return early if nothing new, leaving stale count)
-        const totalBranches = state.allMessages.reduce((acc, m) => acc + m.branches.length, 0);
-        const actualUnread = Math.max(0, totalBranches - state.readBranchIds.size);
-        const newUnreadCounts = new Map(state.unreadCounts);
-        if (actualUnread > 0) {
-          newUnreadCounts.set(id, actualUnread);
-        } else {
-          newUnreadCounts.delete(id);
-        }
-        state.unreadCounts = newUnreadCounts;
-        console.log(`[loadConversation] Synced unread count for ${id}: ${actualUnread}`);
+        // STUBBED: Unread count calculation disabled pending architecture review
+        // See .workshop/proposal-realtime-notifications.md
+        // The local calculation has migration issues (everything shows as unread for existing users)
+        // Will be re-enabled when backend provides proper unread tracking
 
         const totalTime = Date.now() - startTime;
         console.log(`[loadConversation] ✓ Successfully loaded conversation ${id} in ${totalTime}ms`);
@@ -1156,18 +1148,8 @@ export function createStore(): {
       }
       state.readBranchIds = newSet;
 
-      // Update local unread count for current conversation
-      // Create new Map to trigger Vue reactivity (mutations don't trigger watchers)
-      const conversationId = state.currentConversation.id;
-      const totalBranches = state.allMessages.reduce((acc, m) => acc + m.branches.length, 0);
-      const unreadCount = totalBranches - state.readBranchIds.size;
-      const newUnreadCounts = new Map(state.unreadCounts);
-      if (unreadCount > 0) {
-        newUnreadCounts.set(conversationId, unreadCount);
-      } else {
-        newUnreadCounts.delete(conversationId);
-      }
-      state.unreadCounts = newUnreadCounts;
+      // STUBBED: Unread count update disabled pending architecture review
+      // See .workshop/proposal-realtime-notifications.md
 
       // Debounced persist to backend (don't call on every switch)
       if (state.readPersistTimeout) {
@@ -1185,10 +1167,9 @@ export function createStore(): {
       }, 2000); // 2 second debounce
     },
 
+    // STUBBED: Unread count disabled pending architecture review
     getUnreadCount(): number {
-      if (!state.currentConversation) return 0;
-      const totalBranches = state.allMessages.reduce((acc, m) => acc + m.branches.length, 0);
-      return Math.max(0, totalBranches - state.readBranchIds.size);
+      return 0;
     },
 
     async fetchUnreadCounts() {

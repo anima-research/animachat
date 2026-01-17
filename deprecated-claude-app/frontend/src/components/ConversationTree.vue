@@ -444,9 +444,9 @@ function hasBlueOutline(d: d3.HierarchyPointNode<TreeNode>) {
          d.data.branchId === props.currentBranchId);
 }
 
+// STUBBED: Unread check disabled pending architecture review
 function isUnread(d: d3.HierarchyPointNode<TreeNode>): boolean {
-  if (!props.readBranchIds || props.readBranchIds.size === 0) return false;
-  return !props.readBranchIds.has(d.data.branchId);
+  return false;
 }
 
 

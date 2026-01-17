@@ -1445,23 +1445,8 @@ const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
 
-// Unread branch count for current conversation (excluding system messages)
-const unreadBranchCount = computed(() => {
-  const readIds = store.state.readBranchIds;
-  const messages = store.state.allMessages;
-
-  if (!messages || messages.length === 0) return 0;
-
-  let count = 0;
-  for (const message of messages) {
-    for (const branch of message.branches) {
-      if (!readIds.has(branch.id) && branch.role !== 'system') {
-        count++;
-      }
-    }
-  }
-  return count;
-});
+// STUBBED: Unread count disabled pending architecture review
+const unreadBranchCount = computed(() => 0);
 
 // Legacy unread count (kept for backwards compatibility)
 const unreadCount = computed(() => store.getUnreadCount());
