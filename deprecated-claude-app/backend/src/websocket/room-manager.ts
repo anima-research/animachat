@@ -272,6 +272,55 @@ class RoomManager {
       }))
     };
   }
+  
+  /**
+   * Get all active WebSocket connections.
+   * Used by heartbeat to ping all connections and keep them alive.
+   */
+  getAllConnections(): AuthenticatedWebSocket[] {
+    const allConnections: AuthenticatedWebSocket[] = [];
+    for (const connections of this.userConnections.values()) {
+      for (const ws of connections) {
+        allConnections.push(ws);
+      }
+    }
+    return allConnections;
+  }
+  
+  /**
+   * Perform heartbeat check on all connections.
+   * Terminates connections that didn't respond to the last ping.
+   */
+  performHeartbeat(): { checked: number; terminated: number } {
+    const connections = this.getAllConnections();
+    let terminated = 0;
+    
+    for (const ws of connections) {
+      if (ws.isAlive === false) {
+        // Connection didn't respond to last ping - terminate it
+        console.log(`[Heartbeat] Terminating unresponsive connection for user ${ws.userId}`);
+        ws.terminate();
+        terminated++;
+        continue;
+      }
+      
+      // Mark as not alive, will be set to true when pong is received
+      ws.isAlive = false;
+      
+      // Send ping (the 'pong' handler will set isAlive = true)
+      try {
+        ws.ping();
+      } catch (error) {
+        console.error(`[Heartbeat] Failed to ping user ${ws.userId}:`, error);
+      }
+    }
+    
+    if (connections.length > 0) {
+      console.log(`[Heartbeat] Checked ${connections.length} connections, terminated ${terminated} unresponsive`);
+    }
+    
+    return { checked: connections.length, terminated };
+  }
 }
 
 // Singleton instance

@@ -1196,10 +1196,15 @@ const lastCompletedTime = ref<number | null>(null);
 // Stuck generation detection
 const streamingStartTime = ref<number | null>(null);
 const firstTokenReceived = ref(false);
+const lastContentReceivedTime = ref<number | null>(null); // Track when we last received any content
 const showStuckButton = ref(false);
 const stuckDialog = ref(false);
 const stuckAnalyticsSubmitting = ref(false);
 let stuckCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let contentStuckCheckTimer: ReturnType<typeof setTimeout> | null = null; // Secondary timer for "content but no completion"
+
+// Timeout for "content received but never completed" - used for image generation issues
+const CONTENT_STUCK_TIMEOUT_MS = 45000; // 45 seconds after last content with no completion
 
 // Get stuck threshold based on current model - Anthropic is faster to detect issues
 const getStuckThresholdMs = () => {
@@ -2967,6 +2972,21 @@ function startStuckDetection() {
 }
 
 function onTokenReceived() {
+  // Track when we last received content (for "content but no completion" detection)
+  lastContentReceivedTime.value = Date.now();
+  
+  // Reset the "content stuck" timer - we're still receiving content
+  if (contentStuckCheckTimer) {
+    clearTimeout(contentStuckCheckTimer);
+  }
+  // Start a new timer - if no completion arrives within CONTENT_STUCK_TIMEOUT_MS, show stuck button
+  contentStuckCheckTimer = setTimeout(() => {
+    if (isStreaming.value && firstTokenReceived.value) {
+      console.warn('[Stuck Detection] Content received but no completion after', CONTENT_STUCK_TIMEOUT_MS / 1000, 'seconds');
+      showStuckButton.value = true;
+    }
+  }, CONTENT_STUCK_TIMEOUT_MS);
+  
   if (!firstTokenReceived.value) {
     firstTokenReceived.value = true;
     showStuckButton.value = false;
@@ -2980,10 +3000,15 @@ function onTokenReceived() {
 function clearStuckDetection() {
   streamingStartTime.value = null;
   firstTokenReceived.value = false;
+  lastContentReceivedTime.value = null;
   showStuckButton.value = false;
   if (stuckCheckTimer) {
     clearTimeout(stuckCheckTimer);
     stuckCheckTimer = null;
+  }
+  if (contentStuckCheckTimer) {
+    clearTimeout(contentStuckCheckTimer);
+    contentStuckCheckTimer = null;
   }
 }
 
@@ -2995,8 +3020,11 @@ async function submitStuckAnalytics() {
       timestamp: new Date().toISOString(),
       streamingStartTime: streamingStartTime.value ? new Date(streamingStartTime.value).toISOString() : null,
       elapsedMs: streamingStartTime.value ? Date.now() - streamingStartTime.value : null,
+      lastContentReceivedTime: lastContentReceivedTime.value ? new Date(lastContentReceivedTime.value).toISOString() : null,
+      timeSinceLastContent: lastContentReceivedTime.value ? Date.now() - lastContentReceivedTime.value : null,
       conversationId: currentConversation.value?.id,
       streamingMessageId: streamingMessageId.value,
+      streamingBranchId: streamingBranchId.value,
       firstTokenReceived: firstTokenReceived.value,
       wsConnected: store.state.wsService?.isConnected,
       userAgent: navigator.userAgent,
