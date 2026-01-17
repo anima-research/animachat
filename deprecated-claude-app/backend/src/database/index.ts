@@ -172,6 +172,8 @@ export class Database {
     // Create test user if no users exist
     if (this.users.size === 0) {
       await this.createTestUser();
+      console.log('🧪 Creating additional test users...');
+      await this.createAdditionalTestUsers();
     } else {
       // If test user exists but has no custom models, create test models
       const testUserId = 'test-user-id-12345';
@@ -189,8 +191,11 @@ export class Database {
           console.log('✅ Test user already has custom models');
         }
       }
+      // Also ensure additional test users exist
+      console.log('🧪 Ensuring additional test users exist...');
+      await this.createAdditionalTestUsers();
     }
-    
+
     this.initialized = true;
   }
 
@@ -270,6 +275,11 @@ export class Database {
       }
     }
     this.conversationsLastAccessedTimes.set(conversationId, new Date());
+  }
+
+  // Public method to ensure conversation events are loaded (for cached counts like totalBranchCount)
+  async ensureConversationLoaded(conversationId: string, conversationOwnerUserId: string): Promise<void> {
+    await this.loadConversation(conversationId, conversationOwnerUserId);
   }
 
   private unloadConversation(conversationId: string) {
@@ -381,11 +391,77 @@ export class Database {
       createdAt: new Date(),
       apiKeys: []
     };
-    
+
     this.users.set(demoUser.id, demoUser);
     this.usersByEmail.set(demoUser.email, demoUser.id);
-    
+
     await this.logEvent('user_created', { user: demoUser });
+  }
+
+  private async createAdditionalTestUsers() {
+    // Additional test users for multi-user testing
+    const testUsers = [
+      {
+        id: 'test-admin-cassandra',
+        email: 'cassandra@oracle.test',
+        name: 'Cassandra',
+        password: 'prophecy123',
+        isAdmin: true
+      },
+      {
+        id: 'test-user-bartleby',
+        email: 'bartleby@scrivener.test',
+        name: 'Bartleby',
+        password: 'prefernot123',
+        isAdmin: false
+      },
+      {
+        id: 'test-user-scheherazade',
+        email: 'scheherazade@1001nights.test',
+        name: 'Scheherazade',
+        password: 'story123',
+        isAdmin: false
+      }
+    ];
+
+    for (const userData of testUsers) {
+      // Check if user already exists
+      if (this.usersByEmail.has(userData.email)) {
+        console.log(`   ↳ ${userData.email} already exists, skipping`);
+        continue;
+      }
+
+      const user: User = {
+        id: userData.id,
+        email: userData.email,
+        name: userData.name,
+        createdAt: new Date(),
+        apiKeys: []
+      };
+
+      const hashedPassword = await bcrypt.hash(userData.password, 10);
+
+      this.users.set(user.id, user);
+      this.usersByEmail.set(user.email, user.id);
+      this.userConversations.set(user.id, new Set());
+      this.passwordHashes.set(user.email, hashedPassword);
+
+      await this.logEvent('user_created', { user, passwordHash: hashedPassword });
+
+      // Grant admin if needed
+      if (userData.isAdmin) {
+        await this.recordGrantCapability({
+          id: uuidv4(),
+          time: new Date().toISOString(),
+          userId: user.id,
+          action: 'granted',
+          capability: 'admin',
+          grantedByUserId: 'test-user-id-12345' // granted by main test user
+        });
+      }
+
+      console.log(`   ↳ ${userData.email} (${userData.isAdmin ? 'admin' : 'user'})`);
+    }
   }
 
   private async logEvent(type: string, data: any): Promise<void> {
@@ -800,7 +876,8 @@ export class Database {
         const conversation = {
           ...event.data,
           createdAt: new Date(event.data.createdAt),
-          updatedAt: new Date(event.data.updatedAt)
+          updatedAt: new Date(event.data.updatedAt),
+          totalBranchCount: event.data.totalBranchCount ?? 0
         };
         this.conversations.set(conversation.id, conversation);
         const userConvs = this.userConversations.get(conversation.userId) || new Set();
@@ -856,11 +933,19 @@ export class Database {
           convMessages.push(message.id);
         }
         this.conversationMessages.set(message.conversationId, convMessages);
-        
-        // Update conversation timestamp
+
+        // Update conversation timestamp and totalBranchCount
         const conversation = this.conversations.get(message.conversationId);
         if (conversation) {
-          const updated = { ...conversation, updatedAt: event.timestamp };
+          // Count non-system branches being added
+          const nonSystemBranchCount = message.branches.filter(
+            (b: any) => b.role !== 'system'
+          ).length;
+          const updated = {
+            ...conversation,
+            updatedAt: event.timestamp,
+            totalBranchCount: (conversation.totalBranchCount || 0) + nonSystemBranchCount
+          };
           this.conversations.set(message.conversationId, updated);
         }
         break;
@@ -881,17 +966,22 @@ export class Database {
             activeBranchId: branch.id
           };
           this.messages.set(messageId, updated);
-          
-          // Update conversation timestamp
+
+          // Update conversation timestamp and totalBranchCount
           const conversation = this.conversations.get(message.conversationId);
           if (conversation) {
-            const updatedConv = { ...conversation, updatedAt: event.timestamp };
+            const increment = branch.role !== 'system' ? 1 : 0;
+            const updatedConv = {
+              ...conversation,
+              updatedAt: event.timestamp,
+              totalBranchCount: (conversation.totalBranchCount || 0) + increment
+            };
             this.conversations.set(message.conversationId, updatedConv);
           }
         }
         break;
       }
-      
+
       case 'active_branch_changed': {
         const { messageId, branchId } = event.data;
         const message = this.messages.get(messageId);
@@ -945,6 +1035,25 @@ export class Database {
       
       case 'message_deleted': {
         const { messageId, conversationId } = event.data;
+
+        // Get message before deleting to count its non-system branches
+        const message = this.messages.get(messageId);
+        if (message && conversationId) {
+          const nonSystemBranchCount = message.branches.filter(
+            b => b.role !== 'system'
+          ).length;
+
+          // Decrement totalBranchCount
+          const conversation = this.conversations.get(conversationId);
+          if (conversation && nonSystemBranchCount > 0) {
+            const updatedConv = {
+              ...conversation,
+              totalBranchCount: Math.max(0, (conversation.totalBranchCount || 0) - nonSystemBranchCount)
+            };
+            this.conversations.set(conversationId, updatedConv);
+          }
+        }
+
         this.messages.delete(messageId);
         const convMessages = this.conversationMessages.get(conversationId);
         if (convMessages) {
@@ -996,18 +1105,34 @@ export class Database {
         const { messageId, branchId, conversationId } = event.data;
         const message = this.messages.get(messageId);
         if (message) {
+          // Find the branch being deleted to check its role
+          const deletedBranch = message.branches.find(b => b.id === branchId);
+          const wasNonSystem = deletedBranch && deletedBranch.role !== 'system';
+
           const updatedBranches = message.branches.filter(b => b.id !== branchId);
           // Always keep the message - a new branch might be added later
           // If all branches are deleted, keep the message with empty branches
           // and a placeholder activeBranchId that will be fixed when a new branch is added
-            const updated = {
-              ...message,
-              branches: updatedBranches,
-            activeBranchId: message.activeBranchId === branchId 
+          const updated = {
+            ...message,
+            branches: updatedBranches,
+            activeBranchId: message.activeBranchId === branchId
               ? (updatedBranches[0]?.id || message.activeBranchId) // Keep old ID as placeholder if no branches left
               : message.activeBranchId
-            };
-            this.messages.set(messageId, updated);
+          };
+          this.messages.set(messageId, updated);
+
+          // Decrement totalBranchCount if it was a non-system branch
+          if (wasNonSystem && conversationId) {
+            const conversation = this.conversations.get(conversationId);
+            if (conversation && (conversation.totalBranchCount || 0) > 0) {
+              const updatedConv = {
+                ...conversation,
+                totalBranchCount: (conversation.totalBranchCount || 0) - 1
+              };
+              this.conversations.set(conversationId, updatedConv);
+            }
+          }
         }
         break;
       }
@@ -2406,7 +2531,139 @@ export class Database {
       await this.logConversationEvent(duplicate.id, 'message_created', newMessage);
     }
     
+    // Align active branch path to ensure consistent visibility
+    // This is crucial for conversations with multiple roots (e.g., from looming/branching)
+    await this.alignActiveBranchPath(duplicate.id, duplicateOwnerUserId);
+    
     return duplicate;
+  }
+
+  /**
+   * Align activeBranchId values to form a consistent path from one root to one leaf.
+   * This is needed after duplicate or import to ensure getVisibleMessages works correctly,
+   * especially for conversations with multiple roots (from looming/parallel exploration).
+   */
+  async alignActiveBranchPath(conversationId: string, userId: string): Promise<void> {
+    const messages = await this.getConversationMessages(conversationId, userId);
+    if (messages.length === 0) return;
+    
+    // Build lookup maps
+    const branchToMessage = new Map<string, Message>();
+    const parentToChildren = new Map<string, Message[]>(); // parentBranchId -> child messages
+    
+    for (const msg of messages) {
+      for (const branch of msg.branches) {
+        branchToMessage.set(branch.id, msg);
+        const parentId = branch.parentBranchId || 'root';
+        if (!parentToChildren.has(parentId)) {
+          parentToChildren.set(parentId, []);
+        }
+        parentToChildren.get(parentId)!.push(msg);
+      }
+    }
+    
+    // Find all root messages (branches with no parent or parent='root')
+    const rootMessages = messages.filter(msg => {
+      const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+      return activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root');
+    });
+    
+    console.log(`[AlignActivePath] Found ${rootMessages.length} root messages`);
+    
+    if (rootMessages.length === 0) {
+      console.warn(`[AlignActivePath] No root messages found, cannot align`);
+      return;
+    }
+    
+    // Pick the canonical root: the one whose subtree contains the most recent message
+    // (by createdAt of the deepest leaf)
+    let canonicalRoot: Message | undefined;
+    let latestLeafTime = 0;
+    
+    for (const root of rootMessages) {
+      // Find the deepest/latest leaf in this root's subtree
+      const leafTime = this.findLatestLeafTime(root, parentToChildren, branchToMessage);
+      if (leafTime > latestLeafTime) {
+        latestLeafTime = leafTime;
+        canonicalRoot = root;
+      }
+    }
+    
+    if (!canonicalRoot) {
+      canonicalRoot = rootMessages[0]; // Fallback to first
+    }
+    
+    console.log(`[AlignActivePath] Canonical root: ${canonicalRoot.id.slice(0, 8)}`);
+    
+    // Now propagate from the canonical root forward, ensuring activeBranchIds align
+    const activePath: string[] = []; // Branch IDs on the active path
+    const canonicalBranch = canonicalRoot.branches.find(b => b.id === canonicalRoot!.activeBranchId);
+    if (canonicalBranch) {
+      activePath.push(canonicalBranch.id);
+    }
+    
+    // Walk forward through messages, updating activeBranchId to continue from our path
+    const sortedMessages = this.sortMessagesByTreeOrder(messages);
+    
+    for (const msg of sortedMessages) {
+      if (msg.id === canonicalRoot.id) continue; // Skip the root we already handled
+      
+      // Find a branch that continues from our active path
+      const continuingBranch = msg.branches.find(branch => 
+        branch.parentBranchId && activePath.includes(branch.parentBranchId)
+      );
+      
+      if (continuingBranch) {
+        // This message is on the active path
+        if (msg.activeBranchId !== continuingBranch.id) {
+          console.log(`[AlignActivePath] Updating message ${msg.id.slice(0, 8)} activeBranchId: ${msg.activeBranchId.slice(0, 8)} -> ${continuingBranch.id.slice(0, 8)}`);
+          msg.activeBranchId = continuingBranch.id;
+          this.messages.set(msg.id, msg);
+        }
+        
+        // Extend the path
+        const parentIndex = activePath.indexOf(continuingBranch.parentBranchId!);
+        activePath.length = parentIndex + 1;
+        activePath.push(continuingBranch.id);
+      }
+      // Messages not on the active path keep their activeBranchId as-is
+    }
+    
+    console.log(`[AlignActivePath] Done, active path has ${activePath.length} branches`);
+  }
+  
+  /**
+   * Find the timestamp of the latest leaf in a subtree rooted at the given message
+   */
+  private findLatestLeafTime(
+    root: Message, 
+    parentToChildren: Map<string, Message[]>,
+    branchToMessage: Map<string, Message>
+  ): number {
+    let latestTime = 0;
+    const visited = new Set<string>();
+    
+    const visit = (msg: Message) => {
+      if (visited.has(msg.id)) return;
+      visited.add(msg.id);
+      
+      const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+      if (activeBranch?.createdAt) {
+        const time = new Date(activeBranch.createdAt).getTime();
+        if (time > latestTime) latestTime = time;
+      }
+      
+      // Visit children
+      for (const branch of msg.branches) {
+        const children = parentToChildren.get(branch.id) || [];
+        for (const child of children) {
+          visit(child);
+        }
+      }
+    };
+    
+    visit(root);
+    return latestTime;
   }
 
   // Message methods
@@ -2500,6 +2757,11 @@ export class Database {
     
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
     await this.logConversationEvent(conversationId, 'message_created', message);
+
+    // Update cached branch count in state file (for unread tracking without loading full conversation)
+    if (role !== 'system') {
+      await this.uiStateStore.incrementBranchCount(conversationId, 1);
+    }
 
     return message;
   }
@@ -2630,11 +2892,16 @@ export class Database {
     this.messages.set(messageId, updatedMessage);
 
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'message_branch_added', { 
-      messageId, 
+    await this.logConversationEvent(conversationId, 'message_branch_added', {
+      messageId,
       branch: newBranch,
       userId: sentByUserId || conversationOwnerUserId
     });
+
+    // Update cached branch count in state file (for unread tracking without loading full conversation)
+    if (role !== 'system') {
+      await this.uiStateStore.incrementBranchCount(conversationId, 1);
+    }
 
     return updatedMessage;
   }
@@ -2685,7 +2952,27 @@ export class Database {
   async setUserDetachedBranch(conversationId: string, userId: string, messageId: string, branchId: string): Promise<void> {
     await this.uiStateStore.setDetachedBranch(conversationId, userId, messageId, branchId);
   }
-  
+
+  async markBranchesAsRead(conversationId: string, userId: string, branchIds: string[]): Promise<void> {
+    await this.uiStateStore.markBranchesAsRead(conversationId, userId, branchIds);
+  }
+
+  async getReadBranchIds(conversationId: string, userId: string): Promise<string[]> {
+    return this.uiStateStore.getReadBranchIds(conversationId, userId);
+  }
+
+  // Get cached total branch count from state file (for unread tracking without loading full conversation)
+  async getTotalBranchCount(conversationId: string): Promise<number> {
+    return this.uiStateStore.getTotalBranchCount(conversationId);
+  }
+
+  // Backfill branch count to state file (for migration of existing conversations)
+  async backfillBranchCount(conversationId: string, count: number): Promise<void> {
+    const state = await this.uiStateStore.loadShared(conversationId);
+    state.totalBranchCount = count;
+    await this.uiStateStore.saveShared(conversationId, state);
+  }
+
   async updateMessage(messageId: string, conversationId: string, conversationOwnerUserId: string, message: Message, updatedByUserId?: string): Promise<boolean> {
     const oldMessage = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!oldMessage) return false;
@@ -2705,10 +2992,13 @@ export class Database {
   async deleteMessage(messageId: string, conversationId: string, conversationOwnerUserId: string, deletedByUserId?: string): Promise<boolean> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return false;
-    
+
+    // Count non-system branches before deletion (for updating cached count)
+    const nonSystemBranchCount = message.branches.filter(b => b.role !== 'system').length;
+
     // Remove from messages map
     this.messages.delete(messageId);
-    
+
     // Remove from conversation's message list
     const messageIds = this.conversationMessages.get(message.conversationId);
     if (messageIds) {
@@ -2717,13 +3007,18 @@ export class Database {
         messageIds.splice(index, 1);
       }
     }
-    
+
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    await this.logConversationEvent(conversationId, 'message_deleted', { 
-      messageId, 
+    await this.logConversationEvent(conversationId, 'message_deleted', {
+      messageId,
       conversationId,
       deletedByUserId: deletedByUserId || conversationOwnerUserId
     });
+
+    // Update cached branch count in state file
+    if (nonSystemBranchCount > 0) {
+      await this.uiStateStore.decrementBranchCount(conversationId, nonSystemBranchCount);
+    }
 
     return true;
   }
@@ -3168,23 +3463,32 @@ export class Database {
   async deleteMessageBranch(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string, deletedByUserId?: string): Promise<string[] | null> {
     const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     if (!message) return null;
-    
+
     const branch = message.branches.find(b => b.id === branchId);
     if (!branch) return null;
 
     const deletedMessageIds: string[] = [];
     const actionUserId = deletedByUserId || conversationOwnerUserId;
-    
+
+    // Track non-system branches being deleted (for updating cached count)
+    let deletedNonSystemBranches = 0;
+
     // If this is the only branch, delete the entire message and cascade
     if (message.branches.length === 1) {
+      // Count non-system branches in original message
+      deletedNonSystemBranches += message.branches.filter(b => b.role !== 'system').length;
+
       // Find all messages that need to be deleted (cascade)
       const messagesToDelete = this.findDescendantMessages(messageId, branchId);
       deletedMessageIds.push(messageId, ...messagesToDelete);
-      
+
       // Delete messages in reverse order (children first)
       for (const msgId of [...messagesToDelete].reverse()) {
         const msg = this.messages.get(msgId);
         if (msg) {
+          // Count non-system branches in cascade-deleted messages
+          deletedNonSystemBranches += msg.branches.filter(b => b.role !== 'system').length;
+
           this.messages.delete(msgId);
           const convMessages = this.conversationMessages.get(msg.conversationId);
           if (convMessages) {
@@ -3193,15 +3497,15 @@ export class Database {
               convMessages.splice(index, 1);
             }
           }
-          
-          await this.logConversationEvent(conversationId, 'message_deleted', { 
+
+          await this.logConversationEvent(conversationId, 'message_deleted', {
             messageId: msgId,
             conversationId,
             deletedByUserId: actionUserId
           });
         }
       }
-      
+
       // Delete the original message
       this.messages.delete(messageId);
       const convMessages = this.conversationMessages.get(message.conversationId);
@@ -3211,14 +3515,18 @@ export class Database {
           convMessages.splice(index, 1);
         }
       }
-      
-      await this.logConversationEvent(conversationId, 'message_deleted', { 
+
+      await this.logConversationEvent(conversationId, 'message_deleted', {
         messageId,
         conversationId,
         deletedByUserId: actionUserId
       });
     } else {
-      // Just remove this branch
+      // Just remove this branch - count if non-system
+      if (branch.role !== 'system') {
+        deletedNonSystemBranches += 1;
+      }
+
       const updatedBranches = message.branches.filter(b => b.id !== branchId);
       const updatedMessage = {
         ...message,
@@ -3227,23 +3535,26 @@ export class Database {
         // If we're deleting the active branch, switch to another branch
         activeBranchId: message.activeBranchId === branchId ? updatedBranches[0].id : message.activeBranchId
       };
-      
+
       this.messages.set(messageId, updatedMessage);
-      
-      await this.logConversationEvent(conversationId, 'message_branch_deleted', { 
+
+      await this.logConversationEvent(conversationId, 'message_branch_deleted', {
         messageId,
         branchId,
         conversationId,
         deletedByUserId: actionUserId
       });
-      
+
       // Still need to cascade delete messages that reply to this specific branch
       const descendantMessages = this.findDescendantMessages(messageId, branchId);
       deletedMessageIds.push(...descendantMessages);
-      
+
       for (const msgId of [...descendantMessages].reverse()) {
         const msg = this.messages.get(msgId);
         if (msg) {
+          // Count non-system branches in cascade-deleted messages
+          deletedNonSystemBranches += msg.branches.filter(b => b.role !== 'system').length;
+
           this.messages.delete(msgId);
           const convMessages = this.conversationMessages.get(msg.conversationId);
           if (convMessages) {
@@ -3252,8 +3563,8 @@ export class Database {
               convMessages.splice(index, 1);
             }
           }
-          
-          await this.logConversationEvent(conversationId, 'message_deleted', { 
+
+          await this.logConversationEvent(conversationId, 'message_deleted', {
             messageId: msgId,
             conversationId,
             deletedByUserId: actionUserId
@@ -3263,7 +3574,12 @@ export class Database {
     }
 
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
-    
+
+    // Update cached branch count in state file
+    if (deletedNonSystemBranches > 0) {
+      await this.uiStateStore.decrementBranchCount(conversationId, deletedNonSystemBranches);
+    }
+
     return deletedMessageIds;
   }
   

@@ -78,7 +78,17 @@
               @click="handleConversationClick(conversation.id)"
             >
               <template v-slot:title>
-                <div class="text-truncate">{{ conversation.title }}</div>
+                <div class="d-flex align-center">
+                  <div class="text-truncate flex-grow-1">{{ conversation.title }}</div>
+                  <v-badge
+                    v-if="getConversationUnreadCount(conversation.id) > 0"
+                    :content="getConversationUnreadCount(conversation.id)"
+                    color="warning"
+                    text-color="white"
+                    inline
+                    class="ml-1 sidebar-unread-badge"
+                  />
+                </div>
               </template>
               <template v-slot:subtitle>
                 <div>
@@ -135,6 +145,11 @@
                       title="Compact (reduce file size)"
                       @click="compactConversation(conversation.id)"
                     />
+                    <v-list-item
+                      prepend-icon="mdi-email-mark-as-unread"
+                      title="Mark as read"
+                      @click="markConversationAsRead(conversation)"
+                    />
                   </v-list>
                 </v-menu>
               </template>
@@ -156,6 +171,14 @@
               <template v-slot:title>
                 <div class="d-flex align-center">
                   <div class="text-truncate flex-grow-1">{{ share.conversation?.title || 'Untitled' }}</div>
+                  <v-badge
+                    v-if="getConversationUnreadCount(share.conversationId) > 0"
+                    :content="getConversationUnreadCount(share.conversationId)"
+                    color="warning"
+                    text-color="white"
+                    inline
+                    class="ml-1 sidebar-unread-badge"
+                  />
                   <v-chip size="x-small" :color="getPermissionColor(share.permission)" class="ml-1">
                     {{ share.permission }}
                   </v-chip>
@@ -375,15 +398,26 @@
           @click="treeDrawer = !treeDrawer"
           title="Toggle conversation tree"
         />
-        
-        <v-btn
+
+        <!-- History button with unread badge -->
+        <v-badge
           v-if="currentConversation"
-          :icon="showEventHistory ? 'mdi-history' : 'mdi-history'"
-          :color="showEventHistory ? 'primary' : undefined"
-          variant="text"
-          @click.stop="showEventHistory = !showEventHistory"
-          title="Event history"
-        />
+          :content="unreadBranchCount"
+          :model-value="unreadBranchCount > 0"
+          color="warning"
+          text-color="white"
+          offset-x="12"
+          offset-y="10"
+          class="unread-history-badge"
+        >
+          <v-btn
+            :icon="showEventHistory ? 'mdi-history' : 'mdi-history'"
+            :color="showEventHistory ? 'primary' : undefined"
+            variant="text"
+            @click.stop="showEventHistory = !showEventHistory"
+            title="Event history"
+          />
+        </v-badge>
       </v-app-bar>
 
       <!-- Messages Area with Event History Panel -->
@@ -807,6 +841,7 @@
         :current-branch-id="currentBranchId"
         :selected-parent-message-id="selectedBranchForParent?.messageId"
         :selected-parent-branch-id="selectedBranchForParent?.branchId"
+        :read-branch-ids="store.state.readBranchIds"
         @navigate-to-branch="navigateToTreeBranch"
         class="flex-grow-1"
         style="overflow-y: hidden"
@@ -1414,6 +1449,12 @@ function getPermissionColor(permission: string): string {
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
+
+// STUBBED: Unread count disabled pending architecture review
+const unreadBranchCount = computed(() => 0);
+
+// Legacy unread count (kept for backwards compatibility)
+const unreadCount = computed(() => store.getUnreadCount());
 
 // Compute authenticity for visible messages
 const authenticityMap = computed((): Map<string, AuthenticityStatus> => {
@@ -2355,15 +2396,16 @@ onMounted(async () => {
     welcomeDialog.value = true;
   }
   
-  // Load conversation from route
-  if (route.params.id) {
-    console.log(`[ConversationView] Route has conversation ID: ${route.params.id}`);
+  // Load conversation from route (handles both /conversation/:id and /conversation/:conversationId/message/:messageId)
+  const conversationId = (route.params.conversationId || route.params.id) as string | undefined;
+  if (conversationId) {
+    console.log(`[ConversationView] Route has conversation ID: ${conversationId}`);
     console.log(`[ConversationView] Starting conversation load...`);
     const loadStart = Date.now();
     isLoadingConversation.value = true;
-    
+
     try {
-      await store.loadConversation(route.params.id as string);
+      await store.loadConversation(conversationId);
       console.log(`[ConversationView] ✓ store.loadConversation completed in ${Date.now() - loadStart}ms`);
       console.log(`[ConversationView] allMessages.length: ${store.state.allMessages.length}`);
     } catch (error) {
@@ -2371,44 +2413,58 @@ onMounted(async () => {
     } finally {
       isLoadingConversation.value = false;
     }
-    
+
     try {
       await loadParticipants();
       console.log(`[ConversationView] ✓ loadParticipants completed`);
     } catch (error) {
       console.error(`[ConversationView] ✗ loadParticipants failed:`, error);
     }
-    
+
     try {
       await loadBookmarks();
       console.log(`[ConversationView] ✓ loadBookmarks completed`);
     } catch (error) {
       console.error(`[ConversationView] ✗ loadBookmarks failed:`, error);
     }
-    
+
     try {
       await loadCurrentConversationCollaborators();
       console.log(`[ConversationView] ✓ loadCurrentConversationCollaborators completed`);
     } catch (error) {
       console.error(`[ConversationView] ✗ loadCurrentConversationCollaborators failed:`, error);
     }
-    
+
     console.log(`[ConversationView] Total load time: ${Date.now() - loadStart}ms`);
-    
+
     // Join the room for multi-user support
     if (store.state.wsService) {
-      console.log(`[ConversationView] Joining WebSocket room: ${route.params.id}`);
-      store.state.wsService.joinRoom(route.params.id as string);
+      console.log(`[ConversationView] Joining WebSocket room: ${conversationId}`);
+      store.state.wsService.joinRoom(conversationId);
     } else {
       console.warn(`[ConversationView] ⚠ wsService not available for room join`);
     }
-    
-    // Scroll to bottom after messages load
+
+    // Ensure DOM is updated before scrolling
     await nextTick();
-    // Add small delay for long conversations
-    setTimeout(() => {
-      scrollToBottom();
-    }, 100);
+
+    // Check if this is a deep link to a specific message
+    const messageId = route.params.messageId as string | undefined;
+    const branchId = route.query.branch as string | undefined;
+
+    if (messageId) {
+      // Deep link - navigate to specific message
+      setTimeout(async () => {
+        await handleEventNavigate(messageId, branchId);
+        // Clean up the URL to the simple form
+        router.replace(`/conversation/${conversationId}`);
+      }, 100);
+    } else {
+      // Normal load - scroll to bottom
+      setTimeout(() => {
+        scrollToBottom();
+      }, 100);
+    }
 
     if (isMobile.value) {
       mobilePanel.value = 'conversation';
@@ -2439,8 +2495,14 @@ const conversationDrafts = ref<Map<string, string>>(new Map());
 // Track if initial setup is complete
 const isInitialized = ref(false);
 
+// Get conversation ID from either route format
+function getConversationIdFromRoute(): string | undefined {
+  // Handle both /conversation/:id and /conversation/:conversationId/message/:messageId
+  return (route.params.conversationId || route.params.id) as string | undefined;
+}
+
 // Watch route changes
-watch(() => route.params.id, async (newId, oldId) => {
+watch(() => getConversationIdFromRoute(), async (newId, oldId) => {
   // Skip if not yet initialized (will be handled by onMounted -> loadInitialConversation)
   if (!isInitialized.value) return;
   
@@ -2502,10 +2564,24 @@ watch(() => route.params.id, async (newId, oldId) => {
     
     // Ensure DOM is updated before scrolling
     await nextTick();
-    // Add small delay for long conversations
-    setTimeout(() => {
-      scrollToBottom();
-    }, 100);
+
+    // Check if this is a deep link to a specific message
+    const messageId = route.params.messageId as string | undefined;
+    const branchId = route.query.branch as string | undefined;
+
+    if (messageId) {
+      // Deep link - navigate to specific message
+      setTimeout(async () => {
+        await handleEventNavigate(messageId, branchId);
+        // Clean up the URL to the simple form
+        router.replace(`/conversation/${newId}`);
+      }, 100);
+    } else {
+      // Normal load - scroll to bottom
+      setTimeout(() => {
+        scrollToBottom();
+      }, 100);
+    }
   } else {
     // Navigating away from a conversation - clear input
     messageInput.value = '';
@@ -3573,6 +3649,15 @@ async function compactConversation(id: string) {
   }
 }
 
+function markConversationAsRead(conversation: Conversation) {
+  // Get all branch IDs from this conversation
+  // If it's the current conversation, use allMessages; otherwise we'd need to load it
+  if (currentConversation.value?.id === conversation.id) {
+    const allBranchIds = allMessages.value.flatMap(m => m.branches.map((b: any) => b.id));
+    store.markBranchesAsRead(allBranchIds);
+  }
+}
+
 function openDuplicateDialog(conversation: Conversation) {
   duplicateConversationTarget.value = conversation;
   duplicateDialog.value = true;
@@ -4058,15 +4143,8 @@ async function loadUserUIState() {
         selectedResponder.value = state.selectedResponder;
       }
     }
-    
-    if (state.isDetached) {
-      store.setDetachedMode(true);
-      if (state.detachedBranches) {
-        for (const [messageId, branchId] of Object.entries(state.detachedBranches)) {
-          store.setLocalBranchSelection(messageId, branchId as string);
-        }
-      }
-    }
+
+    // Note: isDetached and detachedBranches are now handled in store.loadConversation()
   } catch (error) {
     // Ignore errors - just use defaults
     console.debug('[ConversationView] No saved UI state found');
@@ -4553,9 +4631,13 @@ async function importRawMessages() {
 // The sidebar now uses embedded participant summaries from the backend
 // The active conversation uses loadParticipants() with smart caching
 
+function getConversationUnreadCount(conversationId: string): number {
+  return store.state.unreadCounts.get(conversationId) || 0;
+}
+
 function getConversationModelsHtml(conversation: any): string {
   if (!conversation) return '';
-  
+
   // For standard conversations, show the model name
   if (conversation.format === 'standard' || !conversation.format) {
     const model = store.state.models.find(m => m.id === conversation.model);
@@ -4602,6 +4684,16 @@ function formatDate(date: Date | string): string {
 </script>
 
 <style scoped>
+/* Unread badges - smaller, consistent style */
+.unread-history-badge :deep(.v-badge__badge),
+.sidebar-unread-badge :deep(.v-badge__badge) {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
 /* Input bar button groups - consistent spacing */
 .input-bar-left,
 .input-bar-right {

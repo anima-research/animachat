@@ -6,6 +6,7 @@ import path from 'path';
  */
 export interface SharedConversationState {
   activeBranches: Record<string, string>; // messageId -> branchId
+  totalBranchCount?: number; // cached count of non-system branches (for unread calculation)
 }
 
 /**
@@ -16,6 +17,8 @@ export interface UserConversationState {
   selectedResponder?: string;   // participantId of AI that will respond
   isDetached?: boolean;         // if true, user navigates independently
   detachedBranches?: Record<string, string>; // messageId -> branchId (only used if isDetached)
+  readBranchIds?: string[];     // branch IDs this user has seen (for unread tracking)
+  lastReadAt?: string;          // ISO timestamp of last read action
 }
 
 /**
@@ -100,6 +103,25 @@ export class ConversationUIStateStore {
     return state.activeBranches[messageId];
   }
 
+  // Branch count methods (for unread tracking without loading full conversation)
+
+  async getTotalBranchCount(conversationId: string): Promise<number> {
+    const state = await this.loadShared(conversationId);
+    return state.totalBranchCount ?? 0;
+  }
+
+  async incrementBranchCount(conversationId: string, delta: number = 1): Promise<number> {
+    const state = await this.loadShared(conversationId);
+    const newCount = Math.max(0, (state.totalBranchCount ?? 0) + delta);
+    state.totalBranchCount = newCount;
+    await this.saveShared(conversationId, state);
+    return newCount;
+  }
+
+  async decrementBranchCount(conversationId: string, delta: number = 1): Promise<number> {
+    return this.incrementBranchCount(conversationId, -delta);
+  }
+
   // ==================== PER-USER STATE ====================
 
   private getUserCacheKey(conversationId: string, userId: string): string {
@@ -168,6 +190,25 @@ export class ConversationUIStateStore {
     const detachedBranches = state.detachedBranches || {};
     detachedBranches[messageId] = branchId;
     await this.updateUser(conversationId, userId, { detachedBranches });
+  }
+
+  // ==================== READ TRACKING ====================
+
+  async markBranchesAsRead(conversationId: string, userId: string, branchIds: string[]): Promise<void> {
+    const state = await this.loadUser(conversationId, userId);
+    const existing = new Set(state.readBranchIds || []);
+    for (const id of branchIds) {
+      existing.add(id);
+    }
+    await this.updateUser(conversationId, userId, {
+      readBranchIds: Array.from(existing),
+      lastReadAt: new Date().toISOString()
+    });
+  }
+
+  async getReadBranchIds(conversationId: string, userId: string): Promise<string[]> {
+    const state = await this.loadUser(conversationId, userId);
+    return state.readBranchIds || [];
   }
 
   // ==================== CACHE MANAGEMENT ====================

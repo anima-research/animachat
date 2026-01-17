@@ -174,6 +174,12 @@
             </template>
             <v-list-item-title class="text-caption">Download JSON</v-list-item-title>
           </v-list-item>
+          <v-list-item density="compact" @click="copyMessageLink">
+            <template v-slot:prepend>
+              <v-icon size="16" icon="mdi-link" />
+            </template>
+            <v-list-item-title class="text-caption">Copy link</v-list-item-title>
+          </v-list-item>
           <v-divider v-if="(message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse)) || canViewMetadata" class="my-0" />
           <v-list-item
             v-if="message.branches[branchIndex].role === 'assistant' && (currentBranch.debugRequest || currentBranch.debugResponse || currentBranch.debugRequestBlobId || currentBranch.debugResponseBlobId)"
@@ -1019,9 +1025,7 @@ const canViewMetadata = computed(() => {
 });
 
 const branchIndex = computed(() => {
-  // Use effective branch ID (local selection if detached, else server's activeBranchId)
-  const effectiveBranchId = store.getEffectiveBranchId(props.message);
-  return props.message.branches.findIndex(b => b.id === effectiveBranchId) || 0;
+  return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;
 });
 
 const currentBranch = computed(() => {
@@ -1314,9 +1318,7 @@ const siblingBranches = computed(() => {
 
 // Get index among siblings
 const siblingIndex = computed(() => {
-  // Use effective branch ID (local selection if detached, else server's activeBranchId)
-  const effectiveBranchId = store.getEffectiveBranchId(props.message);
-  return siblingBranches.value.findIndex(b => b.id === effectiveBranchId) || 0;
+  return siblingBranches.value.findIndex(b => b.id === props.message.activeBranchId) || 0;
 });
 
 // Check if branches are navigable (share the same parent)
@@ -1848,6 +1850,20 @@ function formatTimestamp(timestamp: string | Date): string {
   
   // Otherwise show date
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+}
+
+function copyMessageLink() {
+  const conversationId = props.message.conversationId;
+  const messageId = props.message.id;
+  const branchId = currentBranch.value.id;
+
+  const url = `${window.location.origin}/conversation/${conversationId}/message/${messageId}?branch=${branchId}`;
+
+  navigator.clipboard.writeText(url).then(() => {
+    console.log('[MessageComponent] Link copied to clipboard:', url);
+  }).catch(err => {
+    console.error('[MessageComponent] Failed to copy link:', err);
+  });
 }
 
 async function downloadPrompt() {

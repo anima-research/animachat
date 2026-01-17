@@ -140,6 +140,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/conversation/:conversationId/message/:messageId',
+      name: 'message-link',
+      component: ConversationView,
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/conversation/:id/archive',
       name: 'archive',
       component: ArchiveView,

@@ -17,6 +17,41 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 // Parsed pricing lookup (computed from models cache)
 const pricingLookup: Map<string, CachedPricing> = new Map();
 
+// Optional refresh callback - set by index.ts on startup
+let refreshCallback: (() => Promise<void>) | null = null;
+let isRefreshing = false;
+
+/**
+ * Register a callback that can refresh the OpenRouter cache on-demand
+ */
+export function setOpenRouterRefreshCallback(callback: () => Promise<void>): void {
+  refreshCallback = callback;
+}
+
+/**
+ * Try to refresh the cache if it's empty or stale
+ * Returns true if refresh was attempted
+ */
+export async function tryRefreshOpenRouterCache(): Promise<boolean> {
+  if (!refreshCallback) return false;
+  if (isRefreshing) return false; // Prevent concurrent refreshes
+  
+  const { models, isStale } = getOpenRouterModelsCache();
+  if (models.length > 0 && !isStale) return false; // Cache is fine
+  
+  try {
+    isRefreshing = true;
+    console.log('[PricingCache] Attempting lazy refresh of OpenRouter cache...');
+    await refreshCallback();
+    return true;
+  } catch (error) {
+    console.error('[PricingCache] Failed to refresh OpenRouter cache:', error);
+    return false;
+  } finally {
+    isRefreshing = false;
+  }
+}
+
 /**
  * Update the OpenRouter models cache (called from models.ts route)
  */
