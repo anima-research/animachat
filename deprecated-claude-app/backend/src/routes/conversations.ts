@@ -110,54 +110,22 @@ export function conversationRouter(db: Database): Router {
   const router = Router();
 
   // Get unread counts for all user's conversations (owned AND shared)
-  // Reads from state files - does NOT load full conversation events
+  //
+  // STUBBED: Returns empty object until proper implementation.
+  // See .workshop/proposal-realtime-notifications.md for architecture discussion.
+  // See .workshop/unread-frontend-contract.md for frontend expectations.
+  //
+  // Issues with current implementation:
+  // 1. Migration problem: existing users see all historical messages as "unread"
+  // 2. No real-time updates: sidebar doesn't refresh until user clicks conversation
+  //
+  // Frontend UI components are ready and will light up when this returns real data.
   router.get('/unread-counts', async (req: AuthRequest, res) => {
-    try {
-      if (!req.userId) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
-
-      // Get owned conversations (lightweight - just metadata from user events)
-      const ownedConversations = await db.getUserConversationsWithSummary(req.userId);
-
-      // Get shared conversations (conversations where user is a collaborator)
-      const shares = db.getConversationsSharedWithUser(req.userId);
-
-      console.log(`[unread-counts] User ${req.userId}: ${ownedConversations.length} owned, ${shares.length} shared conversations`);
-
-      // Collect all conversation IDs (owned + shared, deduplicated)
-      const conversationIds = new Set<string>();
-      for (const conv of ownedConversations) {
-        conversationIds.add(conv.id);
-      }
-      for (const share of shares) {
-        conversationIds.add(share.conversationId);
-        console.log(`[unread-counts] Shared conversation: ${share.conversationId}`);
-      }
-
-      const unreadCounts: Record<string, number> = {};
-
-      for (const convId of conversationIds) {
-        // Read totalBranchCount from state file (NOT loading full conversation)
-        const totalBranches = await db.getTotalBranchCount(convId);
-
-        // Get read branch IDs for this user (small per-user state file)
-        const readBranchIds = await db.getReadBranchIds(convId, req.userId);
-
-        // Unread = total non-system branches minus read branches
-        const unreadCount = Math.max(0, totalBranches - readBranchIds.length);
-        console.log(`[unread-counts] Conv ${convId}: total=${totalBranches}, read=${readBranchIds.length}, unread=${unreadCount}`);
-        if (unreadCount > 0) {
-          unreadCounts[convId] = unreadCount;
-        }
-      }
-
-      console.log(`[unread-counts] Final counts:`, unreadCounts);
-      res.json(unreadCounts);
-    } catch (error) {
-      console.error('Get unread counts error:', error);
-      res.status(500).json({ error: 'Internal server error' });
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
     }
+    // Stub: return empty counts until proper implementation
+    res.json({});
   });
 
   // Backfill totalBranchCount for existing conversations (run once after migration)
