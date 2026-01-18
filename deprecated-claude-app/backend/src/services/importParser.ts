@@ -698,7 +698,7 @@ export class ImportParser {
     // The model sees: thinking (if extended thinking enabled), tool_use blocks, tool_result blocks, then text
     let currentTurn: {
       role: 'user' | 'assistant';
-      thinkingBlocks: Array<{ thinking: string }>; // Multiple thinking blocks possible
+      thinkingBlocks: Array<{ thinking: string; signature?: string }>; // Multiple thinking blocks with optional signatures
       toolCalls: Array<{ name: string; params: any; result: string }>;
       textContent: string;
       attachments: Array<{ fileName: string; content: string; mimeType: string }>;
@@ -710,13 +710,14 @@ export class ImportParser {
       
       // Build contentBlocks for proper extended thinking support
       // This allows thinking to be sent as real API content blocks to Anthropic
-      const contentBlocks: Array<{ type: string; thinking?: string; text?: string }> = [];
+      const contentBlocks: Array<{ type: string; thinking?: string; signature?: string; text?: string }> = [];
       
-      // Add thinking blocks
+      // Add thinking blocks (with signatures if available)
       for (const tb of currentTurn.thinkingBlocks) {
         contentBlocks.push({
           type: 'thinking',
-          thinking: tb.thinking
+          thinking: tb.thinking,
+          ...(tb.signature && { signature: tb.signature })
         });
       }
       
@@ -779,8 +780,12 @@ export class ImportParser {
       }
       
       // Process thinking (model's chain of thought - each thinking block is separate)
+      // Include signature if present (allows proper API replay)
       if (msg.thinking?.text) {
-        currentTurn.thinkingBlocks.push({ thinking: msg.thinking.text });
+        currentTurn.thinkingBlocks.push({ 
+          thinking: msg.thinking.text,
+          ...(msg.thinking.signature && { signature: msg.thinking.signature })
+        });
       }
       
       // Process tool calls

@@ -530,14 +530,23 @@ export class AnthropicService {
             // Assistant message with thinking blocks - format as content array for API
             // This is required for models like Opus 4.5 to maintain chain of thought
             const apiContentBlocks: any[] = [];
+            let unsignedThinkingText = ''; // Collect thinking without signatures to prepend as text
             
             for (const block of activeBranch.contentBlocks) {
               if (block.type === 'thinking') {
-                apiContentBlocks.push({
-                  type: 'thinking',
-                  thinking: block.thinking,
-                  ...(block.signature && { signature: block.signature })
-                });
+                // Only send thinking as structured block if it has a signature
+                // Anthropic API requires signatures to verify thinking authenticity
+                // Thinking without signatures (e.g., imported) is converted to text
+                if (block.signature) {
+                  apiContentBlocks.push({
+                    type: 'thinking',
+                    thinking: block.thinking,
+                    signature: block.signature
+                  });
+                } else {
+                  // Collect unsigned thinking to include as text
+                  unsignedThinkingText += `<thinking>\n${block.thinking}\n</thinking>\n\n`;
+                }
               } else if (block.type === 'redacted_thinking') {
                 apiContentBlocks.push({
                   type: 'redacted_thinking',
@@ -547,6 +556,21 @@ export class AnthropicService {
                 apiContentBlocks.push({
                   type: 'text',
                   text: block.text
+                });
+              }
+            }
+            
+            // If we have unsigned thinking, prepend it to the text content
+            if (unsignedThinkingText) {
+              const existingTextIndex = apiContentBlocks.findIndex(b => b.type === 'text');
+              if (existingTextIndex >= 0) {
+                // Prepend to existing text block
+                apiContentBlocks[existingTextIndex].text = unsignedThinkingText + apiContentBlocks[existingTextIndex].text;
+              } else {
+                // Create new text block with the thinking + main content
+                apiContentBlocks.push({
+                  type: 'text',
+                  text: unsignedThinkingText + messageContent.trim()
                 });
               }
             }
