@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { v4 as uuidv4 } from 'uuid';
 import { AuthRequest } from '../middleware/auth.js';
 import { Database } from '../database/index.js';
 import { ImportParser } from '../services/importParser.js';
@@ -556,7 +557,7 @@ export function importRouter(db: Database): Router {
           // Apply file attachments from metadata (e.g., from Cursor read_file)
           if (createdBranch && msgMetadata?.attachments && msgMetadata.attachments.length > 0) {
             const attachments = msgMetadata.attachments.map((att: any) => ({
-              id: require('uuid').v4(),
+              id: uuidv4(),
               fileName: att.fileName,
               fileSize: att.content?.length || 0,
               fileType: att.mimeType || 'text/plain',
