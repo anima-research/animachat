@@ -109,6 +109,83 @@ const CreatePostHocOperationSchema = z.object({
 export function conversationRouter(db: Database): Router {
   const router = Router();
 
+  // Get unread counts for all user's conversations (owned AND shared)
+  //
+  // STUBBED: Returns empty object until proper implementation.
+  // See .workshop/proposal-realtime-notifications.md for architecture discussion.
+  // See .workshop/unread-frontend-contract.md for frontend expectations.
+  //
+  // Issues with current implementation:
+  // 1. Migration problem: existing users see all historical messages as "unread"
+  // 2. No real-time updates: sidebar doesn't refresh until user clicks conversation
+  //
+  // Frontend UI components are ready and will light up when this returns real data.
+  router.get('/unread-counts', async (req: AuthRequest, res) => {
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    // Stub: return empty counts until proper implementation
+    res.json({});
+  });
+
+  // Backfill totalBranchCount for existing conversations (run once after migration)
+  // This loads each conversation's events and saves the computed count to state file
+  router.post('/backfill-branch-counts', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Get owned conversations
+      const ownedConversations = await db.getUserConversationsWithSummary(req.userId);
+
+      // Get shared conversations
+      const shares = db.getConversationsSharedWithUser(req.userId);
+
+      const results: Record<string, number> = {};
+
+      // Process owned conversations
+      for (const conv of ownedConversations) {
+        // Load conversation events (computes totalBranchCount via event replay)
+        await db.ensureConversationLoaded(conv.id, conv.userId);
+
+        // Get the computed count from the in-memory conversation
+        const updatedConv = await db.getConversation(conv.id, conv.userId);
+        const count = updatedConv?.totalBranchCount ?? 0;
+
+        // Save to state file for future fast access
+        if (count > 0) {
+          await db.backfillBranchCount(conv.id, count);
+        }
+
+        results[conv.id] = count;
+      }
+
+      // Process shared conversations (use owner's ID from share)
+      for (const share of shares) {
+        // Skip if already processed (user might own and be shared the same conversation somehow)
+        if (results[share.conversationId] !== undefined) continue;
+
+        // Load conversation using the owner's ID (sharedByUserId)
+        await db.ensureConversationLoaded(share.conversationId, share.sharedByUserId);
+
+        const conv = await db.getConversation(share.conversationId, share.sharedByUserId);
+        const count = conv?.totalBranchCount ?? 0;
+
+        if (count > 0) {
+          await db.backfillBranchCount(share.conversationId, count);
+        }
+
+        results[share.conversationId] = count;
+      }
+
+      res.json({ message: 'Backfill complete', counts: results });
+    } catch (error) {
+      console.error('Backfill branch counts error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Get all conversations for user
   router.get('/', async (req: AuthRequest, res) => {
     try {
@@ -533,6 +610,31 @@ export function conversationRouter(db: Database): Router {
       res.json(state);
     } catch (error) {
       console.error('Update UI state error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Mark branches as read for the current user
+  router.post('/:id/mark-read', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const { branchIds } = req.body;
+      if (!Array.isArray(branchIds)) {
+        return res.status(400).json({ error: 'branchIds must be an array' });
+      }
+
+      await db.markBranchesAsRead(req.params.id, req.userId, branchIds);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Mark branches read error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

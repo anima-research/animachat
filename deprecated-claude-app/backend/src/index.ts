@@ -35,7 +35,7 @@ import { Database } from './database/index.js';
 import { initBlobStore } from './database/blob-store.js';
 import { authenticateToken } from './middleware/auth.js';
 import { OpenRouterService } from './services/openrouter.js';
-import { updateOpenRouterModelsCache } from './services/pricing-cache.js';
+import { updateOpenRouterModelsCache, setOpenRouterRefreshCallback } from './services/pricing-cache.js';
 
 dotenv.config();
 
@@ -203,16 +203,23 @@ async function startServer() {
     modelLoader.setDatabase(db);
     console.log('ModelLoader initialized with database');
     
-    // Pre-populate OpenRouter pricing cache
+    // Pre-populate OpenRouter pricing cache and register lazy refresh callback
+    const openRouterService = new OpenRouterService(db);
+    
+    // Register refresh callback for lazy loading if cache is empty
+    setOpenRouterRefreshCallback(async () => {
+      const models = await openRouterService.listModels();
+      updateOpenRouterModelsCache(models);
+    });
+    
     try {
       console.log('Pre-populating OpenRouter pricing cache...');
-      const openRouterService = new OpenRouterService(db);
       const openRouterModels = await openRouterService.listModels();
       updateOpenRouterModelsCache(openRouterModels);
       console.log(`✅ OpenRouter pricing cache ready with ${openRouterModels.length} models`);
     } catch (error: any) {
       console.error('⚠️ PRICING WARNING: Failed to pre-populate OpenRouter pricing cache.');
-      console.error('   OpenRouter models will show $0 cost until the cache is populated.');
+      console.error('   OpenRouter models will be fetched on-demand when needed.');
       console.error('   This usually means OPENROUTER_API_KEY is not set or invalid.');
       console.error('   Error:', error?.message || error);
     }

@@ -215,7 +215,7 @@ export class OpenRouterService {
           effectiveMaxTokens = minMaxTokens;
         }
       }
-      
+
       requestBody = {
         model: modelId,
         messages: openRouterMessages,

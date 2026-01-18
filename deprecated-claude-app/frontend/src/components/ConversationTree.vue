@@ -79,6 +79,7 @@ const props = defineProps<{
   currentBranchId?: string;
   selectedParentMessageId?: string;
   selectedParentBranchId?: string;
+  readBranchIds?: Set<string>; // Branches user has seen
 }>();
 
 const emit = defineEmits<{
@@ -436,11 +437,16 @@ function fillColor(d: d3.HierarchyPointNode<TreeNode>) {
 
 function hasBlueOutline(d: d3.HierarchyPointNode<TreeNode>) {
   return (props.selectedParentMessageId && props.selectedParentBranchId &&
-         d.data.messageId === props.selectedParentMessageId && 
+         d.data.messageId === props.selectedParentMessageId &&
          d.data.branchId === props.selectedParentBranchId) ||
-        (!props.selectedParentMessageId && 
-         d.data.messageId === props.currentMessageId && 
+        (!props.selectedParentMessageId &&
+         d.data.messageId === props.currentMessageId &&
          d.data.branchId === props.currentBranchId);
+}
+
+// STUBBED: Unread check disabled pending architecture review
+function isUnread(d: d3.HierarchyPointNode<TreeNode>): boolean {
+  return false;
 }
 
 
@@ -736,7 +742,7 @@ function renderTree() {
       if (nodesWithCollapsedDescendants.value.has(nodeId)) {
         const plusSize = baseNodeRadius * 0.5;
         const plusOffset = baseNodeRadius * 0.9;
-        
+
         // Draw a small circle background
         g.append('circle')
           .attr('cx', plusOffset)
@@ -746,12 +752,12 @@ function renderTree() {
           .style('stroke', '#888')
           .style('stroke-width', 1)
           .style('pointer-events', 'none');
-        
+
         // Draw plus sign
         g.append('path')
-          .attr('d', `M ${plusOffset - plusSize * 0.5},${plusOffset} 
-                      L ${plusOffset + plusSize * 0.5},${plusOffset} 
-                      M ${plusOffset},${plusOffset - plusSize * 0.5} 
+          .attr('d', `M ${plusOffset - plusSize * 0.5},${plusOffset}
+                      L ${plusOffset + plusSize * 0.5},${plusOffset}
+                      M ${plusOffset},${plusOffset - plusSize * 0.5}
                       L ${plusOffset},${plusOffset + plusSize * 0.5}`)
           .style('stroke', '#888')
           .style('stroke-width', Math.max(1.5, plusSize * 0.3))
@@ -759,6 +765,22 @@ function renderTree() {
           .style('fill', 'none')
           .style('pointer-events', 'none');
       }
+    }
+
+    // Add unread indicator (notification dot) for unread branches
+    if (isUnread(d)) {
+      const dotSize = baseNodeRadius * 0.35;
+      const dotOffset = baseNodeRadius * 0.7;
+
+      // Draw an orange notification dot in the top-right
+      g.append('circle')
+        .attr('cx', dotOffset)
+        .attr('cy', -dotOffset)
+        .attr('r', dotSize)
+        .style('fill', '#ff9800') // Orange/amber color
+        .style('stroke', 'var(--v-theme-background)')
+        .style('stroke-width', 1.5)
+        .style('pointer-events', 'none');
     }
   });
 
@@ -947,6 +969,7 @@ watch([
   () => props.selectedParentMessageId,
   () => props.selectedParentBranchId,
   () => props.participants,
+  () => props.readBranchIds,
   bookmarks,
   compactMode,
   alignActivePath,

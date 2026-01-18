@@ -35,9 +35,24 @@ interface StoreState {
   } | null;
   // Detached branch mode - allows users to navigate branches independently
   isDetachedFromMainBranch: boolean;
-  localBranchSelections: Map<string, string>; // messageId -> branchId
+  // Snapshot of shared activeBranchIds to restore when leaving detached mode
+  sharedActiveBranchIds: Map<string, string>;
   // WebSocket connection state
   wsConnectionState: 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'failed';
+  // Branch activity notifications (ephemeral - not persisted)
+  hiddenBranchActivities: Map<string, {
+    messageId: string;
+    branchId: string;
+    content: string;
+    participantId: string | null;
+    role: 'user' | 'assistant' | 'system';
+    model: string | null;
+    createdAt: Date;
+  }>;
+  // Read tracking for unread notifications
+  readBranchIds: Set<string>;  // Branches user has seen in current conversation
+  unreadCounts: Map<string, number>;  // conversationId -> unread count for sidebar badges
+  readPersistTimeout: ReturnType<typeof setTimeout> | null;  // Debounce timer for persisting reads
 }
 
 export interface Store {
@@ -77,10 +92,12 @@ export interface Store {
   
   // Detached branch mode
   setDetachedMode(detached: boolean): void;
-  setLocalBranchSelection(messageId: string, branchId: string): void;
-  getEffectiveBranchId(message: Message): string; // Returns local selection if detached, else activeBranchId
-  clearLocalBranchSelections(): void;
-  
+
+  // Read tracking
+  markBranchesAsRead(branchIds: string[]): void;
+  getUnreadCount(): number;  // Unread in current conversation
+  fetchUnreadCounts(): Promise<void>;  // Load counts for all conversations
+
   loadModels(): Promise<void>;
   loadOpenRouterModels(): Promise<void>;
   loadCustomModels(): Promise<void>;
@@ -119,12 +136,10 @@ let messagesVersion = 0;
 let visibleMessagesCache: {
   sourceVersion: number;
   sourceLength: number;
-  detachedBranchSelections: string; // JSON stringified for comparison
   result: Message[];
 } = {
   sourceVersion: 0,
   sourceLength: 0,
-  detachedBranchSelections: '{}',
   result: []
 };
 
@@ -223,9 +238,15 @@ export function createStore(): {
     systemConfig: null,
     // Detached branch mode
     isDetachedFromMainBranch: false,
-    localBranchSelections: new Map(),
+    sharedActiveBranchIds: new Map(),
     // WebSocket connection state
-    wsConnectionState: 'disconnected'
+    wsConnectionState: 'disconnected',
+    // Branch activity notifications
+    hiddenBranchActivities: new Map(),
+    // Read tracking
+    readBranchIds: new Set(),
+    unreadCounts: new Map(),
+    readPersistTimeout: null
   });
 
   const store: Store = {
@@ -349,6 +370,8 @@ export function createStore(): {
       try {
         const response = await api.get('/conversations');
         state.conversations = response.data;
+        // Fetch unread counts in parallel (don't block)
+        this.fetchUnreadCounts();
       } catch (error) {
         console.error('Failed to load conversations:', error);
         throw error;
@@ -359,7 +382,27 @@ export function createStore(): {
       const maxRetries = 3;
       const retryDelay = 1000;
       const startTime = Date.now();
-      
+
+      // Clear branch notifications when switching conversations
+      state.hiddenBranchActivities.clear();
+      // Note: Don't clear readBranchIds here - we'll set it atomically after loading
+      // to avoid a flash of "all unread" while the new read state loads
+
+      // Flush any pending read state persist and WAIT for it (don't just fire-and-forget)
+      // This ensures the backend has the updated read state before we load the new conversation
+      if (state.readPersistTimeout && state.currentConversation) {
+        clearTimeout(state.readPersistTimeout);
+        state.readPersistTimeout = null;
+        const currentId = state.currentConversation.id;
+        try {
+          await api.post(`/conversations/${currentId}/mark-read`, {
+            branchIds: Array.from(state.readBranchIds)
+          });
+        } catch (err) {
+          console.warn('Failed to persist read state on switch:', err);
+        }
+      }
+
       try {
         console.log(`[loadConversation] Loading ${id}... (attempt ${retryCount + 1}/${maxRetries})`);
         console.log(`[loadConversation] API base URL: ${api.defaults.baseURL}`);
@@ -370,10 +413,55 @@ export function createStore(): {
         console.log(`[loadConversation] Response status: ${response.status}, has data: ${!!response.data}`);
         
         state.currentConversation = response.data;
-        console.log(`[loadConversation] Set currentConversation, now loading messages...`);
-        
-        await this.loadMessages(id);
-        
+        console.log(`[loadConversation] Set currentConversation, now loading messages and read state...`);
+
+        // Load messages and read state in parallel to avoid flash of unread
+        const [, uiStateResult] = await Promise.all([
+          this.loadMessages(id),
+          api.get(`/conversations/${id}/ui-state`).catch(err => {
+            console.warn(`[loadConversation] Failed to load read state:`, err);
+            return { data: { readBranchIds: [] } };
+          })
+        ]);
+
+        // Set read state (do this before any tree rendering can happen)
+        const readBranchIds = uiStateResult.data?.readBranchIds || [];
+        state.readBranchIds = new Set(readBranchIds);
+        console.log(`[loadConversation] Loaded ${readBranchIds.length} read branch IDs`);
+
+        // Capture shared state BEFORE applying detached branches
+        // This snapshot is used to restore when leaving detached mode
+        state.sharedActiveBranchIds = new Map();
+        for (const message of state.allMessages) {
+          state.sharedActiveBranchIds.set(message.id, message.activeBranchId);
+        }
+
+        // Apply detached mode state BEFORE computing visible messages
+        // In detached mode, apply user's saved branch selections directly to activeBranchId
+        const isDetached = uiStateResult.data?.isDetached || false;
+        const detachedBranches = uiStateResult.data?.detachedBranches || {};
+        if (isDetached) {
+          state.isDetachedFromMainBranch = true;
+          for (const [messageId, branchId] of Object.entries(detachedBranches)) {
+            const message = state.allMessages.find(m => m.id === messageId);
+            if (message) {
+              message.activeBranchId = branchId as string;
+            }
+          }
+          // Invalidate cache so getVisibleMessages() uses the updated activeBranchIds
+          state.messagesVersion++;
+          invalidateSortCache();
+        }
+
+        // Mark current visible path as read
+        const visibleBranchIds = this.getVisibleMessages().map(m => m.activeBranchId);
+        this.markBranchesAsRead(visibleBranchIds);
+
+        // STUBBED: Unread count calculation disabled pending architecture review
+        // See .workshop/proposal-realtime-notifications.md
+        // The local calculation has migration issues (everything shows as unread for existing users)
+        // Will be re-enabled when backend provides proper unread tracking
+
         const totalTime = Date.now() - startTime;
         console.log(`[loadConversation] ✓ Successfully loaded conversation ${id} in ${totalTime}ms`);
       } catch (error: any) {
@@ -699,53 +787,43 @@ export function createStore(): {
     },
     
         switchBranch(messageId: string, branchId: string) {
-      console.log('=== SWITCH BRANCH CALLED ===');
-      console.log('Params:', { messageId, branchId });
-      console.log('Detached mode:', state.isDetachedFromMainBranch);
-      
       const message = state.allMessages.find(m => m.id === messageId);
       if (!message) {
         console.error('switchBranch: Message not found:', messageId);
         return;
       }
-      
-      // Get effective current branch
-      const currentBranchId = this.getEffectiveBranchId(message);
-      
+
       // Skip if already on this branch
-      if (currentBranchId === branchId) {
-        console.log('Already on branch:', branchId);
+      if (message.activeBranchId === branchId) {
         return;
       }
-      
-      console.log('=== SWITCHING BRANCH ===');
-      console.log('Message:', messageId, 'from branch:', currentBranchId, 'to branch:', branchId);
-      
-      if (state.isDetachedFromMainBranch) {
-        // Detached mode: only update local selection, don't affect main branch
-        this.setLocalBranchSelection(messageId, branchId);
-        console.log('Branch switch saved locally (detached mode)');
-      } else {
-        // Attached mode: update local state AND persist to backend
-        message.activeBranchId = branchId;
-        
-        if (state.currentConversation) {
+
+      // Update activeBranchId locally
+      message.activeBranchId = branchId;
+
+      // Persist to appropriate endpoint based on mode
+      if (state.currentConversation) {
+        if (state.isDetachedFromMainBranch) {
+          api.patch(`/conversations/${state.currentConversation.id}/ui-state`, {
+            detachedBranch: { messageId, branchId }
+          }).catch(error => {
+            console.error('Failed to persist detached branch:', error);
+          });
+        } else {
           api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
             messageId,
             branchId
-          }).then(() => {
-            console.log('Branch switch persisted to backend');
           }).catch(error => {
             console.error('Failed to persist branch switch:', error);
           });
         }
       }
-      
+
       // Sort messages by tree order to handle out-of-order children
       const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
       const sortedMessageIndex = sortedMessages.findIndex(m => m.id === messageId);
-      
-      // Build path up to and including the switched message (in tree order)
+
+      // Build path up to and including the switched message
       const branchPath: string[] = [];
       for (let i = 0; i <= sortedMessageIndex; i++) {
         const msg = sortedMessages[i];
@@ -754,31 +832,36 @@ export function createStore(): {
           branchPath.push(activeBranch.id);
         }
       }
-      
-      console.log('Branch path after switch:', [...branchPath]);
-      
-      // Update subsequent messages (in tree order) to follow the correct path
+
+      // Update subsequent messages to follow the correct path
       for (let i = sortedMessageIndex + 1; i < sortedMessages.length; i++) {
         const msg = sortedMessages[i];
-        
+
         // Find which branch of this message continues from our path
         for (const branch of msg.branches) {
           if (branch.parentBranchId && branchPath.includes(branch.parentBranchId)) {
             if (msg.activeBranchId !== branch.id) {
-              console.log(`Updating message activeBranchId from ${msg.activeBranchId} to ${branch.id}`);
               msg.activeBranchId = branch.id;
-              
-              // Also persist this change to backend (non-blocking)
+
+              // Persist cascade to appropriate endpoint
               if (state.currentConversation) {
-                api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
-                  messageId: msg.id,
-                  branchId: branch.id
-                }).catch(error => {
-                  console.error('Failed to persist downstream branch switch:', error);
-                });
+                if (state.isDetachedFromMainBranch) {
+                  api.patch(`/conversations/${state.currentConversation.id}/ui-state`, {
+                    detachedBranch: { messageId: msg.id, branchId: branch.id }
+                  }).catch(error => {
+                    console.error('Failed to persist downstream detached branch:', error);
+                  });
+                } else {
+                  api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
+                    messageId: msg.id,
+                    branchId: branch.id
+                  }).catch(error => {
+                    console.error('Failed to persist downstream branch switch:', error);
+                  });
+                }
               }
             }
-            
+
             // Add this branch to the path for checking further messages
             const parentIndex = branchPath.indexOf(branch.parentBranchId);
             branchPath.length = parentIndex + 1;
@@ -787,95 +870,128 @@ export function createStore(): {
           }
         }
       }
-      
+
       // Invalidate cache and force recompute visible messages after branch switch
       state.messagesVersion++;
       invalidateSortCache();
       const newVisible = this.getVisibleMessages();
-      console.log('After switch, visible messages:', newVisible.length);
+
+      // Clear notifications for now-visible branches and mark them as read
+      const newVisibleBranchIds = Array.from(
+        new Set(newVisible.map(m => m.activeBranchId))
+      );
+      for (const branchId of state.hiddenBranchActivities.keys()) {
+        if (newVisibleBranchIds.includes(branchId)) {
+          state.hiddenBranchActivities.delete(branchId);
+        }
+      }
+      this.markBranchesAsRead(newVisibleBranchIds);
     },
-    
+
     // Batch switch multiple branches at once - much faster for tree navigation
     // Does all the expensive work once instead of per-branch
     switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>) {
       if (switches.length === 0) return;
-      
-      console.log(`=== BATCH SWITCH ${switches.length} BRANCHES ===`);
-      
-      // Apply all local state changes first (no reactivity triggers yet)
-      const changedMessages = new Set<string>();
+
+      // Apply all local state changes first
+      const changedMessages = new Map<string, string>(); // messageId -> branchId
       for (const { messageId, branchId } of switches) {
         const message = state.allMessages.find(m => m.id === messageId);
         if (!message) continue;
-        
+
         if (message.activeBranchId !== branchId) {
           message.activeBranchId = branchId;
-          changedMessages.add(messageId);
+          changedMessages.set(messageId, branchId);
         }
       }
-      
+
       if (changedMessages.size === 0) {
-        console.log('No branches needed switching');
         return;
       }
-      
-      console.log(`Changed ${changedMessages.size} message branches`);
-      
-      // Now do the expensive tree order fixup ONCE
+
+      // Build the branch path by following parentBranchId from the deepest switch
       const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
-      const lastSwitchIndex = Math.max(
-        ...switches.map(s => sortedMessages.findIndex(m => m.id === s.messageId))
-      );
-      
-      // Build path up to the last switched message
-      const branchPath: string[] = [];
-      for (let i = 0; i <= lastSwitchIndex; i++) {
-        const msg = sortedMessages[i];
-        const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
-        if (activeBranch) {
-          branchPath.push(activeBranch.id);
+
+      // Find the deepest switch (furthest from root in the tree)
+      let deepestSwitchBranchId: string | null = null;
+      let deepestIndex = -1;
+
+      for (const { messageId, branchId } of switches) {
+        const idx = sortedMessages.findIndex(m => m.id === messageId);
+        if (idx > deepestIndex) {
+          deepestIndex = idx;
+          deepestSwitchBranchId = branchId;
         }
       }
-      
-      // Update subsequent messages to follow the correct path
-      for (let i = lastSwitchIndex + 1; i < sortedMessages.length; i++) {
-        const msg = sortedMessages[i];
+
+      if (!deepestSwitchBranchId) {
+        console.warn('No valid switch found');
+        return;
+      }
+
+      // Build the branch path by tracing from deepest switch back to root
+      const branchPath: string[] = [];
+      let currentBranchId: string | null = deepestSwitchBranchId;
+
+      while (currentBranchId && currentBranchId !== 'root') {
+        branchPath.unshift(currentBranchId);
+        const msg = state.allMessages.find(m => m.branches.some(b => b.id === currentBranchId));
+        if (!msg) break;
+        const branch = msg.branches.find(b => b.id === currentBranchId);
+        currentBranchId = branch?.parentBranchId || null;
+      }
+
+      // Update all messages to follow this path
+      for (const msg of sortedMessages) {
         for (const branch of msg.branches) {
-          if (branch.parentBranchId && branchPath.includes(branch.parentBranchId)) {
-            if (msg.activeBranchId !== branch.id) {
-              msg.activeBranchId = branch.id;
-              changedMessages.add(msg.id);
-            }
-            const parentIndex = branchPath.indexOf(branch.parentBranchId);
-            branchPath.length = parentIndex + 1;
-            branchPath.push(branch.id);
+          const parentInPath = branch.parentBranchId === 'root' || branchPath.includes(branch.parentBranchId!);
+          const branchInPath = branchPath.includes(branch.id);
+
+          if (parentInPath && branchInPath && msg.activeBranchId !== branch.id) {
+            msg.activeBranchId = branch.id;
+            changedMessages.set(msg.id, branch.id);
             break;
           }
         }
       }
-      
-      // Batch API calls - fire and forget
+
+      // Persist to appropriate endpoint based on mode
       if (state.currentConversation) {
-        for (const msgId of changedMessages) {
-          const msg = state.allMessages.find(m => m.id === msgId);
-          if (msg) {
+        for (const [msgId, branchId] of changedMessages) {
+          if (state.isDetachedFromMainBranch) {
+            api.patch(`/conversations/${state.currentConversation.id}/ui-state`, {
+              detachedBranch: { messageId: msgId, branchId }
+            }).catch(error => {
+              console.error('Failed to persist detached branch:', error);
+            });
+          } else {
             api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
               messageId: msgId,
-              branchId: msg.activeBranchId
+              branchId
             }).catch(error => {
-              console.error('Failed to persist batch branch switch:', error);
+              console.error('Failed to persist branch switch:', error);
             });
           }
         }
       }
-      
-      // Invalidate cache and recompute ONCE at the end
+
+      // Invalidate cache and recompute
       state.messagesVersion++;
       invalidateSortCache();
       const newVisible = this.getVisibleMessages();
-      console.log('After batch switch, visible messages:', newVisible.length);
+
+      // Clear notifications for now-visible branches and mark them as read
+      const newVisibleBranchIds = Array.from(
+        new Set(newVisible.map(m => m.activeBranchId))
+      );
+      for (const branchId of state.hiddenBranchActivities.keys()) {
+        if (newVisibleBranchIds.includes(branchId)) {
+          state.hiddenBranchActivities.delete(branchId);
+        }
+      }
+      this.markBranchesAsRead(newVisibleBranchIds);
     },
-    
+
     async deleteMessage(messageId: string, branchId: string) {
       if (!state.currentConversation || !state.wsService) return;
       
@@ -890,10 +1006,8 @@ export function createStore(): {
     // Helper method to get visible messages based on current branch selections
     getVisibleMessages(): Message[] {
       // Check cache first to avoid expensive recomputation
-      const localSelectionsKey = JSON.stringify(Array.from(state.localBranchSelections.entries()));
       if (visibleMessagesCache.sourceVersion === messagesVersion &&
-          visibleMessagesCache.sourceLength === state.allMessages.length &&
-          visibleMessagesCache.detachedBranchSelections === localSelectionsKey) {
+          visibleMessagesCache.sourceLength === state.allMessages.length) {
         return visibleMessagesCache.result;
       }
       
@@ -901,24 +1015,87 @@ export function createStore(): {
       // This handles cases where order numbers don't reflect tree structure
       const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
       
+      // For multi-root conversations (from looming/branching), find the canonical root
+      // Canonical root is the one whose subtree has the most recent activity
+      const rootMessages = sortedMessages.filter(msg => {
+        const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+        return activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root');
+      });
+      
+      let canonicalRootId: string | null = null;
+      if (rootMessages.length > 1) {
+        // Multiple roots - pick the one with most recent activity in its subtree
+        // Build parent->children map
+        const parentToChildren = new Map<string, Message[]>();
+        for (const msg of sortedMessages) {
+          for (const branch of msg.branches) {
+            const parentId = branch.parentBranchId || 'root';
+            if (!parentToChildren.has(parentId)) {
+              parentToChildren.set(parentId, []);
+            }
+            parentToChildren.get(parentId)!.push(msg);
+          }
+        }
+        
+        // Find latest timestamp in each root's subtree
+        let latestTime = 0;
+        for (const root of rootMessages) {
+          const rootTime = findLatestInSubtree(root, parentToChildren);
+          if (rootTime > latestTime) {
+            latestTime = rootTime;
+            canonicalRootId = root.id;
+          }
+        }
+        console.log(`[getVisibleMessages] Multiple roots (${rootMessages.length}), canonical root: ${canonicalRootId?.slice(0, 8)}`);
+      } else if (rootMessages.length === 1) {
+        canonicalRootId = rootMessages[0].id;
+      }
+      
+      // Helper function to find latest timestamp in a subtree
+      function findLatestInSubtree(root: Message, parentToChildren: Map<string, Message[]>): number {
+        let latest = 0;
+        const visited = new Set<string>();
+        
+        function visit(msg: Message) {
+          if (visited.has(msg.id)) return;
+          visited.add(msg.id);
+          
+          for (const branch of msg.branches) {
+            if (branch.createdAt) {
+              const time = new Date(branch.createdAt).getTime();
+              if (time > latest) latest = time;
+            }
+            // Visit children of this branch
+            const children = parentToChildren.get(branch.id) || [];
+            for (const child of children) visit(child);
+          }
+        }
+        
+        visit(root);
+        return latest;
+      }
+      
       const visibleMessages: Message[] = [];
       const branchPath: string[] = []; // Track the current conversation path (branch IDs)
       
       for (let i = 0; i < sortedMessages.length; i++) {
         const message = sortedMessages[i];
-        // Use effective branch ID (local selection if detached, else server's activeBranchId)
-        const effectiveBranchId = this.getEffectiveBranchId(message);
-        const activeBranch = message.branches.find(b => b.id === effectiveBranchId);
+        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
         
         // console.log(`Message ${i}:`, message.id, 'activeBranchId:', message.activeBranchId, 
         //             'branches:', message.branches.length, 
         //             'activeBranch parentBranchId:', activeBranch?.parentBranchId);
         
         // Case 1: Active branch exists and is a root message
+        // Only accept the canonical root - skip others (handles multi-root conversations from looming)
         if (activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root')) {
-          visibleMessages.push(message);
-          branchPath.push(activeBranch.id);
-          // console.log('Added root message:', message.id);
+          // Only accept if this is the canonical root (or if no canonical was determined)
+          if (branchPath.length === 0 && (!canonicalRootId || message.id === canonicalRootId)) {
+            visibleMessages.push(message);
+            branchPath.push(activeBranch.id);
+            // console.log('Added canonical root message:', message.id);
+          }
+          // Skip other roots - they're from different conversation branches
           continue;
         }
 
@@ -938,101 +1115,107 @@ export function createStore(): {
           continue;
         }
 
-        // Case 3: Active branch is missing (deleted) or doesn't continue from our path
-        // Look for ANY branch that continues from our path
-        const validBranches = message.branches.filter(branch => 
-          branch.parentBranchId && branchPath.includes(branch.parentBranchId)
-        );
-        
-        if (validBranches.length === 0) {
-          // No branch continues from current path - skip this message
-          if (!activeBranch) {
-            console.log('No active branch found for message:', message.id, '(activeBranchId points to deleted branch)');
-          }
-          continue;
+        // Case 3: Active branch doesn't exist or doesn't connect to our path
+        // Be strict: skip this message. Don't try to recover via other branches,
+        // as that can accidentally include orphaned/deleted branches from other roots.
+        // (This mirrors the import preview logic which is strict about following activeBranchId only)
+        if (!activeBranch) {
+          console.log('Skipping message with deleted active branch:', message.id);
         }
-        
-        // Pick the best branch:
-        // 1. Prefer the effective branchId if it's valid and in validBranches
-        // 2. Otherwise pick the chronologically newest (by createdAt)
-        let selectedBranch = validBranches.find(b => b.id === effectiveBranchId);
-        
-        if (!selectedBranch) {
-          // Sort by createdAt descending (newest first) and pick the first
-          selectedBranch = [...validBranches].sort((a, b) => {
-            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return timeB - timeA; // Newest first
-          })[0];
-          
-          if (!activeBranch) {
-            console.log('Recovered message with deleted active branch:', message.id, 
-                        'using branch:', selectedBranch.id.slice(0, 8));
-          }
-        }
-        
-        // Create a deep copy with the selected branch as active
-              const messageCopy = { 
-                ...message, 
-          activeBranchId: selectedBranch.id,
-          branches: [...message.branches]
-              };
-              visibleMessages.push(messageCopy);
-              
-        const parentIndex = branchPath.indexOf(selectedBranch.parentBranchId!);
-              branchPath.length = parentIndex + 1;
-        branchPath.push(selectedBranch.id);
+        // Message is from a different conversation path - skip it
       }
       
       // Update cache before returning
       visibleMessagesCache = {
         sourceVersion: messagesVersion,
         sourceLength: state.allMessages.length,
-        detachedBranchSelections: localSelectionsKey,
         result: visibleMessages
       };
       
       console.log('[getVisibleMessages] Cache miss - computed', visibleMessages.length, 'visible from', state.allMessages.length, 'total');
       return visibleMessages;
     },
-    
-    // Detached branch mode methods
-    setDetachedMode(detached: boolean) {
-      state.isDetachedFromMainBranch = detached;
-      if (!detached) {
-        // When re-attaching, clear local selections
-        state.localBranchSelections.clear();
+
+    // Read tracking methods
+    markBranchesAsRead(branchIds: string[]) {
+      if (branchIds.length === 0) return;
+
+      // Check if any are new
+      let changed = false;
+      for (const id of branchIds) {
+        if (!state.readBranchIds.has(id)) {
+          changed = true;
+          break;
+        }
       }
-      // Trigger reactivity
+
+      if (!changed || !state.currentConversation) return;
+
+      // Create a new Set to trigger Vue reactivity (mutating Set doesn't trigger watchers)
+      const newSet = new Set(state.readBranchIds);
+      for (const id of branchIds) {
+        newSet.add(id);
+      }
+      state.readBranchIds = newSet;
+
+      // STUBBED: Unread count update disabled pending architecture review
+      // See .workshop/proposal-realtime-notifications.md
+
+      // Debounced persist to backend (don't call on every switch)
+      if (state.readPersistTimeout) {
+        clearTimeout(state.readPersistTimeout);
+      }
+      state.readPersistTimeout = setTimeout(async () => {
+        try {
+          await api.post(`/conversations/${conversationId}/mark-read`, {
+            branchIds: Array.from(state.readBranchIds)
+          });
+        } catch (err) {
+          console.warn('Failed to persist read state:', err);
+        }
+        state.readPersistTimeout = null;
+      }, 2000); // 2 second debounce
+    },
+
+    // STUBBED: Unread count disabled pending architecture review
+    getUnreadCount(): number {
+      return 0;
+    },
+
+    async fetchUnreadCounts() {
+      try {
+        const response = await api.get('/conversations/unread-counts');
+        state.unreadCounts = new Map(Object.entries(response.data));
+        console.log(`[fetchUnreadCounts] Loaded counts for ${state.unreadCounts.size} conversations`);
+      } catch (err) {
+        console.warn('Failed to fetch unread counts:', err);
+      }
+    },
+
+    // Detached branch mode
+    setDetachedMode(detached: boolean) {
+      if (detached && !state.isDetachedFromMainBranch) {
+        // Entering detached mode: capture shared state snapshot
+        state.sharedActiveBranchIds = new Map();
+        for (const message of state.allMessages) {
+          state.sharedActiveBranchIds.set(message.id, message.activeBranchId);
+        }
+        console.log('[Store] Captured shared state before detaching:', state.sharedActiveBranchIds.size, 'branches');
+      } else if (!detached && state.isDetachedFromMainBranch) {
+        // Leaving detached mode: restore shared state
+        for (const [messageId, branchId] of state.sharedActiveBranchIds) {
+          const message = state.allMessages.find(m => m.id === messageId);
+          if (message && message.activeBranchId !== branchId) {
+            message.activeBranchId = branchId;
+          }
+        }
+        console.log('[Store] Restored shared state after re-attaching:', state.sharedActiveBranchIds.size, 'branches');
+      }
+
+      state.isDetachedFromMainBranch = detached;
       state.messagesVersion++;
       invalidateSortCache();
       console.log('[Store] Detached mode:', detached);
-    },
-    
-    setLocalBranchSelection(messageId: string, branchId: string) {
-      state.localBranchSelections.set(messageId, branchId);
-      // Trigger reactivity
-      state.messagesVersion++;
-      invalidateSortCache();
-      console.log('[Store] Local branch selection:', messageId.slice(0, 8), '->', branchId.slice(0, 8));
-    },
-    
-    getEffectiveBranchId(message: Message): string {
-      // If detached, use local selection if available
-      if (state.isDetachedFromMainBranch) {
-        const localSelection = state.localBranchSelections.get(message.id);
-        if (localSelection) {
-          return localSelection;
-        }
-      }
-      // Fall back to server's activeBranchId
-      return message.activeBranchId;
-    },
-    
-    clearLocalBranchSelections() {
-      state.localBranchSelections.clear();
-      state.messagesVersion++;
-      invalidateSortCache();
     },
     
     // Model actions
@@ -1198,8 +1381,40 @@ export function createStore(): {
         }
         state.messagesVersion++;
         invalidateSortCache();
+
+        // Check if this message is hidden from current view (for branch notifications)
+        const newBranch = data.message.branches[data.message.branches.length - 1];
+        if (newBranch && newBranch.role !== 'system') {
+          // Get current visible branch path
+          const visibleMessages = store.getVisibleMessages();
+          const visibleBranchIds = new Set<string>();
+          for (const msg of visibleMessages) {
+            visibleBranchIds.add(msg.activeBranchId);
+          }
+
+          // Check if the new branch's parent is NOT in our visible path
+          const parentBranchId = newBranch.parentBranchId;
+          const isHidden = parentBranchId &&
+                          parentBranchId !== 'root' &&
+                          !visibleBranchIds.has(parentBranchId);
+
+          if (isHidden) {
+            state.hiddenBranchActivities.set(newBranch.id, {
+              messageId: data.message.id,
+              branchId: newBranch.id,
+              content: (newBranch.content || '').slice(0, 100),
+              participantId: newBranch.participantId || null,
+              role: newBranch.role,
+              model: newBranch.model || null,
+              createdAt: new Date(newBranch.createdAt || Date.now())
+            });
+          } else {
+            // Branch is visible (user is watching it stream) - mark as read immediately
+            store.markBranchesAsRead([newBranch.id]);
+          }
+        }
       });
-      
+
       state.wsService.on('stream', (data: any) => {
         // console.log('Store handling stream:', data);
         const message = state.allMessages.find(m => m.id === data.messageId);
@@ -1213,6 +1428,12 @@ export function createStore(): {
               // Force Vue reactivity for contentBlocks updates (especially during thinking)
               // Without this, empty content chunks with only contentBlocks won't trigger re-renders
               state.messagesVersion++;
+            }
+
+            // Update notification preview if this is a hidden branch
+            const notification = state.hiddenBranchActivities.get(data.branchId);
+            if (notification) {
+              notification.content = (branch.content || '').slice(0, 100);
             }
           }
         }
@@ -1231,12 +1452,50 @@ export function createStore(): {
         // The server handles preserveActiveBranch logic for parallel generation
         const index = state.allMessages.findIndex(m => m.id === data.message.id);
         if (index !== -1) {
+          // Check for new branches before updating (for notifications)
+          const oldMessage = state.allMessages[index];
+          const oldBranchIds = new Set(oldMessage.branches.map(b => b.id));
+          const newBranches = data.message.branches.filter((b: any) => !oldBranchIds.has(b.id));
+
           state.allMessages[index] = data.message;
           state.messagesVersion++;
           invalidateSortCache();
+
+          // Check if any new branches are hidden from current view (for notifications)
+          for (const newBranch of newBranches) {
+            if (newBranch.role === 'system') continue;
+
+            // Get current visible branch path
+            const visibleMessages = store.getVisibleMessages();
+            const visibleBranchIds = new Set<string>();
+            for (const msg of visibleMessages) {
+              visibleBranchIds.add(msg.activeBranchId);
+            }
+
+            // Check if the new branch's parent is NOT in our visible path
+            const parentBranchId = newBranch.parentBranchId;
+            const isHidden = parentBranchId &&
+                            parentBranchId !== 'root' &&
+                            !visibleBranchIds.has(parentBranchId);
+
+            if (isHidden) {
+              state.hiddenBranchActivities.set(newBranch.id, {
+                messageId: data.message.id,
+                branchId: newBranch.id,
+                content: (newBranch.content || '').slice(0, 100),
+                participantId: newBranch.participantId || null,
+                role: newBranch.role,
+                model: newBranch.model || null,
+                createdAt: new Date(newBranch.createdAt || Date.now())
+              });
+            } else {
+              // Branch is visible (user is watching it) - mark as read immediately
+              store.markBranchesAsRead([newBranch.id]);
+            }
+          }
         }
       });
-      
+
       state.wsService.on('message_deleted', (data: any) => {
         // console.log('Store handling message_deleted:', data);
         const { messageId, branchId, deletedMessages } = data;
