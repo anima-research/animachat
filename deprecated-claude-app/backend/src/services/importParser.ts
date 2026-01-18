@@ -709,13 +709,17 @@ export class ImportParser {
       if (!currentTurn) return;
       
       // Reconstruct what the model saw/produced
-      // Since Arc doesn't support tool use yet, we omit tool markers
+      // Since Arc doesn't support tool use yet, we omit tool calls
       // File reads become attachments (handled separately)
+      // 
+      // NOTE: Extended thinking can't be properly reconstructed without contentBlocks support
+      // in the import system. For now, we include it as text so it's visible and provides
+      // context, but it won't function as "real" extended thinking when sent to Anthropic.
       let finalContent = '';
       
-      // 1. Thinking (model's extended thinking - part of its output)
+      // 1. Thinking - include as text (best we can do without contentBlocks support)
       if (currentTurn.thinking) {
-        finalContent += `<thinking>\n${currentTurn.thinking}\n</thinking>\n\n`;
+        finalContent += currentTurn.thinking + '\n\n';
       }
       
       // 2. Text response (the model's actual text output)
