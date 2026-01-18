@@ -679,7 +679,7 @@ export class ImportParser {
   }
 
   private async parseCursorJson(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
-    // Cursor JSON export format:
+    // Cursor JSON export format - goal is to reconstruct the actual context the model saw
     // {
     //   "metadata": { "id", "name", "subtitle", "model": { "modelName", "maxMode" }, "created", "version" },
     //   "messages": [
@@ -695,13 +695,12 @@ export class ImportParser {
     const model = conversationMetadata.model?.modelName;
     
     // Group consecutive messages by role to merge assistant "bubbles" into single turns
-    // Cursor splits thinking, tool calls, and text into separate messages
+    // The model sees: thinking (if extended thinking enabled), tool_use blocks, tool_result blocks, then text
     let currentTurn: {
       role: 'user' | 'assistant';
-      content: string;
       thinking?: string;
-      thinkingDuration?: number;
-      toolCalls: Array<{ name: string; params: string; result: string; status: string }>;
+      toolCalls: Array<{ name: string; params: any; result: string }>;
+      textContent: string;
       attachments: Array<{ fileName: string; content: string; mimeType: string }>;
       timestamp?: Date;
     } | null = null;
@@ -709,27 +708,44 @@ export class ImportParser {
     const flushTurn = () => {
       if (!currentTurn) return;
       
-      // Build the message content
+      // Reconstruct what the model actually saw/produced
       let finalContent = '';
       
-      // Add thinking as a collapsible section if present
+      // 1. Thinking (this is the model's extended thinking output - it saw/produced this)
       if (currentTurn.thinking) {
-        finalContent += `<details>\n<summary>💭 Chain of Thought${currentTurn.thinkingDuration ? ` (${(currentTurn.thinkingDuration / 1000).toFixed(1)}s)` : ''}</summary>\n\n${currentTurn.thinking}\n</details>\n\n`;
+        finalContent += `<thinking>\n${currentTurn.thinking}\n</thinking>\n\n`;
       }
       
-      // Add main content
-      if (currentTurn.content) {
-        finalContent += currentTurn.content;
-      }
-      
-      // Add tool call summaries (the actual file contents go in attachments)
-      if (currentTurn.toolCalls.length > 0) {
-        for (const tc of currentTurn.toolCalls) {
-          if (tc.name !== 'read_file') {
-            // For non-read_file tools, show a summary
-            finalContent += `\n\n<details>\n<summary>🔧 Tool: ${tc.name}</summary>\n\n**Params:** \`${tc.params}\`\n\n**Result:** ${tc.result?.substring(0, 500)}${(tc.result?.length || 0) > 500 ? '...' : ''}\n</details>`;
+      // 2. Tool uses and results (the model produced tool_use, then saw tool_result)
+      for (const tc of currentTurn.toolCalls) {
+        // For read_file specifically, the result becomes an attachment
+        // but we still show the tool interaction in the text
+        if (tc.name === 'read_file') {
+          try {
+            const params = typeof tc.params === 'string' ? JSON.parse(tc.params) : tc.params;
+            const filePath = params.targetFile || params.relativeWorkspacePath || 'file';
+            finalContent += `[Reading file: ${filePath}]\n\n`;
+          } catch {
+            finalContent += `[Reading file]\n\n`;
           }
+        } else if (tc.name === 'write' || tc.name === 'edit_file' || tc.name === 'search_replace') {
+          // File write operations - show what was written
+          try {
+            const params = typeof tc.params === 'string' ? JSON.parse(tc.params) : tc.params;
+            const filePath = params.relativeWorkspacePath || params.targetFile || params.file_path || 'file';
+            finalContent += `[Writing to: ${filePath}]\n\n`;
+          } catch {
+            finalContent += `[File operation: ${tc.name}]\n\n`;
+          }
+        } else {
+          // Other tools - show name and brief summary
+          finalContent += `[Tool: ${tc.name}]\n\n`;
         }
+      }
+      
+      // 3. Text response (the model's actual text output)
+      if (currentTurn.textContent) {
+        finalContent += currentTurn.textContent;
       }
       
       if (finalContent.trim() || currentTurn.attachments.length > 0) {
@@ -741,7 +757,7 @@ export class ImportParser {
           participantName: currentTurn.role === 'user' ? 'User' : 'Cursor'
         };
         
-        // Add attachments if any (from read_file calls)
+        // Add file attachments (from read_file results - this is what the model saw)
         if (currentTurn.attachments.length > 0) {
           (parsedMessage as any).metadata = {
             ...(parsedMessage as any).metadata,
@@ -767,21 +783,19 @@ export class ImportParser {
       if (!currentTurn) {
         currentTurn = {
           role,
-          content: '',
+          textContent: '',
           toolCalls: [],
           attachments: [],
           timestamp: msg.created ? new Date(msg.created) : undefined
         };
       }
       
-      // Process thinking
+      // Process thinking (model's chain of thought - no duration, just the content)
       if (msg.thinking?.text) {
         if (currentTurn.thinking) {
-          currentTurn.thinking += '\n\n---\n\n' + msg.thinking.text;
-          currentTurn.thinkingDuration = (currentTurn.thinkingDuration || 0) + (msg.thinking.duration_ms || 0);
+          currentTurn.thinking += '\n\n' + msg.thinking.text;
         } else {
           currentTurn.thinking = msg.thinking.text;
-          currentTurn.thinkingDuration = msg.thinking.duration_ms;
         }
       }
       
@@ -791,22 +805,20 @@ export class ImportParser {
         currentTurn.toolCalls.push({
           name: tc.name,
           params: tc.params || '',
-          result: tc.result || '',
-          status: tc.status || 'completed'
+          result: tc.result || ''
         });
         
         // For read_file, extract the file content as an attachment
+        // This represents what the model actually saw in its context
         if (tc.name === 'read_file' && tc.result) {
           try {
             const resultData = JSON.parse(tc.result);
-            const paramsData = JSON.parse(tc.params || '{}');
+            const paramsData = typeof tc.params === 'string' ? JSON.parse(tc.params) : tc.params;
             const fileName = paramsData.targetFile || paramsData.relativeWorkspacePath || 'file.txt';
             const fileContent = resultData.contents || resultData.contentsAfterEdit || '';
             
             if (fileContent) {
-              // Extract just the filename from the path
               const shortFileName = fileName.split('/').pop() || fileName;
-              
               currentTurn.attachments.push({
                 fileName: shortFileName,
                 content: fileContent,
@@ -814,18 +826,17 @@ export class ImportParser {
               });
             }
           } catch (e) {
-            // If we can't parse the result, skip creating an attachment
             console.warn('Failed to parse read_file result:', e);
           }
         }
       }
       
-      // Process text content
+      // Process text content (model's text output)
       if (msg.text) {
-        if (currentTurn.content) {
-          currentTurn.content += '\n\n' + msg.text;
+        if (currentTurn.textContent) {
+          currentTurn.textContent += '\n\n' + msg.text;
         } else {
-          currentTurn.content = msg.text;
+          currentTurn.textContent = msg.text;
         }
       }
     }
