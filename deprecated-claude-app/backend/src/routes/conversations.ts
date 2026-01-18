@@ -1189,7 +1189,10 @@ export function conversationRouter(db: Database): Router {
             for (const parentMsg of messages) {
               const parentBranch = parentMsg.branches.find(b => b.id === branch.parentBranchId);
               if (parentBranch) {
-                parentMap.set(msg.id, { messageId: parentMsg.id, branchId: parentBranch.id });
+                // CRITICAL: Key by BRANCH ID, not message ID!
+                // A message can have multiple branches with different parents.
+                // If keyed by message ID, only the last branch's parent would be recorded.
+                parentMap.set(branch.id, { messageId: parentMsg.id, branchId: parentBranch.id });
                 break;
               }
             }
@@ -1218,7 +1221,8 @@ export function conversationRouter(db: Database): Router {
         if (!msg) break;
         historyPath.unshift({ message: msg, branchId: currentBranchId! });
         
-        const parent = parentMap.get(currentMsgId);
+        // Look up parent by BRANCH ID to follow the correct path through the tree
+        const parent = parentMap.get(currentBranchId!);
         if (parent) {
           currentMsgId = parent.messageId;
           currentBranchId = parent.branchId;

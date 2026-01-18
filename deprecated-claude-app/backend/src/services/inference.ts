@@ -273,9 +273,14 @@ export class InferenceService {
       }
     }
     
-    // Build post-facto stop sequences for prefill thinking mode
+    // Build post-facto stop sequences for ALL prefill/messages modes
+    // This is critical because:
+    // 1. Gemini only supports 5 stop sequences max
+    // 2. Native API stop sequences may not work reliably with all providers
+    // 3. We need a fallback to catch when models simulate other participants
     // Since this is applied in our code, not the API, we can check for ALL participants
-    const postFactoStopSequences = shouldTriggerPrefillThinking ? (() => {
+    const needsPostFactoStopSequences = (actualFormat === 'prefill' || actualFormat === 'messages') && participants.length > 0;
+    const postFactoStopSequences = needsPostFactoStopSequences ? (() => {
       const baseStopSequences = ['User:', 'A:', "Claude:"];
       const participantStopSequences = participants
         .filter(p => p.name !== '' && p.id !== responderId)
@@ -494,7 +499,53 @@ export class InferenceService {
             }
           }
         }
-      : baseOnChunk;
+      // Case 2: Prefill/messages without thinking - just apply post-facto stop sequences
+      : (needsPostFactoStopSequences && postFactoStopSequences.length > 0)
+        ? async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+            // If we already hit a stop sequence, ignore further chunks (except completion)
+            if (responseHitStopSequence && !isComplete) return;
+            
+            if (isComplete) {
+              // Skip if we already sent early completion due to stop sequence
+              if (earlyCompletionSent) {
+                console.log(`[InferenceService] Skipping duplicate completion (early completion already sent)`);
+                return;
+              }
+              await baseOnChunk('', true, contentBlocks, usage);
+              return;
+            }
+            
+            if (!chunk) {
+              await baseOnChunk(chunk, isComplete, contentBlocks, usage);
+              return;
+            }
+            
+            // Buffer content to detect stop sequences
+            responseBuffer += chunk;
+            
+            // Check for stop sequence in accumulated response
+            const stopMatch = findStopSequence(responseBuffer);
+            if (stopMatch) {
+              responseHitStopSequence = true;
+              console.log(`[InferenceService] Stop sequence "${stopMatch.sequence}" found at position ${stopMatch.index}, truncating response`);
+              // Calculate how much of this chunk to send
+              const totalBefore = responseBuffer.length - chunk.length;
+              const cutPoint = stopMatch.index - totalBefore;
+              if (cutPoint > 0) {
+                await baseOnChunk(chunk.substring(0, cutPoint).trimEnd(), false, contentBlocks);
+              }
+              // Send early completion to avoid waiting for API stream to finish
+              if (!earlyCompletionSent) {
+                console.log(`[InferenceService] Sending early completion (stop sequence in response)`);
+                earlyCompletionSent = true;
+                await baseOnChunk('', true, contentBlocks);
+              }
+            } else {
+              await baseOnChunk(chunk, false, contentBlocks);
+            }
+          }
+        // Case 3: Standard mode - just pass through
+        : baseOnChunk;
 
     let usageResult: { usage?: any; rawRequest?: any } = {};
 
