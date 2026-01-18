@@ -487,15 +487,15 @@ export class ImportParser {
     //
     // Response content...
     
-    const lines = content.split('\n');
     const messages: ParsedMessage[] = [];
     let title: string | undefined;
     let exportedAt: string | undefined;
     let cursorVersion: string | undefined;
     
-    // Parse header
-    if (lines.length > 0 && lines[0].startsWith('# ')) {
-      title = lines[0].substring(2).trim();
+    // Parse header - title is the first line starting with #
+    const titleMatch = content.match(/^# (.+)$/m);
+    if (titleMatch) {
+      title = titleMatch[1].trim();
     }
     
     // Parse metadata line (e.g., "_Exported on 1/18/2026 at 13:59:20 PST from Cursor (2.3.29)_")
@@ -510,14 +510,23 @@ export class ImportParser {
     const sections = content.split(/\n---\n/).filter(s => s.trim());
     
     for (const section of sections) {
-      // Look for speaker line (**User** or **Cursor** or **Assistant**)
-      const speakerMatch = section.match(/^\s*\*\*([^*]+)\*\*\s*$/m);
+      // Look for speaker line at the START of the section
+      // Must be: **SimpleWord** (no colons, no long text, no punctuation inside)
+      // This avoids matching bold headers inside message content like "**Section 3.4:**"
+      const speakerMatch = section.match(/^\s*\*\*([A-Za-z][A-Za-z0-9 ]{0,20})\*\*\s*$/m);
       
       if (speakerMatch) {
         const speaker = speakerMatch[1].trim();
         
-        // Extract content after the speaker line
+        // Additional validation: speaker should be at or near the start of the section
+        // (within first 50 chars, allowing for some whitespace)
         const speakerIndex = section.indexOf(speakerMatch[0]);
+        if (speakerIndex > 50) {
+          // This bold text is too far into the section to be a speaker header
+          continue;
+        }
+        
+        // Extract content after the speaker line
         const contentStart = speakerIndex + speakerMatch[0].length;
         let messageContent = section.substring(contentStart).trim();
         
@@ -525,10 +534,14 @@ export class ImportParser {
         if (!messageContent) continue;
         
         // Determine role based on speaker name
-        const isAssistant = speaker.toLowerCase() === 'cursor' || 
-                           speaker.toLowerCase() === 'assistant' ||
-                           speaker.toLowerCase() === 'claude' ||
-                           speaker.toLowerCase() === 'ai';
+        const lowerSpeaker = speaker.toLowerCase();
+        const isAssistant = lowerSpeaker === 'cursor' || 
+                           lowerSpeaker === 'assistant' ||
+                           lowerSpeaker === 'claude' ||
+                           lowerSpeaker === 'ai' ||
+                           lowerSpeaker === 'gpt' ||
+                           lowerSpeaker === 'chatgpt' ||
+                           lowerSpeaker === 'gemini';
         
         messages.push({
           role: isAssistant ? 'assistant' : 'user',
@@ -536,12 +549,6 @@ export class ImportParser {
           participantName: speaker
         });
       }
-    }
-    
-    // If no messages found with speaker pattern, the file might be the first section with just header
-    // Try to extract title from first line if we got nothing
-    if (messages.length === 0 && title) {
-      // This is probably just header content, no messages to import
     }
     
     return {
