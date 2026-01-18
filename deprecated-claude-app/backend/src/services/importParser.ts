@@ -708,42 +708,17 @@ export class ImportParser {
     const flushTurn = () => {
       if (!currentTurn) return;
       
-      // Reconstruct what the model actually saw/produced
+      // Reconstruct what the model saw/produced
+      // Since Arc doesn't support tool use yet, we omit tool markers
+      // File reads become attachments (handled separately)
       let finalContent = '';
       
-      // 1. Thinking (this is the model's extended thinking output - it saw/produced this)
+      // 1. Thinking (model's extended thinking - part of its output)
       if (currentTurn.thinking) {
         finalContent += `<thinking>\n${currentTurn.thinking}\n</thinking>\n\n`;
       }
       
-      // 2. Tool uses and results (the model produced tool_use, then saw tool_result)
-      for (const tc of currentTurn.toolCalls) {
-        // For read_file specifically, the result becomes an attachment
-        // but we still show the tool interaction in the text
-        if (tc.name === 'read_file') {
-          try {
-            const params = typeof tc.params === 'string' ? JSON.parse(tc.params) : tc.params;
-            const filePath = params.targetFile || params.relativeWorkspacePath || 'file';
-            finalContent += `[Reading file: ${filePath}]\n\n`;
-          } catch {
-            finalContent += `[Reading file]\n\n`;
-          }
-        } else if (tc.name === 'write' || tc.name === 'edit_file' || tc.name === 'search_replace') {
-          // File write operations - show what was written
-          try {
-            const params = typeof tc.params === 'string' ? JSON.parse(tc.params) : tc.params;
-            const filePath = params.relativeWorkspacePath || params.targetFile || params.file_path || 'file';
-            finalContent += `[Writing to: ${filePath}]\n\n`;
-          } catch {
-            finalContent += `[File operation: ${tc.name}]\n\n`;
-          }
-        } else {
-          // Other tools - show name and brief summary
-          finalContent += `[Tool: ${tc.name}]\n\n`;
-        }
-      }
-      
-      // 3. Text response (the model's actual text output)
+      // 2. Text response (the model's actual text output)
       if (currentTurn.textContent) {
         finalContent += currentTurn.textContent;
       }
