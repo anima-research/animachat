@@ -404,6 +404,11 @@ const formatOptions = [
     description: 'Export from Arc Chat (this app)'
   },
   {
+    value: 'cursor',
+    label: 'Cursor IDE',
+    description: 'Markdown export from Cursor composer/chat'
+  },
+  {
     value: 'anthropic',
     label: 'Anthropic/Claude.ai',
     description: 'Export from Claude.ai or Anthropic API'
@@ -435,6 +440,7 @@ const formatLabels: Record<string, string> = {
   anthropic: 'Anthropic',
   chrome_extension: 'Claude Conversation Exporter',
   arc_chat: 'Arc Chat',
+  cursor: 'Cursor',
   openai: 'OpenAI',
   colon_single: 'text',
   colon_double: 'text'
@@ -472,6 +478,9 @@ const acceptedFileTypes = computed(() => {
       selectedFormat.value === 'arc_chat' ||
       selectedFormat.value === 'openai') {
     return '.json,application/json';
+  }
+  if (selectedFormat.value === 'cursor') {
+    return '.md,.markdown,text/markdown';
   }
   return '.txt,text/plain';
 });

@@ -36,6 +36,9 @@ export class ImportParser {
       case 'openai':
         ({ messages, title, metadata } = await this.parseOpenAI(content));
         break;
+      case 'cursor':
+        ({ messages, title, metadata } = await this.parseCursor(content));
+        break;
       case 'colon_single':
         ({ messages, title, metadata } = await this.parseColonFormat(content, '\n', options?.allowedParticipants));
         break;
@@ -465,6 +468,91 @@ export class ImportParser {
     
     // Fallback to basic JSON parsing
     return this.parseBasicJson(content);
+  }
+
+  private async parseCursor(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
+    // Cursor export format is Markdown:
+    // # Title
+    // _Exported on DATE from Cursor (VERSION)_
+    //
+    // ---
+    //
+    // **User**
+    //
+    // Message content...
+    //
+    // ---
+    //
+    // **Cursor**
+    //
+    // Response content...
+    
+    const lines = content.split('\n');
+    const messages: ParsedMessage[] = [];
+    let title: string | undefined;
+    let exportedAt: string | undefined;
+    let cursorVersion: string | undefined;
+    
+    // Parse header
+    if (lines.length > 0 && lines[0].startsWith('# ')) {
+      title = lines[0].substring(2).trim();
+    }
+    
+    // Parse metadata line (e.g., "_Exported on 1/18/2026 at 13:59:20 PST from Cursor (2.3.29)_")
+    const metadataMatch = content.match(/_Exported on ([^_]+) from Cursor \(([^)]+)\)_/);
+    if (metadataMatch) {
+      exportedAt = metadataMatch[1].trim();
+      cursorVersion = metadataMatch[2].trim();
+    }
+    
+    // Split content by message separator (---)
+    // The pattern is: --- followed by **Speaker** followed by message content
+    const sections = content.split(/\n---\n/).filter(s => s.trim());
+    
+    for (const section of sections) {
+      // Look for speaker line (**User** or **Cursor** or **Assistant**)
+      const speakerMatch = section.match(/^\s*\*\*([^*]+)\*\*\s*$/m);
+      
+      if (speakerMatch) {
+        const speaker = speakerMatch[1].trim();
+        
+        // Extract content after the speaker line
+        const speakerIndex = section.indexOf(speakerMatch[0]);
+        const contentStart = speakerIndex + speakerMatch[0].length;
+        let messageContent = section.substring(contentStart).trim();
+        
+        // Skip empty messages
+        if (!messageContent) continue;
+        
+        // Determine role based on speaker name
+        const isAssistant = speaker.toLowerCase() === 'cursor' || 
+                           speaker.toLowerCase() === 'assistant' ||
+                           speaker.toLowerCase() === 'claude' ||
+                           speaker.toLowerCase() === 'ai';
+        
+        messages.push({
+          role: isAssistant ? 'assistant' : 'user',
+          content: messageContent,
+          participantName: speaker
+        });
+      }
+    }
+    
+    // If no messages found with speaker pattern, the file might be the first section with just header
+    // Try to extract title from first line if we got nothing
+    if (messages.length === 0 && title) {
+      // This is probably just header content, no messages to import
+    }
+    
+    return {
+      messages,
+      title: title || 'Imported from Cursor',
+      metadata: {
+        exportedAt,
+        cursorVersion,
+        source: 'cursor'
+      }
+    };
   }
 
   private async parseColonFormat(
