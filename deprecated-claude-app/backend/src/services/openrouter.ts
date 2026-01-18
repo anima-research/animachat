@@ -815,6 +815,7 @@ export class OpenRouterService {
               // Anthropic API requires signatures to verify thinking authenticity
               // Thinking without signatures (e.g., imported) is converted to text
               if (block.signature) {
+                console.log(`[OpenRouter] Thinking block: text length=${block.thinking.length}, sig length=${block.signature.length}, sig prefix=${block.signature.substring(0, 20)}...`);
                 apiContentBlocks.push({
                   type: 'thinking',
                   thinking: block.thinking,
