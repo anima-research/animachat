@@ -52,6 +52,7 @@ export const ImportFormatSchema = z.enum([
   'arc_chat',
   'openai',
   'cursor',
+  'cursor_json',
   'colon_single',
   'colon_double'
 ]);

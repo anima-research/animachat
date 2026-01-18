@@ -405,8 +405,13 @@ const formatOptions = [
   },
   {
     value: 'cursor',
-    label: 'Cursor IDE',
+    label: 'Cursor IDE (Markdown)',
     description: 'Markdown export from Cursor composer/chat'
+  },
+  {
+    value: 'cursor_json',
+    label: 'Cursor IDE (JSON)',
+    description: 'JSON export with chain-of-thought and tool calls'
   },
   {
     value: 'anthropic',
@@ -440,7 +445,8 @@ const formatLabels: Record<string, string> = {
   anthropic: 'Anthropic',
   chrome_extension: 'Claude Conversation Exporter',
   arc_chat: 'Arc Chat',
-  cursor: 'Cursor',
+  cursor: 'Cursor (Markdown)',
+  cursor_json: 'Cursor (JSON)',
   openai: 'OpenAI',
   colon_single: 'text',
   colon_double: 'text'
@@ -476,7 +482,8 @@ const acceptedFileTypes = computed(() => {
       selectedFormat.value === 'anthropic' ||
       selectedFormat.value === 'chrome_extension' ||
       selectedFormat.value === 'arc_chat' ||
-      selectedFormat.value === 'openai') {
+      selectedFormat.value === 'openai' ||
+      selectedFormat.value === 'cursor_json') {
     return '.json,application/json';
   }
   if (selectedFormat.value === 'cursor') {

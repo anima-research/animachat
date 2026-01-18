@@ -39,6 +39,9 @@ export class ImportParser {
       case 'cursor':
         ({ messages, title, metadata } = await this.parseCursor(content));
         break;
+      case 'cursor_json':
+        ({ messages, title, metadata } = await this.parseCursorJson(content));
+        break;
       case 'colon_single':
         ({ messages, title, metadata } = await this.parseColonFormat(content, '\n', options?.allowedParticipants));
         break;
@@ -673,6 +676,199 @@ export class ImportParser {
         source: 'cursor'
       }
     };
+  }
+
+  private async parseCursorJson(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
+    // Cursor JSON export format:
+    // {
+    //   "metadata": { "id", "name", "subtitle", "model": { "modelName", "maxMode" }, "created", "version" },
+    //   "messages": [
+    //     { "role", "bubble_id", "text", "created", "thinking"?: { "text", "duration_ms" }, "tool_call"?: { "name", "params", "result", "status" } }
+    //   ]
+    // }
+    
+    const data = JSON.parse(content);
+    const messages: ParsedMessage[] = [];
+    
+    const conversationMetadata = data.metadata || {};
+    const title = conversationMetadata.name;
+    const model = conversationMetadata.model?.modelName;
+    
+    // Group consecutive messages by role to merge assistant "bubbles" into single turns
+    // Cursor splits thinking, tool calls, and text into separate messages
+    let currentTurn: {
+      role: 'user' | 'assistant';
+      content: string;
+      thinking?: string;
+      thinkingDuration?: number;
+      toolCalls: Array<{ name: string; params: string; result: string; status: string }>;
+      attachments: Array<{ fileName: string; content: string; mimeType: string }>;
+      timestamp?: Date;
+    } | null = null;
+    
+    const flushTurn = () => {
+      if (!currentTurn) return;
+      
+      // Build the message content
+      let finalContent = '';
+      
+      // Add thinking as a collapsible section if present
+      if (currentTurn.thinking) {
+        finalContent += `<details>\n<summary>💭 Chain of Thought${currentTurn.thinkingDuration ? ` (${(currentTurn.thinkingDuration / 1000).toFixed(1)}s)` : ''}</summary>\n\n${currentTurn.thinking}\n</details>\n\n`;
+      }
+      
+      // Add main content
+      if (currentTurn.content) {
+        finalContent += currentTurn.content;
+      }
+      
+      // Add tool call summaries (the actual file contents go in attachments)
+      if (currentTurn.toolCalls.length > 0) {
+        for (const tc of currentTurn.toolCalls) {
+          if (tc.name !== 'read_file') {
+            // For non-read_file tools, show a summary
+            finalContent += `\n\n<details>\n<summary>🔧 Tool: ${tc.name}</summary>\n\n**Params:** \`${tc.params}\`\n\n**Result:** ${tc.result?.substring(0, 500)}${(tc.result?.length || 0) > 500 ? '...' : ''}\n</details>`;
+          }
+        }
+      }
+      
+      if (finalContent.trim() || currentTurn.attachments.length > 0) {
+        const parsedMessage: ParsedMessage = {
+          role: currentTurn.role,
+          content: finalContent.trim(),
+          timestamp: currentTurn.timestamp,
+          model: currentTurn.role === 'assistant' ? model : undefined,
+          participantName: currentTurn.role === 'user' ? 'User' : 'Cursor'
+        };
+        
+        // Add attachments if any (from read_file calls)
+        if (currentTurn.attachments.length > 0) {
+          (parsedMessage as any).metadata = {
+            ...(parsedMessage as any).metadata,
+            attachments: currentTurn.attachments
+          };
+        }
+        
+        messages.push(parsedMessage);
+      }
+      
+      currentTurn = null;
+    };
+    
+    for (const msg of data.messages || []) {
+      const role = msg.role === 'user' ? 'user' : 'assistant';
+      
+      // If role changed, flush the previous turn
+      if (currentTurn && currentTurn.role !== role) {
+        flushTurn();
+      }
+      
+      // Start a new turn if needed
+      if (!currentTurn) {
+        currentTurn = {
+          role,
+          content: '',
+          toolCalls: [],
+          attachments: [],
+          timestamp: msg.created ? new Date(msg.created) : undefined
+        };
+      }
+      
+      // Process thinking
+      if (msg.thinking?.text) {
+        if (currentTurn.thinking) {
+          currentTurn.thinking += '\n\n---\n\n' + msg.thinking.text;
+          currentTurn.thinkingDuration = (currentTurn.thinkingDuration || 0) + (msg.thinking.duration_ms || 0);
+        } else {
+          currentTurn.thinking = msg.thinking.text;
+          currentTurn.thinkingDuration = msg.thinking.duration_ms;
+        }
+      }
+      
+      // Process tool calls
+      if (msg.tool_call) {
+        const tc = msg.tool_call;
+        currentTurn.toolCalls.push({
+          name: tc.name,
+          params: tc.params || '',
+          result: tc.result || '',
+          status: tc.status || 'completed'
+        });
+        
+        // For read_file, extract the file content as an attachment
+        if (tc.name === 'read_file' && tc.result) {
+          try {
+            const resultData = JSON.parse(tc.result);
+            const paramsData = JSON.parse(tc.params || '{}');
+            const fileName = paramsData.targetFile || paramsData.relativeWorkspacePath || 'file.txt';
+            const fileContent = resultData.contents || resultData.contentsAfterEdit || '';
+            
+            if (fileContent) {
+              // Extract just the filename from the path
+              const shortFileName = fileName.split('/').pop() || fileName;
+              
+              currentTurn.attachments.push({
+                fileName: shortFileName,
+                content: fileContent,
+                mimeType: this.guessMimeType(shortFileName)
+              });
+            }
+          } catch (e) {
+            // If we can't parse the result, skip creating an attachment
+            console.warn('Failed to parse read_file result:', e);
+          }
+        }
+      }
+      
+      // Process text content
+      if (msg.text) {
+        if (currentTurn.content) {
+          currentTurn.content += '\n\n' + msg.text;
+        } else {
+          currentTurn.content = msg.text;
+        }
+      }
+    }
+    
+    // Flush the last turn
+    flushTurn();
+    
+    return {
+      messages,
+      title: title || 'Imported from Cursor',
+      metadata: {
+        id: conversationMetadata.id,
+        model: model,
+        subtitle: conversationMetadata.subtitle,
+        created: conversationMetadata.created,
+        version: conversationMetadata.version,
+        source: 'cursor_json'
+      }
+    };
+  }
+
+  private guessMimeType(fileName: string): string {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      'ts': 'text/typescript',
+      'tsx': 'text/typescript',
+      'js': 'text/javascript',
+      'jsx': 'text/javascript',
+      'json': 'application/json',
+      'md': 'text/markdown',
+      'txt': 'text/plain',
+      'py': 'text/x-python',
+      'rs': 'text/x-rust',
+      'go': 'text/x-go',
+      'vue': 'text/x-vue',
+      'css': 'text/css',
+      'html': 'text/html',
+      'yaml': 'text/yaml',
+      'yml': 'text/yaml',
+      'sh': 'text/x-shellscript',
+      'sql': 'text/x-sql',
+    };
+    return mimeTypes[ext || ''] || 'text/plain';
   }
 
   private async parseColonFormat(
