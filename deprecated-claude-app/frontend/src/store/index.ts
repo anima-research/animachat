@@ -35,6 +35,8 @@ interface StoreState {
   } | null;
   // Detached branch mode - allows users to navigate branches independently
   isDetachedFromMainBranch: boolean;
+  // Snapshot of shared activeBranchIds to restore when leaving detached mode
+  sharedActiveBranchIds: Map<string, string>;
   // WebSocket connection state
   wsConnectionState: 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'failed';
   // Branch activity notifications (ephemeral - not persisted)
@@ -236,6 +238,7 @@ export function createStore(): {
     systemConfig: null,
     // Detached branch mode
     isDetachedFromMainBranch: false,
+    sharedActiveBranchIds: new Map(),
     // WebSocket connection state
     wsConnectionState: 'disconnected',
     // Branch activity notifications
@@ -425,6 +428,13 @@ export function createStore(): {
         const readBranchIds = uiStateResult.data?.readBranchIds || [];
         state.readBranchIds = new Set(readBranchIds);
         console.log(`[loadConversation] Loaded ${readBranchIds.length} read branch IDs`);
+
+        // Capture shared state BEFORE applying detached branches
+        // This snapshot is used to restore when leaving detached mode
+        state.sharedActiveBranchIds = new Map();
+        for (const message of state.allMessages) {
+          state.sharedActiveBranchIds.set(message.id, message.activeBranchId);
+        }
 
         // Apply detached mode state BEFORE computing visible messages
         // In detached mode, apply user's saved branch selections directly to activeBranchId
@@ -1184,6 +1194,24 @@ export function createStore(): {
 
     // Detached branch mode
     setDetachedMode(detached: boolean) {
+      if (detached && !state.isDetachedFromMainBranch) {
+        // Entering detached mode: capture shared state snapshot
+        state.sharedActiveBranchIds = new Map();
+        for (const message of state.allMessages) {
+          state.sharedActiveBranchIds.set(message.id, message.activeBranchId);
+        }
+        console.log('[Store] Captured shared state before detaching:', state.sharedActiveBranchIds.size, 'branches');
+      } else if (!detached && state.isDetachedFromMainBranch) {
+        // Leaving detached mode: restore shared state
+        for (const [messageId, branchId] of state.sharedActiveBranchIds) {
+          const message = state.allMessages.find(m => m.id === messageId);
+          if (message && message.activeBranchId !== branchId) {
+            message.activeBranchId = branchId;
+          }
+        }
+        console.log('[Store] Restored shared state after re-attaching:', state.sharedActiveBranchIds.size, 'branches');
+      }
+
       state.isDetachedFromMainBranch = detached;
       state.messagesVersion++;
       invalidateSortCache();
