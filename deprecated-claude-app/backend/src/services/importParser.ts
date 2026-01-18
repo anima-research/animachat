@@ -698,7 +698,7 @@ export class ImportParser {
     // The model sees: thinking (if extended thinking enabled), tool_use blocks, tool_result blocks, then text
     let currentTurn: {
       role: 'user' | 'assistant';
-      thinking?: string;
+      thinkingBlocks: Array<{ thinking: string }>; // Multiple thinking blocks possible
       toolCalls: Array<{ name: string; params: any; result: string }>;
       textContent: string;
       attachments: Array<{ fileName: string; content: string; mimeType: string }>;
@@ -708,40 +708,48 @@ export class ImportParser {
     const flushTurn = () => {
       if (!currentTurn) return;
       
-      // Reconstruct what the model saw/produced
-      // Since Arc doesn't support tool use yet, we omit tool calls
-      // File reads become attachments (handled separately)
-      // 
-      // NOTE: Extended thinking can't be properly reconstructed without contentBlocks support
-      // in the import system. For now, we include it as text so it's visible and provides
-      // context, but it won't function as "real" extended thinking when sent to Anthropic.
-      let finalContent = '';
+      // Build contentBlocks for proper extended thinking support
+      // This allows thinking to be sent as real API content blocks to Anthropic
+      const contentBlocks: Array<{ type: string; thinking?: string; text?: string }> = [];
       
-      // 1. Thinking - include as text (best we can do without contentBlocks support)
-      if (currentTurn.thinking) {
-        finalContent += currentTurn.thinking + '\n\n';
+      // Add thinking blocks
+      for (const tb of currentTurn.thinkingBlocks) {
+        contentBlocks.push({
+          type: 'thinking',
+          thinking: tb.thinking
+        });
       }
       
-      // 2. Text response (the model's actual text output)
-      if (currentTurn.textContent) {
-        finalContent += currentTurn.textContent;
+      // Add text block if there's text content
+      if (currentTurn.textContent.trim()) {
+        contentBlocks.push({
+          type: 'text',
+          text: currentTurn.textContent.trim()
+        });
       }
       
-      if (finalContent.trim() || currentTurn.attachments.length > 0) {
+      // The "content" field is for display/backward compatibility
+      // contentBlocks is what gets sent to the API
+      const displayContent = currentTurn.textContent.trim();
+      
+      if (displayContent || contentBlocks.length > 0 || currentTurn.attachments.length > 0) {
         const parsedMessage: ParsedMessage = {
           role: currentTurn.role,
-          content: finalContent.trim(),
+          content: displayContent,
           timestamp: currentTurn.timestamp,
           model: currentTurn.role === 'assistant' ? model : undefined,
-          participantName: currentTurn.role === 'user' ? 'User' : 'Cursor'
+          participantName: currentTurn.role === 'user' ? 'User' : 'Cursor',
+          metadata: {}
         };
+        
+        // Add contentBlocks for extended thinking support
+        if (contentBlocks.length > 0 && currentTurn.role === 'assistant') {
+          (parsedMessage as any).metadata.contentBlocks = contentBlocks;
+        }
         
         // Add file attachments (from read_file results - this is what the model saw)
         if (currentTurn.attachments.length > 0) {
-          (parsedMessage as any).metadata = {
-            ...(parsedMessage as any).metadata,
-            attachments: currentTurn.attachments
-          };
+          (parsedMessage as any).metadata.attachments = currentTurn.attachments;
         }
         
         messages.push(parsedMessage);
@@ -762,6 +770,7 @@ export class ImportParser {
       if (!currentTurn) {
         currentTurn = {
           role,
+          thinkingBlocks: [],
           textContent: '',
           toolCalls: [],
           attachments: [],
@@ -769,13 +778,9 @@ export class ImportParser {
         };
       }
       
-      // Process thinking (model's chain of thought - no duration, just the content)
+      // Process thinking (model's chain of thought - each thinking block is separate)
       if (msg.thinking?.text) {
-        if (currentTurn.thinking) {
-          currentTurn.thinking += '\n\n' + msg.thinking.text;
-        } else {
-          currentTurn.thinking = msg.thinking.text;
-        }
+        currentTurn.thinkingBlocks.push({ thinking: msg.thinking.text });
       }
       
       // Process tool calls

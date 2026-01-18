@@ -542,6 +542,34 @@ export function importRouter(db: Database): Router {
           if (createdBranch && originalUuid) {
             branchIdMap.set(originalUuid, createdBranch.id);
           }
+          
+          // Apply contentBlocks for extended thinking support
+          // This allows imported conversations to have proper chain-of-thought
+          const msgMetadata = (parsedMsg as any).metadata;
+          if (createdBranch && msgMetadata?.contentBlocks && msgMetadata.contentBlocks.length > 0) {
+            await db.updateMessageBranch(createdMessage.id, conversation.userId, createdBranch.id, {
+              contentBlocks: msgMetadata.contentBlocks
+            });
+            console.log(`Applied ${msgMetadata.contentBlocks.length} contentBlocks to message ${createdMessage.id}`);
+          }
+          
+          // Apply file attachments from metadata (e.g., from Cursor read_file)
+          if (createdBranch && msgMetadata?.attachments && msgMetadata.attachments.length > 0) {
+            const attachments = msgMetadata.attachments.map((att: any) => ({
+              id: require('uuid').v4(),
+              fileName: att.fileName,
+              fileSize: att.content?.length || 0,
+              fileType: att.mimeType || 'text/plain',
+              content: att.content,
+              encoding: 'utf-8' as const,
+              mimeType: att.mimeType || 'text/plain',
+              createdAt: new Date()
+            }));
+            await db.updateMessageBranch(createdMessage.id, conversation.userId, createdBranch.id, {
+              attachments
+            });
+            console.log(`Applied ${attachments.length} attachments to message ${createdMessage.id}`);
+          }
         }
       }
 
