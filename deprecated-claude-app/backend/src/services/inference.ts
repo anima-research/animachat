@@ -852,8 +852,45 @@ export class InferenceService {
       startIdx = messages.length - 1;
     }
     
-    const truncatedMessages = messages.slice(startIdx);
+    let truncatedMessages = messages.slice(startIdx);
     const droppedCount = startIdx;
+    
+    // If we only have 1 message and it exceeds available tokens, truncate its text content
+    // This handles the case where all messages were consolidated into a single oversized message
+    if (truncatedMessages.length === 1 && messageTokens[startIdx] > availableTokens) {
+      const msg = truncatedMessages[0];
+      const targetChars = availableTokens * 4; // rough tokens to chars
+      
+      console.log(`[Truncate] ⚠️ Single message exceeds context (${messageTokens[startIdx]} tokens > ${availableTokens} available)`);
+      console.log(`[Truncate] Truncating message text from head to fit ~${targetChars} chars`);
+      
+      // Handle different message formats
+      if (msg.branches && msg.branches[0]) {
+        const branch = msg.branches[0];
+        if (branch.content && branch.content.length > targetChars) {
+          // Keep the tail (most recent) part of the content
+          const truncatedContent = '...[earlier context truncated]...\n\n' + branch.content.slice(-targetChars);
+          truncatedMessages = [{
+            ...msg,
+            branches: [{
+              ...branch,
+              content: truncatedContent
+            }]
+          }];
+          keptTokens = Math.ceil(truncatedContent.length / 4);
+          console.log(`[Truncate] 📝 Truncated message content: ${branch.content.length} → ${truncatedContent.length} chars (~${keptTokens} tokens)`);
+        }
+      } else if (typeof msg.content === 'string' && msg.content.length > targetChars) {
+        // Direct content format
+        const truncatedContent = '...[earlier context truncated]...\n\n' + msg.content.slice(-targetChars);
+        truncatedMessages = [{
+          ...msg,
+          content: truncatedContent
+        }];
+        keptTokens = Math.ceil(truncatedContent.length / 4);
+        console.log(`[Truncate] 📝 Truncated message content: ${msg.content.length} → ${truncatedContent.length} chars (~${keptTokens} tokens)`);
+      }
+    }
     
     console.log(`[Truncate] 🔄 Auto-truncated: dropped ${droppedCount} messages, kept ${truncatedMessages.length} (~${keptTokens} tokens)`);
     
