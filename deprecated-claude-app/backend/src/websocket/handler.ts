@@ -1039,8 +1039,8 @@ async function handleChatMessage(
           maxTokens: responder.settings?.maxTokens ?? conversation.settings.maxTokens,
           topP: responder.settings?.topP ?? conversation.settings.topP,
           topK: responder.settings?.topK ?? conversation.settings.topK,
-          // Always use conversation-level thinking settings
-          thinking: conversation.settings.thinking,
+          // Use participant thinking settings if defined, otherwise fall back to conversation
+          thinking: responder.settings?.thinking ?? conversation.settings.thinking,
           // Include model-specific settings (e.g., image resolution)
           modelSpecific: responder.settings?.modelSpecific ?? conversation.settings.modelSpecific
         };
@@ -1415,8 +1415,8 @@ async function handleRegenerate(
           maxTokens: participant.settings?.maxTokens ?? conversation.settings.maxTokens,
           topP: participant.settings?.topP ?? conversation.settings.topP,
           topK: participant.settings?.topK ?? conversation.settings.topK,
-          // Always use conversation-level thinking settings
-          thinking: conversation.settings.thinking,
+          // Use participant thinking settings if defined, otherwise fall back to conversation
+          thinking: participant.settings?.thinking ?? conversation.settings.thinking,
           // Include model-specific settings (e.g., image resolution)
           modelSpecific: participant.settings?.modelSpecific ?? conversation.settings.modelSpecific
         };
@@ -1850,8 +1850,8 @@ async function handleEdit(
             maxTokens: responderParticipant.settings?.maxTokens ?? conversation.settings.maxTokens,
             topP: responderParticipant.settings?.topP ?? conversation.settings.topP,
             topK: responderParticipant.settings?.topK ?? conversation.settings.topK,
-            // Always use conversation-level thinking settings
-            thinking: conversation.settings.thinking,
+            // Use participant thinking settings if defined, otherwise fall back to conversation
+            thinking: responderParticipant.settings?.thinking ?? conversation.settings.thinking,
             // Include model-specific settings (e.g., image resolution)
             modelSpecific: responderParticipant.settings?.modelSpecific ?? conversation.settings.modelSpecific
           };
