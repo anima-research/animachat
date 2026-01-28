@@ -1309,11 +1309,22 @@ const avatarPreviewModelId = computed(() => {
 });
 
 // Get all sibling branches (branches that share the same parent)
+// FIX: Treat undefined, null, and 'root' as equivalent for root messages
+// This handles inconsistency where createMessage sets 'root' but addMessageBranch uses undefined
 const siblingBranches = computed(() => {
   const activeParent = currentBranch.value.parentBranchId;
-  return props.message.branches.filter(
-    branch => branch.parentBranchId === activeParent
-  );
+  const isActiveRoot = !activeParent || activeParent === 'root';
+  
+  return props.message.branches.filter(branch => {
+    const branchParent = branch.parentBranchId;
+    const isBranchRoot = !branchParent || branchParent === 'root';
+    
+    // If both are root branches, they're siblings
+    if (isActiveRoot && isBranchRoot) return true;
+    
+    // Otherwise, exact match required
+    return branchParent === activeParent;
+  });
 });
 
 // Get index among siblings
