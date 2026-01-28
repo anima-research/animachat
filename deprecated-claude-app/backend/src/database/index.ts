@@ -3700,6 +3700,47 @@ export class Database {
     return this.sortMessagesByTreeOrder(messages);
   }
 
+  async getConversationMessageBranchPage(conversationId: string, conversationOwnerUserId: string, messageId: string, limit: number, requestingUserId?: string): Promise<Message[]> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
+    const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
+    const messageIds = this.conversationMessages.get(conversationId) || [];
+    
+    const viewerId = requestingUserId || conversationOwnerUserId;
+    const branchesMap: Map<string, string> = new Map(
+      messageIds.flatMap(msgId => {
+        const msg = this.messages.get(msgId);
+        if (!msg) return [];
+        const visibleBranches = msg.branches.filter(
+          b => !b.privateToUserId || b.privateToUserId === viewerId
+        );
+        return visibleBranches.map(b => [b.id, msgId] as const)
+      })
+    );
+
+    if (!message) {
+      console.warn(`[getConversationMessageBranchPage] Message not found: ${messageId} in conversation ${conversationId}`);
+      return [];
+    }
+
+    const page: Message[] = [];
+    let nextMessage: Message | undefined = message;
+
+    for (let i = 0; i < limit && nextMessage; i++) {
+      page.push(nextMessage);
+
+      const activeBranch = nextMessage.branches.find(b => b.id === nextMessage!.activeBranchId);
+      if (!activeBranch || !activeBranch.parentBranchId || activeBranch.parentBranchId === 'root') break;
+
+      let nextMessageId = branchesMap.get(activeBranch.parentBranchId);
+      if (!nextMessageId) break;
+
+      nextMessage = this.messages.get(nextMessageId);
+    }
+
+    return page.reverse();
+  }
+
   async getMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<Message | null> {
     return await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
   }
