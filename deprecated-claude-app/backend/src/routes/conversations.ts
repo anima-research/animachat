@@ -374,9 +374,15 @@ export function conversationRouter(db: Database): Router {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
+      const before = req.query.before as string || undefined;
+      const limit = parseInt(req.query.limit as string) || 50;
+
       // Note: Access control is handled in getConversation
       // Pass requesting user to filter private branches
-      const messages = await db.getConversationMessages(req.params.id, conversation.userId, req.userId);
+      const messages = (before ?
+        await db.getConversationMessageBranchPage(req.params.id, conversation.userId, before, limit, req.userId) :
+        await db.getConversationMessages(req.params.id, conversation.userId, req.userId)
+      );
 
       // Prepare messages for client: strip debug data, convert old images to blob refs
       // Pass db and userId so conversions can be persisted (avoiding duplicate blobs after restart)
