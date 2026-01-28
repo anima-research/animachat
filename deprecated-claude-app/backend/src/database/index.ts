@@ -714,8 +714,8 @@ export class Database {
       return { valid: false, error: 'This invite has reached its maximum uses' };
     }
 
-    // Legacy check for old single-use invites without useCount
-    if (invite.maxUses === undefined && invite.claimedBy) {
+    // Legacy check for old single-use invites that predate the useCount system
+    if (invite.maxUses === undefined && invite.claimedBy && invite.useCount === undefined) {
       return { valid: false, error: 'This invite has already been used' };
     }
 
