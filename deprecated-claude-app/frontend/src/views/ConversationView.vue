@@ -2561,6 +2561,7 @@ watch(() => getConversationIdFromRoute(), async (newId, oldId) => {
   streamingMessageId.value = null;
   streamingBranchId.value = null;
   streamingError.value = null;
+  hasMoreMessages.value = true;
   
   if (newId) {
     console.log(`[ConversationView:watch] Route changed to: ${newId}`);
@@ -2723,6 +2724,7 @@ async function loadOlderMessages() {
 
   isLoadingMoreMessages.value = true;
   const oldestMessage = messages.value[0];
+
   if (!oldestMessage) {
     isLoadingMoreMessages.value = false;
     return;
@@ -2731,24 +2733,11 @@ async function loadOlderMessages() {
   const element = dynamicScrollerRef.value?.$el;
   const oldScrollHeight = element.scrollHeight;
 
-  try {
-    const older = await api.get(`/conversations/${currentConversation.value?.id}/messages`, {
-      params: {
-        before: oldestMessage.id,
-        limit: 100
-      }
-    });
-
-    if (older.data.length == 0) {
-      hasMoreMessages.value = false;
-    } else {
-      // Prepend older messages to the store
-      store.state.allMessages = older.data.concat(store.state.allMessages);
-      store.state.messagesVersion++;
-    }
-  } finally {
-    isLoadingMoreMessages.value = false;
+  if (!await store.loadMessages(currentConversation.value?.id, 100, oldestMessage.id)) {
+    hasMoreMessages.value = false;
   }
+
+  isLoadingMoreMessages.value = false;
   
   await nextTick();
   const newScrollHeight = element.scrollHeight;

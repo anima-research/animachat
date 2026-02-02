@@ -79,7 +79,8 @@ export interface Store {
   duplicateConversation(id: string): Promise<Conversation>;
   compactConversation(id: string): Promise<{ success: boolean; result: any; message: string }>;
   
-  loadMessages(conversationId: string): Promise<void>;
+  loadMessages(conversationId: string, limit?: number, beforeMessageId?: string): Promise<boolean>;
+  getMessagePage(conversationId: string, limit?: number, beforeMessageId?: string): Promise<Message[]>;
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number): Promise<void>;
   continueGeneration(responderId?: string, explicitParentBranchId?: string, samplingBranches?: number): Promise<void>;
   regenerateMessage(messageId: string, branchId: string, parentBranchId?: string, samplingBranches?: number): Promise<void>;
@@ -417,7 +418,7 @@ export function createStore(): {
 
         // Load messages and read state in parallel to avoid flash of unread
         const [, uiStateResult] = await Promise.all([
-          this.loadMessages(id),
+          this.loadMessages(id, 100), // TODO make this configurable
           api.get(`/conversations/${id}/ui-state`).catch(err => {
             console.warn(`[loadConversation] Failed to load read state:`, err);
             return { data: { readBranchIds: [] } };
@@ -592,47 +593,60 @@ export function createStore(): {
     },
     
     // Message actions
-    async loadMessages(conversationId: string, retryCount = 0) {
+    async loadMessages(conversationId: string, limit?: number, beforeMessageId?: string) {
+      const messages = await this.getMessagePage(conversationId, limit, beforeMessageId);
+      if (messages.length > 0) {
+        if (beforeMessageId) {
+          const existingIds = new Set(state.allMessages.map(m => m.id));
+          const unique = messages.filter(m => !existingIds.has(m.id));
+          state.allMessages = unique.concat(state.allMessages)
+        } else {
+          state.allMessages = messages;
+        }
+        
+        state.messagesVersion++;
+        invalidateSortCache();
+        return true;
+      }
+      return false;
+    },
+
+    // Message actions
+    async getMessagePage(conversationId: string, limit?: number, beforeMessageId?: string, retryCount = 0) {
       const maxRetries = 3;
       const retryDelay = 1000;
       const startTime = Date.now();
       
       try {
-        console.log(`[loadMessages] Loading messages for ${conversationId}... (attempt ${retryCount + 1}/${maxRetries})`);
+        const numMessages = limit !== undefined ? limit : 'all';
+        console.log(`[getMessagePage] Loading ${numMessages} for ${conversationId}... (attempt ${retryCount + 1}/${maxRetries})`);
         
-        const response = await api.get(`/conversations/${conversationId}/messages`);
+        const response = await api.get(`/conversations/${conversationId}/messages`, {
+          params: {
+            before: beforeMessageId,
+            limit: limit,
+          },
+        });
+
         const fetchTime = Date.now() - startTime;
         
-        console.log(`[loadMessages] Response received in ${fetchTime}ms`);
-        console.log(`[loadMessages] Response status: ${response.status}`);
-        console.log(`[loadMessages] Response data is array: ${Array.isArray(response.data)}, length: ${response.data?.length || 0}`);
+        console.log(`[getMessagePage] Response received in ${fetchTime}ms`);
+        console.log(`[getMessagePage] Response status: ${response.status}`);
+        console.log(`[getMessagePage] Response data is array: ${Array.isArray(response.data)}, length: ${response.data?.length || 0}`);
         
         if (!response.data) {
-          console.warn(`[loadMessages] ⚠ Response data is null/undefined!`);
+          console.warn(`[getMessagePage] ⚠ Response data is null/undefined!`);
         }
         
-        state.allMessages = response.data || [];
-        state.messagesVersion++;
-        invalidateSortCache();
-        
-        console.log(`[loadMessages] ✓ Loaded ${state.allMessages.length} messages, messagesVersion: ${state.messagesVersion}`);
-        
-        // Log branch info for debugging
-        const totalBranches = state.allMessages.reduce((acc, m) => acc + (m.branches?.length || 0), 0);
-        console.log(`[loadMessages] Total branches across all messages: ${totalBranches}`);
-        
-        // Log if this is multi-participant
-        if (state.currentConversation?.format !== 'standard') {
-          console.log(`[loadMessages] Multi-participant conversation format: ${state.currentConversation?.format}`);
-        }
+        return response.data || [];
       } catch (error: any) {
         const elapsed = Date.now() - startTime;
-        console.error(`[loadMessages] ✗ Failed after ${elapsed}ms (attempt ${retryCount + 1}/${maxRetries})`);
-        console.error(`[loadMessages] Error code: ${error?.code}`);
-        console.error(`[loadMessages] Error message: ${error?.message}`);
-        console.error(`[loadMessages] Error response status: ${error?.response?.status}`);
-        console.error(`[loadMessages] Error response data:`, error?.response?.data);
-        console.error(`[loadMessages] Full error:`, error);
+        console.error(`[getMessagePage] ✗ Failed after ${elapsed}ms (attempt ${retryCount + 1}/${maxRetries})`);
+        console.error(`[getMessagePage] Error code: ${error?.code}`);
+        console.error(`[getMessagePage] Error message: ${error?.message}`);
+        console.error(`[getMessagePage] Error response status: ${error?.response?.status}`);
+        console.error(`[getMessagePage] Error response data:`, error?.response?.data);
+        console.error(`[getMessagePage] Full error:`, error);
         
         // Retry on network errors or timeouts
         if (retryCount < maxRetries - 1 && (
@@ -642,12 +656,12 @@ export function createStore(): {
           error?.message?.includes('Network Error')
         )) {
           const delay = retryDelay * (retryCount + 1);
-          console.log(`[loadMessages] Will retry in ${delay}ms...`);
+          console.log(`[getMessagePage] Will retry in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
-          return this.loadMessages(conversationId, retryCount + 1);
+          return this.getMessagePage(conversationId, limit, beforeMessageId, retryCount + 1);
         }
         
-        console.error(`[loadMessages] No more retries, giving up`);
+        console.error(`[getMessagePage] No more retries, giving up`);
         throw error;
       }
     },
