@@ -424,8 +424,8 @@
       <div class="d-flex flex-grow-1 overflow-hidden">
         <v-container
           ref="messagesContainer"
-          class="flex-grow-1 overflow-y-auto messages-container"
-          style="max-height: calc(100vh - 160px);"
+          class="flex-grow-1 messages-container"
+          style="height: calc(100vh - 160px); overflow: hidden; min-height: 0"
         >
           <div v-if="!currentConversation && !isLoadingConversation" class="text-center mt-12">
             <v-icon size="64" color="grey">mdi-message-text-outline</v-icon>
@@ -443,39 +443,57 @@
           </div>
           
           <div v-else>
-            <CompositeMessageGroup
-              v-for="(group, groupIndex) in groupedMessages"
-              :key="group.id"
-              :messages="group.messages"
-              :participants="participants"
-              :is-last-group="groupIndex === groupedMessages.length - 1"
-              :selected-branch-for-parent="selectedBranchForParent"
-              :streaming-message-id="streamingMessageId"
-              :streaming-branch-id="streamingBranchId"
-              :is-streaming="isStreaming"
-              :streaming-error="streamingError"
-              :post-hoc-affected-messages="postHocAffectedMessages"
-              :show-stuck-button="showStuckButton"
-              :authenticity-map="authenticityMap"
-              @regenerate="regenerateMessage"
-              @stuck-clicked="stuckDialog = true"
-              @edit="editMessage"
-              @edit-only="editMessageOnly"
-              @switch-branch="switchBranch"
-              @delete="deleteMessage"
-              @delete-all-branches="deleteAllBranches"
-              @select-as-parent="selectBranchAsParent"
-              @stop-auto-scroll="stopAutoScroll"
-              @bookmark-changed="handleBookmarkChanged"
-              @post-hoc-hide="handlePostHocHide"
-              @post-hoc-edit="handlePostHocEdit"
-              @post-hoc-edit-content="handlePostHocEditContent"
-              @post-hoc-hide-before="handlePostHocHideBefore"
-              @post-hoc-unhide="handlePostHocUnhide"
-              @delete-post-hoc-operation="handleDeletePostHocOperation"
-              @split="handleSplit"
-              @fork="handleFork"
-            />
+            <DynamicScroller
+              :items="groupedMessages"
+              :min-item-size="80"
+              class="scroller"
+              ref="dynamicScrollerRef"
+              @scroll="handleScroll"
+            >
+              <template v-slot="{ item: group, index: groupIndex, active }">
+                <DynamicScrollerItem
+                  :item="group"
+                  :active="active"
+                  :size-dependencies="[group.messages.length]"
+                  :data-index="groupIndex"
+                  :key-field="group.id"
+                >
+                <div style="padding-bottom: 10px">
+                  <CompositeMessageGroup
+                    :messages="group.messages"
+                    :participants="participants"
+                    :is-last-group="groupIndex === groupedMessages.length - 1"
+                    :selected-branch-for-parent="selectedBranchForParent"
+                    :streaming-message-id="streamingMessageId"
+                    :streaming-branch-id="streamingBranchId"
+                    :is-streaming="isStreaming"
+                    :streaming-error="streamingError"
+                    :post-hoc-affected-messages="postHocAffectedMessages"
+                    :show-stuck-button="showStuckButton"
+                    :authenticity-map="authenticityMap"
+                    @regenerate="regenerateMessage"
+                    @stuck-clicked="stuckDialog = true"
+                    @edit="editMessage"
+                    @edit-only="editMessageOnly"
+                    @switch-branch="switchBranch"
+                    @delete="deleteMessage"
+                    @delete-all-branches="deleteAllBranches"
+                    @select-as-parent="selectBranchAsParent"
+                    @stop-auto-scroll="stopAutoScroll"
+                    @bookmark-changed="handleBookmarkChanged"
+                    @post-hoc-hide="handlePostHocHide"
+                    @post-hoc-edit="handlePostHocEdit"
+                    @post-hoc-edit-content="handlePostHocEditContent"
+                    @post-hoc-hide-before="handlePostHocHideBefore"
+                    @post-hoc-unhide="handlePostHocUnhide"
+                    @delete-post-hoc-operation="handleDeletePostHocOperation"
+                    @split="handleSplit"
+                    @fork="handleFork"
+                  />
+                </div>
+                </DynamicScrollerItem>
+              </template>
+            </DynamicScroller>
           </div>
         </v-container>
         
@@ -1194,6 +1212,8 @@ import ModelPillBar from '@/components/ModelPillBar.vue';
 import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
 import { getModelColor } from '@/utils/modelColors';
 import { computeAuthenticity, type AuthenticityStatus } from '@/utils/authenticity';
+import { RecycleScroller, DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
+import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 
 const route = useRoute();
 const router = useRouter();
@@ -1234,6 +1254,7 @@ const isProgrammaticScroll = ref(false);  // Tracks when scroll is from code, no
 const isSwitchingBranch = ref(false);
 const streamingError = ref<{ messageId: string; error: string; suggestion?: string } | null>(null);
 const isLoadingConversation = ref(false);
+const dynamicScrollerRef = ref();
 
 // Track last completed branch to prevent re-triggering streaming on DEBUG CAPTURE updates
 const lastCompletedBranchId = ref<string | null>(null);
@@ -2620,8 +2641,10 @@ watch(() => store.state.isDetachedFromMainBranch, (newValue) => {
   }
 });
 
+const lastMessageId = computed(() => messages.value[messages.value.length - 1]?.id);
+
 // Watch for new messages to scroll
-watch(messages, () => {
+watch(lastMessageId, (newId, oldId) => {
   // Don't auto-scroll if:
   // 1. Auto-scroll is disabled (user scrolled up)
   // 2. User is actively scrolling (prevents fighting with user input)
@@ -2638,7 +2661,8 @@ watch(messages, () => {
   const shouldScroll = autoScrollEnabled.value && 
                        !userScrolledRecently.value &&
                        !isSwitchingBranch.value &&
-                       isStreamingVisibleBranch;
+                       isStreamingVisibleBranch &&
+                       oldId !== undefined; // Skip initial load;
   
   if (shouldScroll) {
     nextTick(() => {
@@ -2650,47 +2674,41 @@ watch(messages, () => {
 // Set up scroll sync for breadcrumb navigation and auto-scroll detection
 let scrollTimeout: number;
 let userScrollCooldown: number;
-watch(messagesContainer, (container) => {
-  if (container) {
-    // Vuetify components expose their DOM element via $el
-    const element = (container as any).$el || container;
 
-    if (element && element.addEventListener) {
-      const handleScroll = () => {
-        // Ignore programmatic scrolls for user interaction tracking
-        // But still allow them to sync breadcrumbs
-        if (!isProgrammaticScroll.value) {
-          // Mark that user scrolled recently - prevents auto-scroll from fighting
-          userScrolledRecently.value = true;
-          clearTimeout(userScrollCooldown);
-          userScrollCooldown = window.setTimeout(() => {
-            userScrolledRecently.value = false;
-          }, 300); // Wait 300ms after last scroll before allowing auto-scroll
-          
-          // Check scroll position and update autoScrollEnabled
-          // This allows user to scroll up to disable auto-scroll at any time
-          const scrollBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-          // If user has scrolled up more than a small threshold, disable auto-scroll
-          if (scrollBottom > 50) {
-            autoScrollEnabled.value = false;
-          }
-          // If user scrolls back near the bottom, re-enable (only for user scrolls)
-          else if (scrollBottom <= 10) {
-            autoScrollEnabled.value = true;
-          }
-        }
-        
-        // Debounce the sync to avoid too many calls
-        clearTimeout(scrollTimeout);
-        scrollTimeout = window.setTimeout(() => {
-          syncBreadcrumbScroll();
-        }, 50);
-      };
+function handleScroll(event: Event) {
+  console.log('handleScroll fired, isProgrammatic:', isProgrammaticScroll.value)
+  const element = event.target as HTMLElement;
+  if (!element) return;
+  
+  // Ignore programmatic scrolls for user interaction tracking
+  // But still allow them to sync breadcrumbs
+  if (!isProgrammaticScroll.value) {
+    // Mark that user scrolled recently - prevents auto-scroll from fighting
+    userScrolledRecently.value = true;
+    clearTimeout(userScrollCooldown);
+    userScrollCooldown = window.setTimeout(() => {
+      userScrolledRecently.value = false;
+    }, 300); // Wait 300ms after last scroll before allowing auto-scroll
 
-      element.addEventListener('scroll', handleScroll);
+    // Check scroll position and update autoScrollEnabled
+    // This allows user to scroll up to disable auto-scroll at any time
+    const scrollBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    // If user has scrolled up more than a small threshold, disable auto-scroll
+    if (scrollBottom > 50) {
+      autoScrollEnabled.value = false;
+    }
+    // If user scrolls back near the bottom, re-enable (only for user scrolls)
+    else if (scrollBottom <= 10) {
+      autoScrollEnabled.value = true;
     }
   }
-});
+  
+  // Debounce the sync to avoid too many calls
+  clearTimeout(scrollTimeout);
+  scrollTimeout = window.setTimeout(() => {
+    syncBreadcrumbScroll();
+  }, 50);
+};
 
 // Track when user is manually scrolling bookmarks to prevent sync
 let userScrollTimeout: number;
@@ -2745,51 +2763,50 @@ watch(messages, () => {
 }, { deep: true });
 
 function scrollToBottom(smooth: boolean = false) {
-  // Mark this as a programmatic scroll so the scroll handler doesn't re-enable autoScroll
-  isProgrammaticScroll.value = true;
-  
-  // For long conversations, we need multiple frames to ensure full render
-  const attemptScroll = (attempts: number = 0) => {
-    requestAnimationFrame(() => {
-      if (messagesContainer.value) {
-        const container = messagesContainer.value;
-        // Vuetify components expose their DOM element via $el
-        const element = (container as any).$el || container;
-        
-        if (element && element.scrollTo) {
-          const previousHeight = element.scrollHeight;
-          
-          element.scrollTo({
-            top: element.scrollHeight,
-            behavior: smooth ? 'smooth' : 'instant'
-          });
-          
-          // Check if content is still loading (scroll height is changing)
-          if (attempts < 10) { // Increased attempts for very long conversations
-            setTimeout(() => {
-              const el = (messagesContainer.value as any)?.$el || messagesContainer.value;
-              if (el && el.scrollHeight > previousHeight) {
-                // Content grew, scroll again
-                attemptScroll(attempts + 1);
-              } else {
-                // Done scrolling, clear the programmatic flag after a short delay
-                setTimeout(() => {
-                  isProgrammaticScroll.value = false;
-                }, 100);
-              }
-            }, 50); // Reduced delay for more responsive scrolling
-          } else {
-            // Max attempts reached, clear the flag
-            setTimeout(() => {
-              isProgrammaticScroll.value = false;
-            }, 100);
-          }
+  isProgrammaticScroll.value = true
+
+  const scroller = dynamicScrollerRef.value
+  if (!scroller) return
+
+  if (smooth) {
+    // Can't use built-in for smooth scrolling, need manual approach
+    const el = scroller.$el
+    const doScroll = () => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+
+    doScroll()
+
+    if (scroller.$_undefinedSizes > 0) {
+      const checkAndScroll = () => {
+        doScroll()
+        if (scroller.$_undefinedSizes > 0) {
+          requestAnimationFrame(checkAndScroll)
+        } else {
+          setTimeout(() => {
+            doScroll()
+            isProgrammaticScroll.value = false
+          }, 100)
         }
       }
-    });
-  };
-  
-  attemptScroll();
+      requestAnimationFrame(checkAndScroll)
+    } else {
+      setTimeout(() => {
+        doScroll()
+        isProgrammaticScroll.value = false
+      }, 100)
+    }
+  } else {
+    // Use built-in for instant scrolling
+    scroller.scrollToBottom()
+    // Watch for completion
+    const checkDone = () => {
+      if (scroller.$_scrollingToBottom) {
+        requestAnimationFrame(checkDone)
+      } else {
+        isProgrammaticScroll.value = false
+      }
+    }
+    requestAnimationFrame(checkDone)
+  }
 }
 
 function closeMobileSidebar() {
@@ -4016,9 +4033,7 @@ async function handleEventNavigate(messageId: string, branchId?: string) {
 }
 
 function scrollToTop() {
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTo({ top: 0, behavior: 'smooth' });
-  }
+  dynamicScrollerRef.value?.scrollToTop();
 }
 
 // Sync breadcrumb scroll position with page scroll
@@ -4809,14 +4824,9 @@ function formatDate(date: Date | string): string {
   }
 }
 
-/* Force scrollbar to always show on macOS/webkit */
-.messages-container::-webkit-scrollbar {
-  -webkit-appearance: none;
-  width: 12px;
-}
-
 .messages-container {
-  overflow-y: scroll !important; /* Force scrollbar to always show */
+  padding-right: 0 !important;
+  padding-top: 4px !important;
 }
 
 /* Clickable chip styles */
@@ -5245,5 +5255,36 @@ function formatDate(date: Date | string): string {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+.scroller {
+  height: calc(100vh - 220px);
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(187, 134, 252, 0.5) rgba(255, 255, 255, 0.05);
+  padding-right: 16px;
+}
+
+.scroller::-webkit-scrollbar {
+  -webkit-appearance: none;
+  width: 12px;
+}
+
+.scroller::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.scroller::-webkit-scrollbar-thumb {
+  background: rgba(187, 134, 252, 0.5);
+  border-radius: 6px;
+  border: 1px solid rgba(187, 134, 252, 0.2);
+}
+
+.scroller::-webkit-scrollbar-thumb:hover {
+  background: rgba(187, 134, 252, 0.7);
+  border: 1px solid rgba(187, 134, 252, 0.4);
 }
 </style>
