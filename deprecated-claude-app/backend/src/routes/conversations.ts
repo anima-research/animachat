@@ -379,10 +379,7 @@ export function conversationRouter(db: Database): Router {
 
       // Note: Access control is handled in getConversation
       // Pass requesting user to filter private branches
-      const messages = (before ?
-        await db.getConversationMessageBranchPage(req.params.id, conversation.userId, before, limit, req.userId) :
-        await db.getConversationMessages(req.params.id, conversation.userId, req.userId)
-      );
+      const messages = await db.getConversationMessageBranchPage(req.params.id, conversation.userId, limit, before, req.userId)
 
       // Prepare messages for client: strip debug data, convert old images to blob refs
       // Pass db and userId so conversions can be persisted (avoiding duplicate blobs after restart)

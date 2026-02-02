@@ -3700,11 +3700,44 @@ export class Database {
     return this.sortMessagesByTreeOrder(messages);
   }
 
-  async getConversationMessageBranchPage(conversationId: string, conversationOwnerUserId: string, messageId: string, limit: number, requestingUserId?: string): Promise<Message[]> {
+  async getConversationMessageBranchPage(conversationId: string, conversationOwnerUserId: string, limit: number, messageId?: string, requestingUserId?: string): Promise<Message[]> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
-    const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
     const messageIds = this.conversationMessages.get(conversationId) || [];
+
+    const message = await (async () => {
+      if (messageId) {
+        return await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
+      } else {
+        // TODO Duplicate logic from above; refactor
+        const viewerId = requestingUserId || conversationOwnerUserId;
+        const messages = this.sortMessagesByTreeOrder(messageIds
+          .map(id => this.messages.get(id))
+          .filter((msg): msg is Message => msg !== undefined)
+          .map(msg => {
+            // Filter out branches that are private to other users
+            const visibleBranches = msg.branches.filter(
+              b => !b.privateToUserId || b.privateToUserId === viewerId
+            );
+            return { ...msg, branches: visibleBranches };
+          })
+          .filter(msg => msg.branches.length > 0)); // Remove messages with no visible branches
+        
+        let message = messages[0];
+        for (const currentMessage of messages) {
+          const currentBranch = currentMessage.branches.find(b => b.id === currentMessage.activeBranchId);
+          if (currentBranch?.parentBranchId === message.activeBranchId) {
+            message = currentMessage;
+          }
+        }
+        return message;
+      }
+    })();
+
+    if (!message) {
+      console.warn(`[getConversationMessageBranchPage] Message not found: ${messageId} in conversation ${conversationId}`);
+      return [];
+    }
     
     const viewerId = requestingUserId || conversationOwnerUserId;
     const branchesMap: Map<string, string> = new Map(
@@ -3717,11 +3750,6 @@ export class Database {
         return visibleBranches.map(b => [b.id, msgId] as const)
       })
     );
-
-    if (!message) {
-      console.warn(`[getConversationMessageBranchPage] Message not found: ${messageId} in conversation ${conversationId}`);
-      return [];
-    }
 
     const page: Message[] = [];
     let nextMessage: Message | undefined = message;
