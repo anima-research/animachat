@@ -1151,6 +1151,9 @@ export function createStore(): {
 
       if (!changed || !state.currentConversation) return;
 
+      // Capture conversation ID now (before the timeout fires, user might navigate away)
+      const conversationId = state.currentConversation.id;
+
       // Create a new Set to trigger Vue reactivity (mutating Set doesn't trigger watchers)
       const newSet = new Set(state.readBranchIds);
       for (const id of branchIds) {
@@ -1354,6 +1357,21 @@ export function createStore(): {
       const token = localStorage.getItem('token');
       if (!token) {
         console.warn(`[Store] No token found, skipping WebSocket connection`);
+        return;
+      }
+      
+      // IMPORTANT: Don't create multiple WebSocketService instances!
+      // This was causing rapid reconnection loops when users navigated between views
+      if (state.wsService) {
+        console.log(`[Store] WebSocketService already exists, checking connection state...`);
+        // If already connected or connecting, don't recreate
+        if (state.wsService.isConnected || state.wsService.isConnecting) {
+          console.log(`[Store] WebSocket already connected/connecting, skipping`);
+          return;
+        }
+        // If disconnected, try to reconnect instead of recreating
+        console.log(`[Store] WebSocket exists but disconnected, reconnecting...`);
+        state.wsService.connect();
         return;
       }
       

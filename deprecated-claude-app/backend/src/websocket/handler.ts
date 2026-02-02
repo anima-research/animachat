@@ -637,6 +637,12 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
         case 'typing':
           handleTyping(ws, message, db);
           break;
+        
+        case 'ping':
+          // Client-side keep-alive ping - respond with pong to confirm connection is alive
+          // This is separate from WebSocket protocol-level ping/pong
+          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+          break;
           
         default:
           ws.send(JSON.stringify({ type: 'error', error: 'Unknown message type' }));

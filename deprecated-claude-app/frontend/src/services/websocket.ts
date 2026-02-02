@@ -20,11 +20,14 @@ export class WebSocketService {
   private maxReconnectAttempts = 5;
   private reconnectTimeout: number | null = null;
   private connectionTimeout: number | null = null; // Timeout for connection attempts
+  private keepAliveInterval: number | null = null; // Client-side keep-alive for Safari
   private eventHandlers: Map<string, Set<EventHandler>> = new Map();
   private messageQueue: WsMessage[] = [];
   private currentRoomId: string | null = null;
   private visibilityHandler: (() => void) | null = null;
   private intentionalDisconnect = false; // Track if disconnect was intentional
+  private isClosingConnection = false; // Prevent race conditions during close
+  private lastPongTime: number = 0; // Track last server response
   
   constructor(token: string) {
     this.token = token;
@@ -36,10 +39,14 @@ export class WebSocketService {
     this.visibilityHandler = () => {
       if (document.visibilityState === 'visible') {
         console.log('[WS] Tab became visible, checking connection...');
-        // Reset reconnect attempts when tab becomes visible
+        // Reset reconnect attempts when tab becomes visible (user is actively using the tab)
         this.reconnectAttempts = 0;
         
-        // Force reconnect if not connected or connection is stale
+        // Check if connection is stale (no server activity while tab was hidden)
+        const timeSinceLastPong = Date.now() - this.lastPongTime;
+        const connectionMayBeStale = timeSinceLastPong > 60000; // 1 minute without activity
+        
+        // Force reconnect if not connected or connection appears stale
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
           console.log('[WS] Connection dead after tab resume, reconnecting...');
           this.connect();
@@ -50,6 +57,25 @@ export class WebSocketService {
             this.currentRoomId = null; // Clear so joinRoom actually sends the message
             setTimeout(() => this.joinRoom(roomId), 500); // Give connection time to establish
           }
+        } else if (connectionMayBeStale) {
+          console.log(`[WS] Connection may be stale (${Math.round(timeSinceLastPong / 1000)}s since last activity), sending ping...`);
+          // Send a ping to verify connection is still alive
+          try {
+            this.ws.send(JSON.stringify({ type: 'ping' }));
+            // If we don't get a pong within 5 seconds, force reconnect
+            setTimeout(() => {
+              const newTimeSinceLastPong = Date.now() - this.lastPongTime;
+              if (newTimeSinceLastPong > timeSinceLastPong) {
+                console.warn('[WS] Connection confirmed dead (no pong), reconnecting...');
+                this.ws?.close(4001, 'Connection stale after visibility change');
+              }
+            }, 5000);
+          } catch (e) {
+            console.warn('[WS] Failed to send visibility ping, reconnecting...');
+            this.connect();
+          }
+        } else {
+          console.log(`[WS] Connection appears healthy (last activity ${Math.round(timeSinceLastPong / 1000)}s ago)`);
         }
       }
     };
@@ -66,10 +92,22 @@ export class WebSocketService {
       return;
     }
     
+    // Don't try to connect while we're closing a previous connection
+    if (this.isClosingConnection) {
+      console.log('[WS] Waiting for previous connection to close...');
+      return;
+    }
+    
     // Clear any existing connection timeout
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);
       this.connectionTimeout = null;
+    }
+    
+    // Clear keep-alive interval
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
     }
     
     // Mark as not intentionally disconnected
@@ -79,6 +117,16 @@ export class WebSocketService {
     wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
     wsUrl.searchParams.set('token', this.token);
     
+    // Add unique tab identifier to work around Safari + iCloud Private Relay bug
+    // where multiple WebSocket connections to the same host:port are serialized.
+    // Each tab gets a unique ID, making the URLs distinct to Safari.
+    let tabId = sessionStorage.getItem('ws_tab_id');
+    if (!tabId) {
+      tabId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      sessionStorage.setItem('ws_tab_id', tabId);
+    }
+    wsUrl.searchParams.set('tabId', tabId);
+    
     // For development, connect to backend port
     if (import.meta.env.DEV) {
       // Use HTTPS port if the page is served over HTTPS
@@ -86,38 +134,60 @@ export class WebSocketService {
       wsUrl.pathname = '/';
     }
     
-    console.log('[WS] Connecting to:', wsUrl.toString());
+    console.log('[WS] Connecting to:', wsUrl.toString(), '(tabId:', tabId, ')');
     this.emit('connection_state', { state: 'connecting' });
     
     // Close any existing WebSocket before creating new one
-    if (this.ws) {
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+      this.isClosingConnection = true;
       try {
+        // Remove handlers to prevent double-triggering
+        this.ws.onclose = null;
+        this.ws.onerror = null;
         this.ws.close();
       } catch (e) {
         // Ignore errors when closing
       }
+      // Wait a bit for the close to complete, then proceed
+      setTimeout(() => {
+        this.isClosingConnection = false;
+        this.ws = null;
+        this.connect();
+      }, 100);
+      return;
     }
     
     this.ws = new WebSocket(wsUrl.toString());
+    this.lastPongTime = Date.now();
     
-    // Set connection timeout (15 seconds) to avoid hanging in "connecting" state
+    // Set connection timeout (20 seconds) to avoid hanging in "connecting" state
+    // Increased from 15s to give Safari more time
     this.connectionTimeout = window.setTimeout(() => {
       if (this.ws?.readyState === WebSocket.CONNECTING) {
-        console.warn('[WS] Connection timeout, closing and retrying...');
+        console.warn('[WS] Connection timeout after 20s, closing and retrying...');
+        this.isClosingConnection = true;
+        this.ws.onclose = null; // Prevent double-handling
         this.ws.close();
-        // onclose will handle the reconnect
+        this.ws = null;
+        this.isClosingConnection = false;
+        this.attemptReconnect();
       }
-    }, 15000);
+    }, 20000);
     
     this.ws.onopen = () => {
-      console.log('[WS] Connected');
+      console.log('[WS] Connected successfully');
       // Clear connection timeout
       if (this.connectionTimeout) {
         clearTimeout(this.connectionTimeout);
         this.connectionTimeout = null;
       }
       this.reconnectAttempts = 0;
+      this.lastPongTime = Date.now();
       this.emit('connection_state', { state: 'connected' });
+      
+      // Start client-side keep-alive (Safari needs this more frequently)
+      // Send a ping every 15 seconds to keep the connection alive
+      this.startKeepAlive();
       
       // Send queued messages
       while (this.messageQueue.length > 0) {
@@ -129,6 +199,9 @@ export class WebSocketService {
     };
     
     this.ws.onmessage = (event) => {
+      // Any message from server counts as "pong" - connection is alive
+      this.lastPongTime = Date.now();
+      
       try {
         const data = JSON.parse(event.data);
         // console.log('WebSocket received:', data.type, data);
@@ -139,15 +212,20 @@ export class WebSocketService {
     };
     
     this.ws.onclose = (event) => {
-      console.log('[WS] Disconnected', event.code, event.reason);
+      console.log('[WS] Disconnected', event.code, event.reason, `(was connected for ${Math.round((Date.now() - this.lastPongTime) / 1000)}s since last activity)`);
       // Clear connection timeout
       if (this.connectionTimeout) {
         clearTimeout(this.connectionTimeout);
         this.connectionTimeout = null;
       }
+      // Clear keep-alive
+      if (this.keepAliveInterval) {
+        clearInterval(this.keepAliveInterval);
+        this.keepAliveInterval = null;
+      }
       this.emit('connection_state', { state: 'disconnected' });
-      // Only attempt reconnect if not intentionally disconnected
-      if (!this.intentionalDisconnect) {
+      // Only attempt reconnect if not intentionally disconnected and not already closing
+      if (!this.intentionalDisconnect && !this.isClosingConnection) {
         this.attemptReconnect();
       }
     };
@@ -155,6 +233,37 @@ export class WebSocketService {
     this.ws.onerror = (error) => {
       console.error('[WS] Error:', error);
     };
+  }
+  
+  /**
+   * Start client-side keep-alive to prevent Safari from closing idle connections.
+   * Sends a lightweight ping message every 15 seconds.
+   */
+  private startKeepAlive(): void {
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+    }
+    
+    this.keepAliveInterval = window.setInterval(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        // Check if we haven't heard from server in 45 seconds (missed 1.5 server heartbeats)
+        const timeSinceLastPong = Date.now() - this.lastPongTime;
+        if (timeSinceLastPong > 45000) {
+          console.warn(`[WS] No server activity for ${Math.round(timeSinceLastPong / 1000)}s, connection may be dead`);
+          // Force reconnect - the connection might be zombie
+          this.ws.close(4000, 'No server activity');
+          return;
+        }
+        
+        // Send a lightweight ping message to keep connection alive
+        // This helps Safari maintain the WebSocket connection
+        try {
+          this.ws.send(JSON.stringify({ type: 'ping' }));
+        } catch (e) {
+          console.warn('[WS] Failed to send keep-alive ping:', e);
+        }
+      }
+    }, 15000);
   }
   
   disconnect(): void {
@@ -169,6 +278,11 @@ export class WebSocketService {
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);
       this.connectionTimeout = null;
+    }
+    
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
     }
     
     if (this.ws) {
