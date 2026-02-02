@@ -2675,8 +2675,10 @@ watch(lastMessageId, (newId, oldId) => {
 let scrollTimeout: number;
 let userScrollCooldown: number;
 
+const isLoadingMoreMessages = ref(false);
+const hasMoreMessages = ref(true);
+
 function handleScroll(event: Event) {
-  console.log('handleScroll fired, isProgrammatic:', isProgrammaticScroll.value)
   const element = event.target as HTMLElement;
   if (!element) return;
   
@@ -2701,6 +2703,12 @@ function handleScroll(event: Event) {
     else if (scrollBottom <= 10) {
       autoScrollEnabled.value = true;
     }
+
+    // Paginagion: fetch older messages when near top
+    const scrollTop = element.scrollTop;
+    if (scrollTop < 300 && !isLoadingMoreMessages.value && hasMoreMessages.value) {
+      loadOlderMessages();
+    }
   }
   
   // Debounce the sync to avoid too many calls
@@ -2709,6 +2717,43 @@ function handleScroll(event: Event) {
     syncBreadcrumbScroll();
   }, 50);
 };
+
+async function loadOlderMessages() {
+  if (isLoadingMoreMessages.value || !hasMoreMessages.value) return;
+
+  isLoadingMoreMessages.value = true;
+  const oldestMessage = messages.value[0];
+  if (!oldestMessage) {
+    isLoadingMoreMessages.value = false;
+    return;
+  }
+
+  const element = dynamicScrollerRef.value?.$el;
+  const oldScrollHeight = element.scrollHeight;
+
+  try {
+    const older = await api.get(`/conversations/${currentConversation.value?.id}/messages`, {
+      params: {
+        before: oldestMessage.id,
+        limit: 100
+      }
+    });
+
+    if (older.data.length == 0) {
+      hasMoreMessages.value = false;
+    } else {
+      // Prepend older messages to the store
+      store.state.allMessages = older.data.concat(store.state.allMessages);
+      store.state.messagesVersion++;
+    }
+  } finally {
+    isLoadingMoreMessages.value = false;
+  }
+  
+  await nextTick();
+  const newScrollHeight = element.scrollHeight;
+  element.scrollTop += (newScrollHeight - oldScrollHeight);
+}
 
 // Track when user is manually scrolling bookmarks to prevent sync
 let userScrollTimeout: number;
