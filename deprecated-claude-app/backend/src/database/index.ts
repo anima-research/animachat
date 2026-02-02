@@ -3805,14 +3805,14 @@ export class Database {
     return this.sortMessagesByTreeOrder(messages);
   }
 
-  async getConversationMessageBranchPage(conversationId: string, conversationOwnerUserId: string, limit: number, messageId?: string, requestingUserId?: string): Promise<Message[]> {
+  async getConversationMessageBranchPage(conversationId: string, conversationOwnerUserId: string, limit: number, beforeMessageId?: string, requestingUserId?: string): Promise<Message[]> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
     const messageIds = this.conversationMessages.get(conversationId) || [];
 
     const message = await (async () => {
-      if (messageId) {
-        return await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
+      if (beforeMessageId) {
+        return await this.tryLoadAndVerifyMessage(beforeMessageId, conversationId, conversationOwnerUserId);
       } else {
         // TODO Duplicate logic from above; refactor
         const viewerId = requestingUserId || conversationOwnerUserId;
@@ -3840,7 +3840,7 @@ export class Database {
     })();
 
     if (!message) {
-      console.warn(`[getConversationMessageBranchPage] Message not found: ${messageId} in conversation ${conversationId}`);
+      console.warn(`[getConversationMessageBranchPage] Message not found: ${beforeMessageId} in conversation ${conversationId}`);
       return [];
     }
     

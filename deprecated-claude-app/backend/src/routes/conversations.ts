@@ -374,8 +374,8 @@ export function conversationRouter(db: Database): Router {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
-      const before = req.query.before as string || undefined;
-      const limit = parseInt(req.query.limit as string) || 50;
+      const before = req.query.before as string | undefined;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : Infinity;
 
       // Note: Access control is handled in getConversation
       // Pass requesting user to filter private branches
