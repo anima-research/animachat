@@ -1085,10 +1085,21 @@ export function createStore(): {
         // console.log(`Message ${i}:`, message.id, 'activeBranchId:', message.activeBranchId, 
         //             'branches:', message.branches.length, 
         //             'activeBranch parentBranchId:', activeBranch?.parentBranchId);
+
+        // Case 0: Active branch doesn't exist or doesn't connect to our path
+        // Be strict: skip this message. Don't try to recover via other branches,
+        // as that can accidentally include orphaned/deleted branches from other roots.
+        // (This mirrors the import preview logic which is strict about following activeBranchId only)
+        if (!activeBranch) {
+          console.log('Skipping message with deleted active branch:', message.id);
+          continue;
+        }
+        // Message is from a different conversation path - skip it
         
         // Case 1: Active branch exists and is a root message
         // Only accept the canonical root - skip others (handles multi-root conversations from looming)
-        if (activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root')) {
+
+        if (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root') {
           // Only accept if this is the canonical root (or if no canonical was determined)
           if (branchPath.length === 0 && (!canonicalRootId || message.id === canonicalRootId)) {
             visibleMessages.push(message);
@@ -1099,8 +1110,19 @@ export function createStore(): {
           continue;
         }
 
-        // Case 2: Active branch exists and continues from our current path
-        if (activeBranch && branchPath.includes(activeBranch.parentBranchId!)) {
+        // Case 2: Active branch is a pseudo-root (earliest loaded message)
+        // Build down anyways
+        if (state.allMessages.some(m => m.branches.some(b => b.id === activeBranch.parentBranchId))) {
+          if (branchPath.length === 0) {
+            visibleMessages.push(message);
+            branchPath.push(activeBranch.id);
+            // console.log('Added pseudo-root message:', message.id);
+            continue;
+          }
+        }
+
+        // Case 3: Active branch exists and continues from our current path
+        if (branchPath.includes(activeBranch.parentBranchId!)) {
           // This message is a valid continuation
           visibleMessages.push(message);
           
@@ -1115,14 +1137,6 @@ export function createStore(): {
           continue;
         }
 
-        // Case 3: Active branch doesn't exist or doesn't connect to our path
-        // Be strict: skip this message. Don't try to recover via other branches,
-        // as that can accidentally include orphaned/deleted branches from other roots.
-        // (This mirrors the import preview logic which is strict about following activeBranchId only)
-        if (!activeBranch) {
-          console.log('Skipping message with deleted active branch:', message.id);
-        }
-        // Message is from a different conversation path - skip it
       }
       
       // Update cache before returning
