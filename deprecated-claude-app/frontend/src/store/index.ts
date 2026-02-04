@@ -1065,13 +1065,12 @@ export function createStore(): {
           continue;
         }
 
-        // Case 2: Active branch is a pseudo-root (earliest loaded message)
-        // Build down anyways
-        if (state.allMessages.some(m => m.branches.some(b => b.id === activeBranch.parentBranchId))) {
+        // Case 2: Active branch is a pseudo-root (earliest loaded message whose parent isn't loaded)
+        // Treat it as a root and build down from here
+        if (!state.allMessages.some(m => m.branches.some(b => b.id === activeBranch.parentBranchId))) {
           if (branchPath.length === 0) {
             visibleMessages.push(message);
             branchPath.push(activeBranch.id);
-            // console.log('Added pseudo-root message:', message.id);
             continue;
           }
         }
