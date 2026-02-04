@@ -3989,38 +3989,6 @@ async function handleBookmarkChanged() {
   }
 }
 
-function scrollToMessage(messageId: string) {
-  const scroller = dynamicScrollerRef.value;
-  if (scroller) {
-    const index = groupedMessages.value.findIndex(g => g.messages.some(m => m.id === messageId));
-    if (index !== -1) {
-      scroller.scrollToItem(index);
-      setTimeout(() => {
-        const element = document.getElementById(`message-${messageId}`);
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          element.classList.add('highlight-flash');
-          setTimeout(() => {
-            element.classList.remove('highlight-flash');
-          }, 1500);
-        }
-      }, 50);
-      return;
-    }
-  }
-
-  const element = document.getElementById(`message-${messageId}`);
-  if (element) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    element.classList.add('highlight-flash');
-    setTimeout(() => {
-      element.classList.remove('highlight-flash');
-    }, 1500);
-  } else {
-    console.warn(`[scrollToMessage] Element not found for message: ${messageId}`);
-  }
-}
-
 async function handleEventNavigate(messageId: string, branchId?: string) {
   console.log(`[handleEventNavigate] messageId: ${messageId}, branchId: ${branchId}`);
 
@@ -4059,46 +4027,30 @@ async function handleEventNavigate(messageId: string, branchId?: string) {
     return;
   }
   
-  // Build the ancestry chain: trace back through parentBranchId to find all branches we need to activate
-  const branchesToActivate: Array<{ messageId: string; branchId: string }> = [];
-  
-  // Add the target message's branch
-  if (message.activeBranchId !== targetBranchId) {
-    branchesToActivate.push({ messageId: message.id, branchId: targetBranchId });
-  }
-  
-  // Trace back through parent branches
-  let currentParentBranchId = targetBranch.parentBranchId;
-  while (currentParentBranchId) {
-    // Find the message that contains this branch
-    const parentMessage = store.state.allMessages.find(m => 
-      m.branches.some(b => b.id === currentParentBranchId)
-    );
-    
-    if (!parentMessage) break;
-    
-    // If parent message isn't on this branch, we need to switch it
-    if (parentMessage.activeBranchId !== currentParentBranchId) {
-      branchesToActivate.unshift({ messageId: parentMessage.id, branchId: currentParentBranchId });
-    }
-    
-    // Continue up the chain
-    const parentBranch = parentMessage.branches.find(b => b.id === currentParentBranchId);
-    currentParentBranchId = parentBranch?.parentBranchId || null;
-  }
-  
-  // Switch branches in batch for faster navigation
-  if (branchesToActivate.length > 0) {
-    console.log(`[handleEventNavigate] Batch switching ${branchesToActivate.length} branches`);
-    store.switchBranchesBatch(branchesToActivate);
-    await getBookmarksInActivePath();
+  await store.activateBranch(messageId, targetBranchId);
+  await getBookmarksInActivePath();
+
+  if (allMessages.value.map(m => m.id).includes(messageId) === false) {
+    console.log('[handleEventNavigate] Message not in allMessages, loading around target');
+    await store.clearMessages();
+    await store.loadMessages(currentConversation.value?.id || '', 50, messageId, 'older');
+    await store.loadMessages(currentConversation.value?.id || '', 50, messageId, 'newer');
+    hasMoreNewerMessages.value = true;
+    hasMoreMessages.value = true;
   }
 
-  // Wait for DOM to update
   await nextTick();
-
-  // Then scroll to the message
-  scrollToMessage(messageId);
+  setTimeout(() => {
+    const scroller = dynamicScrollerRef.value;
+    if (scroller) {
+      const index = groupedMessages.value.findIndex(g => g.messages.some(m => m.id === messageId));
+      if (index !== -1) {
+        scroller.scrollToItem(index);
+      } else {
+        console.warn('[handleEventNavigate] Message not found in visible messages:', { messageId, branchId: targetBranchId });
+      }
+    }
+  }, 100);
 }
 
 function scrollToTop() {
