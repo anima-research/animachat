@@ -72,7 +72,7 @@ export interface Store {
   logout(): void;
   
   loadConversations(): Promise<void>;
-  loadConversation(id: string): Promise<void>;
+  loadConversation(id: string, targetMessageId?: string): Promise<void>;
   createConversation(model: string, title?: string, format?: 'standard' | 'prefill'): Promise<Conversation>;
   updateConversation(id: string, updates: Partial<Conversation>): Promise<void>;
   archiveConversation(id: string): Promise<void>;
@@ -381,7 +381,7 @@ export function createStore(): {
       }
     },
     
-    async loadConversation(id: string, retryCount = 0) {
+    async loadConversation(id: string, targetMessageId?: string, retryCount = 0) {
       const maxRetries = 3;
       const retryDelay = 1000;
       const startTime = Date.now();
@@ -407,20 +407,32 @@ export function createStore(): {
       }
 
       try {
-        console.log(`[loadConversation] Loading ${id}... (attempt ${retryCount + 1}/${maxRetries})`);
+        console.log(`[loadConversation] Loading ${id}${targetMessageId ? ` around message ${targetMessageId}` : ''}... (attempt ${retryCount + 1}/${maxRetries})`);
         console.log(`[loadConversation] API base URL: ${api.defaults.baseURL}`);
-        
+
         const response = await api.get(`/conversations/${id}`);
         const fetchTime = Date.now() - startTime;
         console.log(`[loadConversation] Conversation data received in ${fetchTime}ms`);
         console.log(`[loadConversation] Response status: ${response.status}, has data: ${!!response.data}`);
-        
+
         state.currentConversation = response.data;
         console.log(`[loadConversation] Set currentConversation, now loading messages and read state...`);
 
+        // Clear existing messages before loading new conversation
+        // Important for deep links which use merge instead of replace
+        state.allMessages = [];
+
         // Load messages and read state in parallel to avoid flash of unread
+        // If we have a targetMessageId (deep link), load messages around it instead of latest
+        const messageLoadPromise = targetMessageId
+          ? Promise.all([
+              this.loadMessages(id, 50, targetMessageId, 'older'),
+              this.loadMessages(id, 50, targetMessageId, 'newer'),
+            ]).then(() => true)
+          : this.loadMessages(id, 100);
+
         const [, uiStateResult] = await Promise.all([
-          this.loadMessages(id, 100), // TODO make this configurable
+          messageLoadPromise,
           api.get(`/conversations/${id}/ui-state`).catch(err => {
             console.warn(`[loadConversation] Failed to load read state:`, err);
             return { data: { readBranchIds: [] } };

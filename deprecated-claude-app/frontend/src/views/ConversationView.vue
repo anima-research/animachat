@@ -2067,6 +2067,7 @@ onMounted(async () => {
   if (typeof window !== 'undefined') {
     updateMobileState();
     window.addEventListener('resize', updateMobileState);
+    window.addEventListener('hashchange', handleHashChange);
     if (isMobile.value) {
       mobilePanel.value = route.params.id ? 'conversation' : 'sidebar';
       drawer.value = mobilePanel.value === 'sidebar';
@@ -2395,14 +2396,15 @@ onMounted(async () => {
   
   // Load conversation from route (handles both /conversation/:id and /conversation/:conversationId/message/:messageId)
   const conversationId = (route.params.conversationId || route.params.id) as string | undefined;
+  const targetMessageId = route.params.messageId as string | undefined;
   if (conversationId) {
-    console.log(`[ConversationView] Route has conversation ID: ${conversationId}`);
+    console.log(`[ConversationView] Route has conversation ID: ${conversationId}${targetMessageId ? `, target message: ${targetMessageId}` : ''}`);
     console.log(`[ConversationView] Starting conversation load...`);
     const loadStart = Date.now();
     isLoadingConversation.value = true;
 
     try {
-      await store.loadConversation(conversationId);
+      await store.loadConversation(conversationId, targetMessageId);
       console.log(`[ConversationView] ✓ store.loadConversation completed in ${Date.now() - loadStart}ms`);
       console.log(`[ConversationView] allMessages.length: ${store.state.allMessages.length}`);
     } catch (error) {
@@ -2449,16 +2451,22 @@ onMounted(async () => {
     // Check if this is a deep link to a specific message
     const messageId = route.params.messageId as string | undefined;
     const branchId = route.query.branch as string | undefined;
+    const hashTarget = parseHashTarget();
 
-    if (messageId) {
-      // Deep link - navigate to specific message
+    if (messageId || hashTarget) {
+      // Deep link - may have newer messages above current view
+      hasMoreNewerMessages.value = true;
+      const targetId = messageId || hashTarget!.messageId;
+      const targetBranch = branchId || hashTarget?.branchId;
       setTimeout(async () => {
-        await handleEventNavigate(messageId, branchId);
-        // Clean up the URL to the simple form
-        router.replace(`/conversation/${conversationId}`);
+        await handleEventNavigate(targetId, targetBranch);
+        if (messageId) {
+          router.replace(`/conversation/${conversationId}`);
+        }
       }, 100);
     } else {
-      // Normal load - scroll to bottom
+      // Normal load - scroll to bottom, no newer messages
+      hasMoreNewerMessages.value = false;
       setTimeout(() => {
         scrollToBottom();
       }, 100);
@@ -2479,8 +2487,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', updateMobileState);
+    window.removeEventListener('hashchange', handleHashChange);
   }
-  
+
   // Leave room when unmounting
   if (currentConversation.value && store.state.wsService) {
     store.state.wsService.leaveRoom(currentConversation.value.id);
@@ -2492,6 +2501,28 @@ const conversationDrafts = ref<Map<string, string>>(new Map());
 
 // Track if initial setup is complete
 const isInitialized = ref(false);
+
+// Parse hash fragment for deep linking (supports #messageId or #messageId:branchId)
+function parseHashTarget(): { messageId: string; branchId?: string } | null {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash;
+  if (!hash || hash === '#') return null;
+
+  const hashContent = hash.slice(1);
+  if (hashContent.includes(':')) {
+    const [messageId, branchId] = hashContent.split(':');
+    return { messageId, branchId };
+  }
+  return { messageId: hashContent };
+}
+
+// Handle hash change events for navigation
+function handleHashChange() {
+  const hashTarget = parseHashTarget();
+  if (hashTarget && currentConversation.value) {
+    handleEventNavigate(hashTarget.messageId, hashTarget.branchId);
+  }
+}
 
 // Get conversation ID from either route format
 function getConversationIdFromRoute(): string | undefined {
@@ -2529,20 +2560,21 @@ watch(() => getConversationIdFromRoute(), async (newId, oldId) => {
   hasMoreMessages.value = true;
 
   if (newId) {
-    console.log(`[ConversationView:watch] Route changed to: ${newId}`);
+    const targetMessageId = route.params.messageId as string | undefined;
+    console.log(`[ConversationView:watch] Route changed to: ${newId}${targetMessageId ? `, target: ${targetMessageId}` : ''}`);
     const loadStart = Date.now();
     isLoadingConversation.value = true;
-    
+
     // Restore draft for this conversation or clear input
     messageInput.value = conversationDrafts.value.get(newId as string) || '';
-    
+
     // Clear selected branch when switching conversations
     if (selectedBranchForParent.value) {
       cancelBranchSelection();
     }
 
     try {
-      await store.loadConversation(newId as string);
+      await store.loadConversation(newId as string, targetMessageId);
       console.log(`[ConversationView:watch] ✓ Conversation loaded in ${Date.now() - loadStart}ms, messages: ${store.state.allMessages.length}`);
     } catch (error) {
       console.error(`[ConversationView:watch] ✗ Failed to load conversation:`, error);
@@ -2568,14 +2600,21 @@ watch(() => getConversationIdFromRoute(), async (newId, oldId) => {
     // Check if this is a deep link to a specific message
     const messageId = route.params.messageId as string | undefined;
     const branchId = route.query.branch as string | undefined;
+    const hashTarget = parseHashTarget();
 
     if (messageId) {
-      // Deep link - navigate to specific message, may have newer messages
+      // Deep link via route param - navigate to specific message, may have newer messages
       hasMoreNewerMessages.value = true;
       setTimeout(async () => {
         await handleEventNavigate(messageId, branchId);
         // Clean up the URL to the simple form
         router.replace(`/conversation/${newId}`);
+      }, 100);
+    } else if (hashTarget) {
+      // Deep link via hash fragment - navigate to specific message
+      hasMoreNewerMessages.value = true;
+      setTimeout(async () => {
+        await handleEventNavigate(hashTarget.messageId, hashTarget.branchId);
       }, 100);
     } else {
       // Normal load - scroll to bottom, no newer messages possible
@@ -3951,11 +3990,28 @@ async function handleBookmarkChanged() {
 }
 
 function scrollToMessage(messageId: string) {
+  const scroller = dynamicScrollerRef.value;
+  if (scroller) {
+    const index = groupedMessages.value.findIndex(g => g.messages.some(m => m.id === messageId));
+    if (index !== -1) {
+      scroller.scrollToItem(index);
+      setTimeout(() => {
+        const element = document.getElementById(`message-${messageId}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          element.classList.add('highlight-flash');
+          setTimeout(() => {
+            element.classList.remove('highlight-flash');
+          }, 1500);
+        }
+      }, 50);
+      return;
+    }
+  }
+
   const element = document.getElementById(`message-${messageId}`);
   if (element) {
     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    
-    // Add a brief highlight effect
     element.classList.add('highlight-flash');
     setTimeout(() => {
       element.classList.remove('highlight-flash');
@@ -3967,21 +4023,39 @@ function scrollToMessage(messageId: string) {
 
 async function handleEventNavigate(messageId: string, branchId?: string) {
   console.log(`[handleEventNavigate] messageId: ${messageId}, branchId: ${branchId}`);
-  
+
   // Find the message in the store
-  const message = store.state.allMessages.find(m => m.id === messageId);
-  
+  let message = store.state.allMessages.find(m => m.id === messageId);
+
+  if (!message && currentConversation.value) {
+    console.log(`[handleEventNavigate] Message not loaded, fetching around target...`);
+    try {
+      const olderLoaded = await store.loadMessages(currentConversation.value.id, 50, messageId, 'older');
+      const newerLoaded = await store.loadMessages(currentConversation.value.id, 50, messageId, 'newer');
+      console.log(`[handleEventNavigate] Loaded messages: older=${olderLoaded}, newer=${newerLoaded}`);
+      message = store.state.allMessages.find(m => m.id === messageId);
+    } catch (error) {
+      console.error(`[handleEventNavigate] Failed to load messages around target:`, error);
+    }
+  }
+
   if (!message) {
     console.warn(`[handleEventNavigate] Message not found in allMessages: ${messageId}`);
+    errorSnackbarMessage.value = 'Message not found';
+    errorSnackbarDetails.value = 'The linked message may have been deleted or is not accessible.';
+    errorSnackbar.value = true;
     return;
   }
-  
+
   // Get the target branch (either specified or current active)
   const targetBranchId = branchId || message.activeBranchId;
   const targetBranch = message.branches.find(b => b.id === targetBranchId);
-  
+
   if (!targetBranch) {
     console.warn(`[handleEventNavigate] Branch not found: ${targetBranchId}`);
+    errorSnackbarMessage.value = 'Branch not found';
+    errorSnackbarDetails.value = 'The linked message branch may have been deleted.';
+    errorSnackbar.value = true;
     return;
   }
   
@@ -4033,7 +4107,7 @@ function scrollToTop() {
 
 // Sync breadcrumb scroll position with page scroll
 function syncBreadcrumbScroll() {
-  if (!messagesContainer.value || !bookmarksScrollRef.value || bookmarksInActivePath.value.length === 0) {
+  if (!bookmarksScrollRef.value || bookmarksInActivePath.value.length === 0) {
     return;
   }
 
@@ -4042,23 +4116,21 @@ function syncBreadcrumbScroll() {
     return;
   }
 
-  // Vuetify components expose their DOM element via $el
-  const container = (messagesContainer.value as any).$el || messagesContainer.value;
-  if (!container || !container.scrollTop) return;
+  // Use DynamicScroller's internal state to find visible items
+  // (DOM elements may not exist for off-screen items in virtual scrolling)
+  const scroller = dynamicScrollerRef.value;
+  if (!scroller) return;
 
-  const containerRect = container.getBoundingClientRect();
+  const visibleStartIndex = scroller.$_startIndex ?? 0;
+  const visibleEndIndex = scroller.$_endIndex ?? groupedMessages.value.length - 1;
 
   // Find the lowest visible message (bottom of viewport)
   let lowestVisibleMessageId: string | null = null;
-
-  for (const message of messages.value) {
-    const element = document.getElementById(`message-${message.id}`);
-    if (!element) continue;
-
-    const rect = element.getBoundingClientRect();
-    // Check if message is at least partially visible in viewport
-    if (rect.top < containerRect.bottom && rect.bottom > containerRect.top) {
-      lowestVisibleMessageId = message.id;
+  for (let i = visibleEndIndex; i >= visibleStartIndex; i--) {
+    const group = groupedMessages.value[i];
+    if (group?.messages?.length) {
+      lowestVisibleMessageId = group.messages[group.messages.length - 1].id;
+      break;
     }
   }
 
@@ -4066,10 +4138,11 @@ function syncBreadcrumbScroll() {
 
   // Find the last bookmark in the ancestry of the lowest visible message
   let lastBookmarkIndex = -1;
+  const currentMsgIndex = messages.value.findIndex(m => m.id === lowestVisibleMessageId);
+
   for (let i = bookmarksInActivePath.value.length - 1; i >= 0; i--) {
     const bookmark = bookmarksInActivePath.value[i];
     const bookmarkMsgIndex = messages.value.findIndex(m => m.id === bookmark.messageId);
-    const currentMsgIndex = messages.value.findIndex(m => m.id === lowestVisibleMessageId);
 
     if (bookmarkMsgIndex <= currentMsgIndex) {
       lastBookmarkIndex = i;
