@@ -202,7 +202,7 @@ export function conversationRouter(db: Database): Router {
     }
   });
 
-  // Search across all conversations
+  // Search across all conversations using search indexes
   // IMPORTANT: This route must be BEFORE /:id routes to avoid being caught by them
   router.get('/search', async (req: AuthRequest, res) => {
     try {
@@ -210,77 +210,44 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      const query = (req.query.q as string || '').toLowerCase().trim();
+      const query = (req.query.q as string || '').trim();
       if (!query || query.length < 2) {
         return res.json({ results: [], query: '' });
       }
 
       const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
       
-      // Get all user's conversations
-      const conversations = await db.getUserConversations(req.userId);
-      const results: Array<{
-        conversationId: string;
-        conversationTitle: string;
-        messageId: string;
-        branchId: string;
-        content: string;
-        snippet: string;
-        role: 'user' | 'assistant' | 'system';
-        model?: string;
-        createdAt: Date;
-        matchIndex: number;
-      }> = [];
-
-      // Search through each conversation's messages
-      for (const conversation of conversations) {
-        if (results.length >= limit) break;
+      // Use index-based search - doesn't load full conversation data
+      const matches = await db.searchConversations(req.userId, query, limit);
+      
+      // Transform matches into the expected response format
+      const results = matches.map(match => {
+        // Get conversation title
+        const conversation = db.getConversationById(match.conversationId);
+        const conversationTitle = conversation?.title || 'Untitled';
         
-        try {
-          const messages = await db.getConversationMessages(conversation.id, req.userId);
-          
-          for (const message of messages) {
-            if (results.length >= limit) break;
-            
-            for (const branch of message.branches) {
-              if (results.length >= limit) break;
-              
-              const content = branch.content.toLowerCase();
-              const matchIndex = content.indexOf(query);
-              
-              if (matchIndex !== -1) {
-                // Create a snippet around the match (100 chars before and after)
-                const start = Math.max(0, matchIndex - 100);
-                const end = Math.min(branch.content.length, matchIndex + query.length + 100);
-                let snippet = branch.content.slice(start, end);
-                
-                // Add ellipsis if truncated
-                if (start > 0) snippet = '...' + snippet;
-                if (end < branch.content.length) snippet = snippet + '...';
-                
-                results.push({
-                  conversationId: conversation.id,
-                  conversationTitle: conversation.title || 'Untitled',
-                  messageId: message.id,
-                  branchId: branch.id,
-                  content: branch.content,
-                  snippet,
-                  role: branch.role,
-                  model: branch.model,
-                  createdAt: branch.createdAt,
-                  matchIndex
-                });
-              }
-            }
-          }
-        } catch (e) {
-          // Skip conversations that fail to load
-          console.error(`Search: Failed to load conversation ${conversation.id}:`, e);
-        }
-      }
-
-      // Sort by most recent first
-      results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        // Create a snippet around the match (100 chars before and after)
+        // Note: match.text is lowercased, so we use it for snippet generation
+        const start = Math.max(0, match.matchIndex - 100);
+        const end = Math.min(match.text.length, match.matchIndex + query.length + 100);
+        let snippet = match.text.slice(start, end);
+        
+        // Add ellipsis if truncated
+        if (start > 0) snippet = '...' + snippet;
+        if (end < match.text.length) snippet = snippet + '...';
+        
+        return {
+          conversationId: match.conversationId,
+          conversationTitle,
+          messageId: match.messageId,
+          branchId: match.branchId,
+          content: match.text,  // Lowercased content from index
+          snippet,
+          role: match.role,
+          createdAt: new Date(match.timestamp),
+          matchIndex: match.matchIndex
+        };
+      });
 
       res.json({ results, query, total: results.length });
     } catch (error) {

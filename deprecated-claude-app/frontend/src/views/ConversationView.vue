@@ -105,6 +105,7 @@
                 v-for="result in sidebarSearchResults"
                 :key="`${result.conversationId}-${result.branchId}`"
                 class="search-result-item"
+                :class="{ 'search-result-active': getConversationIdFromRoute() === result.conversationId }"
                 @click="navigateToSearchResult(result)"
               >
                 <template v-slot:title>
@@ -4809,12 +4810,30 @@ function clearSidebarSearch() {
   sidebarSearchResults.value = [];
 }
 
-function navigateToSearchResult(result: typeof sidebarSearchResults.value[0]) {
-  clearSidebarSearch();
-  router.push({
-    path: `/conversation/${result.conversationId}/message/${result.messageId}`,
-    query: { branch: result.branchId }
-  });
+async function navigateToSearchResult(result: typeof sidebarSearchResults.value[0]) {
+  // Check if we're already on this conversation
+  const currentConvId = getConversationIdFromRoute();
+  
+  if (currentConvId === result.conversationId) {
+    // Same conversation - directly navigate to the message/branch
+    // The route watcher won't trigger since conversation ID is the same
+    await handleEventNavigate(result.messageId, result.branchId);
+  } else {
+    // Different conversation - use router navigation
+    // The route watcher will handle the deep link
+    router.push({
+      path: `/conversation/${result.conversationId}/message/${result.messageId}`,
+      query: { branch: result.branchId }
+    });
+  }
+  
+  // On mobile, switch to conversation panel after clicking a result
+  if (isMobile.value) {
+    mobilePanel.value = 'conversation';
+  }
+  
+  // Don't clear search results - let user continue exploring matches
+  // User can click "Clear" button to dismiss search results
 }
 
 function highlightSearchMatch(text: string, query: string): string {
@@ -5397,6 +5416,15 @@ function escapeHtml(text: string): string {
 .search-result-item:hover {
   background: rgba(var(--v-theme-primary), 0.08);
   border-left-color: rgb(var(--v-theme-primary));
+}
+
+.search-result-item.search-result-active {
+  background: rgba(var(--v-theme-primary), 0.12);
+  border-left-color: rgb(var(--v-theme-primary));
+}
+
+.search-result-item.search-result-active:hover {
+  background: rgba(var(--v-theme-primary), 0.16);
 }
 
 .search-result-item :deep(.v-list-item-title) {
