@@ -79,8 +79,9 @@ export interface Store {
   duplicateConversation(id: string): Promise<Conversation>;
   compactConversation(id: string): Promise<{ success: boolean; result: any; message: string }>;
   
-  loadMessages(conversationId: string, limit?: number, beforeMessageId?: string): Promise<boolean>;
-  getMessagePage(conversationId: string, limit?: number, beforeMessageId?: string): Promise<Message[]>;
+  loadMessages(conversationId: string, limit?: number, beforeMessageId?: string, direction?: 'older' | 'newer'): Promise<boolean>;
+  clearMessages(): Promise<void>;
+  getMessagePage(conversationId: string, limit?: number, cursorMessageId?: string, direction?: 'older' | 'newer'): Promise<Message[]>;
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number): Promise<void>;
   continueGeneration(responderId?: string, explicitParentBranchId?: string, samplingBranches?: number): Promise<void>;
   regenerateMessage(messageId: string, branchId: string, parentBranchId?: string, samplingBranches?: number): Promise<void>;
@@ -88,6 +89,7 @@ export interface Store {
   editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean, samplingBranches?: number): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
   switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>): void;
+  activateBranch(messageId: string, branchId: string): Promise<void>;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
   getVisibleMessages(): Message[];
   
@@ -593,17 +595,21 @@ export function createStore(): {
     },
     
     // Message actions
-    async loadMessages(conversationId: string, limit?: number, beforeMessageId?: string) {
-      const messages = await this.getMessagePage(conversationId, limit, beforeMessageId);
+    async loadMessages(conversationId: string, limit?: number, cursorMessageId?: string, direction: 'older' | 'newer' = 'older') {
+      const messages = await this.getMessagePage(conversationId, limit, cursorMessageId, direction);
       if (messages.length > 0) {
-        if (beforeMessageId) {
+        if (cursorMessageId) {
           const existingIds = new Set(state.allMessages.map(m => m.id));
           const unique = messages.filter(m => !existingIds.has(m.id));
-          state.allMessages = unique.concat(state.allMessages)
+          if (direction === 'newer') {
+            state.allMessages = state.allMessages.concat(unique);
+          } else {
+            state.allMessages = unique.concat(state.allMessages);
+          }
         } else {
           state.allMessages = messages;
         }
-        
+
         state.messagesVersion++;
         invalidateSortCache();
         return true;
@@ -611,8 +617,14 @@ export function createStore(): {
       return false;
     },
 
+    async clearMessages() {
+      state.allMessages = [];
+      state.messagesVersion++;
+      invalidateSortCache();
+    },
+
     // Message actions
-    async getMessagePage(conversationId: string, limit?: number, beforeMessageId?: string, retryCount = 0) {
+    async getMessagePage(conversationId: string, limit?: number, cursorMessageId?: string, direction: 'older' | 'newer' = 'older', retryCount = 0) {
       const maxRetries = 3;
       const retryDelay = 1000;
       const startTime = Date.now();
@@ -623,7 +635,8 @@ export function createStore(): {
         
         const response = await api.get(`/conversations/${conversationId}/messages`, {
           params: {
-            before: beforeMessageId,
+            cursor: cursorMessageId,
+            direction: direction,
             limit: limit,
           },
         });
@@ -658,7 +671,7 @@ export function createStore(): {
           const delay = retryDelay * (retryCount + 1);
           console.log(`[getMessagePage] Will retry in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
-          return this.getMessagePage(conversationId, limit, beforeMessageId, retryCount + 1);
+          return this.getMessagePage(conversationId, limit, cursorMessageId, direction, retryCount + 1);
         }
         
         console.error(`[getMessagePage] No more retries, giving up`);
@@ -1004,6 +1017,27 @@ export function createStore(): {
         }
       }
       this.markBranchesAsRead(newVisibleBranchIds);
+    },
+
+    async activateBranch(messageId: string, branchId: string) {
+      const response = await api.post(`/conversations/${state.currentConversation?.id}/activate-branch`, {
+        messageId: messageId,
+        branchId: branchId,
+        isDetached: state.isDetachedFromMainBranch
+      }).catch(error => {
+        console.error('Failed to activate branch:', error);
+      });
+
+      if (response?.data?.changedBranches) {
+        for (const { messageId, branchId } of response.data.changedBranches) {
+          const message = state.allMessages.find(m => m.id === messageId);
+          if (message) {
+            message.activeBranchId = branchId;
+          }
+        }
+        state.messagesVersion++;
+        invalidateSortCache();
+      }
     },
 
     async deleteMessage(messageId: string, branchId: string) {

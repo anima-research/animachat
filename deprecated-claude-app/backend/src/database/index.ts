@@ -3622,17 +3622,147 @@ export class Database {
 
     return deletedMessageIds;
   }
-  
+
+  async activateBranch(messageId: string, branchId: string, conversationId: string, conversationOwnerUserId: string, isDetached: boolean = false): Promise<Map<string, string> | undefined> {
+    await this.loadUser(conversationOwnerUserId);
+    await this.loadConversation(conversationId, conversationOwnerUserId);
+
+    const allMessages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
+
+    // Build path from target branch back to root
+    const pathToRoot: { messageId: string, branchId: string }[] = [];
+
+    // Find the target branch and trace back to root
+    let currentBranchId: string | undefined = branchId;
+
+    while (currentBranchId && currentBranchId !== 'root') {
+      // Find the message containing this branch
+      const message = allMessages.find(m =>
+        m.branches.some(b => b.id === currentBranchId)
+      );
+
+      if (!message) {
+        console.error(`[activateBranch] Could not find message for branch: ${currentBranchId}`);
+        console.log('[activateBranch] messages:', allMessages.map(m => ({
+          id: m.id,
+          branchIds: m.branches.map(b => b.id)
+        })));
+        break;
+      }
+
+      // Add to path
+      pathToRoot.unshift({ messageId: message.id, branchId: currentBranchId });
+
+      // Find the branch to get its parent
+      const branch = message.branches.find(b => b.id === currentBranchId);
+      if (!branch) break;
+
+      currentBranchId = branch.parentBranchId;
+    }
+
+    console.log('[activateBranch] Path to switch:', pathToRoot);
+
+    // Collect all branches that need switching
+    const branchesToSwitch = pathToRoot.filter(({ messageId: msgId, branchId: brId }) => {
+      const message = allMessages.find(m => m.id === msgId);
+      return message && message.activeBranchId !== brId;
+    });
+
+    // Use batch switch for much faster navigation
+    console.log(`[activateBranch] Batch switching ${branchesToSwitch.length} branches`);
+    const changedMessages = this.switchBranchesBatch(allMessages, branchesToSwitch);
+    if (changedMessages) {
+      for (const [msgId, branchId] of changedMessages) {
+        if (isDetached) {
+          await this.setUserDetachedBranch(conversationId, conversationOwnerUserId, msgId, branchId);
+        } else {
+          await this.setActiveBranch(msgId, conversationId, conversationOwnerUserId, branchId);
+        }
+      }
+
+      await this.markBranchesAsRead(conversationId, conversationOwnerUserId, Array.from(changedMessages.values()));
+    }
+    return changedMessages;
+  }
+
+  private switchBranchesBatch(allMessages: Message[], switches: Array<{ messageId: string; branchId: string }>): Map<string, string> | undefined {
+    if (switches.length === 0) return;
+
+    // Apply all local state changes first
+    const changedMessages = new Map<string, string>(); // messageId -> branchId
+    for (const { messageId, branchId } of switches) {
+      const message = allMessages.find(m => m.id === messageId);
+      if (!message) continue;
+
+      if (message.activeBranchId !== branchId) {
+        message.activeBranchId = branchId;
+        changedMessages.set(messageId, branchId);
+      }
+    }
+
+    if (changedMessages.size === 0) {
+      return;
+    }
+
+    // Build the branch path by following parentBranchId from the deepest switch
+    const sortedMessages = this.sortMessagesByTreeOrder(allMessages);
+
+    // Find the deepest switch (furthest from root in the tree)
+    let deepestSwitchBranchId: string | null = null;
+    let deepestIndex = -1;
+
+    for (const { messageId, branchId } of switches) {
+      const idx = sortedMessages.findIndex(m => m.id === messageId);
+      if (idx > deepestIndex) {
+        deepestIndex = idx;
+        deepestSwitchBranchId = branchId;
+      }
+    }
+
+    if (!deepestSwitchBranchId) {
+      console.warn('[switchBranchesBatch] No valid switch found');
+      return;
+    }
+
+    // Build the branch path by tracing from deepest switch back to root
+    const branchPath: string[] = [];
+    let traceBranchId: string | null = deepestSwitchBranchId;
+
+    while (traceBranchId && traceBranchId !== 'root') {
+      branchPath.unshift(traceBranchId);
+      const msg = allMessages.find(m => m.branches.some(b => b.id === traceBranchId));
+      if (!msg) break;
+      const branch = msg.branches.find(b => b.id === traceBranchId);
+      traceBranchId = branch?.parentBranchId || null;
+    }
+
+    // Update all messages to follow this path
+    for (const msg of sortedMessages) {
+      for (const branch of msg.branches) {
+        const parentInPath = branch.parentBranchId === 'root' || branchPath.includes(branch.parentBranchId!);
+        const branchInPath = branchPath.includes(branch.id);
+
+        if (parentInPath && branchInPath && msg.activeBranchId !== branch.id) {
+          msg.activeBranchId = branch.id;
+          changedMessages.set(msg.id, branch.id);
+          break;
+        }
+      }
+    }
+
+    return changedMessages;
+  }
+
   /**
    * Build a parent→children adjacency map for efficient tree traversal.
    * Returns Map<parentBranchId, Array<{messageId, branch}>>
    */
   private buildBranchAdjacencyMap(conversationId: string): Map<string, Array<{ messageId: string; branch: { id: string; parentBranchId?: string | null } }>> {
     const adjacencyMap = new Map<string, Array<{ messageId: string; branch: { id: string; parentBranchId?: string | null } }>>();
-    
+
     const allMessages = Array.from(this.messages.values())
       .filter(m => m.conversationId === conversationId);
-    
+
     for (const msg of allMessages) {
       for (const branch of msg.branches) {
         const parentId = branch.parentBranchId || 'ROOT';
@@ -3641,14 +3771,14 @@ export class Database {
         adjacencyMap.set(parentId, children);
       }
     }
-    
+
     return adjacencyMap;
   }
-  
+
   /**
    * Find all messages that are descendants of a specific branch.
    * Uses BFS with adjacency map for O(N) traversal instead of O(N*D).
-   * 
+   *
    * IMPORTANT: A message is only included if ALL its branches descend from the target branch.
    * If a message has branches from multiple parents (some descending, some not), we need to
    * handle branch deletion separately - see deleteMessageBranch.
@@ -3805,14 +3935,14 @@ export class Database {
     return this.sortMessagesByTreeOrder(messages);
   }
 
-  async getConversationMessageBranchPage(conversationId: string, conversationOwnerUserId: string, limit: number, beforeMessageId?: string, requestingUserId?: string): Promise<Message[]> {
+  async getConversationMessageBranchPage(conversationId: string, conversationOwnerUserId: string, limit: number, cursorMessageId?: string, direction: 'older' | 'newer' = 'older', requestingUserId?: string): Promise<Message[]> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
     const messageIds = this.conversationMessages.get(conversationId) || [];
 
     const message = await (async () => {
-      if (beforeMessageId) {
-        return await this.tryLoadAndVerifyMessage(beforeMessageId, conversationId, conversationOwnerUserId);
+      if (cursorMessageId) {
+        return await this.tryLoadAndVerifyMessage(cursorMessageId, conversationId, conversationOwnerUserId);
       } else {
         // TODO Duplicate logic from above; refactor
         const viewerId = requestingUserId || conversationOwnerUserId;
@@ -3828,6 +3958,7 @@ export class Database {
           })
           .filter(msg => msg.branches.length > 0)); // Remove messages with no visible branches
         
+        // Get the latest message in the conversation tree
         let message = messages[0];
         for (const currentMessage of messages) {
           const currentBranch = currentMessage.branches.find(b => b.id === currentMessage.activeBranchId);
@@ -3840,42 +3971,179 @@ export class Database {
     })();
 
     if (!message) {
-      console.warn(`[getConversationMessageBranchPage] Message not found: ${beforeMessageId} in conversation ${conversationId}`);
+      console.warn(`[getConversationMessageBranchPage] Message not found: ${cursorMessageId} in conversation ${conversationId}`);
       return [];
     }
     
     const viewerId = requestingUserId || conversationOwnerUserId;
-    const branchesMap: Map<string, string> = new Map(
-      messageIds.flatMap(msgId => {
-        const msg = this.messages.get(msgId);
-        if (!msg) return [];
-        const visibleBranches = msg.branches.filter(
-          b => !b.privateToUserId || b.privateToUserId === viewerId
-        );
-        return visibleBranches.map(b => [b.id, msgId] as const)
-      })
-    );
 
-    const page: Message[] = [];
-    let nextMessage: Message | undefined = message;
+    if (direction === 'older') {
+      const branchesMap: Map<string, string> = new Map(
+        messageIds.flatMap(msgId => {
+          const msg = this.messages.get(msgId);
+          if (!msg) return [];
+          const visibleBranches = msg.branches.filter(
+            b => !b.privateToUserId || b.privateToUserId === viewerId
+          );
+          return visibleBranches.map(b => [b.id, msgId] as const)
+        })
+      );
 
-    for (let i = 0; i < limit && nextMessage; i++) {
-      page.push(nextMessage);
+      const page: Message[] = [];
+      let nextMessage: Message | undefined = message;
 
-      const activeBranch = nextMessage.branches.find(b => b.id === nextMessage!.activeBranchId);
-      if (!activeBranch || !activeBranch.parentBranchId || activeBranch.parentBranchId === 'root') break;
+      for (let i = 0; i < limit && nextMessage; i++) {
+        page.push(nextMessage);
 
-      let nextMessageId = branchesMap.get(activeBranch.parentBranchId);
-      if (!nextMessageId) break;
+        const activeBranch = nextMessage.branches.find(b => b.id === nextMessage!.activeBranchId);
+        if (!activeBranch || !activeBranch.parentBranchId || activeBranch.parentBranchId === 'root') break;
 
-      nextMessage = this.messages.get(nextMessageId);
+        let nextMessageId = branchesMap.get(activeBranch.parentBranchId);
+        if (!nextMessageId) break;
+
+        nextMessage = this.messages.get(nextMessageId);
+      }
+
+      return page.reverse();
+
+    } else {
+      // This is also some duplicate logic (from alignActiveBranchPath)
+      // some of the states here are potentially illegal? (multiple children messages)
+      // Right now, we only get the first
+      const parentToChildren: Map<string, Message> = new Map();
+      for (const messageId of messageIds) {
+        const msg = this.messages.get(messageId);
+        if (!msg) continue;
+        const visibleBranches = msg.branches.filter(b => !b.privateToUserId || b.privateToUserId === viewerId);
+        if (visibleBranches.length === 0) continue;
+        for (const branch of visibleBranches) {
+          const parentId = branch.parentBranchId || 'root';
+          if (!parentToChildren.has(parentId)) {
+            parentToChildren.set(parentId, msg);
+            break; // Only map first found child
+          }
+        }
+      }
+
+      const page: Message[] = [];
+
+      const cursorBranch = message.branches.find(b => b.id === message.activeBranchId);
+      let nextMessage: Message | undefined = cursorBranch ? parentToChildren.get(cursorBranch.id) : undefined;
+
+      for (let i = 0; i < limit && nextMessage; i++) {
+        page.push(nextMessage);
+
+        const activeBranch = nextMessage.branches.find(b => b.id === nextMessage!.activeBranchId);
+        if (!activeBranch) break;
+
+        let nextMessageCandidate = parentToChildren.get(activeBranch.id);
+        if (!nextMessageCandidate) break;
+
+        nextMessage = nextMessageCandidate;
+      }
+
+      return page;
     }
-
-    return page.reverse();
   }
 
   async getMessage(messageId: string, conversationId: string, conversationOwnerUserId: string): Promise<Message | null> {
     return await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
+  }
+
+  /**
+   * Get the visible/active message path for a conversation.
+   * This follows activeBranchId on each message to build the linear conversation
+   * the user would see, handling multi-root conversations and branch switches.
+   */
+  async getVisibleMessagePath(conversationId: string, conversationOwnerUserId: string, requestingUserId?: string): Promise<Message[]> {
+    const allMessages = await this.getConversationMessages(conversationId, conversationOwnerUserId, requestingUserId);
+    return this.computeVisiblePath(allMessages);
+  }
+
+  private computeVisiblePath(allMessages: Message[]): Message[] {
+    if (allMessages.length === 0) return [];
+
+    const sortedMessages = this.sortMessagesByTreeOrder(allMessages);
+
+    const rootMessages = sortedMessages.filter(msg => {
+      const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+      return activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root');
+    });
+
+    let canonicalRootId: string | null = null;
+    if (rootMessages.length > 1) {
+      const parentToChildren = new Map<string, Message[]>();
+      for (const msg of sortedMessages) {
+        for (const branch of msg.branches) {
+          const parentId = branch.parentBranchId || 'root';
+          if (!parentToChildren.has(parentId)) {
+            parentToChildren.set(parentId, []);
+          }
+          parentToChildren.get(parentId)!.push(msg);
+        }
+      }
+
+      const findLatestInSubtree = (root: Message): number => {
+        let latest = 0;
+        const visited = new Set<string>();
+
+        const visit = (msg: Message) => {
+          if (visited.has(msg.id)) return;
+          visited.add(msg.id);
+
+          for (const branch of msg.branches) {
+            if (branch.createdAt) {
+              const time = new Date(branch.createdAt).getTime();
+              if (time > latest) latest = time;
+            }
+            const children = parentToChildren.get(branch.id) || [];
+            for (const child of children) visit(child);
+          }
+        };
+
+        visit(root);
+        return latest;
+      };
+
+      let latestTime = 0;
+      for (const root of rootMessages) {
+        const rootTime = findLatestInSubtree(root);
+        if (rootTime > latestTime) {
+          latestTime = rootTime;
+          canonicalRootId = root.id;
+        }
+      }
+    } else if (rootMessages.length === 1) {
+      canonicalRootId = rootMessages[0].id;
+    }
+
+    const visibleMessages: Message[] = [];
+    const branchPath: string[] = [];
+
+    for (const message of sortedMessages) {
+      const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+
+      if (!activeBranch) {
+        continue;
+      }
+
+      if (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root') {
+        if (branchPath.length === 0 && (!canonicalRootId || message.id === canonicalRootId)) {
+          visibleMessages.push(message);
+          branchPath.push(activeBranch.id);
+        }
+        continue;
+      }
+
+      if (branchPath.includes(activeBranch.parentBranchId)) {
+        visibleMessages.push(message);
+        const parentIndex = branchPath.indexOf(activeBranch.parentBranchId);
+        branchPath.length = parentIndex + 1;
+        branchPath.push(activeBranch.id);
+      }
+    }
+
+    return visibleMessages;
   }
 
   /**
@@ -4992,6 +5260,48 @@ export class Database {
   async getConversationBookmarks(conversationId: string): Promise<Bookmark[]> {
     return Array.from(this.bookmarks.values())
       .filter(bookmark => bookmark.conversationId === conversationId);
+  }
+
+  async getConversationBookmarksEnriched(conversationId: string, userId: string): Promise<import('@deprecated-claude/shared').EnrichedBookmark[]> {
+    const bookmarks = await this.getConversationBookmarks(conversationId);
+    const participants = await this.getConversationParticipants(conversationId, userId);
+    const participantMap = new Map(participants.map(p => [p.id, p]));
+
+    const enriched: import('@deprecated-claude/shared').EnrichedBookmark[] = [];
+
+    for (const bookmark of bookmarks) {
+      const message = await this.getMessage(bookmark.messageId, conversationId, userId);
+      if (!message) continue;
+
+      const branch = message.branches.find(b => b.id === bookmark.branchId);
+      if (!branch) continue;
+
+      const content = branch.content || '';
+      const preview = content.slice(0, 250) + (content.length > 250 ? '...' : '');
+
+      let participantName = branch.role === 'user' ? 'User' : 'Assistant';
+      let model: string | null = branch.model || null;
+
+      if (branch.participantId) {
+        const participant = participantMap.get(branch.participantId);
+        if (participant) {
+          participantName = participant.name || (participant.type === 'user' ? 'User' : 'Assistant');
+          if (participant.type === 'assistant' && participant.model) {
+            model = participant.model;
+          }
+        }
+      }
+
+      enriched.push({
+        ...bookmark,
+        preview,
+        participantName,
+        model,
+        role: branch.role
+      });
+    }
+
+    return enriched;
   }
 
   async getBookmarkForBranch(messageId: string, branchId: string): Promise<Bookmark | null> {

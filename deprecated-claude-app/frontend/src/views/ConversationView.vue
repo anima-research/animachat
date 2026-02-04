@@ -348,7 +348,7 @@
                       :ref="el => bookmarkRefs[index] = el as HTMLElement"
                       class="bookmark-item cursor-pointer"
                       :class="{ 'bookmark-current': index === currentBookmarkIndex }"
-                      @click="scrollToMessage(bookmark.messageId)"
+                      @click="navigateToBookmark(bookmark.messageId, bookmark.branchId)"
                     >
                       {{ bookmark.label }}
                     </span>
@@ -1193,7 +1193,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
-import type { Conversation, Message, Participant, Model, Bookmark, Persona } from '@deprecated-claude/shared';
+import type { Conversation, Message, Participant, Model, EnrichedBookmark, Persona } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema, getValidatedModelDefaults } from '@deprecated-claude/shared';
 import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
@@ -1383,7 +1383,7 @@ const forkMode = ref<'full' | 'compressed' | 'truncated'>('full');
 const forkIncludePrivateBranches = ref(false);
 const forkIsLoading = ref(false);
 const conversationTreeRef = ref<InstanceType<typeof ConversationTree>>();
-const bookmarks = ref<Bookmark[]>([]);
+const bookmarks = ref<EnrichedBookmark[]>([]);
 const bookmarksScrollRef = ref<HTMLElement>();
 const bookmarkBarRef = ref<HTMLElement>();
 const bookmarkRefs = ref<HTMLElement[]>([]);
@@ -1777,79 +1777,43 @@ function toggleDetachedMode() {
   store.setDetachedMode(!store.state.isDetachedFromMainBranch);
 }
 
-// Get bookmarks in the order they appear in the active conversation path
-const bookmarksInActivePath = computed(() => {
-  const visibleMessages = messages.value;
-  const result: Array<Bookmark & { messageId: string; branchId: string }> = [];
+const bookmarksInActivePath = ref<EnrichedBookmark[]>([]);
 
-  for (const message of visibleMessages) {
-    const bookmark = bookmarks.value.find(
-      b => b.messageId === message.id && b.branchId === message.activeBranchId
-    );
-    if (bookmark) {
-      result.push({
-        ...bookmark,
-        messageId: message.id,
-        branchId: message.activeBranchId
-      });
-    }
-  }
+async function getBookmarksInActivePath() {
+  const conversationId = currentConversation.value?.id;
+  if (!conversationId) return [];
 
-  return result;
-});
+  bookmarksInActivePath.value = await api.get(`/bookmarks/conversation/${currentConversation.value?.id}/active-path`).then(res => res.data || []);
+}
 
-// Get all bookmarks with message content previews for the bookmark browser
+// Get all bookmarks with UI-derived fields (color, display name) for the bookmark browser
+// Preview, participantName, model, role come from backend; we add participantColor and modelName
 const allBookmarksWithPreviews = computed(() => {
   return bookmarks.value.map(bookmark => {
-    // Find the message and branch
-    const message = allMessages.value.find(m => m.id === bookmark.messageId);
-    const branch = message?.branches.find(b => b.id === bookmark.branchId);
-    
-    // Generate preview from message content (longer preview to fill wider dropdowns)
-    const content = branch?.content || '';
-    const preview = content.slice(0, 250) + (content.length > 250 ? '...' : '');
-    
-    // Get participant info for color coding
-    let participantName = branch?.role === 'user' ? 'User' : 'Assistant';
-    let participantColor = branch?.role === 'user' ? '#bb86fc' : getModelColor(branch?.model);
+    const participantColor = bookmark.role === 'user' ? '#bb86fc' : getModelColor(bookmark.model || undefined);
+
     let modelName: string | null = null;
-    
-    if (branch?.participantId) {
-      const participant = participants.value.find(p => p.id === branch.participantId);
-      if (participant) {
-        participantName = participant.name || (participant.type === 'user' ? '(continue)' : '(continue)');
-        if (participant.type === 'assistant') {
-          participantColor = getModelColor(participant.model || branch.model);
-        }
-      }
-    }
-    
-    // Get model display name for assistant messages
-    if (branch?.role === 'assistant' && branch.model) {
-      const modelObj = store.state.models?.find((m: any) => m.id === branch.model);
+    if (bookmark.role === 'assistant' && bookmark.model) {
+      const modelObj = store.state.models?.find((m: any) => m.id === bookmark.model);
       if (modelObj?.displayName) {
         modelName = modelObj.displayName;
       } else if (modelObj?.providerModelId) {
         modelName = modelObj.providerModelId;
       } else {
-        // Fallback to shortened model ID
-        modelName = branch.model.split('/').pop() || branch.model;
+        modelName = bookmark.model.split('/').pop() || bookmark.model;
       }
     }
-    
+
     return {
       ...bookmark,
-      preview,
-      participantName,
       participantColor,
-      modelName,
-      role: branch?.role || 'user'
+      modelName
     };
   });
 });
 
 // Check if a bookmark is in the current active path
-function isBookmarkInActivePath(bookmark: Bookmark): boolean {
+function isBookmarkInActivePath(bookmark: EnrichedBookmark): boolean {
   return bookmarksInActivePath.value.some(
     b => b.messageId === bookmark.messageId && b.branchId === bookmark.branchId
   );
@@ -2456,6 +2420,7 @@ onMounted(async () => {
 
     try {
       await loadBookmarks();
+      await getBookmarksInActivePath();
       console.log(`[ConversationView] ✓ loadBookmarks completed`);
     } catch (error) {
       console.error(`[ConversationView] ✗ loadBookmarks failed:`, error);
@@ -2562,7 +2527,7 @@ watch(() => getConversationIdFromRoute(), async (newId, oldId) => {
   streamingBranchId.value = null;
   streamingError.value = null;
   hasMoreMessages.value = true;
-  
+
   if (newId) {
     console.log(`[ConversationView:watch] Route changed to: ${newId}`);
     const loadStart = Date.now();
@@ -2587,8 +2552,9 @@ watch(() => getConversationIdFromRoute(), async (newId, oldId) => {
     
     await loadParticipants();
     await loadBookmarks();
+    await getBookmarksInActivePath();
     await loadCurrentConversationCollaborators();
-    
+
     console.log(`[ConversationView:watch] Total load time: ${Date.now() - loadStart}ms`);
     
     // Join the room for multi-user support
@@ -2604,14 +2570,16 @@ watch(() => getConversationIdFromRoute(), async (newId, oldId) => {
     const branchId = route.query.branch as string | undefined;
 
     if (messageId) {
-      // Deep link - navigate to specific message
+      // Deep link - navigate to specific message, may have newer messages
+      hasMoreNewerMessages.value = true;
       setTimeout(async () => {
         await handleEventNavigate(messageId, branchId);
         // Clean up the URL to the simple form
         router.replace(`/conversation/${newId}`);
       }, 100);
     } else {
-      // Normal load - scroll to bottom
+      // Normal load - scroll to bottom, no newer messages possible
+      hasMoreNewerMessages.value = false;
       setTimeout(() => {
         scrollToBottom();
       }, 100);
@@ -2678,6 +2646,7 @@ let userScrollCooldown: number;
 
 const isLoadingMoreMessages = ref(false);
 const hasMoreMessages = ref(true);
+const hasMoreNewerMessages = ref(true);
 
 function handleScroll(event: Event) {
   const element = event.target as HTMLElement;
@@ -2705,10 +2674,15 @@ function handleScroll(event: Event) {
       autoScrollEnabled.value = true;
     }
 
-    // Paginagion: fetch older messages when near top
+    // Pagination: fetch older messages when near top
     const scrollTop = element.scrollTop;
     if (scrollTop < 300 && !isLoadingMoreMessages.value && hasMoreMessages.value) {
       loadOlderMessages();
+    }
+
+    // Pagination: fetch newer messages when near bottom
+    if (scrollBottom < 300 && !isLoadingMoreMessages.value && hasMoreNewerMessages.value) {
+      loadNewerMessages();
     }
   }
   
@@ -2742,6 +2716,24 @@ async function loadOlderMessages() {
   await nextTick();
   const newScrollHeight = element.scrollHeight;
   element.scrollTop += (newScrollHeight - oldScrollHeight);
+}
+
+async function loadNewerMessages() {
+  if (isLoadingMoreMessages.value || !hasMoreNewerMessages.value) return;
+
+  isLoadingMoreMessages.value = true;
+  const newestMessage = messages.value[messages.value.length - 1];
+
+  if (!newestMessage) {
+    isLoadingMoreMessages.value = false;
+    return;
+  }
+
+  if (!await store.loadMessages(currentConversation.value?.id, 100, newestMessage.id, 'newer')) {
+    hasMoreNewerMessages.value = false;
+  }
+
+  isLoadingMoreMessages.value = false;
 }
 
 // Track when user is manually scrolling bookmarks to prevent sync
@@ -3212,17 +3204,18 @@ async function editMessageOnly(messageId: string, branchId: string, content: str
   await store.editMessage(messageId, branchId, content, undefined, true);
 }
 
-function switchBranch(messageId: string, branchId: string) {
+async function switchBranch(messageId: string, branchId: string) {
   isSwitchingBranch.value = true;
-  
+
   // Don't clear streaming state here - let stream completion events handle that
   // The scroll logic will check if the streaming branch is visible
   // Also disable auto-scroll when switching branches during streaming
   if (isStreaming.value) {
     autoScrollEnabled.value = false;
   }
-  
+
   store.switchBranch(messageId, branchId);
+  await getBookmarksInActivePath();
   // Reset the flag after a short delay to allow the watch to process
   setTimeout(() => {
     isSwitchingBranch.value = false;
@@ -3232,73 +3225,33 @@ function switchBranch(messageId: string, branchId: string) {
 async function navigateToTreeBranch(messageId: string, branchId: string) {
   console.log('=== NAVIGATE TO TREE BRANCH ===');
   console.log('Target:', { messageId, branchId });
-  console.log('All messages count:', allMessages.value.length);
-  console.log('First 3 message IDs:', allMessages.value.slice(0, 3).map(m => m.id));
-  
-  // Build path from target branch back to root
-  const pathToRoot: { messageId: string, branchId: string }[] = [];
-  
-  // Find the target branch and trace back to root
-  let currentBranchId: string | undefined = branchId;
-  
-  while (currentBranchId && currentBranchId !== 'root') {
-    // Find the message containing this branch
-    const message = allMessages.value.find(m => 
-      m.branches.some(b => b.id === currentBranchId)
-    );
-    
-    if (!message) {
-      console.error('Could not find message for branch:', currentBranchId);
-      console.log('Available messages:', allMessages.value.map(m => ({
-        id: m.id,
-        branchIds: m.branches.map(b => b.id)
-      })));
-      break;
-    }
-    
-    // Add to path
-    pathToRoot.unshift({ messageId: message.id, branchId: currentBranchId });
-    
-    // Find the branch to get its parent
-    const branch = message.branches.find(b => b.id === currentBranchId);
-    if (!branch) break;
-    
-    currentBranchId = branch.parentBranchId;
+
+  await store.activateBranch(messageId, branchId);
+  await getBookmarksInActivePath();
+
+  if (allMessages.value.map(m => m.id).includes(messageId) === false) {
+    console.log('Message ID not found in allMessages:', messageId, ', loading');
+    await store.clearMessages();
+    await store.loadMessages(currentConversation.value?.id || '', 50, messageId, 'older');
+    await store.loadMessages(currentConversation.value?.id || '', 50, messageId, 'newer');
+    hasMoreNewerMessages.value = true;
+    hasMoreMessages.value = true;
   }
-  
-  console.log('Path to switch:', pathToRoot);
-  
-  // Set flag to prevent auto-scrolling during branch switches
-  isSwitchingBranch.value = true;
-  
-  // Collect all branches that need switching
-  const branchesToSwitch = pathToRoot.filter(({ messageId: msgId, branchId: brId }) => {
-    const message = allMessages.value.find(m => m.id === msgId);
-    return message && message.activeBranchId !== brId;
-  });
-  
-  // Use batch switch for much faster navigation
-  if (branchesToSwitch.length > 0) {
-    console.log(`Batch switching ${branchesToSwitch.length} branches`);
-    store.switchBranchesBatch(branchesToSwitch);
-  }
-  
-  // Reset the flag after branches are switched
-  setTimeout(() => {
-    isSwitchingBranch.value = false;
-  }, 100);
+
+  // console.log('All messages count:', allMessages.value.length);
+  // console.log('First 3 message IDs:', allMessages.value.slice(0, 3).map(m => m.id));
   
   // Wait for DOM to update, then scroll to the clicked message
   await nextTick();
   setTimeout(() => {
-    const messageElement = document.getElementById(`message-${messageId}`);
-    if (messageElement) {
-      messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      // Add a brief highlight effect
-      messageElement.classList.add('highlight-message');
-      setTimeout(() => {
-        messageElement.classList.remove('highlight-message');
-      }, 2000);
+    const scroller = dynamicScrollerRef.value;
+    if (scroller) {
+      const index = groupedMessages.value.findIndex(g => g.messages.find(m => m.id === messageId));
+      if (index !== -1) {
+        scroller.scrollToItem(index);
+      } else {
+        console.warn('Message with specified branch not found in visible messages:', { messageId, branchId });
+      }
     }
   }, 100); // Small delay to ensure messages are rendered
 }
@@ -3810,6 +3763,7 @@ async function handlePostHocHide(messageId: string, branchId: string) {
       parentBranchId: getLastVisibleBranchId() // Send the correct parent branch
     });
     await store.loadConversation(currentConversation.value.id);
+    await getBookmarksInActivePath();
   } catch (error) {
     console.error('Failed to create post-hoc hide operation:', error);
   }
@@ -3834,6 +3788,7 @@ async function handlePostHocEditContent(messageId: string, branchId: string, con
       parentBranchId: getLastVisibleBranchId()
     });
     await store.loadConversation(currentConversation.value.id);
+    await getBookmarksInActivePath();
   } catch (error) {
     console.error('Failed to create post-hoc edit operation:', error);
   }
@@ -3851,6 +3806,7 @@ async function handleSplit(messageId: string, branchId: string, splitPosition: n
     if (response.data.success) {
       // Reload to get updated messages
       await store.loadConversation(currentConversation.value.id);
+      await getBookmarksInActivePath();
     }
   } catch (error) {
     console.error('Failed to split message:', error);
@@ -3912,6 +3868,7 @@ async function handlePostHocHideBefore(messageId: string, branchId: string) {
       parentBranchId: getLastVisibleBranchId()
     });
     await store.loadConversation(currentConversation.value.id);
+    await getBookmarksInActivePath();
   } catch (error) {
     console.error('Failed to create post-hoc hide-before operation:', error);
   }
@@ -3928,6 +3885,7 @@ async function handlePostHocUnhide(messageId: string, branchId: string) {
       parentBranchId: getLastVisibleBranchId()
     });
     await store.loadConversation(currentConversation.value.id);
+    await getBookmarksInActivePath();
   } catch (error) {
     console.error('Failed to create post-hoc unhide operation:', error);
   }
@@ -3947,6 +3905,7 @@ async function handleDeletePostHocOperation(messageId: string) {
   try {
     await api.delete(`/conversations/${currentConversation.value.id}/post-hoc-operation/${messageId}`);
     await store.loadConversation(currentConversation.value.id);
+    await getBookmarksInActivePath();
   } catch (error) {
     console.error('Failed to delete post-hoc operation:', error);
   }
@@ -3985,6 +3944,7 @@ async function loadBookmarks() {
 async function handleBookmarkChanged() {
   // Reload bookmarks in both the view and the tree
   await loadBookmarks();
+  await getBookmarksInActivePath();
   if (conversationTreeRef.value) {
     await (conversationTreeRef.value as any).loadBookmarks();
   }
@@ -4057,11 +4017,12 @@ async function handleEventNavigate(messageId: string, branchId?: string) {
   if (branchesToActivate.length > 0) {
     console.log(`[handleEventNavigate] Batch switching ${branchesToActivate.length} branches`);
     store.switchBranchesBatch(branchesToActivate);
+    await getBookmarksInActivePath();
   }
-  
+
   // Wait for DOM to update
   await nextTick();
-  
+
   // Then scroll to the message
   scrollToMessage(messageId);
 }
@@ -4674,6 +4635,7 @@ async function importRawMessages() {
       
       // Reload the conversation to see the imported messages
       await store.loadConversation(conversationId);
+      await getBookmarksInActivePath();
     } else {
       console.error('Failed to import messages:', result);
       alert(`Failed to import messages: ${result.error || 'Unknown error'}`);
