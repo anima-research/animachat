@@ -88,7 +88,6 @@ export interface Store {
   abortGeneration(): void;
   editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean, samplingBranches?: number): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
-  switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>): void;
   activateBranch(messageId: string, branchId: string): Promise<void>;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
   getVisibleMessages(): Message[];
@@ -911,110 +910,6 @@ export function createStore(): {
       }
 
       // Invalidate cache and force recompute visible messages after branch switch
-      state.messagesVersion++;
-      invalidateSortCache();
-      const newVisible = this.getVisibleMessages();
-
-      // Clear notifications for now-visible branches and mark them as read
-      const newVisibleBranchIds = Array.from(
-        new Set(newVisible.map(m => m.activeBranchId))
-      );
-      for (const branchId of state.hiddenBranchActivities.keys()) {
-        if (newVisibleBranchIds.includes(branchId)) {
-          state.hiddenBranchActivities.delete(branchId);
-        }
-      }
-      this.markBranchesAsRead(newVisibleBranchIds);
-    },
-
-    // Batch switch multiple branches at once - much faster for tree navigation
-    // Does all the expensive work once instead of per-branch
-    switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>) {
-      if (switches.length === 0) return;
-
-      // Apply all local state changes first
-      const changedMessages = new Map<string, string>(); // messageId -> branchId
-      for (const { messageId, branchId } of switches) {
-        const message = state.allMessages.find(m => m.id === messageId);
-        if (!message) continue;
-
-        if (message.activeBranchId !== branchId) {
-          message.activeBranchId = branchId;
-          changedMessages.set(messageId, branchId);
-        }
-      }
-
-      if (changedMessages.size === 0) {
-        return;
-      }
-
-      // Build the branch path by following parentBranchId from the deepest switch
-      const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
-
-      // Find the deepest switch (furthest from root in the tree)
-      let deepestSwitchBranchId: string | null = null;
-      let deepestIndex = -1;
-
-      for (const { messageId, branchId } of switches) {
-        const idx = sortedMessages.findIndex(m => m.id === messageId);
-        if (idx > deepestIndex) {
-          deepestIndex = idx;
-          deepestSwitchBranchId = branchId;
-        }
-      }
-
-      if (!deepestSwitchBranchId) {
-        console.warn('No valid switch found');
-        return;
-      }
-
-      // Build the branch path by tracing from deepest switch back to root
-      const branchPath: string[] = [];
-      let currentBranchId: string | null = deepestSwitchBranchId;
-
-      while (currentBranchId && currentBranchId !== 'root') {
-        branchPath.unshift(currentBranchId);
-        const msg = state.allMessages.find(m => m.branches.some(b => b.id === currentBranchId));
-        if (!msg) break;
-        const branch = msg.branches.find(b => b.id === currentBranchId);
-        currentBranchId = branch?.parentBranchId || null;
-      }
-
-      // Update all messages to follow this path
-      for (const msg of sortedMessages) {
-        for (const branch of msg.branches) {
-          const parentInPath = branch.parentBranchId === 'root' || branchPath.includes(branch.parentBranchId!);
-          const branchInPath = branchPath.includes(branch.id);
-
-          if (parentInPath && branchInPath && msg.activeBranchId !== branch.id) {
-            msg.activeBranchId = branch.id;
-            changedMessages.set(msg.id, branch.id);
-            break;
-          }
-        }
-      }
-
-      // Persist to appropriate endpoint based on mode
-      if (state.currentConversation) {
-        for (const [msgId, branchId] of changedMessages) {
-          if (state.isDetachedFromMainBranch) {
-            api.patch(`/conversations/${state.currentConversation.id}/ui-state`, {
-              detachedBranch: { messageId: msgId, branchId }
-            }).catch(error => {
-              console.error('Failed to persist detached branch:', error);
-            });
-          } else {
-            api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
-              messageId: msgId,
-              branchId
-            }).catch(error => {
-              console.error('Failed to persist branch switch:', error);
-            });
-          }
-        }
-      }
-
-      // Invalidate cache and recompute
       state.messagesVersion++;
       invalidateSortCache();
       const newVisible = this.getVisibleMessages();
