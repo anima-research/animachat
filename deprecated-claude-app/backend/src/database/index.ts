@@ -3624,16 +3624,29 @@ export class Database {
         deletedByUserId: actionUserId
       });
 
-      // Still need to cascade delete messages that reply to this specific branch
-      const descendantMessages = this.findDescendantMessages(messageId, branchId);
-      deletedMessageIds.push(...descendantMessages);
-
-      for (const msgId of [...descendantMessages].reverse()) {
+      // Find all descendant branches (not just messages) for proper cascade deletion
+      const descendantBranches = this.findDescendantBranches(messageId, branchId);
+      
+      // Group by message ID for efficient processing
+      const branchesByMessage = new Map<string, string[]>();
+      for (const { messageId: msgId, branchId: bId } of descendantBranches) {
+        const existing = branchesByMessage.get(msgId) || [];
+        existing.push(bId);
+        branchesByMessage.set(msgId, existing);
+      }
+      
+      // Process each affected message
+      for (const [msgId, branchIdsToDelete] of branchesByMessage) {
         const msg = this.messages.get(msgId);
-        if (msg) {
-          // Count non-system branches in cascade-deleted messages
+        if (!msg) continue;
+        
+        const remainingBranches = msg.branches.filter(b => !branchIdsToDelete.includes(b.id));
+        
+        if (remainingBranches.length === 0) {
+          // All branches deleted - delete the entire message
+          // Count non-system branches
           deletedNonSystemBranches += msg.branches.filter(b => b.role !== 'system').length;
-
+          
           this.messages.delete(msgId);
           const convMessages = this.conversationMessages.get(msg.conversationId);
           if (convMessages) {
@@ -3642,12 +3655,39 @@ export class Database {
               convMessages.splice(index, 1);
             }
           }
-
+          deletedMessageIds.push(msgId);
+          
           await this.logConversationEvent(conversationId, 'message_deleted', {
             messageId: msgId,
             conversationId,
             deletedByUserId: actionUserId
           });
+        } else {
+          // Some branches remain - just remove the descendant branches
+          // Count non-system branches being deleted
+          const deletedBranchObjs = msg.branches.filter(b => branchIdsToDelete.includes(b.id));
+          deletedNonSystemBranches += deletedBranchObjs.filter(b => b.role !== 'system').length;
+          
+          const updatedMsg = {
+            ...msg,
+            branches: remainingBranches,
+            updatedAt: new Date(),
+            // If active branch was deleted, switch to first remaining
+            activeBranchId: branchIdsToDelete.includes(msg.activeBranchId) 
+              ? remainingBranches[0].id 
+              : msg.activeBranchId
+          };
+          this.messages.set(msgId, updatedMsg);
+          
+          // Log each branch deletion
+          for (const deletedBranchId of branchIdsToDelete) {
+            await this.logConversationEvent(conversationId, 'message_branch_deleted', {
+              messageId: msgId,
+              branchId: deletedBranchId,
+              conversationId,
+              deletedByUserId: actionUserId
+            });
+          }
         }
       }
     }
@@ -3672,37 +3712,102 @@ export class Database {
     return deletedMessageIds;
   }
   
-  private findDescendantMessages(messageId: string, branchId: string): string[] {
-    const descendants: string[] = [];
-    const conversation = Array.from(this.messages.values()).find(m => m.id === messageId)?.conversationId;
-    
-    if (!conversation) return descendants;
+  /**
+   * Build a parent→children adjacency map for efficient tree traversal.
+   * Returns Map<parentBranchId, Array<{messageId, branch}>>
+   */
+  private buildBranchAdjacencyMap(conversationId: string): Map<string, Array<{ messageId: string; branch: { id: string; parentBranchId?: string | null } }>> {
+    const adjacencyMap = new Map<string, Array<{ messageId: string; branch: { id: string; parentBranchId?: string | null } }>>();
     
     const allMessages = Array.from(this.messages.values())
-      .filter(m => m.conversationId === conversation)
-      .sort((a, b) => a.order - b.order);
+      .filter(m => m.conversationId === conversationId);
     
-    // Find the index of the current message
-    const currentIndex = allMessages.findIndex(m => m.id === messageId);
-    if (currentIndex === -1) return descendants;
+    for (const msg of allMessages) {
+      for (const branch of msg.branches) {
+        const parentId = branch.parentBranchId || 'ROOT';
+        const children = adjacencyMap.get(parentId) || [];
+        children.push({ messageId: msg.id, branch });
+        adjacencyMap.set(parentId, children);
+      }
+    }
     
-    // Track which branch path we're following
-    let currentBranchId = branchId;
+    return adjacencyMap;
+  }
+  
+  /**
+   * Find all messages that are descendants of a specific branch.
+   * Uses BFS with adjacency map for O(N) traversal instead of O(N*D).
+   * 
+   * IMPORTANT: A message is only included if ALL its branches descend from the target branch.
+   * If a message has branches from multiple parents (some descending, some not), we need to
+   * handle branch deletion separately - see deleteMessageBranch.
+   */
+  private findDescendantMessages(messageId: string, branchId: string): string[] {
+    const conversation = Array.from(this.messages.values()).find(m => m.id === messageId)?.conversationId;
+    if (!conversation) return [];
     
-    // Look at all messages after this one
-    for (let i = currentIndex + 1; i < allMessages.length; i++) {
-      const msg = allMessages[i];
+    // Build adjacency map once - O(N)
+    const adjacencyMap = this.buildBranchAdjacencyMap(conversation);
+    
+    // BFS using adjacency map - O(N) total
+    const descendantBranchIds = new Set<string>();
+    const queue = [branchId];
+    
+    while (queue.length > 0) {
+      const currentBranchId = queue.shift()!;
+      const children = adjacencyMap.get(currentBranchId) || [];
       
-      // Check if any branch of this message has parentBranchId matching our current branch
-      const matchingBranch = msg.branches.find(b => b.parentBranchId === currentBranchId);
+      for (const { branch } of children) {
+        if (!descendantBranchIds.has(branch.id)) {
+          descendantBranchIds.add(branch.id);
+          queue.push(branch.id);
+        }
+      }
+    }
+    
+    // Find messages where ALL branches are descendants
+    const descendants: string[] = [];
+    const allMessages = Array.from(this.messages.values())
+      .filter(m => m.conversationId === conversation);
+    
+    for (const msg of allMessages) {
+      if (msg.id === messageId) continue;
       
-      if (matchingBranch) {
+      if (msg.branches.length > 0 && msg.branches.every(b => descendantBranchIds.has(b.id))) {
         descendants.push(msg.id);
-        // Update the branch we're following to this message's active branch
-        currentBranchId = msg.activeBranchId;
-      } else {
-        // If no branch continues from our current branch, stop looking
-        break;
+      }
+    }
+    
+    return descendants;
+  }
+  
+  /**
+   * Find branches that descend from a specific branch (for partial deletion).
+   * Returns array of { messageId, branchId } pairs.
+   * Uses adjacency map for O(N) performance.
+   */
+  private findDescendantBranches(messageId: string, branchId: string): Array<{ messageId: string; branchId: string }> {
+    const conversation = Array.from(this.messages.values()).find(m => m.id === messageId)?.conversationId;
+    if (!conversation) return [];
+    
+    // Build adjacency map once - O(N)
+    const adjacencyMap = this.buildBranchAdjacencyMap(conversation);
+    
+    // BFS collecting all descendant branches - O(N)
+    const descendants: Array<{ messageId: string; branchId: string }> = [];
+    const visited = new Set<string>();
+    const queue = [branchId];
+    
+    while (queue.length > 0) {
+      const currentBranchId = queue.shift()!;
+      const children = adjacencyMap.get(currentBranchId) || [];
+      
+      for (const { messageId: msgId, branch } of children) {
+        if (!visited.has(branch.id)) {
+          visited.add(branch.id);
+          descendants.push({ messageId: msgId, branchId: branch.id });
+          queue.push(branch.id);
+        }
       }
     }
     

@@ -1004,6 +1004,16 @@
             legal liability and public relations risks, we filter certain categories of content on our hosted platform.
           </p>
           
+          <v-alert
+            v-if="contentBlockedData?.categories?.length"
+            type="warning"
+            variant="tonal"
+            density="compact"
+            class="mb-4"
+          >
+            <strong>Restriction category:</strong> {{ contentBlockedData.categories.join(', ') }}
+          </v-alert>
+          
           <v-divider class="my-4" />
           
           <p class="mb-3"><strong>Options for unrestricted access:</strong></p>
@@ -1059,7 +1069,7 @@
           <v-btn
             color="primary"
             variant="flat"
-            @click="contentBlockedDialog = false"
+            @click="contentBlockedDialog = false; contentBlockedData = null"
           >
             OK
           </v-btn>
@@ -1298,6 +1308,7 @@ const sidebarSearchResults = ref<Array<{
   createdAt: Date;
 }>>([]);
 const sidebarSearchLoading = ref(false);
+const contentBlockedData = ref<{ reason?: string; categories?: string[] } | null>(null);
 const rawImportData = ref('');
 const messageInput = ref('');
 const personas = ref<Persona[]>([]);
@@ -2406,6 +2417,7 @@ onMounted(async () => {
       store.state.wsService.on('content_blocked', (data: any) => {
         // Content was blocked by moderation - show informative dialog
         console.warn('Content blocked by moderation:', data);
+        contentBlockedData.value = data;
         contentBlockedDialog.value = true;
       });
       

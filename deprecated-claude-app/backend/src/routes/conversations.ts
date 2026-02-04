@@ -586,7 +586,8 @@ export function conversationRouter(db: Database): Router {
       }
       
       const conversation = await db.getConversation(req.params.id, req.userId);
-      if (!conversation || conversation.userId !== req.userId) {
+      if (!conversation) {
+        // getConversation already handles access control (owner or shared access)
         return res.status(404).json({ error: 'Conversation not found' });
       }
       
@@ -703,11 +704,8 @@ export function conversationRouter(db: Database): Router {
       const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
+        // getConversation already handles access control (owner or shared access)
         return res.status(404).json({ error: 'Conversation not found' });
-      }
-
-      if (conversation.userId !== req.userId) {
-        return res.status(403).json({ error: 'Access denied' });
       }
 
       // Get cache metrics from the enhanced inference service if available
@@ -739,11 +737,8 @@ export function conversationRouter(db: Database): Router {
       const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
+        // getConversation already handles access control (owner or shared access)
         return res.status(404).json({ error: 'Conversation not found' });
-      }
-
-      if (conversation.userId !== req.userId) {
-        return res.status(403).json({ error: 'Access denied' });
       }
 
       // Get metrics summary from database
@@ -780,11 +775,8 @@ export function conversationRouter(db: Database): Router {
       const conversation = await db.getConversation(req.params.id, req.userId);
       
       if (!conversation) {
+        // getConversation already handles access control (owner or shared access)
         return res.status(404).json({ error: 'Conversation not found' });
-      }
-
-      if (conversation.userId !== req.userId) {
-        return res.status(403).json({ error: 'Access denied' });
       }
 
       const exportData = await db.exportConversation(req.params.id, conversation.userId);

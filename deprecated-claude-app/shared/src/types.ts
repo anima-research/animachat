@@ -686,6 +686,9 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('typing'),
     conversationId: z.string().uuid(),
     isTyping: z.boolean()
+  }),
+  z.object({
+    type: z.literal('ping')
   })
 ]);
 
