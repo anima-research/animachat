@@ -1,0 +1,58 @@
+# Animachat Delegate Configuration
+# Copy this file to delegate.yaml and fill in your values.
+
+server:
+  # WebSocket URL of the Animachat server
+  url: ws://localhost:3010
+  # Your JWT token (get from Animachat login)
+  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJ0ZXN0LXVzZXItaWQtMTIzNDUiLCJpYXQiOjE3Njk2OTQ1NTgsImV4cCI6MTc3MDI5OTM1OH0.ZVfhFgpuGdRKHdUne7oTNC3ffbUyJKgAkj2QHvy7Efk"
+
+delegate:
+  # Unique ID for this delegate instance
+  id: "my-dev-machine"
+  # Capabilities this delegate supports
+  capabilities:
+    - mcp_host
+    - webhooks
+
+# MCP servers to host locally
+# Each server is a subprocess managed by the delegate
+mcp_servers:
+  # Example: Filesystem access
+  - name: filesystem
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "D:/league of legends/Licks/Downloads/mcp_server"]
+
+  # Example: GitHub integration
+  # - name: github
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-github"]
+  #   env:
+  #     GITHUB_TOKEN: "${GITHUB_TOKEN}"
+
+  # Example: Custom MCP server
+  # - name: my-custom-tools
+  #   command: node
+  #   args: ["./my-mcp-server.js"]
+
+# Webhook server for external triggers (MCP Live)
+webhooks:
+  # Set to true to enable the webhook HTTP server
+  enabled: true
+  # Port for the webhook server
+  port: 8080
+  # Webhook endpoints
+  endpoints:
+    - source: gitlab
+      path: /webhooks/gitlab
+      secret: ""
+      # Which conversation to post trigger events to
+      conversation_id: "c6af6839-3ae9-4f41-82d7-285c4fbdef0f"
+      # Which AI participant should respond (empty = first assistant)
+      participant_id: ""
+
+    # - source: github
+    #   path: /webhooks/github
+    #   secret: "${GITHUB_WEBHOOK_SECRET}"
+    #   conversation_id: ""
+    #   participant_id: ""
