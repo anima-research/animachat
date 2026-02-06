@@ -511,6 +511,107 @@
             persistent-hint
           />
 
+          <v-divider class="my-4" />
+
+          <h4 class="text-subtitle-1 mb-3">Tool Configuration</h4>
+          <p class="text-caption text-grey mb-3">
+            Configure which tools this participant can use.
+          </p>
+
+          <v-switch
+            :model-value="getToolConfigField('toolsEnabled', true)"
+            @update:model-value="(val) => setToolConfigField('toolsEnabled', val)"
+            label="Enable tool use"
+            density="compact"
+            hide-details
+            class="mb-3"
+          />
+
+          <template v-if="getToolConfigField('toolsEnabled', true)">
+            <v-switch
+              v-model="allowAllTools"
+              label="Allow all available tools"
+              density="compact"
+              hide-details
+              class="mb-3"
+            />
+
+            <v-select
+              v-if="!allowAllTools"
+              :model-value="getToolConfigField('enabledTools', [])"
+              @update:model-value="(val) => setToolConfigField('enabledTools', val)"
+              :items="groupedToolItems.filter(i => i.type === 'tool')"
+              item-title="name"
+              item-value="name"
+              label="Select allowed tools"
+              multiple
+              chips
+              clearable
+              variant="outlined"
+              density="compact"
+              class="mb-3"
+            >
+              <template v-slot:prepend-item>
+                <!-- Show grouped headers in dropdown -->
+                <template v-for="(item, index) in groupedToolItems" :key="index">
+                  <v-list-subheader v-if="item.type === 'header'" class="text-primary font-weight-bold">
+                    <v-icon
+                      :icon="item.title?.includes('MCP') ? 'mdi-desktop-tower' : 'mdi-server'"
+                      size="small"
+                      class="mr-2"
+                    />
+                    {{ item.title }}
+                  </v-list-subheader>
+                  <v-list-item
+                    v-else
+                    :value="item.name"
+                    @click="toggleToolSelection(item.name!)"
+                  >
+                    <template v-slot:prepend>
+                      <v-checkbox-btn
+                        :model-value="(getToolConfigField('enabledTools', []) || []).includes(item.name)"
+                        readonly
+                      />
+                    </template>
+                    <v-list-item-title>{{ item.name }}</v-list-item-title>
+                    <v-list-item-subtitle>
+                      {{ item.description?.slice(0, 60) }}{{ (item.description?.length ?? 0) > 60 ? '...' : '' }}
+                    </v-list-item-subtitle>
+                  </v-list-item>
+                </template>
+              </template>
+              <template v-slot:selection="{ item }">
+                <v-chip size="small" closable @click:close="toggleToolSelection(item.value)">
+                  {{ item.title }}
+                </v-chip>
+              </template>
+            </v-select>
+
+            <v-select
+              :model-value="getToolConfigField('delegateId', null)"
+              @update:model-value="(val) => setToolConfigField('delegateId', val)"
+              :items="connectedDelegates"
+              item-title="delegateId"
+              item-value="delegateId"
+              label="Preferred Delegate"
+              clearable
+              variant="outlined"
+              density="compact"
+              class="mb-3"
+            >
+              <template v-slot:no-data>
+                <v-list-item>
+                  <v-list-item-title class="text-caption text-grey">
+                    No delegates connected
+                  </v-list-item-title>
+                </v-list-item>
+              </template>
+            </v-select>
+
+            <!-- Delegate Status Panel -->
+            <DelegateStatusPanel class="mt-4" @delegates-updated="onDelegatesUpdated" />
+          </template>
+
           <v-alert
             type="info"
             variant="tonal"
@@ -536,13 +637,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, PropType } from 'vue';
+import { ref, computed, watch, PropType, onMounted } from 'vue';
 import type { Participant, Model, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
 import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { get as _get, set as _set, cloneDeep, isEqual } from 'lodash-es';
 import ModelSelector from './ModelSelector.vue';
 import ModelSpecificSettings from './ModelSpecificSettings.vue';
+import DelegateStatusPanel from './DelegateStatusPanel.vue';
+import { getAvailableTools, getConnectedDelegates, type ToolInfo, type DelegateInfo } from '@/services/api';
 
 const props = defineProps({
   modelValue: {
@@ -702,6 +805,146 @@ const selectedParticipantPseudoPrefillFilename = computed(() => {
   return participant?.pseudoPrefillFilename || 'conversation.txt';
 });
 
+// =============================================================================
+// Tool Configuration
+// =============================================================================
+
+const availableTools = ref<ToolInfo[]>([]);
+const connectedDelegates = ref<DelegateInfo[]>([]);
+const previousToolSelection = ref<string[]>([]);
+
+// Computed for the "allow all tools" toggle
+// Logic: null/undefined = allow all, array (even empty) = selective mode
+const allowAllTools = computed({
+  get: () => {
+    const enabledTools = getToolConfigField('enabledTools', null);
+    // null/undefined means "allow all", array means "selective mode"
+    return enabledTools === null || enabledTools === undefined;
+  },
+  set: (val) => {
+    if (val) {
+      // Switch to "allow all" mode - set to null
+      previousToolSelection.value = [...(getToolConfigField('enabledTools', []) || [])];
+      setToolConfigField('enabledTools', null);
+    } else {
+      // Switch to "selective" mode - restore previous or start with empty array
+      setToolConfigField('enabledTools', previousToolSelection.value.length
+        ? [...previousToolSelection.value]
+        : []);  // Empty array = no tools selected yet (user must choose)
+    }
+  }
+});
+
+function getToolConfigField(field: string, defaultValue: any) {
+  const p = participants.value.find(p => p.id === selectedParticipantId.value);
+  if (!p?.toolConfig) {
+    return defaultValue;
+  }
+  return _get(p.toolConfig, field, defaultValue);
+}
+
+function setToolConfigField(field: string, value: any) {
+  const list = participants.value;
+  const idx = list.findIndex(p => p.id === selectedParticipantId.value);
+  if (idx < 0) return;
+
+  const updated = cloneDeep(list);
+
+  // Initialize toolConfig if it doesn't exist
+  if (!updated[idx].toolConfig) {
+    updated[idx].toolConfig = {
+      toolsEnabled: true,
+      enabledTools: null,  // null = allow all tools (default)
+      delegateId: null,
+      toolTimeout: 30000
+    };
+  }
+
+  _set(updated[idx].toolConfig!, field, value);
+
+  // avoid no-op emits
+  if (isEqual(list[idx], updated[idx])) return;
+
+  participants.value = updated;
+}
+
+async function fetchToolsAndDelegates() {
+  try {
+    const [toolsResult, delegatesResult] = await Promise.all([
+      getAvailableTools(),
+      getConnectedDelegates()
+    ]);
+    availableTools.value = toolsResult.tools;
+    connectedDelegates.value = delegatesResult.delegates;
+  } catch (error) {
+    console.error('Failed to fetch tools/delegates:', error);
+  }
+}
+
+// Fetch tools and delegates when component mounts
+onMounted(() => {
+  fetchToolsAndDelegates();
+});
+
+// Handler for when DelegateStatusPanel refreshes
+function onDelegatesUpdated(delegates: DelegateInfo[]) {
+  connectedDelegates.value = delegates;
+}
+
+// Grouped tools for the select dropdown (same as ConversationSettingsDialog)
+const groupedToolItems = computed(() => {
+  const serverTools = availableTools.value.filter(t => t.source === 'server');
+  const mcpTools = availableTools.value.filter(t => t.source === 'delegate');
+
+  const items: Array<{
+    type: 'header' | 'tool';
+    title?: string;
+    name?: string;
+    description?: string;
+    source?: string;
+    delegateId?: string;
+  }> = [];
+
+  // Server tools group
+  if (serverTools.length > 0) {
+    items.push({ type: 'header', title: 'Server Tools' });
+    for (const tool of serverTools) {
+      items.push({
+        type: 'tool',
+        name: tool.name,
+        description: tool.description,
+        source: tool.source
+      });
+    }
+  }
+
+  // MCP tools group (from delegates)
+  if (mcpTools.length > 0) {
+    items.push({ type: 'header', title: 'MCP Tools (from Delegate)' });
+    for (const tool of mcpTools) {
+      items.push({
+        type: 'tool',
+        name: tool.name,
+        description: tool.description,
+        source: tool.source,
+        delegateId: tool.delegateId
+      });
+    }
+  }
+
+  return items;
+});
+
+// Toggle tool selection (for grouped dropdown)
+function toggleToolSelection(toolName: string) {
+  const current = getToolConfigField('enabledTools', []) || [];
+  const newSelection = current.includes(toolName)
+    ? current.filter((t: string) => t !== toolName)
+    : [...current, toolName];
+  setToolConfigField('enabledTools', newSelection);
+}
+
+// =============================================================================
 
 // generic functions for getting and setting participant fields
 // these need to send updates correctly by modifying the participants array

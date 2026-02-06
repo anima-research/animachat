@@ -12,6 +12,7 @@
     "generate-cert": "mkdir -p certs && openssl req -x509 -newkey rsa:4096 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes -subj '/CN=localhost'"
   },
   "dependencies": {
+    "@animalabs/membrane": "github:antra-tess/membrane",
     "@anthropic-ai/sdk": "^0.60.0",
     "@aws-sdk/client-bedrock-runtime": "^3.478.0",
     "@types/compression": "^1.8.1",

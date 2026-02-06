@@ -198,6 +198,10 @@
 
         <!-- Fixed footer section - compact -->
         <div class="sidebar-footer">
+          <!-- Delegate status indicator -->
+          <div class="sidebar-delegate-indicator px-2 py-1">
+            <DelegateIndicator />
+          </div>
           <v-divider />
           <div class="sidebar-footer-grid">
             <v-btn
@@ -1172,6 +1176,25 @@
         <v-btn variant="text" @click="errorSnackbar = false">Close</v-btn>
       </template>
     </v-snackbar>
+
+    <!-- Delegate status notification snackbar -->
+    <v-snackbar
+      :model-value="!!delegateNotification?.show"
+      :timeout="5000"
+      :color="delegateNotification?.type === 'disconnected' ? 'warning' : 'success'"
+      location="bottom"
+      @update:model-value="dismissNotification"
+    >
+      <div class="d-flex align-center">
+        <v-icon class="mr-2">
+          {{ delegateNotification?.type === 'disconnected' ? 'mdi-connection-off' : 'mdi-connection' }}
+        </v-icon>
+        {{ delegateNotification?.message }}
+      </div>
+      <template v-slot:actions>
+        <v-btn variant="text" @click="dismissNotification">OK</v-btn>
+      </template>
+    </v-snackbar>
   </v-layout>
 </template>
 
@@ -1187,6 +1210,8 @@ import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import ConversationSettingsDialog from '@/components/ConversationSettingsDialog.vue';
+import DelegateIndicator from '@/components/DelegateIndicator.vue';
+import { useDelegates } from '@/composables/useDelegates';
 import ShareDialog from '@/components/ShareDialog.vue';
 import CollaborationShareDialog from '@/components/CollaborationShareDialog.vue';
 import EventHistoryPanel from '@/components/EventHistoryPanel.vue';
@@ -1278,6 +1303,9 @@ const MAX_CONSOLE_LOGS = 200;
 const errorSnackbar = ref(false);
 const errorSnackbarMessage = ref('');
 const errorSnackbarDetails = ref('');
+
+// Delegate status notifications
+const { notification: delegateNotification, dismissNotification } = useDelegates();
 
 // Multi-user room state
 const roomUsers = ref<Array<{ userId: string; joinedAt: Date }>>([]);
@@ -4451,7 +4479,8 @@ async function updateParticipants(updatedParticipants: Participant[]) {
           existing.pseudoPrefillMode !== updated.pseudoPrefillMode ||
           existing.pseudoPrefillFilename !== updated.pseudoPrefillFilename ||
           !isEqual(existing.settings, updated.settings) ||
-          !isEqual(existing.contextManagement, updated.contextManagement);
+          !isEqual(existing.contextManagement, updated.contextManagement) ||
+          !isEqual(existing.toolConfig, updated.toolConfig);
         
         console.log(`[updateParticipants] Participant ${existing.name} (${existing.id}):`);
         console.log('  existing.model:', existing.model);
@@ -4469,7 +4498,8 @@ async function updateParticipants(updatedParticipants: Participant[]) {
             contextManagement: updated.contextManagement,
             conversationMode: updated.conversationMode,
             pseudoPrefillMode: updated.pseudoPrefillMode,
-            pseudoPrefillFilename: updated.pseudoPrefillFilename
+            pseudoPrefillFilename: updated.pseudoPrefillFilename,
+            toolConfig: updated.toolConfig
           });
           
           if (!parseResult.success) {
@@ -4961,6 +4991,11 @@ function formatDate(date: Date | string): string {
 .sidebar-footer {
   flex-shrink: 0;
   margin-top: auto;
+}
+
+.sidebar-delegate-indicator {
+  display: flex;
+  justify-content: center;
 }
 
 .sidebar-header-grid {

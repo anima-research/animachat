@@ -1,7 +1,8 @@
-import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults } from '@deprecated-claude/shared';
+import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults, DelegateApiKey, DelegateApiKeyPublic } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { promises as fsAsync } from 'fs';
@@ -115,6 +116,22 @@ export class Database {
   private userGrantCapabilities: Map<string, GrantCapability[]> = new Map();
   private userGrantTotals: Map<string, Map<string, number>> = new Map();
   private invites: Map<string, Invite> = new Map(); // code -> Invite
+
+  // Delegate API Keys for delegate authentication
+  private delegateApiKeys: Map<string, {
+    id: string;
+    userId: string;
+    name: string;
+    keyPrefix: string;
+    keyHash: string;
+    createdAt: Date;
+    lastUsedAt: Date | null;
+    expiresAt: Date | null;
+    isRevoked: boolean;
+    revokedAt: Date | null;
+    scopes: string[];
+  }> = new Map(); // keyId -> DelegateApiKey
+  private delegateApiKeysByUser: Map<string, Set<string>> = new Map(); // userId -> keyIds
 
   private eventStore: EventStore;
   // per user, contains conversation metadata events and participant events
@@ -1407,6 +1424,53 @@ export class Database {
       case 'persona_share_revoked':
         this.personaStore.replayEvent(event);
         break;
+
+      // Delegate API Key events
+      case 'delegate_api_key_created': {
+        const { id, userId, name, keyPrefix, keyHash, expiresAt, scopes } = event.data;
+        if (!userId) break; // Safety check
+
+        const keyData = {
+          id,
+          userId,
+          name,
+          keyPrefix,
+          keyHash,
+          createdAt: new Date(event.timestamp),
+          lastUsedAt: null,
+          expiresAt: expiresAt ? new Date(expiresAt) : null,
+          isRevoked: false,
+          revokedAt: null,
+          scopes: scopes || ['delegate:connect', 'tools:execute'],
+        };
+
+        this.delegateApiKeys.set(id, keyData);
+
+        if (!this.delegateApiKeysByUser.has(userId)) {
+          this.delegateApiKeysByUser.set(userId, new Set());
+        }
+        this.delegateApiKeysByUser.get(userId)!.add(id);
+        break;
+      }
+
+      case 'delegate_api_key_used': {
+        const { id, lastUsedAt } = event.data;
+        const key = this.delegateApiKeys.get(id);
+        if (key) {
+          key.lastUsedAt = new Date(lastUsedAt);
+        }
+        break;
+      }
+
+      case 'delegate_api_key_revoked': {
+        const { id, revokedAt } = event.data;
+        const key = this.delegateApiKeys.get(id);
+        if (key) {
+          key.isRevoked = true;
+          key.revokedAt = new Date(revokedAt);
+        }
+        break;
+      }
 
       // Add more cases as needed
       }
@@ -5474,6 +5538,180 @@ export class Database {
 
   getPersonaShares(personaId: string): PersonaShare[] {
     return this.personaStore.getSharesForPersona(personaId);
+  }
+
+  // =============================================================================
+  // Delegate API Keys
+  // =============================================================================
+
+  /**
+   * Create a new delegate API key.
+   * Returns the full secret key (only returned once on creation).
+   */
+  async createDelegateApiKey(
+    userId: string,
+    name: string,
+    expiresAt?: Date | null
+  ): Promise<{ key: DelegateApiKeyPublic; secretKey: string }> {
+    const id = uuidv4();
+
+    // Generate a secure random key: dak_<32 random bytes in base64>
+    const randomBytes = crypto.randomBytes(32);
+    const secretKey = `dak_${randomBytes.toString('base64url')}`;
+    const keyPrefix = secretKey.slice(0, 12); // "dak_" + 8 chars
+
+    // Hash the key for storage
+    const keyHash = await bcrypt.hash(secretKey, 10);
+
+    const keyData = {
+      id,
+      userId,
+      name,
+      keyPrefix,
+      keyHash,
+      createdAt: new Date(),
+      lastUsedAt: null,
+      expiresAt: expiresAt || null,
+      isRevoked: false,
+      revokedAt: null,
+      scopes: ['delegate:connect', 'tools:execute'],
+    };
+
+    // Store in memory
+    this.delegateApiKeys.set(id, keyData);
+
+    // Add to user's keys
+    if (!this.delegateApiKeysByUser.has(userId)) {
+      this.delegateApiKeysByUser.set(userId, new Set());
+    }
+    this.delegateApiKeysByUser.get(userId)!.add(id);
+
+    // Persist event (include userId in data for replay)
+    await this.logUserEvent(userId, 'delegate_api_key_created', {
+      id,
+      userId, // Include for replay
+      name,
+      keyPrefix,
+      keyHash,
+      expiresAt: expiresAt?.toISOString() || null,
+      scopes: keyData.scopes,
+    });
+
+    // Return public info + secret key (only time secret is returned)
+    const publicKey: DelegateApiKeyPublic = {
+      id,
+      userId,
+      name,
+      keyPrefix,
+      createdAt: keyData.createdAt,
+      lastUsedAt: null,
+      expiresAt: keyData.expiresAt,
+      isRevoked: false,
+      revokedAt: null,
+      scopes: keyData.scopes,
+    };
+
+    return { key: publicKey, secretKey };
+  }
+
+  /**
+   * Get all delegate API keys for a user (public info only).
+   */
+  getDelegateApiKeys(userId: string): DelegateApiKeyPublic[] {
+    const keyIds = this.delegateApiKeysByUser.get(userId);
+    if (!keyIds) return [];
+
+    const keys: DelegateApiKeyPublic[] = [];
+    for (const keyId of keyIds) {
+      const key = this.delegateApiKeys.get(keyId);
+      if (key && !key.isRevoked) {
+        keys.push({
+          id: key.id,
+          userId: key.userId,
+          name: key.name,
+          keyPrefix: key.keyPrefix,
+          createdAt: key.createdAt,
+          lastUsedAt: key.lastUsedAt,
+          expiresAt: key.expiresAt,
+          isRevoked: key.isRevoked,
+          revokedAt: key.revokedAt,
+          scopes: key.scopes,
+        });
+      }
+    }
+
+    return keys.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  /**
+   * Validate a delegate API key and return the userId if valid.
+   * Returns null if key is invalid, expired, or revoked.
+   */
+  async validateDelegateApiKey(secretKey: string): Promise<{ userId: string; keyId: string } | null> {
+    // Quick format check
+    if (!secretKey.startsWith('dak_')) {
+      return null;
+    }
+
+    const keyPrefix = secretKey.slice(0, 12);
+
+    // Find key by prefix (then verify hash)
+    for (const [keyId, key] of this.delegateApiKeys) {
+      if (key.keyPrefix === keyPrefix) {
+        // Check if revoked
+        if (key.isRevoked) {
+          return null;
+        }
+
+        // Check if expired
+        if (key.expiresAt && key.expiresAt < new Date()) {
+          return null;
+        }
+
+        // Verify hash
+        const isValid = await bcrypt.compare(secretKey, key.keyHash);
+        if (isValid) {
+          // Update last used time
+          key.lastUsedAt = new Date();
+
+          // Persist last used update (fire-and-forget)
+          this.logUserEvent(key.userId, 'delegate_api_key_used', {
+            id: keyId,
+            lastUsedAt: key.lastUsedAt.toISOString(),
+          }).catch(err => console.error('Failed to log key usage:', err));
+
+          return { userId: key.userId, keyId };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Revoke a delegate API key.
+   */
+  async revokeDelegateApiKey(userId: string, keyId: string): Promise<boolean> {
+    const key = this.delegateApiKeys.get(keyId);
+
+    if (!key || key.userId !== userId) {
+      return false;
+    }
+
+    if (key.isRevoked) {
+      return true; // Already revoked
+    }
+
+    key.isRevoked = true;
+    key.revokedAt = new Date();
+
+    // Persist event
+    await this.logUserEvent(userId, 'delegate_api_key_revoked', {
+      id: keyId,
+      revokedAt: key.revokedAt.toISOString(),
+    });
+
+    return true;
   }
 
   // Close database connection

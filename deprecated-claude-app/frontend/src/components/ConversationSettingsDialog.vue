@@ -553,7 +553,107 @@
         </div>
         
         <v-divider class="my-4" />
-        
+
+        <!-- Tool Configuration Section -->
+        <div>
+          <h4 class="text-h6 mb-2">Tool Configuration</h4>
+          <p class="text-caption text-grey mb-3">
+            Configure which tools are available for this conversation.
+          </p>
+
+          <v-switch
+            v-model="toolsEnabled"
+            label="Enable tool use"
+            density="compact"
+            hide-details
+            class="mb-3"
+          />
+
+          <template v-if="toolsEnabled">
+            <v-switch
+              v-model="allowAllTools"
+              label="Allow all available tools"
+              density="compact"
+              hide-details
+              class="mb-3"
+            />
+
+            <v-select
+              v-if="!allowAllTools"
+              v-model="enabledTools"
+              :items="groupedToolItems.filter(i => i.type === 'tool')"
+              item-title="name"
+              item-value="name"
+              label="Select allowed tools"
+              multiple
+              chips
+              clearable
+              variant="outlined"
+              density="compact"
+              class="mb-3"
+            >
+              <template v-slot:prepend-item>
+                <!-- Show grouped headers in dropdown -->
+                <template v-for="(item, index) in groupedToolItems" :key="index">
+                  <v-list-subheader v-if="item.type === 'header'" class="text-primary font-weight-bold">
+                    <v-icon
+                      :icon="item.title?.includes('MCP') ? 'mdi-desktop-tower' : 'mdi-server'"
+                      size="small"
+                      class="mr-2"
+                    />
+                    {{ item.title }}
+                  </v-list-subheader>
+                  <v-list-item
+                    v-else
+                    :value="item.name"
+                    @click="toggleToolSelection(item.name!)"
+                  >
+                    <template v-slot:prepend>
+                      <v-checkbox-btn
+                        :model-value="enabledTools.includes(item.name!)"
+                        @update:model-value="toggleToolSelection(item.name!)"
+                      />
+                    </template>
+                    <v-list-item-title>{{ item.name }}</v-list-item-title>
+                    <v-list-item-subtitle class="text-caption">
+                      {{ item.description?.slice(0, 60) }}{{ (item.description?.length || 0) > 60 ? '...' : '' }}
+                    </v-list-item-subtitle>
+                  </v-list-item>
+                </template>
+              </template>
+              <!-- Hide default items since we're using prepend-item for custom layout -->
+              <template v-slot:item="{ item }">
+                <!-- Empty - we handle rendering in prepend-item -->
+              </template>
+            </v-select>
+
+            <v-select
+              v-model="preferredDelegateId"
+              :items="connectedDelegates"
+              item-title="delegateId"
+              item-value="delegateId"
+              label="Preferred Delegate"
+              clearable
+              variant="outlined"
+              density="compact"
+              class="mb-3"
+            >
+              <template v-slot:no-data>
+                <v-list-item>
+                  <v-list-item-title class="text-caption text-grey">
+                    No delegates connected
+                  </v-list-item-title>
+                </v-list-item>
+              </template>
+            </v-select>
+
+            <!-- Delegate Status Panel -->
+            <DelegateStatusPanel class="mt-2 mb-3" @delegates-updated="onDelegatesUpdated" />
+          </template>
+        </div>
+
+        <v-divider class="my-4" />
+
         <div class="d-flex gap-2">
         <v-btn
           variant="text"
@@ -590,18 +690,37 @@
       </v-card-actions>
     </v-card>
   </v-dialog>
+
+  <!-- Warning snackbar for toolConfig validation -->
+  <v-snackbar
+    v-model="warningSnackbar"
+    :timeout="6000"
+    color="warning"
+    location="top"
+    multi-line
+  >
+    <div class="d-flex flex-column">
+      <strong>Tool Configuration Warning</strong>
+      <span class="text-caption mt-1">{{ warningMessage }}</span>
+    </div>
+    <template v-slot:actions>
+      <v-btn variant="text" @click="warningSnackbar = false">OK</v-btn>
+    </template>
+  </v-snackbar>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import type { Conversation, Model, Participant, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
 import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
 import ModelSelector from './ModelSelector.vue';
 import ModelSpecificSettings from './ModelSpecificSettings.vue';
-import { api } from '@/services/api';
+import DelegateStatusPanel from './DelegateStatusPanel.vue';
+import { api, type ToolInfo, type DelegateInfo } from '@/services/api';
 import { useStore } from '@/store';
+import { useDelegates } from '@/composables/useDelegates';
 
 const router = useRouter();
 
@@ -644,6 +763,121 @@ const appendTokensBeforeCaching = ref(10000);
 
 const prefillUserMessageEnabled = ref(true);
 const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
+
+// Tool configuration state
+const toolsEnabled = ref(true);
+const enabledTools = ref<string[]>([]);
+const preferredDelegateId = ref<string | null>(null);
+const previousToolSelection = ref<string[]>([]);
+// Explicit flag to track if user selected "allow all" mode
+const useAllToolsMode = ref(true);
+
+// Use the useDelegates composable for real-time updates
+const {
+  allTools: composableTools,
+  delegates: composableDelegates,
+  refresh: refreshDelegates,
+} = useDelegates();
+
+// Wrap composable refs with computed to maintain reactivity
+const availableTools = computed(() => composableTools.value);
+const connectedDelegates = computed(() => composableDelegates.value);
+
+// Warning snackbar state
+const warningSnackbar = ref(false);
+const warningMessage = ref('');
+
+// Computed for "allow all tools" toggle
+const allowAllTools = computed({
+  get: () => useAllToolsMode.value,
+  set: (val) => {
+    useAllToolsMode.value = val;
+    if (val) {
+      // Save current selection before clearing
+      previousToolSelection.value = [...enabledTools.value];
+      enabledTools.value = [];
+    } else {
+      // Restore previous selection (user can now manually select tools)
+      enabledTools.value = previousToolSelection.value.length
+        ? [...previousToolSelection.value]
+        : [];
+    }
+  }
+});
+
+// Fetch tools and delegates via composable (shares state across components)
+async function fetchToolsAndDelegates() {
+  try {
+    await refreshDelegates();
+  } catch (error) {
+    console.error('Failed to fetch tools/delegates:', error);
+  }
+}
+
+// Toggle tool selection (for grouped dropdown)
+function toggleToolSelection(toolName: string) {
+  const index = enabledTools.value.indexOf(toolName);
+  if (index >= 0) {
+    enabledTools.value.splice(index, 1);
+  } else {
+    enabledTools.value.push(toolName);
+  }
+}
+
+onMounted(() => {
+  fetchToolsAndDelegates();
+});
+
+// Handler for when DelegateStatusPanel refreshes - composable handles the state now
+function onDelegatesUpdated(_delegates: DelegateInfo[]) {
+  // The useDelegates composable automatically syncs state, but we can force a refresh
+  // to ensure tools are up to date
+  fetchToolsAndDelegates();
+}
+
+// Grouped tools for the select dropdown
+const groupedToolItems = computed(() => {
+  const serverTools = availableTools.value.filter(t => t.source === 'server');
+  const mcpTools = availableTools.value.filter(t => t.source === 'delegate');
+
+  const items: Array<{
+    type: 'header' | 'tool';
+    title?: string;
+    name?: string;
+    description?: string;
+    source?: string;
+    delegateId?: string;
+  }> = [];
+
+  // Server tools group
+  if (serverTools.length > 0) {
+    items.push({ type: 'header', title: 'Server Tools' });
+    for (const tool of serverTools) {
+      items.push({
+        type: 'tool',
+        name: tool.name,
+        description: tool.description,
+        source: tool.source
+      });
+    }
+  }
+
+  // MCP tools group (from delegates)
+  if (mcpTools.length > 0) {
+    items.push({ type: 'header', title: 'MCP Tools (from Delegate)' });
+    for (const tool of mcpTools) {
+      items.push({
+        type: 'tool',
+        name: tool.name,
+        description: tool.description,
+        source: tool.source,
+        delegateId: tool.delegateId
+      });
+    }
+  }
+
+  return items;
+})
 
 // CLI mode prompt settings
 const cliModeEnabled = ref(true);
@@ -813,7 +1047,25 @@ watch(() => props.conversation, async (conversation) => {
     // Load combine consecutive messages setting
     combineConsecutiveMessages.value = conversation.combineConsecutiveMessages ?? true;
 
-    
+
+    // Load tool configuration (from conversation or first assistant participant)
+    // For 1-on-1 chats, toolConfig is stored on conversation level
+    // For group chats, it's on each participant
+    const convToolConfig = (conversation as any).toolConfig;
+    if (convToolConfig) {
+      toolsEnabled.value = convToolConfig.toolsEnabled ?? true;
+      enabledTools.value = convToolConfig.enabledTools ?? [];
+      preferredDelegateId.value = convToolConfig.delegateId ?? null;
+      // If enabledTools has items, user is not in "all tools" mode
+      useAllToolsMode.value = (convToolConfig.enabledTools ?? []).length === 0;
+    } else {
+      // Default values
+      toolsEnabled.value = true;
+      enabledTools.value = [];
+      preferredDelegateId.value = null;
+      useAllToolsMode.value = true;
+    }
+
     // Load participants if in multi-participant mode
     await loadParticipants();
   }
@@ -1046,6 +1298,47 @@ function save() {
     };
   }
   
+  // Build tool configuration
+  const toolConfig = {
+    toolsEnabled: toolsEnabled.value,
+    enabledTools: enabledTools.value,
+    delegateId: preferredDelegateId.value,
+    toolTimeout: 30000
+  };
+
+  // Validate tool configuration and show warnings
+  const warnings: string[] = [];
+
+  if (toolsEnabled.value) {
+    // Check if preferred delegate is offline
+    if (preferredDelegateId.value) {
+      const delegateExists = connectedDelegates.value.some(
+        d => d.delegateId === preferredDelegateId.value
+      );
+      if (!delegateExists) {
+        warnings.push(`Preferred delegate "${preferredDelegateId.value}" is currently offline.`);
+      }
+    }
+
+    // Check if selected tools require delegate but none connected
+    if (enabledTools.value.length > 0) {
+      const delegateTools = enabledTools.value.filter(toolName => {
+        const tool = availableTools.value.find(t => t.name === toolName);
+        return tool?.source === 'delegate';
+      });
+
+      if (delegateTools.length > 0 && connectedDelegates.value.length === 0) {
+        warnings.push(`Selected tools (${delegateTools.join(', ')}) require a delegate, but none is connected.`);
+      }
+    }
+  }
+
+  // Show warning if any issues found
+  if (warnings.length > 0) {
+    warningMessage.value = warnings.join(' ');
+    warningSnackbar.value = true;
+  }
+
   // Update conversation settings
   emit('update', {
     title: settings.value.title,
@@ -1056,7 +1349,8 @@ function save() {
     contextManagement,
     prefillUserMessage,
     cliModePrompt,
-    combineConsecutiveMessages: combineConsecutiveMessages.value
+    combineConsecutiveMessages: combineConsecutiveMessages.value,
+    toolConfig
   });
   
   // If in multi-participant mode, emit participants for parent to update
