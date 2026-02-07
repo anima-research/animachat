@@ -15,6 +15,9 @@ npm run dev              # Start both backend + frontend concurrently
 npm run dev:backend      # Backend only (tsx watch on localhost:3010)
 npm run dev:frontend     # Frontend only (Vite dev server, proxies API to :3010)
 npm run build            # Build all workspaces in order: shared → backend → frontend
+npm test                 # Run all tests across all workspaces
+npm run test:watch       # Watch mode (all workspaces, concurrent)
+npm run test:coverage    # Run tests with coverage reports
 ```
 
 Individual workspace commands:
@@ -22,9 +25,22 @@ Individual workspace commands:
 npm run build -w shared    # Build shared types first (required before backend/frontend)
 npm run build -w backend
 npm run build -w frontend
+npm test -w backend        # Run tests for one workspace
+npm test -w frontend
+npm test -w shared
 ```
 
-There is no formal test suite. Manual test scripts exist in `deprecated-claude-app/backend/` (test-context-management.js, test-encryption.js, test-full-flow.js, etc.).
+### Testing
+
+The project uses **Vitest** across all three workspaces with `@vitest/coverage-v8` for coverage reporting. Tests live alongside source files as `*.test.ts`.
+
+```bash
+npx vitest run src/path/to/file.test.ts              # Run a single test file
+npx vitest run src/path/to/file.test.ts --coverage    # Single file with coverage
+npx vitest --reporter=verbose                         # Watch mode with verbose output
+```
+
+Frontend tests use `happy-dom` as the DOM environment and `@vue/test-utils` for component testing. Shared must be built (`npm run build -w shared`) before running frontend tests.
 
 ## Monorepo Architecture
 
@@ -94,3 +110,4 @@ Deployment builds all workspaces, copies artifacts via SCP, installs deps, start
 | Rendering | Marked (markdown), PrismJS (syntax), KaTeX (math), DOMPurify |
 | Auth | JWT, bcrypt |
 | Email | Resend |
+| Testing | Vitest, @vue/test-utils, happy-dom, @vitest/coverage-v8 |
