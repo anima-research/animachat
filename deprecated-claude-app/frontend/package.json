@@ -8,7 +8,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage --reporter=dot --silent"
   },
   "dependencies": {
     "@iconify/vue": "^5.0.0",

@@ -10,7 +10,7 @@
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage --reporter=dot --silent"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.18",
