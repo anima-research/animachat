@@ -12,7 +12,7 @@
     "generate-cert": "mkdir -p certs && openssl req -x509 -newkey rsa:4096 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes -subj '/CN=localhost'",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage --reporter=dot --silent"
+    "test:coverage": "vitest run --coverage --silent --coverage.include='src/**/*.{ts,tsx,js,jsx}'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",
