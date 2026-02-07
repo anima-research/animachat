@@ -20,7 +20,7 @@ vi.hoisted(() => {
 });
 
 // Mock the api module before importing avatars (vi.mock is hoisted)
-vi.mock('@/services/api', () => ({
+vi.mock('../services/api', () => ({
   api: {
     get: vi.fn(),
   },
@@ -36,7 +36,7 @@ import {
   getActivePack,
   setActivePack,
 } from './avatars';
-import { api } from '@/services/api';
+import { api } from '../services/api';
 import type { AvatarPack, Model } from '@deprecated-claude/shared';
 
 const SAMPLE_PACK: AvatarPack = {
