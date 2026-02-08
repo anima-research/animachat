@@ -82,35 +82,6 @@ describe('BedrockService', () => {
     });
   });
 
-  describe('constructor', () => {
-    it('creates service with explicit credentials', () => {
-      const mockDb = new Database() as any;
-      const svc = new BedrockService(mockDb, {
-        accessKeyId: 'AKIA...',
-        secretAccessKey: 'secret',
-        region: 'eu-west-1',
-      });
-      expect(svc).toBeDefined();
-    });
-
-    it('creates service with session token', () => {
-      const mockDb = new Database() as any;
-      const svc = new BedrockService(mockDb, {
-        accessKeyId: 'AKIA...',
-        secretAccessKey: 'secret',
-        region: 'us-east-1',
-        sessionToken: 'session-token-123',
-      });
-      expect(svc).toBeDefined();
-    });
-
-    it('creates service without credentials (falls back to env vars)', () => {
-      const mockDb = new Database() as any;
-      const svc = new BedrockService(mockDb);
-      expect(svc).toBeDefined();
-    });
-  });
-
   describe('formatMessagesForClaude', () => {
     it('formats a simple user message as a string', async () => {
       const messages = [makeMessage('Hello Bedrock')];

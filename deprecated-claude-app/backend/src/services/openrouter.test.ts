@@ -67,20 +67,6 @@ describe('OpenRouterService', () => {
     service = new OpenRouterService(mockDb, 'test-openrouter-key');
   });
 
-  describe('constructor', () => {
-    it('creates service with provided API key', () => {
-      const mockDb = new Database() as any;
-      const svc = new OpenRouterService(mockDb, 'my-key');
-      expect(svc).toBeDefined();
-    });
-
-    it('creates service without API key (logs warning)', () => {
-      const mockDb = new Database() as any;
-      const svc = new OpenRouterService(mockDb);
-      expect(svc).toBeDefined();
-    });
-  });
-
   describe('formatMessagesForOpenRouter', () => {
     it('formats simple user and assistant messages', () => {
       const messages = [

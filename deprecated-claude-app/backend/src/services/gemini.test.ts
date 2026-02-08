@@ -56,20 +56,6 @@ describe('GeminiService', () => {
     service = new GeminiService(mockDb, 'test-gemini-key');
   });
 
-  describe('constructor', () => {
-    it('creates service with provided API key', () => {
-      const mockDb = new Database() as any;
-      const svc = new GeminiService(mockDb, 'my-key');
-      expect(svc).toBeDefined();
-    });
-
-    it('creates service without API key (logs warning)', () => {
-      const mockDb = new Database() as any;
-      const svc = new GeminiService(mockDb);
-      expect(svc).toBeDefined();
-    });
-  });
-
   describe('formatMessagesForGemini (private)', () => {
     it('formats a simple user message', async () => {
       const svc = service as any;

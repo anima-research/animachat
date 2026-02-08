@@ -178,32 +178,6 @@ describe('SharesStore', () => {
   });
 
   describe('replayEvent', () => {
-    it('rebuilds share from share_created event', () => {
-      const now = new Date().toISOString();
-      store.replayEvent({
-        type: 'share_created',
-        data: {
-          id: 'share-1',
-          conversationId: 'conv-1',
-          userId: 'user-1',
-          shareToken: 'abc1234567',
-          shareType: 'tree',
-          createdAt: now,
-          viewCount: 0,
-          settings: {
-            allowDownload: true,
-            showModelInfo: true,
-            showTimestamps: true
-          }
-        }
-      });
-
-      // Verify the share was created via internal state (can look up by token)
-      // We need to use getShareByToken which is async
-      // Instead, let's verify via getSharesByUser pattern
-      // Actually, let's check the sync lookup is correct by using the replay + another method
-    });
-
     it('replays share_deleted event removing the share', async () => {
       const now = new Date().toISOString();
       store.replayEvent({

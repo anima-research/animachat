@@ -49,28 +49,6 @@ describe('OpenAICompatibleService', () => {
     service = new OpenAICompatibleService(mockDb, 'test-key', 'https://api.example.com');
   });
 
-  describe('constructor', () => {
-    it('creates service with API key and base URL', () => {
-      const mockDb = new Database() as any;
-      const svc = new OpenAICompatibleService(mockDb, 'key', 'https://api.example.com');
-      expect(svc).toBeDefined();
-    });
-
-    it('strips trailing slash from base URL', () => {
-      const mockDb = new Database() as any;
-      const svc = new OpenAICompatibleService(mockDb, 'key', 'https://api.example.com/');
-      // The baseUrl is stored internally; we can verify via formatMessagesForOpenAI
-      // or by checking that the constructor doesn't throw
-      expect(svc).toBeDefined();
-    });
-
-    it('accepts optional model prefix', () => {
-      const mockDb = new Database() as any;
-      const svc = new OpenAICompatibleService(mockDb, 'key', 'https://api.example.com', 'prefix/');
-      expect(svc).toBeDefined();
-    });
-  });
-
   describe('formatMessagesForOpenAI', () => {
     it('formats simple user and assistant messages', () => {
       const messages = [

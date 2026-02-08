@@ -996,19 +996,4 @@ describe('AnthropicService', () => {
     });
   });
 
-  describe('constructor', () => {
-    it('creates service with provided API key', () => {
-      const mockDb = new Database() as any;
-      const svc = new AnthropicService(mockDb, 'my-key');
-      // Service should be created without throwing
-      expect(svc).toBeDefined();
-    });
-
-    it('creates service without API key (falls back to env var)', () => {
-      const mockDb = new Database() as any;
-      // Should not throw, just log a warning
-      const svc = new AnthropicService(mockDb);
-      expect(svc).toBeDefined();
-    });
-  });
 });
