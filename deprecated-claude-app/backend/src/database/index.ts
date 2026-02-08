@@ -169,31 +169,33 @@ export class Database {
       this.userLastAccessedTimes.set(id, new Date());
     }
     
-    // Create test user if no users exist
-    if (this.users.size === 0) {
-      await this.createTestUser();
-      console.log('🧪 Creating additional test users...');
-      await this.createAdditionalTestUsers();
-    } else {
-      // If test user exists but has no custom models, create test models
-      const testUserId = 'test-user-id-12345';
-      console.log(`Checking for test user ${testUserId}... exists: ${this.users.has(testUserId)}`);
-      if (this.users.has(testUserId)) {
-        // Ensure user is marked as loaded (in case they were created via old mainEvents)
-        this.userLastAccessedTimes.set(testUserId, new Date());
-        
-        const testUserModels = this.userModelsByUser.get(testUserId);
-        console.log(`Test user models: ${testUserModels ? testUserModels.size : 0}`);
-        if (!testUserModels || testUserModels.size === 0) {
-          console.log('🧪 Test user exists but has no custom models, creating them...');
-          await this.createTestModels(testUserId);
-        } else {
-          console.log('✅ Test user already has custom models');
+    // Create test users only in development
+    if (process.env.NODE_ENV !== 'production') {
+      if (this.users.size === 0) {
+        await this.createTestUser();
+        console.log('🧪 Creating additional test users...');
+        await this.createAdditionalTestUsers();
+      } else {
+        // If test user exists but has no custom models, create test models
+        const testUserId = 'test-user-id-12345';
+        console.log(`Checking for test user ${testUserId}... exists: ${this.users.has(testUserId)}`);
+        if (this.users.has(testUserId)) {
+          // Ensure user is marked as loaded (in case they were created via old mainEvents)
+          this.userLastAccessedTimes.set(testUserId, new Date());
+
+          const testUserModels = this.userModelsByUser.get(testUserId);
+          console.log(`Test user models: ${testUserModels ? testUserModels.size : 0}`);
+          if (!testUserModels || testUserModels.size === 0) {
+            console.log('🧪 Test user exists but has no custom models, creating them...');
+            await this.createTestModels(testUserId);
+          } else {
+            console.log('✅ Test user already has custom models');
+          }
         }
+        // Also ensure additional test users exist
+        console.log('🧪 Ensuring additional test users exist...');
+        await this.createAdditionalTestUsers();
       }
-      // Also ensure additional test users exist
-      console.log('🧪 Ensuring additional test users exist...');
-      await this.createAdditionalTestUsers();
     }
 
     this.initialized = true;
