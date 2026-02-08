@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'crypto';
 import { Message } from '@deprecated-claude/shared';
 
@@ -19,9 +19,15 @@ vi.mock('@aws-sdk/client-bedrock-runtime', () => {
     send = vi.fn();
     constructor(_opts?: any) {}
   }
+  class MockInvokeModelWithResponseStreamCommand {
+    input: any;
+    constructor(opts?: any) {
+      this.input = opts;
+    }
+  }
   return {
     BedrockRuntimeClient: MockBedrockRuntimeClient,
-    InvokeModelWithResponseStreamCommand: class { constructor(_opts?: any) {} },
+    InvokeModelWithResponseStreamCommand: MockInvokeModelWithResponseStreamCommand,
   };
 });
 
@@ -775,6 +781,477 @@ describe('BedrockService', () => {
     it('returns false for unknown provider', async () => {
       const result = await service.validateApiKey('unknown', 'some-key');
       expect(result).toBe(false);
+    });
+  });
+
+  // =========================================================================
+  // Streaming / streamCompletion characterization tests
+  // =========================================================================
+
+  describe('streamCompletion', () => {
+    // Helper: create async iterable for Bedrock streaming response chunks
+    function createMockBody(chunks: Array<{ bytes: Uint8Array } | null>): AsyncIterable<{ chunk?: { bytes?: Uint8Array } }> {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const chunk of chunks) {
+            if (chunk) {
+              yield { chunk: { bytes: chunk.bytes } };
+            }
+          }
+        },
+      };
+    }
+
+    // Create a Claude 3 streaming response (Messages API format)
+    function makeClaude3StreamChunks(text: string): Array<{ bytes: Uint8Array }> {
+      const encoder = new TextEncoder();
+      const words = text.split(' ');
+      const chunks: Array<{ bytes: Uint8Array }> = [];
+
+      // message_start
+      chunks.push({ bytes: encoder.encode(JSON.stringify({ type: 'message_start', message: { id: 'msg_123' } })) });
+
+      // content_block_start
+      chunks.push({ bytes: encoder.encode(JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text' } })) });
+
+      // content deltas
+      for (const word of words) {
+        chunks.push({
+          bytes: encoder.encode(JSON.stringify({
+            type: 'content_block_delta',
+            delta: { text: word + ' ' },
+          })),
+        });
+      }
+
+      // content_block_stop
+      chunks.push({ bytes: encoder.encode(JSON.stringify({ type: 'content_block_stop', index: 0 })) });
+
+      // message_stop
+      chunks.push({ bytes: encoder.encode(JSON.stringify({ type: 'message_stop' })) });
+
+      return chunks;
+    }
+
+    // Create a Claude 2 streaming response (legacy format)
+    function makeClaude2StreamChunks(text: string): Array<{ bytes: Uint8Array }> {
+      const encoder = new TextEncoder();
+      const words = text.split(' ');
+      const chunks: Array<{ bytes: Uint8Array }> = [];
+
+      for (const word of words) {
+        chunks.push({
+          bytes: encoder.encode(JSON.stringify({
+            completion: word + ' ',
+            stop_reason: null,
+          })),
+        });
+      }
+
+      // Final chunk with stop_reason
+      chunks.push({
+        bytes: encoder.encode(JSON.stringify({
+          completion: '',
+          stop_reason: 'stop_sequence',
+        })),
+      });
+
+      return chunks;
+    }
+
+    let mockSend: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      mockSend = (service as any).client.send;
+      mockSend.mockReset();
+    });
+
+    afterEach(() => {
+      delete process.env.DEMO_MODE;
+    });
+
+    it('streams a Claude 3 text response', async () => {
+      const bodyChunks = makeClaude3StreamChunks('Hello from Bedrock');
+      mockSend.mockResolvedValue({ body: createMockBody(bodyChunks) });
+
+      const receivedChunks: string[] = [];
+      let completionCalled = false;
+
+      const onChunk = vi.fn(async (chunk: string, isComplete: boolean) => {
+        if (chunk) receivedChunks.push(chunk);
+        if (isComplete) completionCalled = true;
+      });
+
+      const result = await service.streamCompletion(
+        'anthropic.claude-3-opus-20240229-v1:0',
+        [makeMessage('Hi')],
+        'You are helpful',
+        { maxTokens: 1024, temperature: 0.7 },
+        onChunk,
+      );
+
+      expect(receivedChunks.join('')).toBe('Hello from Bedrock ');
+      expect(completionCalled).toBe(true);
+      expect(result.rawRequest).toBeDefined();
+      expect(result.rawRequest.model).toBe('anthropic.claude-3-opus-20240229-v1:0');
+    });
+
+    it('streams a Claude 2 legacy text response', async () => {
+      const bodyChunks = makeClaude2StreamChunks('Legacy response');
+      mockSend.mockResolvedValue({ body: createMockBody(bodyChunks) });
+
+      const receivedChunks: string[] = [];
+      let completionCalled = false;
+
+      const onChunk = vi.fn(async (chunk: string, isComplete: boolean) => {
+        if (chunk) receivedChunks.push(chunk);
+        if (isComplete) completionCalled = true;
+      });
+
+      const result = await service.streamCompletion(
+        'anthropic.claude-v2:1',
+        [makeMessage('Hi')],
+        'System prompt',
+        { maxTokens: 512, temperature: 0.5 },
+        onChunk,
+      );
+
+      expect(receivedChunks.join('')).toContain('Legacy');
+      expect(completionCalled).toBe(true);
+      expect(result.rawRequest).toBeDefined();
+      expect(result.rawRequest.model).toBe('anthropic.claude-v2:1');
+    });
+
+    it('builds Claude 3 request body with correct format', async () => {
+      const bodyChunks = makeClaude3StreamChunks('ok');
+      mockSend.mockResolvedValue({ body: createMockBody(bodyChunks) });
+
+      await service.streamCompletion(
+        'anthropic.claude-3-sonnet-20240229-v1:0',
+        [makeMessage('Test')],
+        'Be helpful',
+        { maxTokens: 2048, temperature: 0.8 },
+        vi.fn(async () => {}),
+        ['STOP'],
+      );
+
+      // Verify the command was created with correct parameters
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      const command = mockSend.mock.calls[0][0];
+      const body = JSON.parse(command.input?.body || '{}');
+
+      // For Claude 3 model IDs: these go through buildRequestBody
+      // Check it was called (the command is created from buildRequestBody output)
+      expect(body.anthropic_version).toBe('bedrock-2023-05-31');
+      expect(body.max_tokens).toBe(2048);
+      expect(body.temperature).toBe(0.8);
+      expect(body.system).toBe('Be helpful');
+      expect(body.stop_sequences).toEqual(['STOP']);
+    });
+
+    it('builds Claude 2 request body with legacy format', async () => {
+      const bodyChunks = makeClaude2StreamChunks('ok');
+      mockSend.mockResolvedValue({ body: createMockBody(bodyChunks) });
+
+      await service.streamCompletion(
+        'anthropic.claude-v2',
+        [makeMessage('Hello'), makeMessage('Hi', 'assistant'), makeMessage('Follow up')],
+        'System prompt',
+        { maxTokens: 512, temperature: 0.5 },
+        vi.fn(async () => {}),
+      );
+
+      const command = mockSend.mock.calls[0][0];
+      const body = JSON.parse(command.input?.body || '{}');
+
+      expect(body.prompt).toBeDefined();
+      expect(body.prompt).toContain('System: System prompt');
+      expect(body.prompt).toContain('Human: Hello');
+      expect(body.prompt).toContain('Assistant: Hi');
+      expect(body.prompt).toContain('Human: Follow up');
+      expect(body.prompt).toMatch(/\n\nAssistant:$/);
+      expect(body.max_tokens_to_sample).toBe(512);
+    });
+
+    it('returns rawRequest with the request body', async () => {
+      const bodyChunks = makeClaude3StreamChunks('ok');
+      mockSend.mockResolvedValue({ body: createMockBody(bodyChunks) });
+
+      const result = await service.streamCompletion(
+        'anthropic.claude-3-haiku-20240307-v1:0',
+        [makeMessage('Test')],
+        undefined,
+        { maxTokens: 1024, temperature: 1 },
+        vi.fn(async () => {}),
+      );
+
+      expect(result.rawRequest).toBeDefined();
+      expect(result.rawRequest.model).toBe('anthropic.claude-3-haiku-20240307-v1:0');
+      expect(result.rawRequest.anthropic_version).toBe('bedrock-2023-05-31');
+      expect(result.rawRequest.max_tokens).toBe(1024);
+    });
+
+    it('calls onChunk for each content delta', async () => {
+      const encoder = new TextEncoder();
+      const chunks = [
+        { bytes: encoder.encode(JSON.stringify({ type: 'message_start' })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'content_block_delta', delta: { text: 'word1 ' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'content_block_delta', delta: { text: 'word2 ' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'content_block_delta', delta: { text: 'word3' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'message_stop' })) },
+      ];
+      mockSend.mockResolvedValue({ body: createMockBody(chunks) });
+
+      const onChunk = vi.fn(async () => {});
+
+      await service.streamCompletion(
+        'anthropic.claude-3-sonnet-20240229-v1:0',
+        [makeMessage('Test')],
+        undefined,
+        { maxTokens: 1024, temperature: 1 },
+        onChunk,
+      );
+
+      // 3 text deltas + 1 completion call
+      const textCalls = onChunk.mock.calls.filter(c => c[0] !== '' && !c[1]);
+      expect(textCalls).toHaveLength(3);
+      expect(textCalls[0][0]).toBe('word1 ');
+      expect(textCalls[1][0]).toBe('word2 ');
+      expect(textCalls[2][0]).toBe('word3');
+
+      const completionCall = onChunk.mock.calls.find(c => c[1] === true);
+      expect(completionCall).toBeDefined();
+    });
+
+    // --- Error handling ---
+
+    it('throws when response body is empty', async () => {
+      mockSend.mockResolvedValue({ body: undefined });
+
+      await expect(
+        service.streamCompletion(
+          'anthropic.claude-3-opus-20240229-v1:0',
+          [makeMessage('No body')],
+          undefined,
+          { maxTokens: 1024, temperature: 1 },
+          vi.fn(async () => {}),
+        ),
+      ).rejects.toThrow('No response body from Bedrock');
+    });
+
+    it('throws on API error and logs error via llmLogger', async () => {
+      const { llmLogger } = await import('../utils/llmLogger.js');
+      (llmLogger.logResponse as any).mockClear();
+
+      const apiError = new Error('Access Denied');
+      mockSend.mockRejectedValue(apiError);
+
+      await expect(
+        service.streamCompletion(
+          'anthropic.claude-3-opus-20240229-v1:0',
+          [makeMessage('Will fail')],
+          undefined,
+          { maxTokens: 1024, temperature: 1 },
+          vi.fn(async () => {}),
+        ),
+      ).rejects.toThrow('Access Denied');
+
+      // Should log the error
+      expect(llmLogger.logResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          service: 'bedrock',
+          error: 'Access Denied',
+        }),
+      );
+    });
+
+    it('handles non-Error thrown values', async () => {
+      mockSend.mockRejectedValue('string error');
+
+      await expect(
+        service.streamCompletion(
+          'anthropic.claude-3-opus-20240229-v1:0',
+          [makeMessage('Will fail')],
+          undefined,
+          { maxTokens: 1024, temperature: 1 },
+          vi.fn(async () => {}),
+        ),
+      ).rejects.toBe('string error');
+    });
+
+    it('logs request and response via llmLogger on success', async () => {
+      const { llmLogger } = await import('../utils/llmLogger.js');
+      (llmLogger.logRequest as any).mockClear();
+      (llmLogger.logResponse as any).mockClear();
+
+      const bodyChunks = makeClaude3StreamChunks('logged');
+      mockSend.mockResolvedValue({ body: createMockBody(bodyChunks) });
+
+      await service.streamCompletion(
+        'anthropic.claude-3-opus-20240229-v1:0',
+        [makeMessage('Log test')],
+        'System',
+        { maxTokens: 1024, temperature: 1 },
+        vi.fn(async () => {}),
+      );
+
+      expect(llmLogger.logRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          service: 'bedrock',
+          model: 'anthropic.claude-3-opus-20240229-v1:0',
+        }),
+      );
+
+      expect(llmLogger.logResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          service: 'bedrock',
+          model: 'anthropic.claude-3-opus-20240229-v1:0',
+        }),
+      );
+    });
+
+    it('skips non-text chunks from Claude 3 streams', async () => {
+      const encoder = new TextEncoder();
+      const chunks = [
+        { bytes: encoder.encode(JSON.stringify({ type: 'message_start', message: { id: 'msg_1' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'content_block_delta', delta: { text: 'Hello' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'content_block_stop', index: 0 })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'message_stop' })) },
+      ];
+      mockSend.mockResolvedValue({ body: createMockBody(chunks) });
+
+      const receivedChunks: string[] = [];
+      const onChunk = vi.fn(async (chunk: string) => {
+        if (chunk) receivedChunks.push(chunk);
+      });
+
+      await service.streamCompletion(
+        'anthropic.claude-3-opus-20240229-v1:0',
+        [makeMessage('Test')],
+        undefined,
+        { maxTokens: 1024, temperature: 1 },
+        onChunk,
+      );
+
+      // Only the content_block_delta with text should generate chunks
+      expect(receivedChunks).toEqual(['Hello']);
+    });
+
+    // --- Demo mode ---
+
+    it('returns empty object in demo mode without calling API', async () => {
+      process.env.DEMO_MODE = 'true';
+
+      const onChunk = vi.fn(async () => {});
+      const result = await service.streamCompletion(
+        'anthropic.claude-3-opus-20240229-v1:0',
+        [makeMessage('Demo test')],
+        undefined,
+        { maxTokens: 1024, temperature: 1 },
+        onChunk,
+      );
+
+      expect(mockSend).not.toHaveBeenCalled();
+      expect(result).toEqual({});
+
+      // onChunk should have been called with chunks and completion
+      const completionCall = onChunk.mock.calls.find(c => c[1] === true);
+      expect(completionCall).toBeDefined();
+    });
+
+    it('demo mode generates contextual response for "hello" input', async () => {
+      process.env.DEMO_MODE = 'true';
+
+      const receivedChunks: string[] = [];
+      const onChunk = vi.fn(async (chunk: string, isComplete: boolean) => {
+        if (chunk && !isComplete) receivedChunks.push(chunk);
+      });
+
+      await service.streamCompletion(
+        'anthropic.claude-3-opus-20240229-v1:0',
+        [makeMessage('hello')],
+        undefined,
+        { maxTokens: 1024, temperature: 1 },
+        onChunk,
+      );
+
+      const fullResponse = receivedChunks.join('');
+      expect(fullResponse).toContain('Hello!');
+    });
+
+    it('demo mode streams word-by-word and signals completion', async () => {
+      process.env.DEMO_MODE = 'true';
+
+      const receivedChunks: string[] = [];
+      let completionSignaled = false;
+      const onChunk = vi.fn(async (chunk: string, isComplete: boolean) => {
+        if (chunk && !isComplete) receivedChunks.push(chunk);
+        if (isComplete) completionSignaled = true;
+      });
+
+      await service.streamCompletion(
+        'anthropic.claude-3-opus-20240229-v1:0',
+        [makeMessage('some user input')],
+        undefined,
+        { maxTokens: 1024, temperature: 1 },
+        onChunk,
+      );
+
+      // Demo mode streams word by word
+      expect(receivedChunks.length).toBeGreaterThan(1);
+      // Each chunk is a word (preceded by space for non-first chunks)
+      expect(receivedChunks[0]).not.toContain(' '); // First chunk has no leading space
+      expect(completionSignaled).toBe(true);
+      // All chunks together form a non-empty string
+      expect(receivedChunks.join('').length).toBeGreaterThan(10);
+    });
+
+    // --- Command construction ---
+
+    it('passes correct modelId and contentType to InvokeModelWithResponseStreamCommand', async () => {
+      const bodyChunks = makeClaude3StreamChunks('ok');
+      mockSend.mockResolvedValue({ body: createMockBody(bodyChunks) });
+
+      await service.streamCompletion(
+        'anthropic.claude-3-haiku-20240307-v1:0',
+        [makeMessage('Test')],
+        undefined,
+        { maxTokens: 100, temperature: 1 },
+        vi.fn(async () => {}),
+      );
+
+      const command = mockSend.mock.calls[0][0];
+      expect(command.input?.modelId).toBe('anthropic.claude-3-haiku-20240307-v1:0');
+      expect(command.input?.contentType).toBe('application/json');
+      expect(command.input?.accept).toBe('application/json');
+    });
+
+    it('accumulates full content across stream chunks', async () => {
+      const encoder = new TextEncoder();
+      const chunks = [
+        { bytes: encoder.encode(JSON.stringify({ type: 'content_block_delta', delta: { text: 'Part 1. ' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'content_block_delta', delta: { text: 'Part 2. ' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'content_block_delta', delta: { text: 'Part 3.' } })) },
+        { bytes: encoder.encode(JSON.stringify({ type: 'message_stop' })) },
+      ];
+      mockSend.mockResolvedValue({ body: createMockBody(chunks) });
+
+      const allChunks: string[] = [];
+      const onChunk = vi.fn(async (chunk: string) => {
+        if (chunk) allChunks.push(chunk);
+      });
+
+      await service.streamCompletion(
+        'anthropic.claude-3-opus-20240229-v1:0',
+        [makeMessage('Test')],
+        undefined,
+        { maxTokens: 1024, temperature: 1 },
+        onChunk,
+      );
+
+      expect(allChunks.join('')).toBe('Part 1. Part 2. Part 3.');
     });
   });
 });
