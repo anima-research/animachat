@@ -8,19 +8,62 @@ vi.mock('../database/index.js', () => ({
 }));
 
 // Mock blob store
+const mockSaveBlob = vi.fn().mockResolvedValue('mock-blob-id');
+const mockLoadBlob = vi.fn().mockResolvedValue({
+  data: Buffer.from('blob-data'),
+  metadata: { mimeType: 'image/png' },
+});
+const mockDeleteBlob = vi.fn();
 vi.mock('../database/blob-store.js', () => ({
   getBlobStore: vi.fn(() => ({
-    saveBlob: vi.fn().mockResolvedValue('mock-blob-id'),
-    loadBlob: vi.fn().mockResolvedValue({
-      data: Buffer.from('blob-data'),
-      metadata: { mimeType: 'image/png' },
-    }),
-    deleteBlob: vi.fn(),
+    saveBlob: mockSaveBlob,
+    loadBlob: mockLoadBlob,
+    deleteBlob: mockDeleteBlob,
   })),
 }));
 
 import { GeminiService } from './gemini.js';
 import { Database } from '../database/index.js';
+
+// Helper to build SSE data lines from JSON chunks
+function sseLines(chunks: any[]): string {
+  return chunks.map(c => `data: ${JSON.stringify(c)}\n\n`).join('');
+}
+
+// Helper to create a readable stream from a string
+function makeReadableStream(text: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
+// Helper to create a mock fetch Response with SSE body
+function mockSSEResponse(chunks: any[], status = 200): Response {
+  const body = sseLines(chunks);
+  return new Response(makeReadableStream(body), {
+    status,
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
+}
+
+// Helper to create a mock error Response
+function mockErrorResponse(status: number, errorText: string): Response {
+  return new Response(errorText, { status, statusText: 'Error' });
+}
+
+// Default model settings
+function defaultSettings(overrides: any = {}) {
+  return {
+    temperature: 0.7,
+    maxTokens: 1024,
+    ...overrides,
+  };
+}
 
 function makeMessage(
   content: string,
@@ -373,973 +416,1053 @@ describe('GeminiService', () => {
     });
   });
 
-  // =========================================================================
-  // Streaming / streamCompletion characterization tests
-  // =========================================================================
+  describe('constructor', () => {
+    it('stores provided API key', () => {
+      const svc = service as any;
+      expect(svc.apiKey).toBe('test-gemini-key');
+    });
+
+    it('sets default base URL', () => {
+      const svc = service as any;
+      expect(svc.baseUrl).toBe('https://generativelanguage.googleapis.com/v1beta');
+    });
+
+    it('falls back to empty string when no key provided and env not set', () => {
+      const origKey = process.env.GEMINI_API_KEY;
+      delete process.env.GEMINI_API_KEY;
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const svc = new GeminiService(new Database() as any) as any;
+      expect(svc.apiKey).toBe('');
+      consoleSpy.mockRestore();
+      if (origKey !== undefined) process.env.GEMINI_API_KEY = origKey;
+    });
+  });
 
   describe('streamCompletion', () => {
-    // Helper: encode SSE data lines from Gemini stream chunks
-    function makeSSEData(chunks: any[]): string {
-      return chunks.map(c => `data: ${JSON.stringify(c)}\n\n`).join('');
-    }
-
-    // Create a ReadableStream from a string (simulates SSE body)
-    function createReadableStream(data: string): ReadableStream<Uint8Array> {
-      const encoder = new TextEncoder();
-      const encoded = encoder.encode(data);
-      let delivered = false;
-      return new ReadableStream({
-        pull(controller) {
-          if (!delivered) {
-            controller.enqueue(encoded);
-            delivered = true;
-          } else {
-            controller.close();
-          }
-        },
-      });
-    }
-
-    // Standard simple text response
-    function makeSimpleTextChunks(text: string, opts?: {
-      inputTokens?: number;
-      outputTokens?: number;
-    }): any[] {
-      const words = text.split(' ');
-      const chunks: any[] = [];
-
-      for (const word of words) {
-        chunks.push({
-          candidates: [{
-            content: {
-              parts: [{ text: word + ' ' }],
-              role: 'model',
-            },
-          }],
-        });
-      }
-
-      // Final chunk with finish reason and usage
-      chunks.push({
-        candidates: [{
-          content: { parts: [{ text: '' }], role: 'model' },
-          finishReason: 'STOP',
-        }],
-        usageMetadata: {
-          promptTokenCount: opts?.inputTokens ?? 100,
-          candidatesTokenCount: opts?.outputTokens ?? 50,
-          totalTokenCount: (opts?.inputTokens ?? 100) + (opts?.outputTokens ?? 50),
-        },
-      });
-
-      return chunks;
-    }
-
     let fetchSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
-      fetchSpy = vi.spyOn(global, 'fetch');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      fetchSpy = vi.spyOn(globalThis, 'fetch');
+      mockSaveBlob.mockClear();
+      mockDeleteBlob.mockClear();
     });
 
     afterEach(() => {
-      fetchSpy.mockRestore();
+      vi.restoreAllMocks();
     });
 
-    it('streams a simple text response and returns usage', async () => {
-      const sseChunks = makeSimpleTextChunks('Hello from Gemini', { inputTokens: 120, outputTokens: 25 });
-      const sseData = makeSSEData(sseChunks);
+    it('streams text chunks and calls onChunk with incremental text', async () => {
+      const chunks = [
+        { candidates: [{ content: { parts: [{ text: 'Hello' }] } }] },
+        { candidates: [{ content: { parts: [{ text: ' world' }] } }] },
+        { candidates: [{ content: { parts: [{ text: '!' }] } }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 } },
+      ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
 
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
-
-      const receivedChunks: string[] = [];
-      let finalUsage: any;
-      let completionCalled = false;
-
-      const onChunk = vi.fn(async (chunk: string, isComplete: boolean, _contentBlocks?: any[], usage?: any) => {
-        if (chunk) receivedChunks.push(chunk);
-        if (isComplete) {
-          completionCalled = true;
-          finalUsage = usage;
-        }
-      });
-
+      const onChunk = vi.fn().mockResolvedValue(undefined);
       const result = await service.streamCompletion(
         'gemini-2.5-flash',
         [makeMessage('Hi')],
-        'You are helpful',
-        { maxTokens: 1024, temperature: 0.7 },
-        onChunk,
+        undefined,
+        defaultSettings(),
+        onChunk
       );
 
-      expect(receivedChunks.join('')).toContain('Hello');
-      expect(completionCalled).toBe(true);
+      // Should receive each text chunk + completion call
+      const textCalls = onChunk.mock.calls.filter((c: any) => c[0] !== '' && !c[1]);
+      expect(textCalls.length).toBe(3);
+      expect(textCalls[0][0]).toBe('Hello');
+      expect(textCalls[1][0]).toBe(' world');
+      expect(textCalls[2][0]).toBe('!');
 
-      // Usage from the last chunk
-      expect(finalUsage).toEqual({
-        inputTokens: 120,
-        outputTokens: 25,
-      });
+      // Final completion call
+      const completionCall = onChunk.mock.calls.find((c: any) => c[1] === true);
+      expect(completionCall).toBeDefined();
 
-      expect(result.usage).toEqual({
-        inputTokens: 120,
-        outputTokens: 25,
-      });
-
-      expect(result.rawRequest).toBeDefined();
-      expect(result.rawRequest.generationConfig.maxOutputTokens).toBe(1024);
+      // Usage returned
+      expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
     });
 
-    it('builds correct URL with API key and model', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
+    it('builds request URL with model ID and API key', async () => {
+      const chunks = [
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
 
+      const onChunk = vi.fn().mockResolvedValue(undefined);
       await service.streamCompletion(
         'gemini-2.5-flash',
-        [makeMessage('Test')],
+        [makeMessage('test')],
         undefined,
-        { maxTokens: 1024 },
-        vi.fn(async () => {}),
+        defaultSettings(),
+        onChunk
       );
 
-      expect(fetchSpy).toHaveBeenCalledWith(
-        expect.stringContaining('models/gemini-2.5-flash:streamGenerateContent'),
-        expect.objectContaining({ method: 'POST' }),
-      );
-      // URL should contain the API key
-      const calledUrl = fetchSpy.mock.calls[0][0] as string;
-      expect(calledUrl).toContain('key=test-gemini-key');
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const url = fetchSpy.mock.calls[0][0] as string;
+      expect(url).toContain('models/gemini-2.5-flash:streamGenerateContent');
+      expect(url).toContain('alt=sse');
+      expect(url).toContain('key=test-gemini-key');
     });
 
-    it('includes system instruction when systemPrompt is provided', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
+    it('includes system instruction when systemPrompt provided', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
 
-      const result = await service.streamCompletion(
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
         'gemini-2.5-flash',
-        [makeMessage('Test')],
-        'Be concise',
-        { maxTokens: 1024 },
-        vi.fn(async () => {}),
+        [makeMessage('test')],
+        'Be helpful',
+        defaultSettings(),
+        onChunk
       );
 
-      expect(result.rawRequest.systemInstruction).toEqual({
-        parts: [{ text: 'Be concise' }],
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.systemInstruction).toEqual({
+        parts: [{ text: 'Be helpful' }],
       });
     });
 
-    it('does not include system instruction when systemPrompt is undefined', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
+    it('does not include systemInstruction when systemPrompt is undefined', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
 
-      const result = await service.streamCompletion(
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
         'gemini-2.5-flash',
-        [makeMessage('Test')],
+        [makeMessage('test')],
         undefined,
-        { maxTokens: 1024 },
-        vi.fn(async () => {}),
+        defaultSettings(),
+        onChunk
       );
 
-      expect(result.rawRequest.systemInstruction).toBeUndefined();
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.systemInstruction).toBeUndefined();
     });
 
-    it('includes generationConfig with temperature, topP, topK', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
+    it('sets temperature and maxOutputTokens in generationConfig', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
 
-      const result = await service.streamCompletion(
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
         'gemini-2.5-flash',
-        [makeMessage('Test')],
+        [makeMessage('test')],
         undefined,
-        { maxTokens: 2048, temperature: 0.5, topP: 0.9, topK: 40 },
-        vi.fn(async () => {}),
+        defaultSettings({ temperature: 0.5, maxTokens: 2048 }),
+        onChunk
       );
 
-      expect(result.rawRequest.generationConfig.temperature).toBe(0.5);
-      expect(result.rawRequest.generationConfig.topP).toBe(0.9);
-      expect(result.rawRequest.generationConfig.topK).toBe(40);
-      expect(result.rawRequest.generationConfig.maxOutputTokens).toBe(2048);
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.temperature).toBe(0.5);
+      expect(body.generationConfig.maxOutputTokens).toBe(2048);
     });
 
-    it('includes stop sequences (max 5)', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
+    it('includes topP and topK when provided', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
 
-      const result = await service.streamCompletion(
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
         'gemini-2.5-flash',
-        [makeMessage('Test')],
+        [makeMessage('test')],
         undefined,
-        { maxTokens: 1024 },
-        vi.fn(async () => {}),
-        ['STOP1', 'STOP2', 'STOP3', 'STOP4', 'STOP5', 'STOP6'],
+        defaultSettings({ topP: 0.9, topK: 40 }),
+        onChunk
       );
 
-      // Gemini only allows max 5 stop sequences
-      expect(result.rawRequest.generationConfig.stopSequences).toHaveLength(5);
-      expect(result.rawRequest.generationConfig.stopSequences).toEqual(['STOP1', 'STOP2', 'STOP3', 'STOP4', 'STOP5']);
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.topP).toBe(0.9);
+      expect(body.generationConfig.topK).toBe(40);
     });
 
-    it('includes thinking config when thinking is enabled', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
+    it('does not include topP/topK when undefined', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
 
-      const result = await service.streamCompletion(
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings(),
+        onChunk
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.topP).toBeUndefined();
+      expect(body.generationConfig.topK).toBeUndefined();
+    });
+
+    it('includes stop sequences limited to 5', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings(),
+        onChunk,
+        ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.stopSequences).toEqual(['a', 'b', 'c', 'd', 'e']);
+      expect(body.generationConfig.stopSequences).toHaveLength(5);
+    });
+
+    it('does not include stopSequences when empty array', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings(),
+        onChunk,
+        []
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.stopSequences).toBeUndefined();
+    });
+
+    it('includes responseModalities from modelSpecific settings', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash-image',
+        [makeMessage('draw a cat')],
+        undefined,
+        defaultSettings({ modelSpecific: { responseModalities: ['TEXT', 'IMAGE'] } }),
+        onChunk
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.responseModalities).toEqual(['TEXT', 'IMAGE']);
+    });
+
+    it('includes imageConfig when IMAGE is in responseModalities', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash-image',
+        [makeMessage('draw a cat')],
+        undefined,
+        defaultSettings({
+          modelSpecific: {
+            responseModalities: ['TEXT', 'IMAGE'],
+            'imageConfig.aspectRatio': '16:9',
+            'imageConfig.imageSize': '1024x1024',
+          },
+        }),
+        onChunk
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.imageConfig).toEqual({
+        aspectRatio: '16:9',
+        imageSize: '1024x1024',
+      });
+    });
+
+    it('does not include imageConfig when IMAGE is not in responseModalities', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings({
+          modelSpecific: {
+            responseModalities: ['TEXT'],
+            'imageConfig.aspectRatio': '16:9',
+          },
+        }),
+        onChunk
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.imageConfig).toBeUndefined();
+    });
+
+    it('includes Google Search tool when enabled', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('search for cats')],
+        undefined,
+        defaultSettings({ modelSpecific: { 'tools.googleSearch': true } }),
+        onChunk
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.tools).toEqual([{ googleSearch: {} }]);
+    });
+
+    it('does not include tools when Google Search is not enabled', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings(),
+        onChunk
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.tools).toBeUndefined();
+    });
+
+    it('includes thinkingConfig when thinking is enabled', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
         'gemini-3-pro-preview',
-        [makeMessage('Think about this')],
+        [makeMessage('think about this')],
         undefined,
-        {
-          maxTokens: 8192,
-          thinking: { enabled: true, budgetTokens: 4096 },
-        },
-        vi.fn(async () => {}),
+        defaultSettings({ thinking: { enabled: true, budgetTokens: 4096 } }),
+        onChunk
       );
 
-      expect(result.rawRequest.generationConfig.thinkingConfig).toEqual({
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.thinkingConfig).toEqual({
         includeThoughts: true,
         thinkingBudget: 4096,
       });
     });
 
-    it('includes thinking config without budget when budgetTokens is not set', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
+    it('includes thinkingConfig without budget when budgetTokens not specified', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
 
-      const result = await service.streamCompletion(
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
         'gemini-3-pro-preview',
-        [makeMessage('Think')],
+        [makeMessage('think')],
         undefined,
-        {
-          maxTokens: 8192,
-          thinking: { enabled: true },
-        },
-        vi.fn(async () => {}),
+        defaultSettings({ thinking: { enabled: true } }),
+        onChunk
       );
 
-      expect(result.rawRequest.generationConfig.thinkingConfig).toEqual({
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.thinkingConfig).toEqual({
         includeThoughts: true,
       });
     });
 
-    it('includes Google Search tool when enabled in modelSpecific', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
-
-      const result = await service.streamCompletion(
-        'gemini-2.5-flash',
-        [makeMessage('Search for this')],
-        undefined,
-        {
-          maxTokens: 1024,
-          modelSpecific: { 'tools.googleSearch': true },
-        },
-        vi.fn(async () => {}),
-      );
-
-      expect(result.rawRequest.tools).toEqual([{ googleSearch: {} }]);
-    });
-
-    it('includes response modalities and image config when set', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
-
-      const result = await service.streamCompletion(
-        'gemini-2.5-flash-image',
-        [makeMessage('Generate image')],
-        undefined,
-        {
-          maxTokens: 1024,
-          modelSpecific: {
-            'responseModalities': ['TEXT', 'IMAGE'],
-            'imageConfig.aspectRatio': '16:9',
-            'imageConfig.imageSize': '4K',
-          },
-        },
-        vi.fn(async () => {}),
-      );
-
-      expect(result.rawRequest.generationConfig.responseModalities).toEqual(['TEXT', 'IMAGE']);
-      expect(result.rawRequest.generationConfig.imageConfig).toEqual({
-        aspectRatio: '16:9',
-        imageSize: '4K',
-      });
-    });
-
-    it('does not include imageConfig when IMAGE is not in responseModalities', async () => {
-      const sseData = makeSSEData(makeSimpleTextChunks('ok'));
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
-
-      const result = await service.streamCompletion(
-        'gemini-2.5-flash',
-        [makeMessage('Text only')],
-        undefined,
-        {
-          maxTokens: 1024,
-          modelSpecific: {
-            'responseModalities': ['TEXT'],
-            'imageConfig.aspectRatio': '16:9',
-          },
-        },
-        vi.fn(async () => {}),
-      );
-
-      expect(result.rawRequest.generationConfig.imageConfig).toBeUndefined();
-    });
-
-    // --- Streaming event handling ---
-
-    it('handles thinking content in streaming response', async () => {
+    it('handles thinking content in stream (thought: true parts)', async () => {
       const chunks = [
-        {
-          candidates: [{
-            content: {
-              parts: [{ text: 'Let me reason about this...', thought: true }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: {
-              parts: [{ text: ' and more thinking', thought: true }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: {
-              parts: [{ text: 'The answer is 42' }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: { parts: [{ text: '' }], role: 'model' },
-            finishReason: 'STOP',
-          }],
-          usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 20, totalTokenCount: 70 },
-        },
+        { candidates: [{ content: { parts: [{ text: 'Let me think...', thought: true }] } }] },
+        { candidates: [{ content: { parts: [{ text: ' more reasoning', thought: true }] } }] },
+        { candidates: [{ content: { parts: [{ text: 'The answer is 42' }] } }] },
+        { usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 30, totalTokenCount: 50 } },
       ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
 
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(makeSSEData(chunks)), { status: 200 }));
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      const result = await service.streamCompletion(
+        'gemini-3-pro-preview',
+        [makeMessage('What is the meaning of life?')],
+        undefined,
+        defaultSettings({ thinking: { enabled: true } }),
+        onChunk
+      );
 
-      let finalContentBlocks: any[] = [];
-      const onChunk = vi.fn(async (_chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
-        if (isComplete && contentBlocks) {
-          finalContentBlocks = contentBlocks;
-        }
-      });
+      // The completion call should include content blocks with thinking
+      const completionCall = onChunk.mock.calls.find((c: any) => c[1] === true);
+      expect(completionCall).toBeDefined();
+      const blocks = completionCall![2];
+      expect(blocks).toBeDefined();
+      // First block should be thinking
+      expect(blocks[0].type).toBe('thinking');
+      expect(blocks[0].thinking).toBe('Let me think... more reasoning');
+      // Second block should be text
+      expect(blocks[1].type).toBe('text');
+      expect(blocks[1].text).toBe('The answer is 42');
+    });
 
+    it('handles thought_signature in stream chunks', async () => {
+      const chunks = [
+        { candidates: [{ content: { parts: [{ text: 'Response', thought_signature: 'sig-xyz-789' }] } }] },
+      ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
       await service.streamCompletion(
         'gemini-3-pro-preview',
-        [makeMessage('Think about this')],
+        [makeMessage('test')],
         undefined,
-        { maxTokens: 4096 },
-        onChunk,
+        defaultSettings(),
+        onChunk
       );
 
-      // Should have thinking block and text block
-      expect(finalContentBlocks.length).toBeGreaterThanOrEqual(2);
-      const thinkingBlock = finalContentBlocks.find((b: any) => b.type === 'thinking');
-      expect(thinkingBlock).toBeDefined();
-      expect(thinkingBlock.thinking).toContain('Let me reason about this...');
-      expect(thinkingBlock.thinking).toContain(' and more thinking');
-
-      const textBlock = finalContentBlocks.find((b: any) => b.type === 'text');
-      expect(textBlock).toBeDefined();
-      expect(textBlock.text).toBe('The answer is 42');
+      // Completion call should include text block with thoughtSignature
+      const completionCall = onChunk.mock.calls.find((c: any) => c[1] === true);
+      const blocks = completionCall![2];
+      expect(blocks).toBeDefined();
+      const textBlock = blocks.find((b: any) => b.type === 'text');
+      expect(textBlock.thoughtSignature).toBe('sig-xyz-789');
     });
 
-    it('captures thought_signature from response parts', async () => {
+    it('handles inline image data in stream', async () => {
+      const imageData = Buffer.from('fake-image').toString('base64');
       const chunks = [
-        {
-          candidates: [{
-            content: {
-              parts: [{ text: 'Thinking...', thought: true }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: {
-              parts: [{ text: 'Answer', thought_signature: 'sig-xyz-123' }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: { parts: [{ text: '' }], role: 'model' },
-            finishReason: 'STOP',
-          }],
-          usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 10, totalTokenCount: 60 },
-        },
+        { candidates: [{ content: { parts: [{ text: 'Here is an image' }] } }] },
+        { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: imageData } }] } }] },
       ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
 
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(makeSSEData(chunks)), { status: 200 }));
-
-      let finalContentBlocks: any[] = [];
-      const onChunk = vi.fn(async (_chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
-        if (isComplete && contentBlocks) {
-          finalContentBlocks = contentBlocks;
-        }
-      });
-
-      await service.streamCompletion(
-        'gemini-3-pro-preview',
-        [makeMessage('Test')],
-        undefined,
-        { maxTokens: 4096 },
-        onChunk,
-      );
-
-      // Text block should have thoughtSignature
-      const textBlock = finalContentBlocks.find((b: any) => b.type === 'text');
-      expect(textBlock).toBeDefined();
-      expect(textBlock.thoughtSignature).toBe('sig-xyz-123');
-    });
-
-    it('handles image generation in streaming response', async () => {
-      const imgBase64 = Buffer.from('generated-image').toString('base64');
-      const chunks = [
-        {
-          candidates: [{
-            content: {
-              parts: [{ text: 'Here is the image:' }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: {
-              parts: [{
-                inlineData: {
-                  mimeType: 'image/png',
-                  data: imgBase64,
-                },
-              }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: { parts: [{ text: '' }], role: 'model' },
-            finishReason: 'STOP',
-          }],
-          usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 100, totalTokenCount: 150 },
-        },
-      ];
-
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(makeSSEData(chunks)), { status: 200 }));
-
-      let finalContentBlocks: any[] = [];
-      const onChunk = vi.fn(async (_chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
-        if (isComplete && contentBlocks) {
-          finalContentBlocks = contentBlocks;
-        }
-      });
-
+      const onChunk = vi.fn().mockResolvedValue(undefined);
       await service.streamCompletion(
         'gemini-2.5-flash-image',
-        [makeMessage('Draw a cat')],
+        [makeMessage('draw something')],
         undefined,
-        {
-          maxTokens: 1024,
-          modelSpecific: { responseModalities: ['TEXT', 'IMAGE'] },
-        },
-        onChunk,
+        defaultSettings({ modelSpecific: { responseModalities: ['TEXT', 'IMAGE'] } }),
+        onChunk
       );
 
-      // Should have text and image blocks
-      const imageBlock = finalContentBlocks.find((b: any) => b.type === 'image');
+      // saveBlob should have been called with the image data
+      expect(mockSaveBlob).toHaveBeenCalledWith(imageData, 'image/png');
+
+      // Completion call should have image content block
+      const completionCall = onChunk.mock.calls.find((c: any) => c[1] === true);
+      const blocks = completionCall![2];
+      expect(blocks).toBeDefined();
+      const imageBlock = blocks.find((b: any) => b.type === 'image');
       expect(imageBlock).toBeDefined();
       expect(imageBlock.blobId).toBe('mock-blob-id');
-
-      const textBlock = finalContentBlocks.find((b: any) => b.type === 'text');
-      expect(textBlock).toBeDefined();
-      expect(textBlock.text).toBe('Here is the image:');
     });
 
-    it('replaces preview image with final version', async () => {
-      const preview = Buffer.from('preview').toString('base64');
-      const final = Buffer.from('final-high-res').toString('base64');
-
-      const { getBlobStore } = await import('../database/blob-store.js');
-      let blobCallCount = 0;
-      const mockBlobStore = {
-        saveBlob: vi.fn().mockImplementation(() => {
-          blobCallCount++;
-          return Promise.resolve(`blob-${blobCallCount}`);
-        }),
-        loadBlob: vi.fn(),
-        deleteBlob: vi.fn(),
-      };
-      (getBlobStore as any).mockReturnValue(mockBlobStore);
+    it('replaces preview image with final image and deletes old blob', async () => {
+      const previewData = Buffer.from('preview').toString('base64');
+      const finalData = Buffer.from('final-hires').toString('base64');
+      mockSaveBlob
+        .mockResolvedValueOnce('preview-blob-id')
+        .mockResolvedValueOnce('final-blob-id');
 
       const chunks = [
-        {
-          candidates: [{
-            content: {
-              parts: [{ inlineData: { mimeType: 'image/png', data: preview } }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: {
-              parts: [{ inlineData: { mimeType: 'image/png', data: final } }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: { parts: [{ text: '' }], role: 'model' },
-            finishReason: 'STOP',
-          }],
-          usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 100, totalTokenCount: 150 },
-        },
+        { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: previewData } }] } }] },
+        { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: finalData } }] } }] },
       ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
 
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(makeSSEData(chunks)), { status: 200 }));
-
-      let finalContentBlocks: any[] = [];
-      const onChunk = vi.fn(async (_chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
-        if (isComplete && contentBlocks) {
-          finalContentBlocks = contentBlocks;
-        }
-      });
-
+      const onChunk = vi.fn().mockResolvedValue(undefined);
       await service.streamCompletion(
         'gemini-2.5-flash-image',
-        [makeMessage('Draw')],
+        [makeMessage('draw')],
         undefined,
-        { maxTokens: 1024 },
-        onChunk,
+        defaultSettings({ modelSpecific: { responseModalities: ['TEXT', 'IMAGE'] } }),
+        onChunk
       );
 
-      // Should have only one image block (the replacement)
-      const imageBlocks = finalContentBlocks.filter((b: any) => b.type === 'image');
-      expect(imageBlocks).toHaveLength(1);
-      // The second blob id (final version) should be used
-      expect(imageBlocks[0].blobId).toBe('blob-2');
-      // Old preview blob should have been deleted
-      expect(mockBlobStore.deleteBlob).toHaveBeenCalledWith('blob-1');
+      // Should save both blobs
+      expect(mockSaveBlob).toHaveBeenCalledTimes(2);
+      // Should delete the old preview blob
+      expect(mockDeleteBlob).toHaveBeenCalledWith('preview-blob-id');
 
-      // Restore the default mock
-      (getBlobStore as any).mockReturnValue({
-        saveBlob: vi.fn().mockResolvedValue('mock-blob-id'),
-        loadBlob: vi.fn().mockResolvedValue({
-          data: Buffer.from('blob-data'),
-          metadata: { mimeType: 'image/png' },
-        }),
-        deleteBlob: vi.fn(),
-      });
+      // Final content blocks should have the final blob
+      const completionCall = onChunk.mock.calls.find((c: any) => c[1] === true);
+      const blocks = completionCall![2];
+      const imageBlock = blocks.find((b: any) => b.type === 'image');
+      expect(imageBlock.blobId).toBe('final-blob-id');
     });
 
-    // --- Error handling ---
+    it('returns rawRequest in the result', async () => {
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ]));
 
-    it('throws on HTTP error and records failure metrics', async () => {
-      fetchSpy.mockResolvedValue(new Response('Internal Server Error', { status: 500, statusText: 'Internal Server Error' }));
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      const result = await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        'system',
+        defaultSettings(),
+        onChunk
+      );
 
-      const onChunk = vi.fn(async () => {});
+      expect(result.rawRequest).toBeDefined();
+      expect(result.rawRequest.contents).toBeDefined();
+      expect(result.rawRequest.generationConfig).toBeDefined();
+      expect(result.rawRequest.systemInstruction).toBeDefined();
+    });
 
+    it('throws on non-ok HTTP response', async () => {
+      fetchSpy.mockResolvedValueOnce(mockErrorResponse(429, 'Rate limit exceeded'));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
       await expect(
         service.streamCompletion(
           'gemini-2.5-flash',
-          [makeMessage('Will fail')],
+          [makeMessage('test')],
           undefined,
-          { maxTokens: 1024 },
-          onChunk,
-        ),
-      ).rejects.toThrow('Gemini API error: 500');
-
-      // onChunk should have been called with failure metrics
-      const failureCall = onChunk.mock.calls.find(
-        (call) => call[1] === true && call[3]?.failed === true
-      );
-      expect(failureCall).toBeDefined();
-      expect(failureCall![3].failed).toBe(true);
-      expect(failureCall![3].outputTokens).toBe(0);
-      expect(failureCall![3].inputTokens).toBeGreaterThan(0);
+          defaultSettings(),
+          onChunk
+        )
+      ).rejects.toThrow('Gemini API error: 429 Rate limit exceeded');
     });
 
     it('throws when response has no body', async () => {
-      fetchSpy.mockResolvedValue(new Response(null, { status: 200 }));
+      // Create a Response with null body
+      const resp = new Response(null, { status: 200 });
+      Object.defineProperty(resp, 'body', { value: null });
+      fetchSpy.mockResolvedValueOnce(resp);
 
-      const onChunk = vi.fn(async () => {});
-
+      const onChunk = vi.fn().mockResolvedValue(undefined);
       await expect(
         service.streamCompletion(
           'gemini-2.5-flash',
-          [makeMessage('No body')],
+          [makeMessage('test')],
           undefined,
-          { maxTokens: 1024 },
-          onChunk,
-        ),
+          defaultSettings(),
+          onChunk
+        )
       ).rejects.toThrow('No response body from Gemini API');
     });
 
-    it('still throws if onChunk fails during error recording', async () => {
-      fetchSpy.mockResolvedValue(new Response('Bad Request', { status: 400 }));
+    it('calls onChunk with failure metrics on error', async () => {
+      fetchSpy.mockResolvedValueOnce(mockErrorResponse(500, 'Internal server error'));
 
-      const onChunk = vi.fn(async () => {
-        throw new Error('onChunk failed');
-      });
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      try {
+        await service.streamCompletion(
+          'gemini-2.5-flash',
+          [makeMessage('test')],
+          undefined,
+          defaultSettings(),
+          onChunk
+        );
+      } catch {
+        // Expected
+      }
+
+      // onChunk should be called with failure metrics
+      const failureCall = onChunk.mock.calls.find((c: any) => c[1] === true && c[3]?.failed);
+      expect(failureCall).toBeDefined();
+      expect(failureCall![3].failed).toBe(true);
+      expect(failureCall![3].error).toContain('500');
+      expect(failureCall![3].inputTokens).toBeGreaterThan(0);
+      expect(failureCall![3].outputTokens).toBe(0);
+    });
+
+    it('handles malformed JSON in SSE data gracefully', async () => {
+      // Create a stream with invalid JSON
+      const body = `data: {"candidates":[{"content":{"parts":[{"text":"valid"}]}}]}\n\ndata: {invalid json}\n\ndata: {"candidates":[{"content":{"parts":[{"text":" end"}]}}]}\n\n`;
+      fetchSpy.mockResolvedValueOnce(
+        new Response(makeReadableStream(body), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      );
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings(),
+        onChunk
+      );
+
+      // Should still process valid chunks; the invalid one gets logged and skipped
+      const textCalls = onChunk.mock.calls.filter((c: any) => c[0] !== '' && !c[1]);
+      expect(textCalls.length).toBe(2);
+      expect(textCalls[0][0]).toBe('valid');
+      expect(textCalls[1][0]).toBe(' end');
+    });
+
+    it('skips [DONE] marker in SSE stream', async () => {
+      const body = `data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}\n\ndata: [DONE]\n\n`;
+      fetchSpy.mockResolvedValueOnce(
+        new Response(makeReadableStream(body), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      );
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings(),
+        onChunk
+      );
+
+      // Should only get one text chunk, not crash on [DONE]
+      const textCalls = onChunk.mock.calls.filter((c: any) => c[0] !== '' && !c[1]);
+      expect(textCalls.length).toBe(1);
+    });
+
+    it('handles usage metadata with defensive defaults for missing fields', async () => {
+      const chunks = [
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }], usageMetadata: { totalTokenCount: 100 } },
+      ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      const result = await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings(),
+        onChunk
+      );
+
+      // Should use ?? 0 defaults for missing prompt/candidates counts
+      expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    });
+
+    it('handles finishReason in candidates', async () => {
+      const chunks = [
+        { candidates: [{ content: { parts: [{ text: 'done' }] }, finishReason: 'STOP' }] },
+      ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings(),
+        onChunk
+      );
+
+      // Should complete without error (finish reason logged)
+      const completionCall = onChunk.mock.calls.find((c: any) => c[1] === true);
+      expect(completionCall).toBeDefined();
+    });
+
+    it('handles thinking without subsequent text content (diagnostic case)', async () => {
+      const chunks = [
+        { candidates: [{ content: { parts: [{ text: 'Thinking deeply...', thought: true }] } }] },
+      ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-3-pro-preview',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings({ thinking: { enabled: true } }),
+        onChunk
+      );
+
+      // Completion call should have only thinking block (no text)
+      const completionCall = onChunk.mock.calls.find((c: any) => c[1] === true);
+      const blocks = completionCall![2];
+      expect(blocks).toBeDefined();
+      expect(blocks.length).toBe(1);
+      expect(blocks[0].type).toBe('thinking');
+      expect(blocks[0].thinking).toBe('Thinking deeply...');
+    });
+
+    it('handles text + image output (text first, then image)', async () => {
+      const imageData = Buffer.from('cat-img').toString('base64');
+      const chunks = [
+        { candidates: [{ content: { parts: [{ text: 'Here is a cat' }] } }] },
+        { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: imageData } }] } }] },
+      ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      await service.streamCompletion(
+        'gemini-2.5-flash-image',
+        [makeMessage('draw a cat')],
+        undefined,
+        defaultSettings({ modelSpecific: { responseModalities: ['TEXT', 'IMAGE'] } }),
+        onChunk
+      );
+
+      // Completion should have text block first (unshift), then image
+      const completionCall = onChunk.mock.calls.find((c: any) => c[1] === true);
+      const blocks = completionCall![2];
+      expect(blocks[0].type).toBe('text');
+      expect(blocks[0].text).toBe('Here is a cat');
+      expect(blocks[1].type).toBe('image');
+    });
+
+    it('returns no usage when stream has no usageMetadata', async () => {
+      const chunks = [
+        { candidates: [{ content: { parts: [{ text: 'ok' }] } }] },
+      ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
+
+      const onChunk = vi.fn().mockResolvedValue(undefined);
+      const result = await service.streamCompletion(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings(),
+        onChunk
+      );
+
+      expect(result.usage).toBeUndefined();
+    });
+
+    it('records failure metrics even when onChunk throws during error handling', async () => {
+      fetchSpy.mockResolvedValueOnce(mockErrorResponse(500, 'Server error'));
+
+      const onChunk = vi.fn()
+        .mockRejectedValueOnce(new Error('onChunk failed'));
 
       await expect(
         service.streamCompletion(
           'gemini-2.5-flash',
-          [makeMessage('Double fail')],
+          [makeMessage('test')],
           undefined,
-          { maxTokens: 1024 },
-          onChunk,
-        ),
-      ).rejects.toThrow('Gemini API error: 400');
+          defaultSettings(),
+          onChunk
+        )
+      ).rejects.toThrow('Gemini API error: 500');
+
+      // Even though onChunk threw, the original error should still propagate
     });
 
-    it('handles malformed JSON in SSE stream gracefully', async () => {
-      const sseData = `data: {invalid json\n\ndata: ${JSON.stringify({
-        candidates: [{
-          content: { parts: [{ text: 'recovered' }], role: 'model' },
-          finishReason: 'STOP',
-        }],
-        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
-      })}\n\n`;
-
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
-
-      const receivedChunks: string[] = [];
-      const onChunk = vi.fn(async (chunk: string) => {
-        if (chunk) receivedChunks.push(chunk);
-      });
-
-      // Should not throw - parse errors are caught and logged
-      const result = await service.streamCompletion(
-        'gemini-2.5-flash',
-        [makeMessage('Parse error test')],
-        undefined,
-        { maxTokens: 1024 },
-        onChunk,
-      );
-
-      // Should have parsed the valid chunk after the invalid one
-      expect(result.usage).toBeDefined();
-    });
-
-    it('skips [DONE] SSE events', async () => {
-      const chunks = makeSimpleTextChunks('hello');
-      const sseData = makeSSEData(chunks) + 'data: [DONE]\n\n';
-
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(sseData), { status: 200 }));
-
-      const result = await service.streamCompletion(
-        'gemini-2.5-flash',
-        [makeMessage('Test')],
-        undefined,
-        { maxTokens: 1024 },
-        vi.fn(async () => {}),
-      );
-
-      // Should complete without error
-      expect(result.usage).toBeDefined();
-    });
-
-    it('handles thinking-only response with no text output', async () => {
+    it('handles empty candidates array in chunk', async () => {
       const chunks = [
-        {
-          candidates: [{
-            content: {
-              parts: [{ text: 'Deep thinking about nothing...', thought: true }],
-              role: 'model',
-            },
-          }],
-        },
-        {
-          candidates: [{
-            content: { parts: [{ text: '' }], role: 'model' },
-            finishReason: 'STOP',
-          }],
-          usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 0, totalTokenCount: 100 },
-        },
+        { candidates: [] },
+        { candidates: [{ content: { parts: [{ text: 'after empty' }] } }] },
       ];
+      fetchSpy.mockResolvedValueOnce(mockSSEResponse(chunks));
 
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(makeSSEData(chunks)), { status: 200 }));
-
-      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      try {
-        let finalContentBlocks: any[] = [];
-        const onChunk = vi.fn(async (_chunk: string, isComplete: boolean, contentBlocks?: any[]) => {
-          if (isComplete && contentBlocks) {
-            finalContentBlocks = contentBlocks;
-          }
-        });
-
-        await service.streamCompletion(
-          'gemini-3-pro-preview',
-          [makeMessage('Think but no answer')],
-          undefined,
-          { maxTokens: 4096, thinking: { enabled: true, budgetTokens: 4000 } },
-          onChunk,
-        );
-
-        expect(finalContentBlocks).toHaveLength(1);
-        expect(finalContentBlocks[0].type).toBe('thinking');
-
-        // Should warn about thinking without text
-        expect(consoleWarnSpy).toHaveBeenCalledWith(
-          expect.stringContaining('Thinking content received'),
-        );
-      } finally {
-        consoleWarnSpy.mockRestore();
-      }
-    });
-
-    it('handles usage metadata with missing fields (defensive defaults)', async () => {
-      const chunks = [
-        {
-          candidates: [{
-            content: { parts: [{ text: 'Response' }], role: 'model' },
-            finishReason: 'STOP',
-          }],
-          usageMetadata: {
-            // Missing promptTokenCount and candidatesTokenCount
-            totalTokenCount: 100,
-          },
-        },
-      ];
-
-      fetchSpy.mockResolvedValue(new Response(createReadableStream(makeSSEData(chunks)), { status: 200 }));
-
-      let finalUsage: any;
-      const onChunk = vi.fn(async (_chunk: string, isComplete: boolean, _contentBlocks?: any[], usage?: any) => {
-        if (isComplete) finalUsage = usage;
-      });
-
+      const onChunk = vi.fn().mockResolvedValue(undefined);
       await service.streamCompletion(
         'gemini-2.5-flash',
-        [makeMessage('Test')],
+        [makeMessage('test')],
         undefined,
-        { maxTokens: 1024 },
-        onChunk,
+        defaultSettings(),
+        onChunk
       );
 
-      // Should use defaults of 0 via ?? operator
-      expect(finalUsage.inputTokens).toBe(0);
-      expect(finalUsage.outputTokens).toBe(0);
+      // Should still process the second chunk
+      const textCalls = onChunk.mock.calls.filter((c: any) => c[0] !== '' && !c[1]);
+      expect(textCalls.length).toBe(1);
+      expect(textCalls[0][0]).toBe('after empty');
     });
   });
-
-  // =========================================================================
-  // generateContent (non-streaming) characterization tests
-  // =========================================================================
 
   describe('generateContent', () => {
     let fetchSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
-      fetchSpy = vi.spyOn(global, 'fetch');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      fetchSpy = vi.spyOn(globalThis, 'fetch');
+      mockSaveBlob.mockClear();
     });
 
     afterEach(() => {
-      fetchSpy.mockRestore();
+      vi.restoreAllMocks();
     });
 
     it('returns text content from non-streaming response', async () => {
-      const responseData = {
+      const apiResponse = {
         candidates: [{
           content: {
-            parts: [{ text: 'Generated text response' }],
+            parts: [{ text: 'The answer is 42' }],
             role: 'model',
           },
         }],
-        usageMetadata: {
-          promptTokenCount: 50,
-          candidatesTokenCount: 10,
-          totalTokenCount: 60,
-        },
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 10, totalTokenCount: 15 },
       };
-
-      fetchSpy.mockResolvedValue(new Response(JSON.stringify(responseData), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }));
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
 
       const result = await service.generateContent(
         'gemini-2.5-flash',
-        [makeMessage('Generate something')],
-        'Be creative',
-        { maxTokens: 1024 },
+        [makeMessage('question')],
+        undefined,
+        defaultSettings()
       );
 
-      expect(result.content).toBe('Generated text response');
-      expect(result.usage).toEqual({ inputTokens: 50, outputTokens: 10 });
-      expect(result.contentBlocks.length).toBeGreaterThanOrEqual(1);
-      expect(result.contentBlocks[0].type).toBe('text');
+      expect(result.content).toBe('The answer is 42');
+      expect(result.usage).toEqual({ inputTokens: 5, outputTokens: 10 });
+    });
+
+    it('builds URL without SSE params for non-streaming', async () => {
+      const apiResponse = {
+        candidates: [{ content: { parts: [{ text: 'ok' }], role: 'model' } }],
+      };
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
+
+      await service.generateContent(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings()
+      );
+
+      const url = fetchSpy.mock.calls[0][0] as string;
+      expect(url).toContain('models/gemini-2.5-flash:generateContent');
+      expect(url).not.toContain('streamGenerateContent');
+      expect(url).not.toContain('alt=sse');
+    });
+
+    it('includes system instruction in non-streaming request', async () => {
+      const apiResponse = {
+        candidates: [{ content: { parts: [{ text: 'ok' }], role: 'model' } }],
+      };
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
+
+      await service.generateContent(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        'Be concise',
+        defaultSettings()
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.systemInstruction).toEqual({ parts: [{ text: 'Be concise' }] });
     });
 
     it('handles thinking content in non-streaming response', async () => {
-      const responseData = {
+      const apiResponse = {
         candidates: [{
           content: {
             parts: [
-              { text: 'Thinking about this...', thought: true },
+              { text: 'Let me think...', thought: true },
               { text: 'The answer is 42' },
             ],
             role: 'model',
           },
         }],
-        usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 20, totalTokenCount: 70 },
       };
-
-      fetchSpy.mockResolvedValue(new Response(JSON.stringify(responseData), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }));
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
 
       const result = await service.generateContent(
         'gemini-3-pro-preview',
-        [makeMessage('Think')],
+        [makeMessage('test')],
         undefined,
-        { maxTokens: 4096, thinking: { enabled: true, budgetTokens: 2000 } },
+        defaultSettings({ thinking: { enabled: true } })
       );
 
       expect(result.content).toBe('The answer is 42');
-      const thinkingBlock = result.contentBlocks.find((b: any) => b.type === 'thinking');
-      expect(thinkingBlock).toBeDefined();
-      expect((thinkingBlock as any).thinking).toBe('Thinking about this...');
+      expect(result.contentBlocks[0].type).toBe('thinking');
+      expect((result.contentBlocks[0] as any).thinking).toBe('Let me think...');
+      expect(result.contentBlocks[1].type).toBe('text');
+      expect((result.contentBlocks[1] as any).text).toBe('The answer is 42');
     });
 
-    it('handles image generation in non-streaming response', async () => {
-      const imgBase64 = Buffer.from('image-data').toString('base64');
-      const responseData = {
+    it('handles image content in non-streaming response', async () => {
+      const imageData = Buffer.from('image-bytes').toString('base64');
+      const apiResponse = {
         candidates: [{
           content: {
             parts: [
-              { text: 'Here is the image:' },
-              { inlineData: { mimeType: 'image/png', data: imgBase64 } },
+              { text: 'Here is an image' },
+              { inlineData: { mimeType: 'image/png', data: imageData } },
             ],
             role: 'model',
           },
         }],
-        usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 100, totalTokenCount: 150 },
       };
-
-      fetchSpy.mockResolvedValue(new Response(JSON.stringify(responseData), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }));
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
 
       const result = await service.generateContent(
         'gemini-2.5-flash-image',
-        [makeMessage('Draw')],
+        [makeMessage('draw')],
         undefined,
-        {
-          maxTokens: 1024,
-          modelSpecific: { responseModalities: ['TEXT', 'IMAGE'] },
-        },
+        defaultSettings({ modelSpecific: { responseModalities: ['TEXT', 'IMAGE'] } })
       );
 
-      const imageBlock = result.contentBlocks.find((b: any) => b.type === 'image');
+      expect(result.content).toBe('Here is an image');
+      expect(mockSaveBlob).toHaveBeenCalledWith(imageData, 'image/png');
+      const imageBlock = result.contentBlocks.find((b: any) => b.type === 'image') as any;
       expect(imageBlock).toBeDefined();
-      expect((imageBlock as any).blobId).toBe('mock-blob-id');
+      expect(imageBlock.blobId).toBe('mock-blob-id');
     });
 
-    it('builds correct URL for non-streaming endpoint', async () => {
-      const responseData = {
-        candidates: [{
-          content: { parts: [{ text: 'ok' }], role: 'model' },
-        }],
-      };
-
-      fetchSpy.mockResolvedValue(new Response(JSON.stringify(responseData), { status: 200 }));
-
-      await service.generateContent(
-        'gemini-2.5-flash',
-        [makeMessage('Test')],
-        undefined,
-        { maxTokens: 1024 },
-      );
-
-      const calledUrl = fetchSpy.mock.calls[0][0] as string;
-      expect(calledUrl).toContain('models/gemini-2.5-flash:generateContent');
-      expect(calledUrl).toContain('key=test-gemini-key');
-      // Should NOT contain streamGenerateContent
-      expect(calledUrl).not.toContain('stream');
-    });
-
-    it('throws on HTTP error', async () => {
-      fetchSpy.mockResolvedValue(new Response('Forbidden', { status: 403 }));
+    it('throws on non-ok response for non-streaming', async () => {
+      fetchSpy.mockResolvedValueOnce(mockErrorResponse(400, 'Bad request'));
 
       await expect(
         service.generateContent(
           'gemini-2.5-flash',
-          [makeMessage('Will fail')],
+          [makeMessage('test')],
           undefined,
-          { maxTokens: 1024 },
-        ),
-      ).rejects.toThrow('Gemini API error: 403');
+          defaultSettings()
+        )
+      ).rejects.toThrow('Gemini API error: 400 Bad request');
     });
 
-    it('includes thinking config for non-streaming request', async () => {
-      const responseData = {
+    it('returns undefined usage when no usageMetadata', async () => {
+      const apiResponse = {
         candidates: [{ content: { parts: [{ text: 'ok' }], role: 'model' } }],
       };
-
-      fetchSpy.mockResolvedValue(new Response(JSON.stringify(responseData), { status: 200 }));
-
-      await service.generateContent(
-        'gemini-3-pro-preview',
-        [makeMessage('Test')],
-        undefined,
-        { maxTokens: 8192, thinking: { enabled: true, budgetTokens: 4000 } },
-      );
-
-      const calledBody = JSON.parse((fetchSpy.mock.calls[0][1] as any).body);
-      expect(calledBody.generationConfig.thinkingConfig).toEqual({
-        includeThoughts: true,
-        thinkingBudget: 4000,
-      });
-    });
-
-    it('includes Google Search tool in non-streaming request', async () => {
-      const responseData = {
-        candidates: [{ content: { parts: [{ text: 'ok' }], role: 'model' } }],
-      };
-
-      fetchSpy.mockResolvedValue(new Response(JSON.stringify(responseData), { status: 200 }));
-
-      await service.generateContent(
-        'gemini-2.5-flash',
-        [makeMessage('Search')],
-        undefined,
-        { maxTokens: 1024, modelSpecific: { 'tools.googleSearch': true } },
-      );
-
-      const calledBody = JSON.parse((fetchSpy.mock.calls[0][1] as any).body);
-      expect(calledBody.tools).toEqual([{ googleSearch: {} }]);
-    });
-
-    it('returns undefined usage when usageMetadata is missing', async () => {
-      const responseData = {
-        candidates: [{ content: { parts: [{ text: 'no usage' }], role: 'model' } }],
-        // No usageMetadata
-      };
-
-      fetchSpy.mockResolvedValue(new Response(JSON.stringify(responseData), { status: 200 }));
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
 
       const result = await service.generateContent(
         'gemini-2.5-flash',
-        [makeMessage('Test')],
+        [makeMessage('test')],
         undefined,
-        { maxTokens: 1024 },
+        defaultSettings()
       );
 
       expect(result.usage).toBeUndefined();
+    });
+
+    it('handles empty candidates in non-streaming response', async () => {
+      const apiResponse = { candidates: [] };
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
+
+      const result = await service.generateContent(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings()
+      );
+
+      expect(result.content).toBe('');
+      expect(result.contentBlocks).toEqual([]);
+    });
+
+    it('includes Google Search tool in non-streaming request', async () => {
+      const apiResponse = {
+        candidates: [{ content: { parts: [{ text: 'ok' }], role: 'model' } }],
+      };
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
+
+      await service.generateContent(
+        'gemini-2.5-flash',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings({ modelSpecific: { 'tools.googleSearch': true } })
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.tools).toEqual([{ googleSearch: {} }]);
+    });
+
+    it('includes thinkingConfig in non-streaming request', async () => {
+      const apiResponse = {
+        candidates: [{ content: { parts: [{ text: 'ok' }], role: 'model' } }],
+      };
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
+
+      await service.generateContent(
+        'gemini-3-pro-preview',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings({ thinking: { enabled: true, budgetTokens: 2048 } })
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.thinkingConfig).toEqual({
+        includeThoughts: true,
+        thinkingBudget: 2048,
+      });
+    });
+
+    it('includes imageConfig in non-streaming request when IMAGE in responseModalities', async () => {
+      const apiResponse = {
+        candidates: [{ content: { parts: [{ text: 'ok' }], role: 'model' } }],
+      };
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
+
+      await service.generateContent(
+        'gemini-2.5-flash-image',
+        [makeMessage('draw')],
+        undefined,
+        defaultSettings({
+          modelSpecific: {
+            responseModalities: ['TEXT', 'IMAGE'],
+            'imageConfig.aspectRatio': '1:1',
+          },
+        })
+      );
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+      expect(body.generationConfig.imageConfig).toEqual({ aspectRatio: '1:1' });
+    });
+
+    it('places text block after thinking block when both present', async () => {
+      const apiResponse = {
+        candidates: [{
+          content: {
+            parts: [
+              { text: 'reasoning', thought: true },
+              { text: 'answer' },
+            ],
+            role: 'model',
+          },
+        }],
+      };
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
+
+      const result = await service.generateContent(
+        'gemini-3-pro-preview',
+        [makeMessage('test')],
+        undefined,
+        defaultSettings({ thinking: { enabled: true } })
+      );
+
+      expect(result.contentBlocks[0].type).toBe('thinking');
+      expect(result.contentBlocks[1].type).toBe('text');
+    });
+
+    it('places text block first when no thinking and has images', async () => {
+      const imageData = Buffer.from('img').toString('base64');
+      const apiResponse = {
+        candidates: [{
+          content: {
+            parts: [
+              { text: 'caption' },
+              { inlineData: { mimeType: 'image/png', data: imageData } },
+            ],
+            role: 'model',
+          },
+        }],
+      };
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(apiResponse), { status: 200 }));
+
+      const result = await service.generateContent(
+        'gemini-2.5-flash-image',
+        [makeMessage('draw')],
+        undefined,
+        defaultSettings({ modelSpecific: { responseModalities: ['TEXT', 'IMAGE'] } })
+      );
+
+      // Text should be unshifted to beginning
+      expect(result.contentBlocks[0].type).toBe('text');
+      expect((result.contentBlocks[0] as any).text).toBe('caption');
+      expect(result.contentBlocks[1].type).toBe('image');
     });
   });
 });
