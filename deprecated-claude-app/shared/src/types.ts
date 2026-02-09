@@ -365,8 +365,6 @@ export const ToolConfigSchema = z.object({
   // - [] (empty array) = no tools allowed (selective mode, none selected)
   // - ['tool1', 'tool2'] = only these specific tools allowed
   enabledTools: z.array(z.string()).nullable().default(null),
-  // Preferred delegate for remote tool execution (null to unset)
-  delegateId: z.string().nullable().optional(),
   // Custom timeout for tool execution (ms)
   toolTimeout: z.number().min(1000).max(300000).default(30000),
 });

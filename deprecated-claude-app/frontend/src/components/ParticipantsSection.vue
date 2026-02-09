@@ -587,27 +587,6 @@
               </template>
             </v-select>
 
-            <v-select
-              :model-value="getToolConfigField('delegateId', null)"
-              @update:model-value="(val) => setToolConfigField('delegateId', val)"
-              :items="connectedDelegates"
-              item-title="delegateId"
-              item-value="delegateId"
-              label="Preferred Delegate"
-              clearable
-              variant="outlined"
-              density="compact"
-              class="mb-3"
-            >
-              <template v-slot:no-data>
-                <v-list-item>
-                  <v-list-item-title class="text-caption text-grey">
-                    No delegates connected
-                  </v-list-item-title>
-                </v-list-item>
-              </template>
-            </v-select>
-
             <!-- Delegate Status Panel -->
             <DelegateStatusPanel class="mt-4" @delegates-updated="onDelegatesUpdated" />
           </template>
@@ -855,7 +834,6 @@ function setToolConfigField(field: string, value: any) {
     updated[idx].toolConfig = {
       toolsEnabled: true,
       enabledTools: null,  // null = allow all tools (default)
-      delegateId: null,
       toolTimeout: 30000
     };
   }
@@ -902,7 +880,7 @@ const groupedToolItems = computed(() => {
     name?: string;
     description?: string;
     source?: string;
-    delegateId?: string;
+    delegateName?: string;
   }> = [];
 
   // Server tools group
@@ -927,7 +905,7 @@ const groupedToolItems = computed(() => {
         name: tool.name,
         description: tool.description,
         source: tool.source,
-        delegateId: tool.delegateId
+        delegateName: tool.delegateName
       });
     }
   }

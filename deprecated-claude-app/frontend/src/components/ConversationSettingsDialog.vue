@@ -627,26 +627,6 @@
               </template>
             </v-select>
 
-            <v-select
-              v-model="preferredDelegateId"
-              :items="connectedDelegates"
-              item-title="delegateId"
-              item-value="delegateId"
-              label="Preferred Delegate"
-              clearable
-              variant="outlined"
-              density="compact"
-              class="mb-3"
-            >
-              <template v-slot:no-data>
-                <v-list-item>
-                  <v-list-item-title class="text-caption text-grey">
-                    No delegates connected
-                  </v-list-item-title>
-                </v-list-item>
-              </template>
-            </v-select>
-
             <!-- Delegate Status Panel -->
             <DelegateStatusPanel class="mt-2 mb-3" @delegates-updated="onDelegatesUpdated" />
           </template>
@@ -767,7 +747,6 @@ const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
 // Tool configuration state
 const toolsEnabled = ref(true);
 const enabledTools = ref<string[]>([]);
-const preferredDelegateId = ref<string | null>(null);
 const previousToolSelection = ref<string[]>([]);
 // Explicit flag to track if user selected "allow all" mode
 const useAllToolsMode = ref(true);
@@ -846,7 +825,7 @@ const groupedToolItems = computed(() => {
     name?: string;
     description?: string;
     source?: string;
-    delegateId?: string;
+    delegateName?: string;
   }> = [];
 
   // Server tools group
@@ -871,7 +850,7 @@ const groupedToolItems = computed(() => {
         name: tool.name,
         description: tool.description,
         source: tool.source,
-        delegateId: tool.delegateId
+        delegateName: tool.delegateName
       });
     }
   }
@@ -1055,14 +1034,12 @@ watch(() => props.conversation, async (conversation) => {
     if (convToolConfig) {
       toolsEnabled.value = convToolConfig.toolsEnabled ?? true;
       enabledTools.value = convToolConfig.enabledTools ?? [];
-      preferredDelegateId.value = convToolConfig.delegateId ?? null;
-      // If enabledTools has items, user is not in "all tools" mode
-      useAllToolsMode.value = (convToolConfig.enabledTools ?? []).length === 0;
+      // null/undefined = all tools mode, array (even empty) = selective mode
+      useAllToolsMode.value = convToolConfig.enabledTools === null || convToolConfig.enabledTools === undefined;
     } else {
       // Default values
       toolsEnabled.value = true;
       enabledTools.value = [];
-      preferredDelegateId.value = null;
       useAllToolsMode.value = true;
     }
 
@@ -1301,8 +1278,7 @@ function save() {
   // Build tool configuration
   const toolConfig = {
     toolsEnabled: toolsEnabled.value,
-    enabledTools: enabledTools.value,
-    delegateId: preferredDelegateId.value,
+    enabledTools: useAllToolsMode.value ? null : enabledTools.value,
     toolTimeout: 30000
   };
 
@@ -1310,16 +1286,6 @@ function save() {
   const warnings: string[] = [];
 
   if (toolsEnabled.value) {
-    // Check if preferred delegate is offline
-    if (preferredDelegateId.value) {
-      const delegateExists = connectedDelegates.value.some(
-        d => d.delegateId === preferredDelegateId.value
-      );
-      if (!delegateExists) {
-        warnings.push(`Preferred delegate "${preferredDelegateId.value}" is currently offline.`);
-      }
-    }
-
     // Check if selected tools require delegate but none connected
     if (enabledTools.value.length > 0) {
       const delegateTools = enabledTools.value.filter(toolName => {

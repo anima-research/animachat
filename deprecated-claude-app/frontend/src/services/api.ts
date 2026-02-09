@@ -46,7 +46,7 @@ export interface ToolInfo {
   name: string;
   description: string;
   source: 'server' | 'delegate';
-  delegateId?: string;
+  delegateName?: string;  // normalized (lowercase) delegate name
 }
 
 export interface DelegateCapabilities {

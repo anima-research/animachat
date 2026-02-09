@@ -1,5 +1,6 @@
 // Vendored from @deprecated-claude/backend
 // Original location: node_modules/@deprecated-claude/backend/src/delegate/delegate-handler.ts
+// Modified: Phase 3 — strict delegateId validation, normalization, prefixed ack, reconnect race guard
 
 /**
  * Delegate WebSocket Handler
@@ -24,6 +25,38 @@ import {
   type TriggerInferenceMessage,
 } from './protocol.js';
 
+// =============================================================================
+// DelegateId Validation
+// =============================================================================
+
+const DELEGATE_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
+const DELEGATE_ID_MAX_LENGTH = 32;
+const RESERVED_DELEGATE_NAMES = new Set(['server', 'system', 'internal', 'admin']);
+
+function validateDelegateId(raw: string | null): { valid: false; reason: string } | { valid: true; delegateId: string } {
+  if (!raw || !raw.trim()) {
+    return { valid: false, reason: 'Missing delegateId' };
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length > DELEGATE_ID_MAX_LENGTH) {
+    return { valid: false, reason: `delegateId too long (max ${DELEGATE_ID_MAX_LENGTH} chars)` };
+  }
+  if (!DELEGATE_ID_REGEX.test(trimmed)) {
+    return { valid: false, reason: 'delegateId contains invalid characters (allowed: a-z, A-Z, 0-9, _, -)' };
+  }
+  if (trimmed.includes('__')) {
+    return { valid: false, reason: 'delegateId must not contain "__" (reserved as namespace separator)' };
+  }
+  if (RESERVED_DELEGATE_NAMES.has(trimmed.toLowerCase())) {
+    return { valid: false, reason: `delegateId "${trimmed}" is reserved` };
+  }
+  return { valid: true, delegateId: trimmed };
+}
+
+// =============================================================================
+// WebSocket Handler
+// =============================================================================
+
 interface DelegateWebSocket extends WebSocket {
   userId?: string;
   delegateId?: string;
@@ -40,13 +73,15 @@ export async function delegateWebsocketHandler(
   const url = new URL(req.url || '', `http://${req.headers.host}`);
   const token = url.searchParams.get('token');
   const apiKey = url.searchParams.get('apiKey');
-  const delegateId = url.searchParams.get('delegateId');
 
-  if (!delegateId) {
-    console.warn('[DelegateHandler] Missing delegateId');
-    ws.close(1008, 'Missing delegateId');
+  // Strict delegateId validation
+  const delegateIdResult = validateDelegateId(url.searchParams.get('delegateId'));
+  if (!delegateIdResult.valid) {
+    console.warn(`[DelegateHandler] Invalid delegateId: ${delegateIdResult.reason}`);
+    ws.close(1008, delegateIdResult.reason);
     return;
   }
+  const delegateId = delegateIdResult.delegateId;  // trimmed, validated
 
   if (!token && !apiKey) {
     console.warn('[DelegateHandler] Missing token or apiKey');
@@ -146,15 +181,22 @@ export async function delegateWebsocketHandler(
     }
   });
 
-  // Handle disconnect
+  // Handle disconnect — with reconnect race guard
   ws.on('close', (code, reason) => {
     console.log(`[DelegateHandler] Delegate "${delegateId}" disconnected (code: ${code}, reason: ${reason.toString()})`);
 
-    // Unregister from delegate manager (fails pending calls)
+    // Unregister THIS session from delegate manager (fails pending calls)
     delegateManager.unregisterDelegate(sessionId);
 
-    // Unregister tools from registry
-    toolRegistry.unregisterDelegateTools(userId, delegateId);
+    // Race guard: only unregister tools if no replacement connection exists.
+    // Prevents: Connection B replaces A → A.onClose deletes B's tools.
+    const currentDelegate = delegateManager.findDelegate(userId, delegateId);
+    if (!currentDelegate) {
+      // No active connection with this delegateId → safe to unregister tools
+      toolRegistry.unregisterDelegateTools(userId, delegateId.toLowerCase());
+    } else {
+      console.log(`[DelegateHandler] Skipping tool unregister — delegate "${delegateId}" has active replacement (session: ${currentDelegate.sessionId})`);
+    }
   });
 
   ws.on('error', (error) => {
@@ -173,31 +215,40 @@ function handleToolManifest(
   delegateId: string,
   sessionId: string
 ): void {
-  console.log(`[DelegateHandler] Tool manifest from "${delegateId}": ${msg.tools.length} tools`);
+  // NOTE: msg.delegateId is IGNORED — handshake delegateId is canonical.
+  // Prevents delegate from "renaming" itself inside a manifest message.
+  const delegateName = delegateId.toLowerCase();  // normalize for namespacing
 
-  // Update tools in delegate manager
+  console.log(`[DelegateHandler] Tool manifest from "${delegateId}" (namespace: ${delegateName}): ${msg.tools.length} tools`);
+
+  // Update tools in delegate manager (uses original delegateId for WS routing)
   delegateManager.updateTools(sessionId, msg.tools as any);
 
-  // Register tools in tool registry with delegate executor
+  // Clean old tools before registering new ones (handles re-manifest with changed tool set)
+  toolRegistry.unregisterDelegateTools(userId, delegateName);
+
+  // Register tools in tool registry with prefixed names
   toolRegistry.registerDelegateTools(
     userId,
-    delegateId,
+    delegateName,     // normalized (lowercase) for registry keys
+    delegateId,       // original case for display
     msg.tools as any,
-    async (toolName: string, input: Record<string, unknown>) => {
+    async (originalToolName: string, input: Record<string, unknown>) => {
+      // No timeout here — timeout is controlled by executeWithTimeout() in ToolRegistry
+      // which reads toolConfig.toolTimeout. DelegateManager has its own large safety-net timeout.
       return delegateManager.executeToolOnDelegate(
-        delegateId,
+        delegateId,   // original delegateId for WS routing
         userId,
-        { id: '', name: toolName, input },
-        30000
+        { id: '', name: originalToolName, input },
       );
     }
   );
 
-  // Acknowledge manifest receipt
+  // Acknowledge manifest receipt — include prefixed names so delegate knows what LLM sees
   ws.send(JSON.stringify({
     type: 'tool_manifest_ack',
     toolCount: msg.tools.length,
-    tools: msg.tools.map(t => t.name),
+    tools: msg.tools.map(t => `${delegateName}__${t.name}`),
   }));
 }
 

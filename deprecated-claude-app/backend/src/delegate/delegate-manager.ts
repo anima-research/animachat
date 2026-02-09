@@ -189,7 +189,7 @@ export class DelegateManager {
     delegateId: string,
     userId: string,
     call: { id: string; name: string; input: Record<string, unknown> },
-    timeoutMs: number = 30000
+    timeoutMs: number = 300_000  // 5min safety net — real timeout in ToolRegistry.executeWithTimeout()
   ): Promise<ToolResult> {
     const delegate = this.findDelegate(userId, delegateId);
     if (!delegate) {
