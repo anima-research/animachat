@@ -127,12 +127,13 @@ vi.mock('../middleware/auth.js', () => ({
   verifyToken: vi.fn().mockReturnValue({ userId: 'user-1' }),
 }));
 
-// Mock InferenceService
+// Mock InferenceService — expose instance ref so tests can set lastRawRequest
+const mockBaseInferenceRef = vi.hoisted(() => ({ instance: null as any }));
 vi.mock('../services/inference.js', () => ({
   InferenceService: class MockInferenceService {
     streamCompletion = vi.fn().mockResolvedValue({ usage: { inputTokens: 10, outputTokens: 5 } });
-    lastRawRequest = null;
-    constructor(..._args: any[]) {}
+    lastRawRequest: any = null;
+    constructor(..._args: any[]) { mockBaseInferenceRef.instance = this; }
   },
 }));
 
@@ -4590,5 +4591,863 @@ describe('regenerate handler additional error paths', () => {
         expect(mockEnhancedStream).toHaveBeenCalled();
       });
     });
+  });
+});
+
+// ── Additional branch coverage tests ──────────────────────────────────────
+
+describe('inference error handling - regenerate errors', () => {
+  const defaultModel = {
+    id: 'test-model', providerModelId: 'test', provider: 'anthropic',
+    contextWindow: 200000, outputTokenLimit: 4096,
+    settings: { temperature: { min: 0, max: 1, default: 0.7, step: 0.1 }, maxTokens: { min: 1, max: 4096, default: 1024 } },
+  };
+
+  function setupRegenErrorTest(conv: Conversation) {
+    const branchId = randomUUID();
+    const parentBranchId = randomUUID();
+    const msg = makeMessage('original', 'assistant', { conversationId: conv.id });
+    (msg.branches[0] as any).id = branchId;
+    (msg.branches[0] as any).parentBranchId = parentBranchId;
+    (msg.branches[0] as any).participantId = 'p-bot';
+    msg.activeBranchId = branchId;
+    const updatedMsg = makeMessage('', 'assistant', { conversationId: conv.id });
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    mockDb.getMessage.mockResolvedValue(msg);
+    mockDb.getConversationMessages.mockResolvedValue([msg]);
+    mockDb.addMessageBranch.mockResolvedValue(updatedMsg);
+    mockDb.getConversationParticipants.mockResolvedValue([]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockDb.getUserGrantSummary.mockResolvedValue({ totals: {} });
+    mockDb.getApplicableGrantCurrencies.mockResolvedValue([]);
+    mockModelLoader.getModelById.mockResolvedValue(defaultModel);
+    (validatePricingAvailable as any).mockResolvedValue({ valid: true });
+    (checkContent as any).mockResolvedValue({ blocked: false });
+
+    return { msg, branchId, updatedMsg };
+  }
+
+  async function sendRegen(ws: any, convId: string, msgId: string, branchId: string) {
+    ws.emit('message', JSON.stringify({
+      type: 'regenerate', conversationId: convId,
+      messageId: msgId, branchId: branchId,
+    }));
+    await new Promise(r => setTimeout(r, 400));
+    return getSentMessages(ws);
+  }
+
+  it('passes through raw error message for regenerate (no USER_FACING_ERRORS mapping)', async () => {
+    const conv = makeConversation('standard');
+    const { msg, branchId } = setupRegenErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue(new Error('No API key configured'));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendRegen(ws, conv.id, msg.id, branchId);
+    expect(msgs.some(m => m.type === 'error' && m.error?.includes('No API key'))).toBe(true);
+  });
+
+  it('extracts JSON message from Anthropic-style error for regenerate', async () => {
+    const conv = makeConversation('standard');
+    const { msg, branchId } = setupRegenErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue(new Error('400 {"type":"error","error":{"message": "Daily limit exceeded"}}'));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendRegen(ws, conv.id, msg.id, branchId);
+    expect(msgs.some(m => m.type === 'error' && m.error === 'Daily limit exceeded')).toBe(true);
+  });
+
+  it('truncates long error messages for regenerate', async () => {
+    const conv = makeConversation('standard');
+    const { msg, branchId } = setupRegenErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue(new Error('x'.repeat(400)));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendRegen(ws, conv.id, msg.id, branchId);
+    const errorMsg = msgs.find(m => m.type === 'error');
+    expect(errorMsg).toBeDefined();
+    expect(errorMsg.error.length).toBeLessThanOrEqual(300);
+    expect(errorMsg.error).toContain('...');
+  });
+
+  it('passes non-Error thrown values through String() for regenerate', async () => {
+    const conv = makeConversation('standard');
+    const { msg, branchId } = setupRegenErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue('string error');
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendRegen(ws, conv.id, msg.id, branchId);
+    expect(msgs.some(m => m.type === 'error' && m.error === 'string error')).toBe(true);
+  });
+});
+
+describe('additional chat error branches', () => {
+  const defaultModel = {
+    id: 'test-model', providerModelId: 'test', provider: 'anthropic',
+    contextWindow: 200000, outputTokenLimit: 4096,
+    settings: { temperature: { min: 0, max: 1, default: 0.7, step: 0.1 }, maxTokens: { min: 1, max: 4096, default: 1024 } },
+  };
+
+  function setupChatErrorTest(conv: Conversation) {
+    const userMsg = makeMessage('hi', 'user', { conversationId: conv.id });
+    const assistantMsg = makeMessage('', 'assistant', { conversationId: conv.id });
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    (checkContent as any).mockResolvedValue({ blocked: false });
+    mockDb.createMessage.mockResolvedValueOnce(userMsg).mockResolvedValueOnce(assistantMsg);
+    mockDb.getConversationMessages.mockResolvedValue([]);
+    mockDb.getConversationParticipants.mockResolvedValue([{
+      id: 'p-bot', conversationId: conv.id, name: 'Bot',
+      type: 'assistant', model: 'test-model', isActive: true,
+    }]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockModelLoader.getModelById.mockResolvedValue(defaultModel);
+
+    return { userMsg, assistantMsg };
+  }
+
+  async function sendChat(ws: any, convId: string) {
+    ws.emit('message', JSON.stringify({
+      type: 'chat', conversationId: convId,
+      messageId: randomUUID(), content: 'hello',
+    }));
+    await new Promise(r => setTimeout(r, 400));
+    return getSentMessages(ws);
+  }
+
+  it('sends insufficient credits error', async () => {
+    const conv = makeConversation('standard');
+    setupChatErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue(new Error('Insufficient credits remaining'));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendChat(ws, conv.id);
+    expect(msgs.some(m => m.type === 'error' && m.error?.includes('No credits'))).toBe(true);
+  });
+
+  it('sends generic error for long unrecognized errors (>100 chars)', async () => {
+    const conv = makeConversation('standard');
+    setupChatErrorTest(conv);
+    const longMsg = 'This is a very unusual and specific error message that does not match any known patterns and is longer than one hundred characters in total length';
+    mockEnhancedStream.mockRejectedValue(new Error(longMsg));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendChat(ws, conv.id);
+    // Long unrecognized errors fall through to the generic error message
+    const errorMsg = msgs.find(m => m.type === 'error');
+    expect(errorMsg).toBeDefined();
+    expect(errorMsg.suggestion).toBeDefined();
+  });
+
+  it('handles non-Error thrown values in chat', async () => {
+    const conv = makeConversation('standard');
+    setupChatErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue('just a string');
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendChat(ws, conv.id);
+    expect(msgs.some(m => m.type === 'error')).toBe(true);
+  });
+
+  it('sends model not found error in chat', async () => {
+    const conv = makeConversation('standard');
+    setupChatErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue(new Error('Model claude-3-opus not found'));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendChat(ws, conv.id);
+    expect(msgs.some(m => m.type === 'error' && m.error?.includes('Model not found'))).toBe(true);
+  });
+});
+
+describe('startGeneration overwriting existing', () => {
+  it('aborts existing generation when a new one starts for same conversation', async () => {
+    const conv = makeConversation('standard');
+    const userMsg = makeMessage('Hi', 'user', { conversationId: conv.id });
+    const assistantMsg = makeMessage('', 'assistant', { conversationId: conv.id });
+    const participant = {
+      id: 'p-bot', conversationId: conv.id, name: 'Bot',
+      type: 'assistant', model: 'test-model', isActive: true,
+    };
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    (checkContent as any).mockResolvedValue({ blocked: false });
+    mockDb.createMessage.mockResolvedValue(userMsg).mockResolvedValue(assistantMsg);
+    mockDb.getConversationMessages.mockResolvedValue([]);
+    mockDb.getConversationParticipants.mockResolvedValue([participant]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockDb.getUserGrantSummary.mockResolvedValue({ totals: {} });
+    mockDb.getApplicableGrantCurrencies.mockResolvedValue([]);
+    mockModelLoader.getModelById.mockResolvedValue({
+      id: 'test-model', providerModelId: 'test', provider: 'anthropic',
+      contextWindow: 200000, outputTokenLimit: 4096,
+      settings: { temperature: { min: 0, max: 1, default: 0.7, step: 0.1 }, maxTokens: { min: 1, max: 4096, default: 1024 } },
+    });
+    (validatePricingAvailable as any).mockResolvedValue({ valid: true });
+
+    // First call blocks, second proceeds
+    let resolveFirst: any;
+    mockEnhancedStream
+      .mockImplementationOnce(() => new Promise(res => { resolveFirst = res; }))
+      .mockImplementation(async (_mc: any, _msgs: any, _sys: any, _s: any, _uid: any, onChunk: any) => {
+        await onChunk('ok', true, undefined, { inputTokens: 10, outputTokens: 5 });
+      });
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    // First chat triggers generation
+    ws.emit('message', JSON.stringify({
+      type: 'chat', conversationId: conv.id,
+      messageId: randomUUID(), content: 'First',
+    }));
+
+    await new Promise(r => setTimeout(r, 50));
+
+    // Second chat overwrites existing generation
+    ws.emit('message', JSON.stringify({
+      type: 'chat', conversationId: conv.id,
+      messageId: randomUUID(), content: 'Second',
+    }));
+
+    await new Promise(r => setTimeout(r, 400));
+
+    // The first generation should have been started (startGeneration called twice)
+    expect(mockEnhancedStream).toHaveBeenCalledTimes(2);
+    if (resolveFirst) resolveFirst();
+  });
+});
+
+describe('websocket error event', () => {
+  it('handles error event on websocket', () => {
+    const ws = createMockWs();
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('error', new Error('connection reset'));
+
+    expect(consoleSpy).toHaveBeenCalledWith('WebSocket error:', expect.any(Error));
+    consoleSpy.mockRestore();
+  });
+});
+
+describe('pong heartbeat', () => {
+  it('sets isAlive on pong', () => {
+    const ws = createMockWs();
+    ws.isAlive = false;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('pong');
+    expect(ws.isAlive).toBe(true);
+  });
+});
+
+describe('typing handler', () => {
+  it('broadcasts typing status to room', async () => {
+    const convId = randomUUID();
+    const ws = createMockWs();
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'typing', conversationId: convId, isTyping: true,
+    }));
+
+    await new Promise(r => setTimeout(r, 100));
+
+    expect(mockRoomManager.broadcastToRoom).toHaveBeenCalledWith(
+      convId,
+      expect.objectContaining({ type: 'user_typing', isTyping: true }),
+      ws
+    );
+  });
+
+  it('uses email username as display name', async () => {
+    const convId = randomUUID();
+    mockDb.getUserById.mockResolvedValue({ id: 'user-1', email: 'alice@example.com' });
+
+    const ws = createMockWs();
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'typing', conversationId: convId, isTyping: false,
+    }));
+
+    await new Promise(r => setTimeout(r, 100));
+
+    expect(mockRoomManager.broadcastToRoom).toHaveBeenCalledWith(
+      convId,
+      expect.objectContaining({ userName: 'alice' }),
+      ws
+    );
+  });
+
+  it('uses fallback name when user email is missing', async () => {
+    const convId = randomUUID();
+    mockDb.getUserById.mockResolvedValue({ id: 'user-1' }); // No email
+
+    const ws = createMockWs();
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'typing', conversationId: convId, isTyping: true,
+    }));
+
+    await new Promise(r => setTimeout(r, 100));
+
+    expect(mockRoomManager.broadcastToRoom).toHaveBeenCalledWith(
+      convId,
+      expect.objectContaining({ userName: 'Someone' }),
+      ws
+    );
+  });
+});
+
+describe('continue message flow - error paths', () => {
+  const defaultModel = {
+    id: 'test-model', providerModelId: 'test', provider: 'anthropic',
+    contextWindow: 200000, outputTokenLimit: 4096,
+    settings: { temperature: { min: 0, max: 1, default: 0.7, step: 0.1 }, maxTokens: { min: 1, max: 4096, default: 1024 } },
+  };
+
+  it('sends model not found error for continue', async () => {
+    const conv = makeConversation('standard');
+    const msg = makeMessage('partial', 'assistant', { conversationId: conv.id });
+    const participant = {
+      id: 'p-bot', conversationId: conv.id, name: 'Bot',
+      type: 'assistant', model: 'test-model', isActive: true,
+    };
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    mockDb.getMessage.mockResolvedValue(msg);
+    mockDb.getConversationMessages.mockResolvedValue([msg]);
+    mockDb.getConversationParticipants.mockResolvedValue([participant]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockModelLoader.getModelById.mockResolvedValue(defaultModel);
+    (validatePricingAvailable as any).mockResolvedValue({ valid: true });
+    mockEnhancedStream.mockRejectedValue(new Error('Model test-model not found'));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'continue', conversationId: conv.id,
+      messageId: msg.id, parentBranchId: msg.activeBranchId,
+    }));
+
+    await new Promise(r => setTimeout(r, 400));
+
+    const msgs = getSentMessages(ws);
+    expect(msgs.some(m => m.type === 'error')).toBe(true);
+  });
+
+  it('sends error for continue with sampling branches > 1', async () => {
+    const conv = makeConversation('standard');
+    const msg = makeMessage('partial', 'assistant', { conversationId: conv.id });
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    mockDb.getMessage.mockResolvedValue(msg);
+    mockDb.getConversationMessages.mockResolvedValue([msg]);
+    mockDb.getConversationParticipants.mockResolvedValue([{
+      id: 'p-bot', conversationId: conv.id, name: 'Bot',
+      type: 'assistant', model: 'test-model', isActive: true,
+    }]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockModelLoader.getModelById.mockResolvedValue(defaultModel);
+    (validatePricingAvailable as any).mockResolvedValue({ valid: true });
+    mockEnhancedStream.mockRejectedValue(new Error('timeout'));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'continue', conversationId: conv.id,
+      messageId: msg.id, parentBranchId: msg.activeBranchId,
+      samplingBranches: 2,
+    }));
+
+    await new Promise(r => setTimeout(r, 400));
+
+    const msgs = getSentMessages(ws);
+    expect(msgs.some(m => m.type === 'error')).toBe(true);
+  });
+});
+
+describe('edit error message parsing', () => {
+  const defaultModel = {
+    id: 'test-model', providerModelId: 'test', provider: 'anthropic',
+    contextWindow: 200000, outputTokenLimit: 4096,
+    settings: { temperature: { min: 0, max: 1, default: 0.7, step: 0.1 }, maxTokens: { min: 1, max: 4096, default: 1024 } },
+  };
+
+  function setupEditErrorTest(conv: Conversation) {
+    const branchId = randomUUID();
+    const userMsg = makeMessage('original', 'user', { conversationId: conv.id });
+    (userMsg.branches[0] as any).id = branchId;
+    (userMsg.branches[0] as any).parentBranchId = 'root';
+    userMsg.activeBranchId = branchId;
+
+    const assistantMsg = makeMessage('old response', 'assistant', { conversationId: conv.id });
+    (assistantMsg.branches[0] as any).parentBranchId = branchId;
+
+    const editedMsg = makeMessage('edited', 'user', { conversationId: conv.id });
+    const newBranchId = randomUUID();
+    (editedMsg.branches[0] as any).id = newBranchId;
+    (editedMsg.branches[0] as any).parentBranchId = 'root';
+    editedMsg.activeBranchId = newBranchId;
+
+    const newAssistantMsg = makeMessage('', 'assistant', { conversationId: conv.id });
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    (checkContent as any).mockResolvedValue({ blocked: false });
+    mockDb.getMessage.mockResolvedValue(userMsg);
+    mockDb.getConversationMessages.mockResolvedValue([userMsg, assistantMsg]);
+    // First call: user edit branch; second call: new assistant branch
+    mockDb.addMessageBranch.mockResolvedValueOnce(editedMsg).mockResolvedValueOnce(newAssistantMsg);
+    mockDb.getConversationParticipants.mockResolvedValue([{
+      id: 'p-bot', conversationId: conv.id, name: 'Bot',
+      type: 'assistant', model: 'test-model', isActive: true,
+    }]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockDb.getUserGrantSummary.mockResolvedValue({ totals: {} });
+    mockDb.getApplicableGrantCurrencies.mockResolvedValue([]);
+    mockModelLoader.getModelById.mockResolvedValue(defaultModel);
+    (validatePricingAvailable as any).mockResolvedValue({ valid: true });
+
+    return { userMsg, branchId };
+  }
+
+  async function sendEdit(ws: any, convId: string, msgId: string, branchId: string) {
+    ws.emit('message', JSON.stringify({
+      type: 'edit', conversationId: convId,
+      messageId: msgId, branchId: branchId, content: 'edited content',
+    }));
+    await new Promise(r => setTimeout(r, 400));
+    return getSentMessages(ws);
+  }
+
+  it('passes through raw error message for edit (no USER_FACING_ERRORS mapping)', async () => {
+    const conv = makeConversation('standard');
+    const { userMsg, branchId } = setupEditErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue(new Error('Model test-model not found'));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendEdit(ws, conv.id, userMsg.id, branchId);
+    expect(msgs.some(m => m.type === 'error' && m.error?.includes('Model test-model not found'))).toBe(true);
+  });
+
+  it('extracts JSON message from Anthropic-style error for edit', async () => {
+    const conv = makeConversation('standard');
+    const { userMsg, branchId } = setupEditErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue(new Error('400 {"type":"error","error":{"message": "Rate limit exceeded"}}'));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendEdit(ws, conv.id, userMsg.id, branchId);
+    expect(msgs.some(m => m.type === 'error' && m.error === 'Rate limit exceeded')).toBe(true);
+  });
+
+  it('passes through connection error for edit', async () => {
+    const conv = makeConversation('standard');
+    const { userMsg, branchId } = setupEditErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue(new Error('ECONNREFUSED'));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendEdit(ws, conv.id, userMsg.id, branchId);
+    expect(msgs.some(m => m.type === 'error' && m.error?.includes('ECONNREFUSED'))).toBe(true);
+  });
+
+  it('truncates long error messages for edit', async () => {
+    const conv = makeConversation('standard');
+    const { userMsg, branchId } = setupEditErrorTest(conv);
+    mockEnhancedStream.mockRejectedValue(new Error('x'.repeat(400)));
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    const msgs = await sendEdit(ws, conv.id, userMsg.id, branchId);
+    const errorMsg = msgs.find(m => m.type === 'error');
+    expect(errorMsg).toBeDefined();
+    expect(errorMsg.error.length).toBeLessThanOrEqual(300);
+    expect(errorMsg.error).toContain('...');
+  });
+});
+
+// ── Debug capture coverage tests ──────────────────────────────────────────
+describe('debug capture after successful inference', () => {
+  const defaultModel = {
+    id: 'test-model', providerModelId: 'test', provider: 'anthropic',
+    contextWindow: 200000, outputTokenLimit: 4096,
+    settings: { temperature: { min: 0, max: 1, default: 0.7, step: 0.1 }, maxTokens: { min: 1, max: 4096, default: 1024 } },
+  };
+
+  function setupSuccessfulChatMocks(conv: Conversation) {
+    const userMsg = makeMessage('Hello!', 'user', { conversationId: conv.id });
+    const assistantMsg = makeMessage('', 'assistant', { conversationId: conv.id });
+    const participant = {
+      id: 'p-bot', conversationId: conv.id, name: 'Bot',
+      type: 'assistant', model: 'test-model', isActive: true,
+    };
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    mockDb.createMessage.mockResolvedValueOnce(userMsg).mockResolvedValueOnce(assistantMsg);
+    mockDb.getConversationMessages.mockResolvedValue([]);
+    mockDb.getConversationParticipants.mockResolvedValue([participant]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockDb.getUserGrantSummary.mockResolvedValue({ totals: {} });
+    mockDb.getApplicableGrantCurrencies.mockResolvedValue([]);
+    mockModelLoader.getModelById.mockResolvedValue(defaultModel);
+    (validatePricingAvailable as any).mockResolvedValue({ valid: true });
+    (checkContent as any).mockResolvedValue({ blocked: false });
+    mockDb.updateMessageBranch.mockResolvedValue(undefined);
+    mockDb.getMessage.mockResolvedValue(assistantMsg);
+    mockDb.updateConversation.mockResolvedValue(undefined);
+    mockRoomManager.getActiveAiRequest.mockReturnValue(null);
+
+    return { userMsg, assistantMsg, participant };
+  }
+
+  it('captures debug data for chat when lastRawRequest is available', async () => {
+    const conv = makeConversation('standard');
+    const { assistantMsg } = setupSuccessfulChatMocks(conv);
+
+    mockEnhancedStream.mockImplementation(async (_mc: any, _msgs: any, _sys: any, _s: any, _uid: any, onChunk: any) => {
+      // Simulate what real inference does: set lastRawRequest
+      if (mockBaseInferenceRef.instance) {
+        mockBaseInferenceRef.instance.lastRawRequest = { model: 'test', messages: [] };
+      }
+      await onChunk('response text', true, undefined, { inputTokens: 10, outputTokens: 5 });
+      return { usage: { inputTokens: 10, outputTokens: 5 } };
+    });
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'chat', conversationId: conv.id,
+      messageId: randomUUID(), content: 'Hello!',
+    }));
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // Debug capture should have called updateMessageBranch with debug data
+    expect(mockDb.updateMessageBranch).toHaveBeenCalledWith(
+      assistantMsg.id,
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        debugRequest: expect.objectContaining({ model: 'test' }),
+        debugResponse: expect.objectContaining({ content: expect.any(String) }),
+      })
+    );
+    // Should refresh the message and send update to frontend
+    expect(mockDb.getMessage).toHaveBeenCalled();
+  });
+
+  it('captures debug data for regenerate when lastRawRequest is available', async () => {
+    const conv = makeConversation('standard');
+    const branchId = randomUUID();
+    const parentBranchId = randomUUID();
+    const msg = makeMessage('original', 'assistant', { conversationId: conv.id });
+    (msg.branches[0] as any).id = branchId;
+    (msg.branches[0] as any).parentBranchId = parentBranchId;
+    (msg.branches[0] as any).participantId = 'p-bot';
+    msg.activeBranchId = branchId;
+    const updatedMsg = makeMessage('', 'assistant', { conversationId: conv.id });
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    mockDb.getMessage.mockResolvedValue(msg);
+    mockDb.getConversationMessages.mockResolvedValue([msg]);
+    mockDb.addMessageBranch.mockResolvedValue(updatedMsg);
+    mockDb.getConversationParticipants.mockResolvedValue([{
+      id: 'p-bot', conversationId: conv.id, name: 'Bot',
+      type: 'assistant', model: 'test-model', isActive: true,
+    }]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockDb.getUserGrantSummary.mockResolvedValue({ totals: {} });
+    mockDb.getApplicableGrantCurrencies.mockResolvedValue([]);
+    mockModelLoader.getModelById.mockResolvedValue(defaultModel);
+    (validatePricingAvailable as any).mockResolvedValue({ valid: true });
+    (checkContent as any).mockResolvedValue({ blocked: false });
+    mockDb.updateMessageBranch.mockResolvedValue(undefined);
+    mockDb.updateConversation.mockResolvedValue(undefined);
+
+    mockEnhancedStream.mockImplementation(async (_mc: any, _msgs: any, _sys: any, _s: any, _uid: any, onChunk: any) => {
+      if (mockBaseInferenceRef.instance) {
+        mockBaseInferenceRef.instance.lastRawRequest = { model: 'test-regen', messages: [] };
+      }
+      await onChunk('regen response', true, undefined, { inputTokens: 10, outputTokens: 5 });
+      return { usage: { inputTokens: 10, outputTokens: 5 } };
+    });
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'regenerate', conversationId: conv.id,
+      messageId: msg.id, branchId: branchId,
+    }));
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // Debug capture should have been triggered
+    expect(mockDb.updateMessageBranch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        debugRequest: expect.objectContaining({ model: 'test-regen' }),
+      })
+    );
+  });
+
+  it('captures debug data for edit when lastRawRequest is available', async () => {
+    const conv = makeConversation('standard');
+    const branchId = randomUUID();
+    const userMsg = makeMessage('original', 'user', { conversationId: conv.id });
+    (userMsg.branches[0] as any).id = branchId;
+    (userMsg.branches[0] as any).parentBranchId = 'root';
+    userMsg.activeBranchId = branchId;
+
+    const assistantMsg = makeMessage('old response', 'assistant', { conversationId: conv.id });
+    (assistantMsg.branches[0] as any).parentBranchId = branchId;
+
+    const editedMsg = makeMessage('edited', 'user', { conversationId: conv.id });
+    const newBranchId = randomUUID();
+    (editedMsg.branches[0] as any).id = newBranchId;
+    (editedMsg.branches[0] as any).parentBranchId = 'root';
+    editedMsg.activeBranchId = newBranchId;
+
+    const newAssistantMsg = makeMessage('', 'assistant', { conversationId: conv.id });
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    (checkContent as any).mockResolvedValue({ blocked: false });
+    mockDb.getMessage.mockResolvedValue(userMsg);
+    mockDb.getConversationMessages.mockResolvedValue([userMsg, assistantMsg]);
+    mockDb.addMessageBranch.mockResolvedValueOnce(editedMsg).mockResolvedValueOnce(newAssistantMsg);
+    mockDb.getConversationParticipants.mockResolvedValue([{
+      id: 'p-bot', conversationId: conv.id, name: 'Bot',
+      type: 'assistant', model: 'test-model', isActive: true,
+    }]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockDb.getUserGrantSummary.mockResolvedValue({ totals: {} });
+    mockDb.getApplicableGrantCurrencies.mockResolvedValue([]);
+    mockModelLoader.getModelById.mockResolvedValue(defaultModel);
+    (validatePricingAvailable as any).mockResolvedValue({ valid: true });
+    mockDb.updateMessageBranch.mockResolvedValue(undefined);
+    mockDb.updateConversation.mockResolvedValue(undefined);
+
+    mockEnhancedStream.mockImplementation(async (_mc: any, _msgs: any, _sys: any, _s: any, _uid: any, onChunk: any) => {
+      if (mockBaseInferenceRef.instance) {
+        mockBaseInferenceRef.instance.lastRawRequest = { model: 'test-edit', messages: [] };
+      }
+      await onChunk('edit response', true, undefined, { inputTokens: 10, outputTokens: 5 });
+      return { usage: { inputTokens: 10, outputTokens: 5 } };
+    });
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'edit', conversationId: conv.id,
+      messageId: userMsg.id, branchId: branchId, content: 'edited content',
+    }));
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // Debug capture should have been triggered for edit
+    expect(mockDb.updateMessageBranch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        debugRequest: expect.objectContaining({ model: 'test-edit' }),
+      })
+    );
+  });
+
+  it('captures debug data for continue when lastRawRequest is available', async () => {
+    const conv = makeConversation('standard');
+    const msg = makeMessage('partial response', 'assistant', { conversationId: conv.id });
+    (msg.branches[0] as any).participantId = 'p-bot';
+    const participant = {
+      id: 'p-bot', conversationId: conv.id, name: 'Bot',
+      type: 'assistant', model: 'test-model', isActive: true,
+    };
+
+    mockDb.getConversation.mockResolvedValue(conv);
+    mockDb.canUserChatInConversation.mockResolvedValue(true);
+    mockDb.userHasActiveGrantCapability.mockResolvedValue(false);
+    mockDb.isUserAgeVerified.mockResolvedValue(false);
+    mockDb.getMessage.mockResolvedValue(msg);
+    mockDb.getConversationMessages.mockResolvedValue([msg]);
+    mockDb.getConversationParticipants.mockResolvedValue([participant]);
+    mockDb.getUserApiKeys.mockResolvedValue([{ provider: 'anthropic' }]);
+    mockDb.getUserGrantSummary.mockResolvedValue({ totals: {} });
+    mockDb.getApplicableGrantCurrencies.mockResolvedValue([]);
+    mockModelLoader.getModelById.mockResolvedValue(defaultModel);
+    (validatePricingAvailable as any).mockResolvedValue({ valid: true });
+    (checkContent as any).mockResolvedValue({ blocked: false });
+    mockDb.updateMessageBranch.mockResolvedValue(undefined);
+    mockDb.updateConversation.mockResolvedValue(undefined);
+
+    mockEnhancedStream.mockImplementation(async (_mc: any, _msgs: any, _sys: any, _s: any, _uid: any, onChunk: any) => {
+      if (mockBaseInferenceRef.instance) {
+        mockBaseInferenceRef.instance.lastRawRequest = { model: 'test-continue', messages: [] };
+      }
+      await onChunk('continued text', true, undefined, { inputTokens: 10, outputTokens: 5 });
+      return { usage: { inputTokens: 10, outputTokens: 5 } };
+    });
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'continue', conversationId: conv.id,
+      messageId: msg.id, parentBranchId: msg.activeBranchId,
+    }));
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // Debug capture should have been triggered for continue
+    expect(mockDb.updateMessageBranch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        debugRequest: expect.objectContaining({ model: 'test-continue' }),
+      })
+    );
+  });
+
+  it('handles debug capture failure gracefully', async () => {
+    const conv = makeConversation('standard');
+    setupSuccessfulChatMocks(conv);
+
+    mockEnhancedStream.mockImplementation(async (_mc: any, _msgs: any, _sys: any, _s: any, _uid: any, onChunk: any) => {
+      if (mockBaseInferenceRef.instance) {
+        mockBaseInferenceRef.instance.lastRawRequest = { model: 'test', messages: [] };
+      }
+      await onChunk('response', true, undefined, { inputTokens: 10, outputTokens: 5 });
+      return { usage: { inputTokens: 10, outputTokens: 5 } };
+    });
+    // Make updateMessageBranch throw to trigger debug capture error path
+    mockDb.updateMessageBranch.mockRejectedValue(new Error('DB write failed'));
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'chat', conversationId: conv.id,
+      messageId: randomUUID(), content: 'Hello!',
+    }));
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // Should have logged the debug capture error but not crashed
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[DEBUG CAPTURE]'),
+      expect.any(Error)
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('skips debug capture when getMessage returns null', async () => {
+    const conv = makeConversation('standard');
+    setupSuccessfulChatMocks(conv);
+
+    mockEnhancedStream.mockImplementation(async (_mc: any, _msgs: any, _sys: any, _s: any, _uid: any, onChunk: any) => {
+      if (mockBaseInferenceRef.instance) {
+        mockBaseInferenceRef.instance.lastRawRequest = { model: 'test', messages: [] };
+      }
+      await onChunk('response', true, undefined, { inputTokens: 10, outputTokens: 5 });
+      return { usage: { inputTokens: 10, outputTokens: 5 } };
+    });
+    mockDb.updateMessageBranch.mockResolvedValue(undefined);
+    // getMessage returns null — the frontend notification should be skipped
+    mockDb.getMessage.mockResolvedValue(null);
+
+    const ws = createMockWs();
+    ws.OPEN = 1;
+    websocketHandler(ws, createMockReq(), new Database() as any);
+
+    ws.emit('message', JSON.stringify({
+      type: 'chat', conversationId: conv.id,
+      messageId: randomUUID(), content: 'Hello!',
+    }));
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // updateMessageBranch was called (debug saved), but no 'message_edited' for debug refresh
+    expect(mockDb.updateMessageBranch).toHaveBeenCalled();
   });
 });

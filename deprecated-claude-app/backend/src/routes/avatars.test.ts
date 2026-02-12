@@ -408,4 +408,122 @@ describe('Avatars routes', () => {
       expect(res.status).toBe(409);
     });
   });
+
+  // ─── Upload avatar tests ───
+
+  describe('POST /api/avatars/packs/:packId/avatars', () => {
+    // Valid 1x1 PNG pixel
+    const pngPixel = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64'
+    );
+    // Valid 1x1 GIF89a pixel
+    const gifPixel = Buffer.from(
+      'R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==',
+      'base64'
+    );
+
+    it('uploads a PNG avatar and processes to webp', async () => {
+      await createUserPack(TEST_USER_ID, 'upload-png', {
+        id: 'upload-png',
+        name: 'Upload PNG Pack',
+        avatars: {},
+      });
+
+      const res = await request
+        .post('/api/avatars/packs/upload-png/avatars')
+        .attach('avatar', pngPixel, 'test.png')
+        .field('canonicalId', 'model-test');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.canonicalId).toBe('model-test');
+      expect(res.body.thumbnail).toContain('.webp');
+      expect(res.body.original).toContain('.webp');
+    });
+
+    it('uploads a GIF avatar and keeps gif format', async () => {
+      await createUserPack(TEST_USER_ID, 'upload-gif', {
+        id: 'upload-gif',
+        name: 'Upload GIF Pack',
+        avatars: {},
+      });
+
+      const res = await request
+        .post('/api/avatars/packs/upload-gif/avatars')
+        .attach('avatar', gifPixel, { filename: 'test.gif', contentType: 'image/gif' })
+        .field('canonicalId', 'gif-model');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.thumbnail).toContain('.gif');
+      expect(res.body.original).toContain('.gif');
+    });
+
+    it('returns 400 without canonicalId', async () => {
+      await createUserPack(TEST_USER_ID, 'upload-noid', {
+        id: 'upload-noid',
+        name: 'No ID',
+        avatars: {},
+      });
+
+      const res = await request
+        .post('/api/avatars/packs/upload-noid/avatars')
+        .attach('avatar', pngPixel, 'test.png');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('canonicalId');
+    });
+
+    it('returns 400 without file uploaded', async () => {
+      await createUserPack(TEST_USER_ID, 'upload-nofile', {
+        id: 'upload-nofile',
+        name: 'No File',
+        avatars: {},
+      });
+
+      const res = await request
+        .post('/api/avatars/packs/upload-nofile/avatars')
+        .field('canonicalId', 'some-model');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('No file');
+    });
+
+    it('returns 404 for non-existent pack', async () => {
+      const res = await request
+        .post('/api/avatars/packs/nonexistent/avatars')
+        .attach('avatar', pngPixel, 'test.png')
+        .field('canonicalId', 'test-model');
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // ─── Auth checks without userId middleware ───
+
+  describe('Auth checks (no userId middleware)', () => {
+    it('returns 401 for routes requiring userId', async () => {
+      const mod = await import('./avatars.js');
+      const noAuthApp = express();
+      noAuthApp.use(express.json());
+      noAuthApp.use('/api/avatars', mod.default);
+      const noAuthReq = supertest(noAuthApp);
+
+      // PUT /packs/:packId (update)
+      expect((await noAuthReq.put('/api/avatars/packs/x').send({ name: 'X' })).status).toBe(401);
+
+      // DELETE /packs/:packId/avatars/:canonicalId (delete avatar)
+      expect((await noAuthReq.delete('/api/avatars/packs/x/avatars/y')).status).toBe(401);
+
+      // PUT /packs/:packId/colors/:canonicalId (set color)
+      expect((await noAuthReq.put('/api/avatars/packs/x/colors/y').send({ color: '#f00' })).status).toBe(401);
+
+      // DELETE /packs/:packId (delete pack)
+      expect((await noAuthReq.delete('/api/avatars/packs/x')).status).toBe(401);
+
+      // POST /packs/:packId/clone (clone)
+      expect((await noAuthReq.post('/api/avatars/packs/x/clone').send({ newId: 'a', newName: 'A' })).status).toBe(401);
+    });
+  });
 });

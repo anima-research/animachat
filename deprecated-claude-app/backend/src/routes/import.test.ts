@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import express from 'express';
+import supertest from 'supertest';
 import {
   TestContext,
   createTestApp,
   cleanupTestApp,
   createAuthenticatedUser,
 } from './test-helpers.js';
+import { importRouter } from './import.js';
 
 describe('Import Routes', () => {
   let ctx: TestContext;
@@ -808,6 +811,340 @@ describe('Import Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.conversationId).toBeDefined();
       expect(res.body.messageCount).toBe(4);
+    });
+  });
+
+  // ───── Chrome extension with branching ─────
+
+  describe('POST /api/import/execute (chrome_extension branching)', () => {
+    it('imports chrome_extension with branch alternatives (same parent)', async () => {
+      const branchingData = {
+        uuid: 'branch-conv',
+        name: 'Branching Conversation',
+        model: 'claude-3-5-sonnet-20241022',
+        chat_messages: [
+          {
+            uuid: '11111111-1111-4111-8111-111111111111',
+            text: 'Hello',
+            sender: 'human',
+            parent_message_uuid: '00000000-0000-4000-8000-000000000000',
+            created_at: new Date().toISOString(),
+          },
+          {
+            uuid: '22222222-2222-4222-8222-222222222222',
+            text: 'Response A',
+            sender: 'assistant',
+            parent_message_uuid: '11111111-1111-4111-8111-111111111111',
+            created_at: new Date().toISOString(),
+          },
+          {
+            uuid: '33333333-3333-4333-8333-333333333333',
+            text: 'Response B (branch alternative)',
+            sender: 'assistant',
+            parent_message_uuid: '11111111-1111-4111-8111-111111111111',
+            created_at: new Date().toISOString(),
+          },
+          {
+            uuid: '44444444-4444-4444-8444-444444444444',
+            text: 'Follow up after branch A',
+            sender: 'human',
+            parent_message_uuid: '22222222-2222-4222-8222-222222222222',
+            created_at: new Date().toISOString(),
+          },
+        ],
+      };
+
+      const res = await ctx.request
+        .post('/api/import/execute')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          format: 'chrome_extension',
+          content: JSON.stringify(branchingData),
+          conversationFormat: 'standard',
+          title: 'Branching Import',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.conversationId).toBeDefined();
+      expect(res.body.messageCount).toBe(4);
+    });
+  });
+
+  // ───── Arc Chat edge cases ─────
+
+  describe('POST /api/import/execute (arc_chat additional)', () => {
+    it('imports arc_chat with user name different from default', async () => {
+      const arcChatData = {
+        conversation: { id: 'name-diff', title: 'Name Diff', model: 'claude-3-5-sonnet-20241022', format: 'standard' },
+        participants: [
+          { name: 'Alice', type: 'user' },
+          { name: 'Bot', type: 'assistant', model: 'claude-3-5-sonnet-20241022' },
+        ],
+        messages: [
+          {
+            id: 'nd-1',
+            order: 0,
+            activeBranchId: 'nd-b1',
+            branches: [{ id: 'nd-b1', content: 'Hi from Alice', role: 'user', participantName: 'Alice', createdAt: new Date().toISOString() }],
+          },
+          {
+            id: 'nd-2',
+            order: 1,
+            activeBranchId: 'nd-b2',
+            branches: [{ id: 'nd-b2', content: 'Hello Alice!', role: 'assistant', participantName: 'Bot', parentBranchId: 'nd-b1', createdAt: new Date().toISOString() }],
+          },
+        ],
+      };
+
+      const res = await ctx.request
+        .post('/api/import/execute')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          format: 'arc_chat',
+          content: JSON.stringify(arcChatData),
+          conversationFormat: 'standard',
+        });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('imports arc_chat with participantId instead of participantName', async () => {
+      const arcChatData = {
+        conversation: { id: 'pid-test', title: 'PID Test' },
+        participants: [
+          { id: 'p-1', name: 'User', type: 'user' },
+          { id: 'p-2', name: 'Claude', type: 'assistant', model: 'test-model' },
+        ],
+        messages: [
+          {
+            id: 'pid-1',
+            order: 0,
+            activeBranchId: 'pid-b1',
+            branches: [{
+              id: 'pid-b1',
+              content: 'Test via participantId',
+              role: 'user',
+              participantId: 'p-1',
+              createdAt: new Date().toISOString(),
+            }],
+          },
+        ],
+      };
+
+      const res = await ctx.request
+        .post('/api/import/execute')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          format: 'arc_chat',
+          content: JSON.stringify(arcChatData),
+          conversationFormat: 'standard',
+        });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('imports arc_chat with message having no branches (skipped)', async () => {
+      const arcChatData = {
+        conversation: { id: 'no-branch', title: 'No Branch' },
+        participants: [
+          { name: 'User', type: 'user' },
+          { name: 'Bot', type: 'assistant', model: 'test' },
+        ],
+        messages: [
+          {
+            id: 'nb-1',
+            order: 0,
+            activeBranchId: 'nb-b1',
+            branches: [],
+          },
+          {
+            id: 'nb-2',
+            order: 1,
+            activeBranchId: 'nb-b2',
+            branches: [{ id: 'nb-b2', content: 'Valid msg', role: 'user', participantName: 'User', createdAt: new Date().toISOString() }],
+          },
+        ],
+      };
+
+      const res = await ctx.request
+        .post('/api/import/execute')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          format: 'arc_chat',
+          content: JSON.stringify(arcChatData),
+          conversationFormat: 'standard',
+        });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('imports arc_chat with branch-level participantId resolution', async () => {
+      const arcChatData = {
+        conversation: { id: 'branch-pid', title: 'Branch PID' },
+        participants: [
+          { id: 'bp-1', name: 'User', type: 'user' },
+          { id: 'bp-2', name: 'Claude', type: 'assistant', model: 'test-model' },
+        ],
+        messages: [
+          {
+            id: 'bp-m1',
+            order: 0,
+            activeBranchId: 'bp-b1',
+            branches: [{ id: 'bp-b1', content: 'Hello', role: 'user', participantId: 'bp-1', createdAt: new Date().toISOString() }],
+          },
+          {
+            id: 'bp-m2',
+            order: 1,
+            activeBranchId: 'bp-b3',
+            branches: [
+              { id: 'bp-b2', content: 'Response 1', role: 'assistant', participantId: 'bp-2', parentBranchId: 'bp-b1', createdAt: new Date().toISOString() },
+              { id: 'bp-b3', content: 'Response 2 (active)', role: 'assistant', participantId: 'bp-2', parentBranchId: 'bp-b1', createdAt: new Date().toISOString() },
+            ],
+          },
+        ],
+      };
+
+      const res = await ctx.request
+        .post('/api/import/execute')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          format: 'arc_chat',
+          content: JSON.stringify(arcChatData),
+          conversationFormat: 'standard',
+        });
+
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // ───── Raw import error handling ─────
+
+  describe('POST /api/import/messages-raw (error handling)', () => {
+    it('handles individual message import failure gracefully', async () => {
+      const convRes = await ctx.request
+        .post('/api/conversations')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ title: 'Raw Import Error', model: 'claude-3-5-sonnet-20241022' });
+      const convId = convRes.body.id;
+
+      const res = await ctx.request
+        .post('/api/import/messages-raw')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          conversationId: convId,
+          messages: [
+            { id: null, invalid: true },
+            {
+              id: 'valid-err-1',
+              conversationId: convId,
+              order: 0,
+              activeBranchId: 'err-b-1',
+              branches: [
+                { id: 'err-b-1', content: 'Valid msg', role: 'user', createdAt: new Date().toISOString() },
+              ],
+            },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+  });
+
+  // ───── Auth checks (no middleware) ─────
+
+  describe('Auth checks (without auth middleware)', () => {
+    it('returns 401 for preview and execute when userId is missing', async () => {
+      const noAuthApp = express();
+      noAuthApp.use(express.json({ limit: '10mb' }));
+      noAuthApp.use('/api/import', importRouter(ctx.db));
+      const noAuthReq = supertest(noAuthApp);
+
+      // POST /preview
+      expect((await noAuthReq.post('/api/import/preview').send({
+        format: 'basic_json', content: '{}',
+      })).status).toBe(401);
+
+      // POST /execute
+      expect((await noAuthReq.post('/api/import/execute').send({
+        format: 'basic_json', content: '{}', conversationFormat: 'standard',
+      })).status).toBe(401);
+
+      // POST /messages-raw
+      expect((await noAuthReq.post('/api/import/messages-raw').send({
+        conversationId: 'x', messages: [],
+      })).status).toBe(401);
+    });
+  });
+
+  // ───── Execute error handling ─────
+
+  describe('POST /api/import/execute (error paths)', () => {
+    it('returns 500 for valid format with malformed JSON content', async () => {
+      const res = await ctx.request
+        .post('/api/import/execute')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          format: 'basic_json',
+          content: '{not valid json at all!!!',
+          conversationFormat: 'standard',
+        });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBeDefined();
+    });
+
+    it('imports arc_chat with cyclic parent references (breaks cycle)', async () => {
+      const cyclicData = {
+        conversation: { id: 'cycle-test', title: 'Cycle Test' },
+        participants: [
+          { name: 'User', type: 'user' },
+          { name: 'Bot', type: 'assistant', model: 'test' },
+        ],
+        messages: [
+          {
+            id: 'cyc-1',
+            order: 0,
+            activeBranchId: 'cyc-b1',
+            branches: [{ id: 'cyc-b1', content: 'Msg 1', role: 'user', participantName: 'User', parentBranchId: 'cyc-b2', createdAt: new Date().toISOString() }],
+          },
+          {
+            id: 'cyc-2',
+            order: 1,
+            activeBranchId: 'cyc-b2',
+            branches: [{ id: 'cyc-b2', content: 'Msg 2', role: 'assistant', participantName: 'Bot', parentBranchId: 'cyc-b1', createdAt: new Date().toISOString() }],
+          },
+        ],
+      };
+
+      const res = await ctx.request
+        .post('/api/import/execute')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          format: 'arc_chat',
+          content: JSON.stringify(cyclicData),
+          conversationFormat: 'standard',
+        });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('imports with participant mappings matching existing default participant', async () => {
+      const res = await ctx.request
+        .post('/api/import/execute')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          format: 'basic_json',
+          content: basicJsonContent,
+          conversationFormat: 'standard',
+          title: 'Matching Participant',
+          participantMappings: [
+            { sourceName: 'User', targetName: 'User', type: 'user' },
+            { sourceName: 'Assistant', targetName: 'Assistant', type: 'assistant' },
+          ],
+        });
+
+      expect(res.status).toBe(200);
     });
   });
 

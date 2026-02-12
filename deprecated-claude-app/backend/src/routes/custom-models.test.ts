@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import express from 'express';
+import supertest from 'supertest';
 import {
   TestContext,
   createTestApp,
   cleanupTestApp,
   createAuthenticatedUser,
 } from './test-helpers.js';
+import { customModelsRouter } from './custom-models.js';
 
 describe('Custom Models Routes', () => {
   let ctx: TestContext;
@@ -424,6 +427,93 @@ describe('Custom Models Routes', () => {
     });
   });
 
+  // ───── Endpoint URL validation (success paths) ─────
+
+  describe('Endpoint validation (success paths)', () => {
+    it('creates model with valid HTTPS public endpoint', async () => {
+      const res = await ctx.request
+        .post('/api/models/custom')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          displayName: 'HTTPS Public',
+          shortName: 'https-pub',
+          provider: 'openai-compatible',
+          providerModelId: 'test-model',
+          contextWindow: 8000,
+          outputTokenLimit: 2048,
+          customEndpoint: {
+            baseUrl: 'https://api.example.com/v1',
+          },
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.provider).toBe('openai-compatible');
+      expect(res.body.customEndpoint.baseUrl).toBe('https://api.example.com/v1');
+    });
+
+    it('updates model with valid HTTPS public endpoint', async () => {
+      // Create a base model first
+      const createRes = await ctx.request
+        .post('/api/models/custom')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          ...validModelData,
+          displayName: 'EP Update Test',
+          shortName: 'ep-update-test',
+        });
+      expect(createRes.status).toBe(201);
+
+      const res = await ctx.request
+        .patch(`/api/models/custom/${createRes.body.id}`)
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          customEndpoint: { baseUrl: 'https://api.example.com/v1' },
+        });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('updates model with localhost HTTP endpoint (allowed)', async () => {
+      const createRes = await ctx.request
+        .post('/api/models/custom')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          ...validModelData,
+          displayName: 'Localhost Update',
+          shortName: 'localhost-update',
+        });
+      expect(createRes.status).toBe(201);
+
+      const res = await ctx.request
+        .patch(`/api/models/custom/${createRes.body.id}`)
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          customEndpoint: { baseUrl: 'http://localhost:8080/v1' },
+        });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('creates model with 127.0.0.1 HTTP endpoint (allowed)', async () => {
+      const res = await ctx.request
+        .post('/api/models/custom')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({
+          displayName: 'Loopback Model',
+          shortName: 'loopback-model',
+          provider: 'openai-compatible',
+          providerModelId: 'test-model',
+          contextWindow: 8000,
+          outputTokenLimit: 2048,
+          customEndpoint: {
+            baseUrl: 'http://127.0.0.1:11434/v1',
+          },
+        });
+
+      expect(res.status).toBe(201);
+    });
+  });
+
   // ───── User isolation ─────
 
   describe('User isolation', () => {
@@ -446,6 +536,35 @@ describe('Custom Models Routes', () => {
       expect(otherList.status).toBe(200);
       const otherModelNames = otherList.body.map((m: any) => m.displayName);
       expect(otherModelNames).not.toContain('User Model Only');
+    });
+  });
+
+  // ───── Auth checks (no middleware) ─────
+
+  describe('Auth checks (without auth middleware)', () => {
+    it('returns 401 for all routes when userId is missing', async () => {
+      const noAuthApp = express();
+      noAuthApp.use(express.json());
+      noAuthApp.use('/api/models/custom', customModelsRouter(ctx.db));
+      const noAuthReq = supertest(noAuthApp);
+
+      // GET / (list)
+      expect((await noAuthReq.get('/api/models/custom')).status).toBe(401);
+
+      // GET /:id
+      expect((await noAuthReq.get('/api/models/custom/some-id')).status).toBe(401);
+
+      // POST / (create)
+      expect((await noAuthReq.post('/api/models/custom').send({ displayName: 'X' })).status).toBe(401);
+
+      // PATCH /:id (update)
+      expect((await noAuthReq.patch('/api/models/custom/some-id').send({ displayName: 'X' })).status).toBe(401);
+
+      // DELETE /:id
+      expect((await noAuthReq.delete('/api/models/custom/some-id')).status).toBe(401);
+
+      // POST /:id/test
+      expect((await noAuthReq.post('/api/models/custom/some-id/test')).status).toBe(401);
     });
   });
 
