@@ -11,6 +11,11 @@ import { createBookmarksRouter } from './bookmarks.js';
 import { modelRouter } from './models.js';
 import { systemRouter } from './system.js';
 import siteConfigRouter from './site-config.js';
+import { collaborationRouter } from './collaboration.js';
+import { createInvitesRouter } from './invites.js';
+import { importRouter } from './import.js';
+import { createShareRouter } from './shares.js';
+import { customModelsRouter } from './custom-models.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { generateToken } from '../middleware/auth.js';
 
@@ -49,9 +54,14 @@ export async function createTestApp(): Promise<TestContext> {
   app.use('/api/conversations', authenticateToken, conversationRouter(db));
   app.use('/api/participants', authenticateToken, participantRouter(db));
   app.use('/api/bookmarks', createBookmarksRouter(db));
+  app.use('/api/models/custom', authenticateToken, customModelsRouter(db));
   app.use('/api/models', authenticateToken, modelRouter(db));
   app.use('/api/system', systemRouter());
   app.use('/api/site-config', siteConfigRouter);
+  app.use('/api/collaboration', collaborationRouter(db));
+  app.use('/api/invites', createInvitesRouter(db));
+  app.use('/api/import', authenticateToken, importRouter(db));
+  app.use('/api/shares', createShareRouter(db));
 
   // Health check
   app.get('/api/health', (_req, res) => {
