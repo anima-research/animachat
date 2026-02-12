@@ -28,12 +28,12 @@ jobs:
         run: npm run build -w shared
 
       - name: Run backend tests with coverage
-        working-directory: deprecated-claude-app
-        run: npx vitest run --coverage --coverage.include='src/**/*.{ts,tsx,js,jsx}' --coverage.reporter=text --coverage.reporter=json-summary --project backend
+        working-directory: deprecated-claude-app/backend
+        run: npx vitest run --coverage --coverage.include='src/**/*.{ts,tsx,js,jsx}' --coverage.reporter=text --coverage.reporter=json-summary
 
       - name: Run frontend tests with coverage
-        working-directory: deprecated-claude-app
-        run: npx vitest run --coverage --coverage.include='src/**/*.{ts,tsx,js,jsx}' --coverage.reporter=text --coverage.reporter=json-summary --project frontend
+        working-directory: deprecated-claude-app/frontend
+        run: npx vitest run --coverage --coverage.include='src/**/*.{ts,tsx,js,jsx}' --coverage.reporter=text --coverage.reporter=json-summary
 
       - name: Run shared tests
         working-directory: deprecated-claude-app
