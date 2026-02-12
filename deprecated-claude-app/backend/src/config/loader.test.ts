@@ -451,3 +451,231 @@ describe('ConfigLoader', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// SiteConfigLoader tests
+// ---------------------------------------------------------------------------
+
+const SITE_SCRATCH = join(
+  '/tmp/claude-1000/-home-quiterion-Projects-animachat/04733706-3bb5-4af3-91f8-92eec88b6339/scratchpad',
+  'site-config-loader-test-' + Date.now()
+);
+
+/** Reset the SiteConfigLoader singleton so each test gets a fresh instance */
+async function getNewSiteConfigLoader() {
+  const mod = await import('./site-config-loader.js');
+  const loader = mod.SiteConfigLoader.getInstance();
+  // Force-reset internal state so it re-reads configPath from env
+  (loader as any).config = null;
+  (loader as any).configPath = process.env.SITE_CONFIG_PATH ||
+    (process.env.NODE_ENV === 'production'
+      ? '/etc/claude-app/siteConfig.json'
+      : join(process.cwd(), 'config', 'siteConfig.json'));
+  return loader;
+}
+
+async function writeSiteConfig(config: object): Promise<string> {
+  const configPath = join(SITE_SCRATCH, 'siteConfig.json');
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  return configPath;
+}
+
+describe('SiteConfigLoader', () => {
+  beforeEach(async () => {
+    await mkdir(SITE_SCRATCH, { recursive: true });
+  });
+
+  afterEach(async () => {
+    delete process.env.SITE_CONFIG_PATH;
+    await rm(SITE_SCRATCH, { recursive: true, force: true });
+  });
+
+  describe('singleton pattern', () => {
+    it('getInstance returns the same instance', async () => {
+      const mod = await import('./site-config-loader.js');
+      const a = mod.SiteConfigLoader.getInstance();
+      const b = mod.SiteConfigLoader.getInstance();
+      expect(a).toBe(b);
+    });
+  });
+
+  describe('loadConfig', () => {
+    it('loads valid site config from SITE_CONFIG_PATH', async () => {
+      const config = {
+        branding: { name: 'My Chat', tagline: 'Custom tagline' },
+      };
+      const configPath = await writeSiteConfig(config);
+      process.env.SITE_CONFIG_PATH = configPath;
+
+      const loader = await getNewSiteConfigLoader();
+      const loaded = await loader.loadConfig();
+
+      expect(loaded.branding.name).toBe('My Chat');
+      expect(loaded.branding.tagline).toBe('Custom tagline');
+      // Zod defaults should fill in missing fields
+      expect(loaded.branding.logoVariant).toBe('arc');
+    });
+
+    it('returns cached config on subsequent calls', async () => {
+      const config = { branding: { name: 'Cached' } };
+      const configPath = await writeSiteConfig(config);
+      process.env.SITE_CONFIG_PATH = configPath;
+
+      const loader = await getNewSiteConfigLoader();
+      const first = await loader.loadConfig();
+      const second = await loader.loadConfig();
+
+      expect(first).toBe(second); // Same reference — cached
+    });
+
+    it('returns default config when file is missing', async () => {
+      process.env.SITE_CONFIG_PATH = join(SITE_SCRATCH, 'nonexistent.json');
+
+      const loader = await getNewSiteConfigLoader();
+      const loaded = await loader.loadConfig();
+
+      expect(loaded.branding.name).toBe('Arc Chat');
+      expect(loaded.branding.tagline).toBe('Multi-agent conversations');
+      expect(loaded.operator.name).toBe('Arc Chat Team');
+      expect(loaded.features.showTestimonials).toBe(false);
+    });
+
+    it('returns default config when file contains invalid JSON', async () => {
+      const configPath = join(SITE_SCRATCH, 'siteConfig.json');
+      await writeFile(configPath, '<<< not valid json >>>');
+      process.env.SITE_CONFIG_PATH = configPath;
+
+      const loader = await getNewSiteConfigLoader();
+      const loaded = await loader.loadConfig();
+
+      // Should fall back to defaults
+      expect(loaded.branding.name).toBe('Arc Chat');
+    });
+
+    it('applies Zod defaults for missing fields', async () => {
+      // Provide only branding, let Zod fill in the rest
+      const config = { branding: { name: 'Minimal' } };
+      const configPath = await writeSiteConfig(config);
+      process.env.SITE_CONFIG_PATH = configPath;
+
+      const loader = await getNewSiteConfigLoader();
+      const loaded = await loader.loadConfig();
+
+      expect(loaded.branding.name).toBe('Minimal');
+      // Zod defaults for other sections
+      expect(loaded.links).toBeDefined();
+      expect(loaded.links.discord).toBeNull();
+      expect(loaded.operator).toBeDefined();
+      expect(loaded.features).toBeDefined();
+      expect(loaded.content).toBeDefined();
+    });
+  });
+
+  describe('getConfig', () => {
+    it('delegates to loadConfig', async () => {
+      process.env.SITE_CONFIG_PATH = join(SITE_SCRATCH, 'nonexistent.json');
+
+      const loader = await getNewSiteConfigLoader();
+      const config = await loader.getConfig();
+
+      expect(config.branding.name).toBe('Arc Chat');
+    });
+  });
+
+  describe('reloadConfig', () => {
+    it('picks up changes from disk after reload', async () => {
+      const config1 = { branding: { name: 'Version 1' } };
+      const configPath = await writeSiteConfig(config1);
+      process.env.SITE_CONFIG_PATH = configPath;
+
+      const loader = await getNewSiteConfigLoader();
+      const first = await loader.loadConfig();
+      expect(first.branding.name).toBe('Version 1');
+
+      // Write updated config
+      const config2 = { branding: { name: 'Version 2' } };
+      await writeFile(configPath, JSON.stringify(config2, null, 2));
+
+      const reloaded = await loader.reloadConfig();
+      expect(reloaded.branding.name).toBe('Version 2');
+    });
+
+    it('clears cache so next loadConfig reads from disk', async () => {
+      const config1 = { branding: { name: 'Original' } };
+      const configPath = await writeSiteConfig(config1);
+      process.env.SITE_CONFIG_PATH = configPath;
+
+      const loader = await getNewSiteConfigLoader();
+      await loader.loadConfig();
+
+      // Mutate on disk
+      await writeFile(configPath, JSON.stringify({ branding: { name: 'Changed' } }));
+
+      // Without reload, should still return cached
+      const cached = await loader.loadConfig();
+      expect(cached.branding.name).toBe('Original');
+
+      // After reload, should pick up change
+      await loader.reloadConfig();
+      const fresh = await loader.loadConfig();
+      expect(fresh.branding.name).toBe('Changed');
+    });
+  });
+
+  describe('getValue', () => {
+    it('returns nested value by dot path', async () => {
+      const config = {
+        branding: { name: 'Test App', tagline: 'Testing' },
+        operator: { name: 'Test Operator' },
+      };
+      const configPath = await writeSiteConfig(config);
+      process.env.SITE_CONFIG_PATH = configPath;
+
+      const loader = await getNewSiteConfigLoader();
+
+      const name = await loader.getValue<string>('branding.name');
+      expect(name).toBe('Test App');
+
+      const tagline = await loader.getValue<string>('branding.tagline');
+      expect(tagline).toBe('Testing');
+
+      const opName = await loader.getValue<string>('operator.name');
+      expect(opName).toBe('Test Operator');
+    });
+
+    it('returns undefined for non-existent paths', async () => {
+      process.env.SITE_CONFIG_PATH = join(SITE_SCRATCH, 'nonexistent.json');
+
+      const loader = await getNewSiteConfigLoader();
+
+      const value = await loader.getValue<string>('nonexistent.deep.path');
+      expect(value).toBeUndefined();
+    });
+
+    it('returns top-level object', async () => {
+      const config = { branding: { name: 'Test' } };
+      const configPath = await writeSiteConfig(config);
+      process.env.SITE_CONFIG_PATH = configPath;
+
+      const loader = await getNewSiteConfigLoader();
+
+      const branding = await loader.getValue<any>('branding');
+      expect(branding).toBeDefined();
+      expect(branding.name).toBe('Test');
+    });
+  });
+
+  describe('getSiteConfig convenience function', () => {
+    it('returns config via singleton', async () => {
+      process.env.SITE_CONFIG_PATH = join(SITE_SCRATCH, 'nonexistent.json');
+
+      // Reset singleton
+      await getNewSiteConfigLoader();
+
+      const mod = await import('./site-config-loader.js');
+      const config = await mod.getSiteConfig();
+
+      expect(config.branding.name).toBe('Arc Chat');
+    });
+  });
+});
