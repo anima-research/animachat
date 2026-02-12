@@ -7,10 +7,15 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage --silent --coverage.include='src/**/*.{ts,tsx,js,jsx}'"
   },
   "devDependencies": {
-    "typescript": "^5.3.3"
+    "@vitest/coverage-v8": "^4.0.18",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.18"
   },
   "dependencies": {
     "zod": "^3.22.4"
