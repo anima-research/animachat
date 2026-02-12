@@ -1,0 +1,77 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deprecated-claude-app/**'
+      - '.github/workflows/test.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: 'npm'
+          cache-dependency-path: deprecated-claude-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: deprecated-claude-app
+        run: npm ci
+
+      - name: Build shared
+        working-directory: deprecated-claude-app
+        run: npm run build -w shared
+
+      - name: Run backend tests with coverage
+        working-directory: deprecated-claude-app
+        run: npx vitest run --coverage --coverage.include='src/**/*.{ts,tsx,js,jsx}' --coverage.reporter=text --coverage.reporter=json-summary --project backend
+
+      - name: Run frontend tests with coverage
+        working-directory: deprecated-claude-app
+        run: npx vitest run --coverage --coverage.include='src/**/*.{ts,tsx,js,jsx}' --coverage.reporter=text --coverage.reporter=json-summary --project frontend
+
+      - name: Run shared tests
+        working-directory: deprecated-claude-app
+        run: npm test -w shared
+
+      - name: Post coverage summary
+        if: always()
+        working-directory: deprecated-claude-app
+        run: |
+          echo "## Test Coverage Report" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          for workspace in backend frontend; do
+            SUMMARY="$workspace/coverage/coverage-summary.json"
+            if [ -f "$SUMMARY" ]; then
+              STMTS=$(node -e "const d=require('./$SUMMARY').total.statements.pct; process.stdout.write(String(d))")
+              BRANCH=$(node -e "const d=require('./$SUMMARY').total.branches.pct; process.stdout.write(String(d))")
+              FUNCS=$(node -e "const d=require('./$SUMMARY').total.functions.pct; process.stdout.write(String(d))")
+              LINES=$(node -e "const d=require('./$SUMMARY').total.lines.pct; process.stdout.write(String(d))")
+
+              if [ "$(node -e "process.stdout.write(($STMTS >= 75 && $BRANCH >= 75) ? 'pass' : 'fail')")" = "pass" ]; then
+                STATUS="pass"
+              else
+                STATUS="warn"
+              fi
+
+              echo "### $workspace" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "| Metric | Coverage | Target |" >> "$GITHUB_STEP_SUMMARY"
+              echo "|--------|----------|--------|" >> "$GITHUB_STEP_SUMMARY"
+              echo "| Statements | ${STMTS}% | 75% |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| Branches | ${BRANCH}% | 75% |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| Functions | ${FUNCS}% | — |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| Lines | ${LINES}% | — |" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "### $workspace" >> "$GITHUB_STEP_SUMMARY"
+              echo "No coverage data found." >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
