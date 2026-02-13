@@ -431,6 +431,15 @@ export const BookmarkSchema = z.object({
 
 export type Bookmark = z.infer<typeof BookmarkSchema>;
 
+export const EnrichedBookmarkSchema = BookmarkSchema.extend({
+  preview: z.string(),
+  participantName: z.string(),
+  model: z.string().nullable(),
+  role: z.enum(['user', 'assistant', 'system'])
+});
+
+export type EnrichedBookmark = z.infer<typeof EnrichedBookmarkSchema>;
+
 // Content block types for messages
 export const TextContentBlockSchema = z.object({
   type: z.literal('text'),
