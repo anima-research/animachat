@@ -202,6 +202,60 @@ export function conversationRouter(db: Database): Router {
     }
   });
 
+  // Search across all conversations using search indexes
+  // IMPORTANT: This route must be BEFORE /:id routes to avoid being caught by them
+  router.get('/search', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const query = (req.query.q as string || '').trim();
+      if (!query || query.length < 2) {
+        return res.json({ results: [], query: '' });
+      }
+
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+      
+      // Use index-based search - doesn't load full conversation data
+      const matches = await db.searchConversations(req.userId, query, limit);
+      
+      // Transform matches into the expected response format
+      const results = matches.map(match => {
+        // Get conversation title
+        const conversation = db.getConversationById(match.conversationId);
+        const conversationTitle = conversation?.title || 'Untitled';
+        
+        // Create a snippet around the match (100 chars before and after)
+        // Note: match.text is lowercased, so we use it for snippet generation
+        const start = Math.max(0, match.matchIndex - 100);
+        const end = Math.min(match.text.length, match.matchIndex + query.length + 100);
+        let snippet = match.text.slice(start, end);
+        
+        // Add ellipsis if truncated
+        if (start > 0) snippet = '...' + snippet;
+        if (end < match.text.length) snippet = snippet + '...';
+        
+        return {
+          conversationId: match.conversationId,
+          conversationTitle,
+          messageId: match.messageId,
+          branchId: match.branchId,
+          content: match.text,  // Lowercased content from index
+          snippet,
+          role: match.role,
+          createdAt: new Date(match.timestamp),
+          matchIndex: match.matchIndex
+        };
+      });
+
+      res.json({ results, query, total: results.length });
+    } catch (error) {
+      console.error('Search error:', error);
+      res.status(500).json({ error: 'Search failed' });
+    }
+  });
+
   // Create conversation
   router.post('/', async (req: AuthRequest, res) => {
     try {
