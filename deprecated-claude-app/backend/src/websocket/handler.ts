@@ -1184,6 +1184,93 @@ async function handleChatMessage(
 
     // Update conversation timestamp after all branches complete
     await db.updateConversation(conversation.id, conversation.userId, { updatedAt: new Date() });
+
+    try {
+      const needsTitle = !conversation.title || conversation.title === 'New Conversation';
+      
+      // Check if this is the first assistant message in the conversation
+      // We check filteredHistory length (which is previous messages) + 1 (current user message)
+      // If it's small (e.g., just 1 user message), it's the start.
+      const isFirstExchange = filteredHistory.length <= 1;
+
+      console.log(`[Auto-title] Checking conditions: needsTitle=${needsTitle}, isFirstExchange=${isFirstExchange}, historyLength=${filteredHistory.length}`);
+
+      if (needsTitle && isFirstExchange) {
+        console.log('[Auto-title] test 1');
+        const firstUserMessage = filteredHistory.find(m => {
+          const activeBranch = m.branches.find(b => b.id === m.activeBranchId);
+          return activeBranch?.role === 'user';
+        });
+        console.log('[Auto-title] test 2');
+        const firstAssistantContent = assistantMessage.branches.find((b: any) => b.id === generatedBranchIds[0])?.content;
+        console.log('[Auto-title] test 3');
+        if (firstUserMessage && firstAssistantContent) {
+          const titlePrompt = `Generate a short, concise title (3-6 words) for this conversation. Output only the title text, no formatting or markdown:\n\nUser: ${firstUserMessage.branches[0]?.content?.substring(0, 500)}\n\nAssistant: ${firstAssistantContent.substring(0, 500)}`;
+
+          // Use baseInferenceService for a raw, simple call
+          // Signature: (modelId, messages, systemPrompt, settings, userId, onChunk, format, ...)
+          let generatedTitle = '';
+          console.log('[Auto-title] Generating title with model:', responder.model || conversation.model);
+          const tempBranchId = 'temp-branch-' + Date.now();
+          const tempMessage: any = {
+            id: 'temp-title-msg',
+            conversationId: 'temp',
+            userId: conversation.userId,
+            activeBranchId: tempBranchId,
+            branches: [{
+              id: tempBranchId,
+              content: titlePrompt,
+              role: 'user',
+              createdAt: new Date(),
+              isActive: true,
+              parentBranchId: 'root'
+            }],
+            order: 0
+          };
+
+          await baseInferenceService.streamCompletion(
+            responder.model || conversation.model,
+            [tempMessage],
+            'You are a helpful assistant.',
+            { temperature: 0.7, maxTokens: 50 },
+            conversation.userId,
+            async (chunk: string) => {
+              generatedTitle += chunk;
+            }
+          );
+
+          console.log('[Auto-title] Generated raw title:', generatedTitle);
+
+          const cleanTitle = generatedTitle.trim()
+            .replace(/^#+\s*/, '')           // Remove markdown heading markers
+            .replace(/^\*\*(.+)\*\*$/, '$1') // Remove ** only if it wraps the ENTIRE title
+            .replace(/^["']|["']$/g, '')     // Remove quotes at start/end
+            .substring(0, 60);
+          console.log('[Auto-title] Cleaned title:', cleanTitle);
+
+
+          if (cleanTitle) {
+            await db.updateConversation(conversation.id, conversation.userId, { title: cleanTitle });
+            
+            // Notify frontend
+            const updatedConv = await db.getConversation(conversation.id, conversation.userId);
+            if (updatedConv) {
+               ws.send(JSON.stringify({ 
+                 type: 'conversation_updated', 
+                 id: conversation.id,
+                 updates: { 
+                   title: cleanTitle,
+                   updatedAt: updatedConv.updatedAt
+                 }
+               }));
+            }
+          }
+          console.log('[Auto-title] Title updated to:', cleanTitle);
+        }
+      }
+    } catch (titleError) {
+      console.error('[Auto-title] Failed to generate title:', titleError);
+    }
     
     } finally {
       endGeneration(conversation.userId, conversation.id);
