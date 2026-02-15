@@ -331,6 +331,10 @@ export function importRouter(db: Database): Router {
             undefined, // hiddenFromAi
             'import'   // creationSource
           );
+
+          if (exportedMsg.id) {
+            messageIdMap.set(exportedMsg.id, message.id);
+          }
           
           // Map the first branch ID
           if (firstBranch.id && message.branches[0]) {
@@ -410,6 +414,36 @@ export function importRouter(db: Database): Router {
         // Align active branch path for multi-root conversations
         // This ensures getVisibleMessages will find the canonical path correctly
         await db.alignActiveBranchPath(conversation.id, conversation.userId);
+
+        // Import bookmarks - map old message/branch IDs to new ones
+        if (preview.metadata?.bookmarks && Array.isArray(preview.metadata.bookmarks)) {
+          const exportedBookmarks = preview.metadata.bookmarks;
+          let bookmarksImported = 0;
+          
+          for (const bookmark of exportedBookmarks) {
+            // Map old message ID to new message ID
+            const newMessageId = messageIdMap.get(bookmark.messageId);
+            // Map old branch ID to new branch ID
+            const newBranchId = branchIdMapping.get(bookmark.branchId);
+            
+            // Only import if both IDs were successfully mapped
+            if (newMessageId && newBranchId) {
+              await db.createOrUpdateBookmark(
+                conversation.id,
+                newMessageId,
+                newBranchId,
+                bookmark.label
+              );
+              bookmarksImported++;
+            } else {
+              console.log(`[Import] Skipping bookmark - messageId or branchId not found in mapping: ${bookmark.id}`);
+            }
+          }
+          
+          if (bookmarksImported > 0) {
+            console.log(`[Import] Imported ${bookmarksImported} bookmarks`);
+          }
+        }
         
         res.json({ conversationId: conversation.id });
         return;
