@@ -436,7 +436,7 @@ export function importRouter(db: Database): Router {
               );
               bookmarksImported++;
             } else {
-              console.log(`[Import] Skipping bookmark - messageId or branchId not found in mapping: ${bookmark.id}`);
+              console.log(`[Import] Skipping bookmark - messageId or branchId not found in mapping: messageId=${bookmark.messageId}, branchId=${bookmark.branchId}`);          
             }
           }
           

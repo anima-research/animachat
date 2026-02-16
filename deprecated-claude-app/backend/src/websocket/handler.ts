@@ -1193,24 +1193,24 @@ async function handleChatMessage(
       // If it's small (e.g., just 1 user message), it's the start.
       const isFirstExchange = filteredHistory.length <= 1;
 
-      console.log(`[Auto-title] Checking conditions: needsTitle=${needsTitle}, isFirstExchange=${isFirstExchange}, historyLength=${filteredHistory.length}`);
 
       if (needsTitle && isFirstExchange) {
-        console.log('[Auto-title] test 1');
         const firstUserMessage = filteredHistory.find(m => {
           const activeBranch = m.branches.find(b => b.id === m.activeBranchId);
           return activeBranch?.role === 'user';
         });
-        console.log('[Auto-title] test 2');
-        const firstAssistantContent = assistantMessage.branches.find((b: any) => b.id === generatedBranchIds[0])?.content;
-        console.log('[Auto-title] test 3');
+        const firstAssistantContent = generatedBranchIds.length > 0 
+          ? assistantMessage.branches.find((b: any) => b.id === generatedBranchIds[0])?.content 
+          : undefined;
         if (firstUserMessage && firstAssistantContent) {
-          const titlePrompt = `Generate a short, concise title (3-6 words) for this conversation. Output only the title text, no formatting or markdown:\n\nUser: ${firstUserMessage.branches[0]?.content?.substring(0, 500)}\n\nAssistant: ${firstAssistantContent.substring(0, 500)}`;
-
+          // Get the active branch's content, not branches[0]
+          const userActiveBranch = firstUserMessage.branches.find(b => b.id === firstUserMessage.activeBranchId);
+          const userContent = userActiveBranch?.content?.substring(0, 500) ?? '';
+          
+          const titlePrompt = `Generate a short, concise title (3-6 words) for this conversation. Output only the title text, no formatting or markdown:\n\nUser: ${userContent}\n\nAssistant: ${firstAssistantContent.substring(0, 500)}`;
           // Use baseInferenceService for a raw, simple call
           // Signature: (modelId, messages, systemPrompt, settings, userId, onChunk, format, ...)
           let generatedTitle = '';
-          console.log('[Auto-title] Generating title with model:', responder.model || conversation.model);
           const tempBranchId = 'temp-branch-' + Date.now();
           const tempMessage: any = {
             id: 'temp-title-msg',
@@ -1239,14 +1239,12 @@ async function handleChatMessage(
             }
           );
 
-          console.log('[Auto-title] Generated raw title:', generatedTitle);
 
           const cleanTitle = generatedTitle.trim()
             .replace(/^#+\s*/, '')           // Remove markdown heading markers
             .replace(/^\*\*(.+)\*\*$/, '$1') // Remove ** only if it wraps the ENTIRE title
             .replace(/^["']|["']$/g, '')     // Remove quotes at start/end
             .substring(0, 60);
-          console.log('[Auto-title] Cleaned title:', cleanTitle);
 
 
           if (cleanTitle) {
@@ -1265,7 +1263,6 @@ async function handleChatMessage(
                }));
             }
           }
-          console.log('[Auto-title] Title updated to:', cleanTitle);
         }
       }
     } catch (titleError) {
