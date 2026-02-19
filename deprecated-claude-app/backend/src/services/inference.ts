@@ -1249,11 +1249,12 @@ export class InferenceService {
         if (participantName === '') {
           // Raw continuation - no prefix
           formattedContent = activeBranch.content;
-        } else if (role === 'assistant' && provider === 'openai-compatible') {
-          // OpenAI-compatible model's own messages - no prefix (prevents name echoing)
+        } else if (role === 'assistant' && (provider === 'openai-compatible' || provider === 'anthropic' || provider === 'bedrock')) {
+          // Assistant's own messages - no prefix (prevents the model from echoing its name,
+          // which triggers stop sequences in messages mode)
           formattedContent = activeBranch.content;
         } else {
-          // All other messages - add name prefix
+          // All other messages (user messages, other participants) - add name prefix
           formattedContent = `${participantName}: ${activeBranch.content}`;
         }
         
