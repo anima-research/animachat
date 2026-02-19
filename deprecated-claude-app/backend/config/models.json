@@ -1,6 +1,46 @@
 {
   "models": [
     {
+      "id": "claude-sonnet-4.6",
+      "providerModelId": "claude-sonnet-4-6",
+      "canonicalId": "claude-sonnet-4.6",
+      "displayName": "Claude Sonnet 4.6",
+      "shortName": "Sonnet 4.6",
+      "provider": "anthropic",
+      "hidden": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
+      "currencies": {
+        "models-2025": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 64000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
       "id": "claude-opus-4.6",
       "providerModelId": "claude-opus-4-6",
       "canonicalId": "claude-opus-4.6",
@@ -737,6 +777,40 @@
         }
       },
       "canonicalId": "claude-opus-4.5"
+    },
+    {
+      "id": "claude-sonnet-4.6-openrouter",
+      "providerModelId": "anthropic/claude-sonnet-4-6",
+      "displayName": "Claude Sonnet 4.6 (OpenRouter)",
+      "shortName": "Sonnet 4.6",
+      "provider": "openrouter",
+      "hidden": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 64000,
+      "supportsThinking": true,
+      "currencies": {
+        "models-2025": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 64000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        }
+      },
+      "canonicalId": "claude-sonnet-4.6"
     },
     {
       "id": "claude-opus-4.6-openrouter",
