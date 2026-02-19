@@ -96,9 +96,10 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3.5-haiku-bedrock': 0.80,
   
   // Bedrock providerModelId format (anthropic.model-version:variant)
+  'us.anthropic.claude-3-7-sonnet-20250219-v1:0': 3.00,
   'anthropic.claude-3-5-sonnet-20241022-v2:0': 3.00,
   'anthropic.claude-3-5-sonnet-20240620-v1:0': 3.00,
-  'anthropic.claude-3-5-haiku-20241022-v1:0': 0.80,
+  'us.anthropic.claude-3-5-haiku-20241022-v1:0': 0.80,
   'anthropic.claude-3-opus-20240229-v1:0': 15.00,
   'anthropic.claude-3-sonnet-20240229-v1:0': 3.00,
   'anthropic.claude-3-haiku-20240307-v1:0': 0.25,
@@ -179,9 +180,10 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3.5-haiku-bedrock': 4.00,
   
   // Bedrock providerModelId format (anthropic.model-version:variant)
+  'us.anthropic.claude-3-7-sonnet-20250219-v1:0': 15.00,
   'anthropic.claude-3-5-sonnet-20241022-v2:0': 15.00,
   'anthropic.claude-3-5-sonnet-20240620-v1:0': 15.00,
-  'anthropic.claude-3-5-haiku-20241022-v1:0': 4.00,
+  'us.anthropic.claude-3-5-haiku-20241022-v1:0': 4.00,
   'anthropic.claude-3-opus-20240229-v1:0': 75.00,
   'anthropic.claude-3-sonnet-20240229-v1:0': 15.00,
   'anthropic.claude-3-haiku-20240307-v1:0': 1.25,
