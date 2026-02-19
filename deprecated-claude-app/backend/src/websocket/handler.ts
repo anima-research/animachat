@@ -99,7 +99,7 @@ function applyBackroomPromptIfNeeded(params: BackroomPromptParams): string {
   }
   
   // Check if model supports prefill
-  const supportsPrefill = modelProvider === 'anthropic' || modelProvider === 'bedrock' || modelSupportsPrefill === true;
+  const supportsPrefill = modelSupportsPrefill !== false && (modelProvider === 'anthropic' || modelProvider === 'bedrock' || modelSupportsPrefill === true);
   if (!supportsPrefill) {
     return existingSystemPrompt;
   }
@@ -163,7 +163,7 @@ function applyIdentityPromptIfNeeded(params: IdentityPromptParams): string {
   }
   
   // Check if model supports prefill
-  const supportsPrefill = modelProvider === 'anthropic' || modelProvider === 'bedrock' || modelSupportsPrefill === true;
+  const supportsPrefill = modelSupportsPrefill !== false && (modelProvider === 'anthropic' || modelProvider === 'bedrock' || modelSupportsPrefill === true);
   
   // Determine if we're actually using messages mode
   // (either explicitly set to 'messages', or 'auto'/undefined with a model that doesn't support prefill)
@@ -1141,7 +1141,7 @@ async function handleChatMessage(
           console.log(`[DEBUG CAPTURE] Capturing debug data for branch ${firstBranchId.substring(0, 8)}...`);
           
           // Compute actual format used
-          const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+          const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
           const participantMode = responder.conversationMode;
           const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
           const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
@@ -1529,7 +1529,7 @@ async function handleRegenerate(
           const responderParticipantForDebug = participants.find(p => p.id === participantId);
           
           // Compute actual format used (same logic as applyBackroomPromptIfNeeded)
-          const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+          const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
           const participantMode = responderParticipantForDebug?.conversationMode;
           const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
           const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
@@ -1958,7 +1958,7 @@ async function handleEdit(
           const currentBranch = targetMessage.branches.find(b => b.id === firstBranchId);
           if (currentBranch) {
             // Compute actual format used
-            const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+            const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
             const participantMode = responderParticipantEdit?.conversationMode;
             const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
             const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
@@ -2325,7 +2325,7 @@ async function handleContinue(
           if (branchObj) {
             console.log(`[DEBUG CAPTURE] Continue: Capturing debug data for branch ${firstBranchId.substring(0, 8)}...`);
             
-            const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+            const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
             const participantMode = responder.conversationMode;
             const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
             const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
