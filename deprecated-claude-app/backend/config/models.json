@@ -11,6 +11,7 @@
       "contextWindow": 1000000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
+      "supportsPrefill": false,
       "currencies": {
         "models-2025": true
       },
@@ -788,6 +789,7 @@
       "contextWindow": 1000000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
+      "supportsPrefill": false,
       "currencies": {
         "models-2025": true
       },
