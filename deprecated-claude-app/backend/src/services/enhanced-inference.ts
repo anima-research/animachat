@@ -96,6 +96,7 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3.5-haiku-bedrock': 0.80,
   
   // Bedrock providerModelId format (anthropic.model-version:variant)
+  'anthropic.claude-3-7-sonnet-20250219-v1:0': 3.00,
   'anthropic.claude-3-5-sonnet-20241022-v2:0': 3.00,
   'anthropic.claude-3-5-sonnet-20240620-v1:0': 3.00,
   'anthropic.claude-3-5-haiku-20241022-v1:0': 0.80,
@@ -179,6 +180,7 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3.5-haiku-bedrock': 4.00,
   
   // Bedrock providerModelId format (anthropic.model-version:variant)
+  'anthropic.claude-3-7-sonnet-20250219-v1:0': 15.00,
   'anthropic.claude-3-5-sonnet-20241022-v2:0': 15.00,
   'anthropic.claude-3-5-sonnet-20240620-v1:0': 15.00,
   'anthropic.claude-3-5-haiku-20241022-v1:0': 4.00,
