@@ -8,7 +8,7 @@
       "shortName": "Sonnet 4.6",
       "provider": "anthropic",
       "hidden": false,
-      "contextWindow": 200000,
+      "contextWindow": 1000000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
       "currencies": {
@@ -785,7 +785,7 @@
       "shortName": "Sonnet 4.6",
       "provider": "openrouter",
       "hidden": false,
-      "contextWindow": 200000,
+      "contextWindow": 1000000,
       "outputTokenLimit": 64000,
       "supportsThinking": true,
       "currencies": {
