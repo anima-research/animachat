@@ -149,7 +149,8 @@ export class InferenceService {
     participants: Participant[] = [],
     responderId?: string,
     conversation?: Conversation,
-    cacheMarkerIndices?: number[]  // Message indices where to insert cache breakpoints (for prefill)
+    cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints (for prefill)
+    personaContext?: string  // Per-participant persona context to inject into prefill
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -223,7 +224,8 @@ export class InferenceService {
       model.provider,
       conversation,
       shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined,
-      shouldTriggerPrefillThinking
+      shouldTriggerPrefillThinking,
+      personaContext
     );
 
     // For messages mode, provide a default system prompt if none is provided
@@ -927,7 +929,8 @@ export class InferenceService {
     provider?: string,
     conversation?: Conversation,
     cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints
-    triggerThinking?: boolean  // Add opening <think> tag for prefill thinking mode
+    triggerThinking?: boolean,  // Add opening <think> tag for prefill thinking mode
+    personaContext?: string  // Per-participant persona context to prepend in prefill mode
   ): Message[] {
     // Expand prefixHistory from the first message into synthetic messages
     // This handles forked conversations with compressed history
@@ -988,12 +991,20 @@ export class InferenceService {
       const prefillSettings = conversation?.prefillUserMessage || { enabled: true, content: '<cmd>cat untitled.log</cmd>' };
       
       if (prefillSettings.enabled) {
+        // If persona context is provided, use it AS the user message content directly
+        // No wrapper tags — keeps the KV cache clean for session continuation
+        let cmdContent = prefillSettings.content;
+        if (personaContext && personaContext.trim()) {
+          cmdContent = personaContext;
+          Logger.inference(`[InferenceService] Injecting persona context (${Math.ceil(personaContext.length / 4)} est. tokens) as prefill user message`);
+        }
+
         const cmdMessage: Message = {
           id: 'prefill-cmd',
           conversationId: expandedMessages[0]?.conversationId || '',
           branches: [{
             id: 'prefill-cmd-branch',
-            content: prefillSettings.content,
+            content: cmdContent,
             role: 'user',
             createdAt: new Date(),
             isActive: true,
