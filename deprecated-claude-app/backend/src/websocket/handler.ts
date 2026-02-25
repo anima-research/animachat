@@ -309,6 +309,54 @@ function sendInsufficientCreditsError(ws: AuthenticatedWebSocket): void {
 }
 
 /**
+ * Truncate messages to fit within the model's context window when persona context is present.
+ * The persona context is a fixed block injected into every API call, so conversation messages
+ * must fit in whatever space remains. Without persona context, returns messages unchanged.
+ */
+function truncateForPersonaBudget(
+  messages: any[],
+  personaContext: string | undefined,
+  systemPrompt: string,
+  maxOutputTokens: number,
+  contextWindow: number,
+  participantName: string
+): any[] {
+  if (!personaContext || !personaContext.trim()) return messages;
+
+  const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+  const personaTokens = estimateTokens(personaContext);
+  const systemTokens = estimateTokens(systemPrompt);
+  const outputTokens = maxOutputTokens || 8192;
+  const safetyBuffer = 2000;
+  const available = contextWindow - personaTokens - systemTokens - outputTokens - safetyBuffer;
+
+  console.log(`[PersonaContext] Budget for ${participantName}: contextWindow=${contextWindow}, persona=${personaTokens}, system=${systemTokens}, output=${outputTokens}, available=${available}`);
+
+  if (available <= 0) {
+    console.warn(`[PersonaContext] WARNING: Persona context (${personaTokens} tokens) exceeds available budget. Sending minimal conversation.`);
+    return messages.slice(-3);
+  }
+
+  let totalTokens = 0;
+  let startIndex = messages.length;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    const branch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
+    const msgTokens = estimateTokens(branch?.content || '');
+    if (totalTokens + msgTokens > available) break;
+    totalTokens += msgTokens;
+    startIndex = i;
+  }
+
+  if (startIndex > 0) {
+    console.log(`[PersonaContext] Truncating: keeping ${messages.length - startIndex}/${messages.length} messages (${totalTokens} est. tokens)`);
+    return messages.slice(startIndex);
+  }
+
+  return messages;
+}
+
+/**
  * Parameters for running parallel branch inference.
  * This shared utility handles creating multiple branches and running inference on them in parallel.
  */
@@ -333,6 +381,7 @@ interface ParallelInferenceParams {
   abortSignal: AbortSignal;
   creationSource: 'inference' | 'regeneration';
   conversationId: string; // For room broadcasts
+  personaContext?: string; // Per-participant persona context to inject
 }
 
 /**
@@ -361,7 +410,8 @@ async function runParallelBranchInference(params: ParallelInferenceParams): Prom
     userContext,
     abortSignal,
     creationSource,
-    conversationId
+    conversationId,
+    personaContext
   } = params;
 
   // Track branches to generate
@@ -533,7 +583,7 @@ async function runParallelBranchInference(params: ParallelInferenceParams): Prom
         // Store metrics only for first branch to avoid duplicate counting
         if (branchIndex === 0) {
           await db.addMetrics(conversation.id, conversation.userId, metrics);
-          
+
           // Send metrics update to client
           safeSend({
             type: 'metrics_update',
@@ -544,7 +594,8 @@ async function runParallelBranchInference(params: ParallelInferenceParams): Prom
         }
       },
       participants,
-      abortSignal
+      abortSignal,
+      personaContext
     );
     
     return branchContent;
@@ -1101,10 +1152,21 @@ async function handleChatMessage(
     
     // Create abort controller for this generation
     const abortController = startGeneration(conversation.userId, conversation.id);
-    
+
     // Track AI request in room manager for multi-user sync
     roomManager.startAiRequest(message.conversationId, ws.userId!, assistantMessage.id);
-    
+
+    // Per-participant context budgeting
+    const responderPersonaContext = responder.personaContext;
+    const truncatedMessages = truncateForPersonaBudget(
+      messagesForInference,
+      responderPersonaContext,
+      inferenceSystemPrompt || '',
+      inferenceSettings.maxTokens || 8192,
+      modelConfig.contextWindow || 200000,
+      responder.name
+    );
+
     let generatedBranchIds: string[];
     try {
       // Run parallel inference using shared utility
@@ -1119,7 +1181,7 @@ async function handleChatMessage(
         samplingBranchCount,
         modelConfig,
         model: responder.model || conversation.model,
-        historyMessages: messagesForInference,
+        historyMessages: truncatedMessages,
         systemPrompt: inferenceSystemPrompt || '',
         settings: inferenceSettings,
         participants,
@@ -1128,7 +1190,8 @@ async function handleChatMessage(
         userContext,
         abortSignal: abortController.signal,
         creationSource: 'inference',
-        conversationId: message.conversationId
+        conversationId: message.conversationId,
+        personaContext: responderPersonaContext
       });
     
     // DEBUG CAPTURE: Capture debug data for the first branch after completion
@@ -1495,7 +1558,14 @@ async function handleRegenerate(
         samplingBranchCount,
         modelConfig,
         model: regenerateModel,
-        historyMessages: filteredHistoryMessages,
+        historyMessages: truncateForPersonaBudget(
+          filteredHistoryMessages,
+          responderParticipant?.personaContext,
+          responderSystemPrompt || '',
+          responderSettings?.maxTokens || 8192,
+          modelConfig.contextWindow || 200000,
+          responderParticipant?.name || 'unknown'
+        ),
         systemPrompt: responderSystemPrompt || '',
         settings: responderSettings,
         participants,
@@ -1504,7 +1574,8 @@ async function handleRegenerate(
         userContext,
         abortSignal: abortController.signal,
         creationSource: 'regeneration',
-        conversationId: message.conversationId
+        conversationId: message.conversationId,
+        personaContext: responderParticipant?.personaContext
       });
     } finally {
       endGeneration(conversation.userId, conversation.id);
@@ -1931,7 +2002,14 @@ async function handleEdit(
           samplingBranchCount,
           modelConfig,
           model: responderModel,
-          historyMessages: filteredHistoryMessages,
+          historyMessages: truncateForPersonaBudget(
+            filteredHistoryMessages,
+            responderParticipant?.personaContext,
+            responderSystemPrompt || '',
+            responderSettings?.maxTokens || 8192,
+            modelConfig.contextWindow || 200000,
+            responderParticipant?.name || 'unknown'
+          ),
           systemPrompt: responderSystemPrompt || '',
           settings: responderSettings,
           participants,
@@ -1940,7 +2018,8 @@ async function handleEdit(
           userContext,
           abortSignal: abortController.signal,
           creationSource: 'inference',
-          conversationId: message.conversationId
+          conversationId: message.conversationId,
+          personaContext: responderParticipant?.personaContext
         });
       } finally {
         endGeneration(conversation.userId, conversation.id);
@@ -2304,7 +2383,14 @@ async function handleContinue(
         samplingBranchCount,
         modelConfig,
         model: responder.model || conversation.model,
-        historyMessages: messagesWithNewAssistant,
+        historyMessages: truncateForPersonaBudget(
+          messagesWithNewAssistant,
+          responder.personaContext,
+          continueSystemPrompt,
+          inferenceSettings.maxTokens || 8192,
+          modelConfig.contextWindow || 200000,
+          responder.name
+        ),
         systemPrompt: continueSystemPrompt,
         settings: inferenceSettings,
         participants,
@@ -2313,7 +2399,8 @@ async function handleContinue(
         userContext,
         abortSignal: abortController.signal,
         creationSource: 'inference',
-        conversationId
+        conversationId,
+        personaContext: responder.personaContext
       });
       
       // DEBUG CAPTURE: Capture debug data for the first branch after completion

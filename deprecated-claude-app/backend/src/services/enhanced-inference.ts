@@ -317,7 +317,8 @@ export class EnhancedInferenceService {
     participant?: Participant,
     onMetrics?: (metrics: any) => Promise<void>,
     participants?: Participant[],
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    personaContext?: string // Per-participant persona context to inject into prefill
   ): Promise<void> {
     // If no conversation provided, fall back to original behavior
     if (!conversation) {
@@ -335,15 +336,46 @@ export class EnhancedInferenceService {
       );
       return;
     }
-    
-    // Prepare context using context manager
-    const { formattedMessages, cacheKey, window } = await this.contextManager.prepareContext(
-      conversation,
-      messages,
-      undefined, // newMessage is already included in messages
-      participant,
-      model.contextWindow // Pass model's max context for cache arithmetic
-    );
+
+    // When persona context is present, handler.ts already truncated messages
+    // to fit within the model's context window. Skip the context manager's
+    // rolling window to avoid double-truncation — handler is the authority.
+    let window: import('./context-strategies.js').ContextWindow;
+    let cacheKey: string | undefined;
+
+    if (personaContext) {
+      // Build a minimal context window from pre-truncated messages
+      const totalTokens = messages.reduce((sum, m) => {
+        const branch = m.branches?.find((b: any) => b.id === m.activeBranchId) || m.branches?.[0];
+        return sum + Math.ceil((branch?.content?.length || 0) / 4);
+      }, 0);
+
+      window = {
+        messages,
+        cacheablePrefix: [],
+        activeWindow: messages,
+        metadata: {
+          totalMessages: messages.length,
+          totalTokens,
+          windowStart: 0,
+          windowEnd: messages.length,
+          lastRotation: null
+        }
+      };
+      cacheKey = undefined;
+      Logger.context(`[EnhancedInference] Persona context present — bypassing context manager (${messages.length} pre-truncated messages, ~${totalTokens} tokens)`);
+    } else {
+      // Normal path: use context manager for rolling window + cache management
+      const result = await this.contextManager.prepareContext(
+        conversation,
+        messages,
+        undefined, // newMessage is already included in messages
+        participant,
+        model.contextWindow // Pass model's max context for cache arithmetic
+      );
+      window = result.window;
+      cacheKey = result.cacheKey;
+    }
     
     // Debug logging with visual indicators
     const hasCaching = window.cacheablePrefix.length > 0;
@@ -541,7 +573,8 @@ export class EnhancedInferenceService {
       participants || [],
       participant?.id,
       conversation,
-      cacheMarkerIndices  // Pass cache marker indices for Chapter II prefill caching
+      cacheMarkerIndices,  // Pass cache marker indices for Chapter II prefill caching
+      personaContext  // Per-participant persona context for prefill injection
     );
   }
   
