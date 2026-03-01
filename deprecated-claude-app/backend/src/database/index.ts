@@ -14,6 +14,7 @@ import { getBlobStore } from './blob-store.js';
 import { CollaborationStore } from './collaboration.js';
 import { PersonaStore } from './persona.js';
 import { ConversationUIStateStore } from './conversation-ui-state.js';
+import { SearchIndexService, SearchMatch } from './search-index.js';
 import { SharePermission, ConversationShare, canChat, canDelete } from '@deprecated-claude/shared';
 import {
   Persona,
@@ -125,6 +126,7 @@ export class Database {
   private collaborationStore: CollaborationStore;
   private personaStore: PersonaStore;
   private uiStateStore: ConversationUIStateStore;
+  private searchIndexService: SearchIndexService;
   private initialized: boolean = false;
 
   constructor() {
@@ -136,6 +138,7 @@ export class Database {
     this.collaborationStore = new CollaborationStore();
     this.personaStore = new PersonaStore();
     this.uiStateStore = new ConversationUIStateStore();
+    this.searchIndexService = new SearchIndexService('./data/conversations');
   }
   
   async init(): Promise<void> {
@@ -275,6 +278,13 @@ export class Database {
           }
         }
       }
+      
+      // Build search index from loaded messages
+      const messageIds = this.conversationMessages.get(conversationId) || [];
+      const messages = messageIds
+        .map(id => this.messages.get(id))
+        .filter((msg): msg is Message => msg !== undefined);
+      this.searchIndexService.buildIndexFromMessages(conversationId, messages);
     }
     this.conversationsLastAccessedTimes.set(conversationId, new Date());
   }
@@ -294,6 +304,9 @@ export class Database {
 
     // Clear cached UI state
     this.uiStateStore.clearCache(conversationId);
+    
+    // Unload search index (flushes to disk if dirty)
+    this.searchIndexService.unloadIndex(conversationId);
 
     this.conversationsLastAccessedTimes.delete(conversationId);
   }
@@ -2269,6 +2282,35 @@ export class Database {
     });
   }
 
+  /**
+   * Search across all user conversations using the search index
+   * Returns matches without loading full conversation data
+   */
+  async searchConversations(userId: string, query: string, limit: number = 50): Promise<SearchMatch[]> {
+    await this.loadUser(userId);
+    const convIds = this.userConversations.get(userId) || new Set();
+    
+    // Filter to non-archived conversations
+    const activeConvIds = Array.from(convIds)
+      .filter(id => {
+        const conv = this.conversations.get(id);
+        return conv && !conv.archived;
+      });
+    
+    // Create a title lookup function
+    const getTitle = (id: string): string => {
+      const conv = this.conversations.get(id);
+      return conv?.title || 'Untitled';
+    };
+    
+    return this.searchIndexService.searchAllConversations(
+      activeConvIds,
+      query,
+      limit,
+      getTitle
+    );
+  }
+
   async updateConversation(conversationId: string, conversationOwnerUserId: string, updates: Partial<Conversation>): Promise<Conversation | null> {
     const conversation = await this.tryLoadAndVerifyConversation(conversationId, conversationOwnerUserId);
     if (!conversation) return null;
@@ -2531,6 +2573,11 @@ export class Database {
       this.messages.set(newMessage.id, newMessage);
       // log full message creation events so they can be recreated
       await this.logConversationEvent(duplicate.id, 'message_created', newMessage);
+      
+      // Update search index with all branches of the duplicated message
+      for (const branch of newMessage.branches) {
+        this.searchIndexService.addBranchToIndex(duplicate.id, newMessage.id, branch);
+      }
     }
     
     // Align active branch path to ensure consistent visibility
@@ -2764,6 +2811,9 @@ export class Database {
     if (role !== 'system') {
       await this.uiStateStore.incrementBranchCount(conversationId, 1);
     }
+    
+    // Update search index with the new message's branch
+    this.searchIndexService.addBranchToIndex(conversationId, message.id, message.branches[0] as MessageBranch);
 
     return message;
   }
@@ -2832,6 +2882,9 @@ export class Database {
     
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
     await this.logConversationEvent(conversationId, 'message_created', message);
+    
+    // Update search index (includes system messages for completeness)
+    this.searchIndexService.addBranchToIndex(conversationId, message.id, message.branches[0] as MessageBranch);
 
     return message;
   }
@@ -2904,6 +2957,9 @@ export class Database {
     if (role !== 'system') {
       await this.uiStateStore.incrementBranchCount(conversationId, 1);
     }
+    
+    // Update search index
+    this.searchIndexService.addBranchToIndex(conversationId, messageId, newBranch as MessageBranch);
 
     return updatedMessage;
   }
@@ -3021,6 +3077,9 @@ export class Database {
     if (nonSystemBranchCount > 0) {
       await this.uiStateStore.decrementBranchCount(conversationId, nonSystemBranchCount);
     }
+    
+    // Update search index
+    this.searchIndexService.removeMessageFromIndex(conversationId, messageId);
 
     return true;
   }
@@ -3074,6 +3133,11 @@ export class Database {
       restoredByUserId: restoredByUserId || conversationOwnerUserId,
       message
     });
+    
+    // Update search index with restored branches
+    for (const branch of message.branches) {
+      this.searchIndexService.addBranchToIndex(conversationId, message.id, branch as MessageBranch);
+    }
     
     return message;
   }
@@ -3149,6 +3213,9 @@ export class Database {
       restoredByUserId: restoredByUserId || conversationOwnerUserId,
       branch
     });
+    
+    // Update search index with restored branch
+    this.searchIndexService.addBranchToIndex(conversationId, messageId, branch as MessageBranch);
     
     return updatedMessage;
   }
@@ -3327,6 +3394,10 @@ export class Database {
     
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
     
+    // Update search index: update original branch content and add new branch
+    this.searchIndexService.updateBranchInIndex(conversationId, messageId, branchId, firstPart);
+    this.searchIndexService.addBranchToIndex(conversationId, newMessageId, newBranch as MessageBranch);
+    
     console.log(`[splitMessage] Split message ${messageId} at position ${splitPosition}, created new message ${newMessageId}`);
     
     return { originalMessage, newMessage };
@@ -3390,6 +3461,11 @@ export class Database {
     // This ensures the message can be recreated during event replay
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
     await this.logConversationEvent(conversationId, 'message_created', message);
+    
+    // Update search index with imported message branches
+    for (const branch of message.branches) {
+      this.searchIndexService.addBranchToIndex(conversationId, message.id, branch);
+    }
   }
   
   async updateMessageContent(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string, content: string, contentBlocks?: any[]): Promise<boolean> {
@@ -3410,6 +3486,9 @@ export class Database {
     
     await this.updateConversationTimestamp(conversationId, conversationOwnerUserId);
     await this.logConversationEvent(conversationId, 'message_content_updated', { messageId, branchId, content, contentBlocks });
+    
+    // Update search index
+    this.searchIndexService.updateBranchInIndex(conversationId, messageId, branchId, content);
 
     return true;
   }
@@ -3620,6 +3699,16 @@ export class Database {
     // Update cached branch count in state file
     if (deletedNonSystemBranches > 0) {
       await this.uiStateStore.decrementBranchCount(conversationId, deletedNonSystemBranches);
+    }
+    
+    // Update search index
+    // Remove all deleted messages from search index
+    for (const msgId of deletedMessageIds) {
+      this.searchIndexService.removeMessageFromIndex(conversationId, msgId);
+    }
+    // If we only deleted a branch (not the message), remove just that branch
+    if (!deletedMessageIds.includes(messageId)) {
+      this.searchIndexService.removeBranchFromIndex(conversationId, messageId, branchId);
     }
 
     return deletedMessageIds;
@@ -5435,6 +5524,9 @@ export class Database {
 
   // Close database connection
   async close(): Promise<void> {
+    // Flush all dirty search indexes before closing
+    await this.searchIndexService.flushAllDirty();
+    
     await this.eventStore.close();
     await this.userEventStore.close();
     await this.conversationEventStore.close();

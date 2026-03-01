@@ -61,12 +61,84 @@
             </v-btn>
           </div>
 
-          <v-divider />
+          <!-- Search input -->
+          <v-text-field
+            v-model="sidebarSearchQuery"
+            placeholder="Search conversations..."
+            prepend-inner-icon="mdi-magnify"
+            variant="outlined"
+            density="compact"
+            hide-details
+            clearable
+            class="mx-2 mt-2"
+            @keydown.enter="performSidebarSearch"
+            @click:clear="clearSidebarSearch"
+          />
+
+          <v-divider class="mt-2" />
         </div>
 
         <!-- Scrollable conversations section -->
         <div class="sidebar-conversations flex-grow-1">
-          <v-list density="compact" nav>
+          <!-- Search Results -->
+          <template v-if="sidebarSearchResults.length > 0 || sidebarSearchLoading">
+            <v-list density="compact" nav>
+              <v-list-subheader class="d-flex align-center justify-space-between">
+                <span>Search Results</span>
+                <v-btn
+                  variant="text"
+                  size="x-small"
+                  @click="clearSidebarSearch"
+                >
+                  Clear
+                </v-btn>
+              </v-list-subheader>
+              
+              <!-- Loading state -->
+              <div v-if="sidebarSearchLoading" class="d-flex justify-center py-4">
+                <v-progress-circular indeterminate size="24" />
+              </div>
+              
+              <!-- Results -->
+              <v-list-item
+                v-else
+                v-for="result in sidebarSearchResults"
+                :key="`${result.conversationId}-${result.branchId}`"
+                class="search-result-item"
+                :class="{ 'search-result-active': getConversationIdFromRoute() === result.conversationId }"
+                @click="navigateToSearchResult(result)"
+              >
+                <template v-slot:title>
+                  <div class="d-flex align-center">
+                    <div class="text-truncate flex-grow-1">{{ result.conversationTitle }}</div>
+                  </div>
+                </template>
+                <template v-slot:subtitle>
+                  <div>
+                    <div class="text-caption d-flex align-center" style="gap: 6px;">
+                      <span v-html="getSearchResultModelHtml(result)"></span>
+                      <v-icon size="10" class="text-medium-emphasis">mdi-circle-small</v-icon>
+                      <v-icon 
+                        size="12" 
+                        :color="result.role === 'user' ? 'primary' : 'secondary'"
+                      >{{ result.role === 'user' ? 'mdi-account' : 'mdi-robot' }}</v-icon>
+                      <span class="text-medium-emphasis">{{ result.role === 'user' ? 'User' : 'Assistant' }}</span>
+                    </div>
+                    <div class="text-caption text-medium-emphasis">{{ formatDate(result.createdAt) }}</div>
+                    <div class="search-result-snippet mt-1" v-html="highlightSearchMatch(result.snippet, sidebarSearchQuery)" />
+                  </div>
+                </template>
+              </v-list-item>
+              
+              <!-- No results -->
+              <div v-if="!sidebarSearchLoading && sidebarSearchResults.length === 0 && sidebarSearchQuery" class="text-center py-4 text-grey">
+                No results found
+              </div>
+            </v-list>
+          </template>
+          
+          <!-- Normal Conversations List -->
+          <v-list v-else density="compact" nav>
             <v-list-subheader>Conversations</v-list-subheader>
             
             <v-list-item
@@ -156,8 +228,8 @@
             </v-list-item>
           </v-list>
           
-          <!-- Shared with me section -->
-          <v-list v-if="sharedConversations.length > 0" density="compact" nav class="mt-2">
+          <!-- Shared with me section (hidden during search) -->
+          <v-list v-if="sharedConversations.length > 0 && !sidebarSearchResults.length && !sidebarSearchLoading" density="compact" nav class="mt-2">
             <v-list-subheader>Shared with me</v-list-subheader>
             
             <v-list-item
@@ -1221,6 +1293,21 @@ const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
 const addParticipantDialog = ref(false);
 const contentBlockedDialog = ref(false);
+
+// Sidebar search state
+const sidebarSearchQuery = ref('');
+const sidebarSearchResults = ref<Array<{
+  conversationId: string;
+  conversationTitle: string;
+  messageId: string;
+  branchId: string;
+  content: string;
+  snippet: string;
+  role: 'user' | 'assistant' | 'system';
+  model?: string;
+  createdAt: Date;
+}>>([]);
+const sidebarSearchLoading = ref(false);
 const contentBlockedData = ref<{ reason?: string; categories?: string[] } | null>(null);
 const rawImportData = ref('');
 const messageInput = ref('');
@@ -4681,6 +4768,23 @@ function getConversationModelsHtml(conversation: any): string {
   return '<span style="color: #757575; font-weight: 500;">Group Chat</span>';
 }
 
+function getSearchResultModelHtml(result: typeof sidebarSearchResults.value[0]): string {
+  // Show the model that generated this message (for assistant messages)
+  if (result.model) {
+    const model = store.state.models.find(m => m.id === result.model);
+    const modelName = model ? model.displayName
+      .replace('Claude ', '')
+      .replace(' (Bedrock)', ' B')
+      .replace(' (OpenRouter)', ' OR') : result.model;
+    
+    const color = getModelColor(result.model);
+    return `<span style="color: ${color}; font-weight: 500;">${modelName}</span>`;
+  }
+  
+  // For user messages or unknown models, show a placeholder
+  return '<span style="color: #757575; font-weight: 500;">—</span>';
+}
+
 function formatDate(date: Date | string): string {
   const d = new Date(date);
   const now = new Date();
@@ -4692,6 +4796,70 @@ function formatDate(date: Date | string): string {
   if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
   
   return d.toLocaleDateString();
+}
+
+// Sidebar search functions
+async function performSidebarSearch() {
+  const query = sidebarSearchQuery.value.trim();
+  if (query.length < 2) return;
+
+  sidebarSearchLoading.value = true;
+  try {
+    const response = await api.get('/conversations/search', {
+      params: { q: query, limit: 30 }
+    });
+    sidebarSearchResults.value = response.data.results;
+  } catch (error) {
+    console.error('Search failed:', error);
+    sidebarSearchResults.value = [];
+  } finally {
+    sidebarSearchLoading.value = false;
+  }
+}
+
+function clearSidebarSearch() {
+  sidebarSearchQuery.value = '';
+  sidebarSearchResults.value = [];
+}
+
+async function navigateToSearchResult(result: typeof sidebarSearchResults.value[0]) {
+  // Check if we're already on this conversation
+  const currentConvId = getConversationIdFromRoute();
+  
+  if (currentConvId === result.conversationId) {
+    // Same conversation - directly navigate to the message/branch
+    // The route watcher won't trigger since conversation ID is the same
+    await handleEventNavigate(result.messageId, result.branchId);
+  } else {
+    // Different conversation - use router navigation
+    // The route watcher will handle the deep link
+    router.push({
+      path: `/conversation/${result.conversationId}/message/${result.messageId}`,
+      query: { branch: result.branchId }
+    });
+  }
+  
+  // On mobile, switch to conversation panel after clicking a result
+  if (isMobile.value) {
+    mobilePanel.value = 'conversation';
+  }
+  
+  // Don't clear search results - let user continue exploring matches
+  // User can click "Clear" button to dismiss search results
+}
+
+function highlightSearchMatch(text: string, query: string): string {
+  if (!query) return escapeHtml(text);
+  const escaped = escapeHtml(text);
+  const escapedQuery = escapeHtml(query);
+  const regex = new RegExp(`(${escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  return escaped.replace(regex, '<mark class="search-highlight">$1</mark>');
+}
+
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 </script>
 
@@ -5245,5 +5413,65 @@ function formatDate(date: Date | string): string {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Sidebar search styles */
+.search-result-item {
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: all 0.15s ease;
+  min-height: 72px !important;
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+}
+
+.search-result-item:hover {
+  background: rgba(var(--v-theme-primary), 0.08);
+  border-left-color: rgb(var(--v-theme-primary));
+}
+
+.search-result-item.search-result-active {
+  background: rgba(var(--v-theme-primary), 0.12);
+  border-left-color: rgb(var(--v-theme-primary));
+}
+
+.search-result-item.search-result-active:hover {
+  background: rgba(var(--v-theme-primary), 0.16);
+}
+
+.search-result-item :deep(.v-list-item-title) {
+  font-size: 0.875rem !important;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.search-result-item :deep(.v-list-item-subtitle) {
+  -webkit-line-clamp: unset !important;
+  line-clamp: unset !important;
+  display: block !important;
+  white-space: normal !important;
+  overflow: visible !important;
+}
+
+.search-result-snippet {
+  font-size: 0.75rem !important;
+  line-height: 1.4;
+  white-space: normal !important;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  border-left: 2px solid rgba(var(--v-theme-primary), 0.3);
+}
+
+:deep(.search-highlight) {
+  background: rgba(var(--v-theme-warning), 0.4);
+  color: inherit;
+  padding: 1px 2px;
+  border-radius: 2px;
 }
 </style>
