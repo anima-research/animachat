@@ -23,6 +23,7 @@
     "src/services/anthropic-cache-example.ts",
     "src/services/context-manager.ts",
     "src/services/context-strategies.ts",
-    "src/services/enhanced-inference.ts"
+    "src/services/enhanced-inference.ts",
+    "src/**/*.test.ts"
   ]
 }
