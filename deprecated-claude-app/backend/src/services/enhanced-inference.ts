@@ -700,6 +700,13 @@ export class EnhancedInferenceService {
       ?? INPUT_PRICING_PER_MILLION[model.id];
     
     if (price === undefined) {
+      if (model.provider === 'openai-compatible') {
+        console.warn(
+          `[Pricing] No pricing configured for openai-compatible model ${model.id} (${model.providerModelId || 'none'}), assuming $0 for metrics`
+        );
+        return 0;
+      }
+
       // Throw error instead of silently returning $0 - prevents untracked charges
       throw new PricingNotConfiguredError(model.id, model.provider, model.providerModelId);
     }
@@ -727,6 +734,13 @@ export class EnhancedInferenceService {
       ?? OUTPUT_PRICING_PER_MILLION[model.id];
     
     if (price === undefined) {
+      if (model.provider === 'openai-compatible') {
+        console.warn(
+          `[Pricing] No pricing configured for openai-compatible model ${model.id} (${model.providerModelId || 'none'}), assuming $0 for metrics`
+        );
+        return 0;
+      }
+
       // Throw error instead of silently returning $0 - prevents untracked charges
       throw new PricingNotConfiguredError(model.id, model.provider, model.providerModelId);
     }

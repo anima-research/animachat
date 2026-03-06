@@ -546,7 +546,33 @@ export class ImportParser {
   }
 
   private async parseOpenAI(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
-    const data = JSON.parse(content);
+    const parsed = JSON.parse(content);
+
+    // ChatGPT exports: either a single object or an array of conversations
+    const chatgptConversations = Array.isArray(parsed)
+      ? parsed.filter((c: any) =>
+          c &&
+          typeof c === 'object' &&
+          'mapping' in c &&
+          'title' in c
+        )
+      : null;
+
+    if (chatgptConversations && chatgptConversations.length > 1) {
+      throw new Error(
+        `ChatGPT export contains ${chatgptConversations.length} conversations; ` +
+        `this importer currently supports importing one conversation per file.`
+      );
+    }
+
+    const data = chatgptConversations
+      ? chatgptConversations[0]
+      : parsed;
+
+    // If we still don't have a usable object, fall back to the basic JSON parser
+    if (!data || typeof data !== 'object') {
+      return this.parseBasicJson(content);
+    }
     
     // Handle ChatGPT export format
     if (data.title && data.mapping) {
