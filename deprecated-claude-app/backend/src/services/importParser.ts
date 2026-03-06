@@ -374,6 +374,7 @@ export class ImportParser {
     const conversation = data.conversation;
     const exportedMessages = data.messages || [];
     const participants = data.participants || [];
+    const bookmarks = data.bookmarks || [];
     
     // Sort messages by tree order (parents before children) instead of array order
     const sortedMessages = this.sortMessagesByTreeOrder(exportedMessages);
@@ -429,6 +430,7 @@ export class ImportParser {
       metadata: {
         conversation,
         participants,
+        bookmarks,
         exportedAt: data.exportedAt,
         version: data.version
       }

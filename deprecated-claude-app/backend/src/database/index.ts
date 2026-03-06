@@ -4293,10 +4293,13 @@ export class Database {
     const messages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
     const participants = await this.getConversationParticipants(conversationId, conversationOwnerUserId);
 
+    const bookmarks = await this.getConversationBookmarks(conversationId);
+
     return {
       conversation,
       messages,
       participants,
+      bookmarks,
       exportedAt: new Date(),
       version: '1.0' // Version for future compatibility
     };
