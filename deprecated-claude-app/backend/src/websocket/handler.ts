@@ -343,7 +343,7 @@ function truncateForPersonaBudget(
     const msg = messages[i];
     const branch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
     const msgTokens = estimateTokens(branch?.content || '');
-    if (totalTokens + msgTokens > available) break;
+    if (totalTokens + msgTokens > available && startIndex < messages.length) break;
     totalTokens += msgTokens;
     startIndex = i;
   }
