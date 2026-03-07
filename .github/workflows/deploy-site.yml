@@ -161,28 +161,29 @@ jobs:
           SERVICE_NAME="${{ steps.vars.outputs.service_name }}"
           
           echo "🚀 Deploying to $DEPLOY_PATH (${{ matrix.environment }})"
-          
+
           # Stop the service
           sudo -n systemctl stop $SERVICE_NAME 2>/dev/null || true
-          
-          # Backup data directory
+
+          # SAFE DEPLOY: Move data directory out of blast radius (instant, same filesystem)
+          # Never cp -r data — on a full disk this causes partial copies and data loss
           if [ -d "$DEPLOY_PATH/backend/data" ]; then
-            echo "Backing up data directory..."
-            cp -r "$DEPLOY_PATH/backend/data" /tmp/${SERVICE_NAME}-data-backup
+            echo "Preserving data directory..."
+            mv "$DEPLOY_PATH/backend/data" /tmp/${SERVICE_NAME}-data-safe
           fi
-          
-          # Clean deployment directory
+
+          # Clean deployment directory (data is safely out of the way)
           rm -rf "$DEPLOY_PATH/backend/"* 2>/dev/null || true
           rm -rf "$DEPLOY_PATH/frontend/"* 2>/dev/null || true
           rm -rf "$DEPLOY_PATH/shared/"* 2>/dev/null || true
-          
+
           # Ensure directories exist
           mkdir -p "$DEPLOY_PATH/backend" "$DEPLOY_PATH/frontend" "$DEPLOY_PATH/shared"
-          
-          # Restore data directory
-          if [ -d /tmp/${SERVICE_NAME}-data-backup ]; then
+
+          # Restore data directory (instant, same filesystem)
+          if [ -d /tmp/${SERVICE_NAME}-data-safe ]; then
             echo "Restoring data directory..."
-            mv /tmp/${SERVICE_NAME}-data-backup "$DEPLOY_PATH/backend/data"
+            mv /tmp/${SERVICE_NAME}-data-safe "$DEPLOY_PATH/backend/data"
           fi
 
     - name: Copy files to server
