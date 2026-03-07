@@ -990,13 +990,14 @@ export class InferenceService {
       // Note: Anthropic API accepts assistant-only messages for prefill, so this is optional
       const prefillSettings = conversation?.prefillUserMessage || { enabled: true, content: '<cmd>cat untitled.log</cmd>' };
       
-      if (prefillSettings.enabled) {
-        // If persona context is provided, use it AS the user message content directly
-        // No wrapper tags — keeps the KV cache clean for session continuation
-        let cmdContent = prefillSettings.content;
-        if (personaContext && personaContext.trim()) {
-          cmdContent = personaContext;
-          Logger.inference(`[InferenceService] Injecting persona context (${Math.ceil(personaContext.length / 4)} est. tokens) as prefill user message`);
+      // Always inject persona context as the prefill user message if present,
+      // even when prefillSettings.enabled is false (otherwise the budget reserved
+      // by truncateForPersonaBudget is wasted and the persona is silently dropped)
+      const hasPersonaContext = personaContext && personaContext.trim();
+      if (prefillSettings.enabled || hasPersonaContext) {
+        let cmdContent = hasPersonaContext ? personaContext! : prefillSettings.content;
+        if (hasPersonaContext) {
+          Logger.inference(`[InferenceService] Injecting persona context (${Math.ceil(personaContext!.length / 4)} est. tokens) as prefill user message`);
         }
 
         const cmdMessage: Message = {
