@@ -230,7 +230,8 @@
     <!-- Advanced Settings Dialog -->
     <v-dialog
       v-model="showSettingsDialog"
-      max-width="600"
+      max-width="700"
+      scrollable
       @update:model-value="onSettingsDialogToggled"
     >
       <v-card v-if="selectedParticipantId">
@@ -252,7 +253,29 @@
             class="mb-4"
             placeholder="You are a helpful AI assistant..."
           />
-          
+
+          <!-- Persona Context: large private memory body injected per-participant -->
+          <div class="mb-4">
+            <v-textarea
+              :model-value="getParticipantField('personaContext', '')"
+              @update:model-value="(val) => setParticipantField('personaContext', val)"
+              label="Persona Context (private memories)"
+              variant="outlined"
+              rows="6"
+              hide-details
+              placeholder="Paste persona memories, conversation history, or other material private to this participant..."
+            />
+            <div v-if="getParticipantField('personaContext', '')" class="d-flex align-center mt-1">
+              <span class="text-caption text-grey">
+                ~{{ Math.ceil((getParticipantField('personaContext', '') as string).length / 4).toLocaleString() }} tokens
+              </span>
+              <v-spacer />
+              <span v-if="selectedParticipantModel" class="text-caption text-grey">
+                {{ Math.ceil(((selectedParticipantModel.contextWindow || 200000) - Math.ceil((getParticipantField('personaContext', '') as string).length / 4) - Math.ceil((getParticipantField('systemPrompt', '') as string).length / 4) - (getParticipantSettingsField('maxTokens', 4096) as number) - 2000)).toLocaleString() }} tokens available for conversation
+              </span>
+            </div>
+          </div>
+
           <v-slider
             :model-value="getParticipantSettingsField('temperature', 1.0)"
             @update:model-value="(val) => setParticipantSettingsField('temperature', val)"

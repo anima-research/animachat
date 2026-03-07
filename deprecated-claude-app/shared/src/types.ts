@@ -369,6 +369,10 @@ export const ParticipantSchema = z.object({
   conversationMode: ConversationModeEnum.optional(), // Per-participant format override (auto, prefill, messages, completion)
   isActive: z.boolean().default(true),
 
+  // Persona context: large text body injected per-participant at inference time
+  // Contains memories, conversation history, or other material private to this participant
+  personaContext: z.string().optional(),
+
   // Persona system fields
   personaId: z.string().uuid().optional(), // If set, this participant is a persona
   personaParticipationId: z.string().uuid().optional() // Link to participation record
@@ -384,6 +388,7 @@ export const UpdateParticipantSchema = z.object({
   contextManagement: ContextManagementSchema.optional(),
   conversationMode: ConversationModeEnum.optional(), // Per-participant format override
   isActive: z.boolean().optional(),
+  personaContext: z.string().optional(),
   // Persona system fields
   personaId: z.string().uuid().optional(),
   personaParticipationId: z.string().uuid().optional()
