@@ -72,21 +72,23 @@ export interface Store {
   logout(): void;
   
   loadConversations(): Promise<void>;
-  loadConversation(id: string): Promise<void>;
+  loadConversation(id: string, targetMessageId?: string): Promise<void>;
   createConversation(model: string, title?: string, format?: 'standard' | 'prefill'): Promise<Conversation>;
   updateConversation(id: string, updates: Partial<Conversation>): Promise<void>;
   archiveConversation(id: string): Promise<void>;
   duplicateConversation(id: string): Promise<Conversation>;
   compactConversation(id: string): Promise<{ success: boolean; result: any; message: string }>;
   
-  loadMessages(conversationId: string): Promise<void>;
+  loadMessages(conversationId: string, limit?: number, beforeMessageId?: string, direction?: 'older' | 'newer'): Promise<boolean>;
+  clearMessages(): Promise<void>;
+  getMessagePage(conversationId: string, limit?: number, cursorMessageId?: string, direction?: 'older' | 'newer'): Promise<Message[]>;
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number): Promise<void>;
   continueGeneration(responderId?: string, explicitParentBranchId?: string, samplingBranches?: number): Promise<void>;
   regenerateMessage(messageId: string, branchId: string, parentBranchId?: string, samplingBranches?: number): Promise<void>;
   abortGeneration(): void;
   editMessage(messageId: string, branchId: string, content: string, responderId?: string, skipRegeneration?: boolean, samplingBranches?: number): Promise<void>;
   switchBranch(messageId: string, branchId: string): void;
-  switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>): void;
+  activateBranch(messageId: string, branchId: string): Promise<void>;
   deleteMessage(messageId: string, branchId: string): Promise<void>;
   getVisibleMessages(): Message[];
   
@@ -378,7 +380,7 @@ export function createStore(): {
       }
     },
     
-    async loadConversation(id: string, retryCount = 0) {
+    async loadConversation(id: string, targetMessageId?: string, retryCount = 0) {
       const maxRetries = 3;
       const retryDelay = 1000;
       const startTime = Date.now();
@@ -404,20 +406,32 @@ export function createStore(): {
       }
 
       try {
-        console.log(`[loadConversation] Loading ${id}... (attempt ${retryCount + 1}/${maxRetries})`);
+        console.log(`[loadConversation] Loading ${id}${targetMessageId ? ` around message ${targetMessageId}` : ''}... (attempt ${retryCount + 1}/${maxRetries})`);
         console.log(`[loadConversation] API base URL: ${api.defaults.baseURL}`);
-        
+
         const response = await api.get(`/conversations/${id}`);
         const fetchTime = Date.now() - startTime;
         console.log(`[loadConversation] Conversation data received in ${fetchTime}ms`);
         console.log(`[loadConversation] Response status: ${response.status}, has data: ${!!response.data}`);
-        
+
         state.currentConversation = response.data;
         console.log(`[loadConversation] Set currentConversation, now loading messages and read state...`);
 
+        // Clear existing messages before loading new conversation
+        // Important for deep links which use merge instead of replace
+        state.allMessages = [];
+
         // Load messages and read state in parallel to avoid flash of unread
+        // If we have a targetMessageId (deep link), load messages around it instead of latest
+        const messageLoadPromise = targetMessageId
+          ? Promise.all([
+              this.loadMessages(id, 50, targetMessageId, 'older'),
+              this.loadMessages(id, 50, targetMessageId, 'newer'),
+            ]).then(() => true)
+          : this.loadMessages(id, 100);
+
         const [, uiStateResult] = await Promise.all([
-          this.loadMessages(id),
+          messageLoadPromise,
           api.get(`/conversations/${id}/ui-state`).catch(err => {
             console.warn(`[loadConversation] Failed to load read state:`, err);
             return { data: { readBranchIds: [] } };
@@ -592,47 +606,71 @@ export function createStore(): {
     },
     
     // Message actions
-    async loadMessages(conversationId: string, retryCount = 0) {
+    async loadMessages(conversationId: string, limit?: number, cursorMessageId?: string, direction: 'older' | 'newer' = 'older') {
+      const messages = await this.getMessagePage(conversationId, limit, cursorMessageId, direction);
+      if (messages.length > 0) {
+        if (cursorMessageId) {
+          const existingIds = new Set(state.allMessages.map(m => m.id));
+          const unique = messages.filter(m => !existingIds.has(m.id));
+          if (direction === 'newer') {
+            state.allMessages = state.allMessages.concat(unique);
+          } else {
+            state.allMessages = unique.concat(state.allMessages);
+          }
+        } else {
+          state.allMessages = messages;
+        }
+
+        state.messagesVersion++;
+        invalidateSortCache();
+        return true;
+      }
+      return false;
+    },
+
+    async clearMessages() {
+      state.allMessages = [];
+      state.messagesVersion++;
+      invalidateSortCache();
+    },
+
+    // Message actions
+    async getMessagePage(conversationId: string, limit?: number, cursorMessageId?: string, direction: 'older' | 'newer' = 'older', retryCount = 0) {
       const maxRetries = 3;
       const retryDelay = 1000;
       const startTime = Date.now();
       
       try {
-        console.log(`[loadMessages] Loading messages for ${conversationId}... (attempt ${retryCount + 1}/${maxRetries})`);
+        const numMessages = limit !== undefined ? limit : 'all';
+        console.log(`[getMessagePage] Loading ${numMessages} for ${conversationId}... (attempt ${retryCount + 1}/${maxRetries})`);
         
-        const response = await api.get(`/conversations/${conversationId}/messages`);
+        const response = await api.get(`/conversations/${conversationId}/messages`, {
+          params: {
+            cursor: cursorMessageId,
+            direction: direction,
+            limit: limit,
+          },
+        });
+
         const fetchTime = Date.now() - startTime;
         
-        console.log(`[loadMessages] Response received in ${fetchTime}ms`);
-        console.log(`[loadMessages] Response status: ${response.status}`);
-        console.log(`[loadMessages] Response data is array: ${Array.isArray(response.data)}, length: ${response.data?.length || 0}`);
+        console.log(`[getMessagePage] Response received in ${fetchTime}ms`);
+        console.log(`[getMessagePage] Response status: ${response.status}`);
+        console.log(`[getMessagePage] Response data is array: ${Array.isArray(response.data)}, length: ${response.data?.length || 0}`);
         
         if (!response.data) {
-          console.warn(`[loadMessages] ⚠ Response data is null/undefined!`);
+          console.warn(`[getMessagePage] ⚠ Response data is null/undefined!`);
         }
         
-        state.allMessages = response.data || [];
-        state.messagesVersion++;
-        invalidateSortCache();
-        
-        console.log(`[loadMessages] ✓ Loaded ${state.allMessages.length} messages, messagesVersion: ${state.messagesVersion}`);
-        
-        // Log branch info for debugging
-        const totalBranches = state.allMessages.reduce((acc, m) => acc + (m.branches?.length || 0), 0);
-        console.log(`[loadMessages] Total branches across all messages: ${totalBranches}`);
-        
-        // Log if this is multi-participant
-        if (state.currentConversation?.format !== 'standard') {
-          console.log(`[loadMessages] Multi-participant conversation format: ${state.currentConversation?.format}`);
-        }
+        return response.data || [];
       } catch (error: any) {
         const elapsed = Date.now() - startTime;
-        console.error(`[loadMessages] ✗ Failed after ${elapsed}ms (attempt ${retryCount + 1}/${maxRetries})`);
-        console.error(`[loadMessages] Error code: ${error?.code}`);
-        console.error(`[loadMessages] Error message: ${error?.message}`);
-        console.error(`[loadMessages] Error response status: ${error?.response?.status}`);
-        console.error(`[loadMessages] Error response data:`, error?.response?.data);
-        console.error(`[loadMessages] Full error:`, error);
+        console.error(`[getMessagePage] ✗ Failed after ${elapsed}ms (attempt ${retryCount + 1}/${maxRetries})`);
+        console.error(`[getMessagePage] Error code: ${error?.code}`);
+        console.error(`[getMessagePage] Error message: ${error?.message}`);
+        console.error(`[getMessagePage] Error response status: ${error?.response?.status}`);
+        console.error(`[getMessagePage] Error response data:`, error?.response?.data);
+        console.error(`[getMessagePage] Full error:`, error);
         
         // Retry on network errors or timeouts
         if (retryCount < maxRetries - 1 && (
@@ -642,12 +680,12 @@ export function createStore(): {
           error?.message?.includes('Network Error')
         )) {
           const delay = retryDelay * (retryCount + 1);
-          console.log(`[loadMessages] Will retry in ${delay}ms...`);
+          console.log(`[getMessagePage] Will retry in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
-          return this.loadMessages(conversationId, retryCount + 1);
+          return this.getMessagePage(conversationId, limit, cursorMessageId, direction, retryCount + 1);
         }
         
-        console.error(`[loadMessages] No more retries, giving up`);
+        console.error(`[getMessagePage] No more retries, giving up`);
         throw error;
       }
     },
@@ -888,108 +926,25 @@ export function createStore(): {
       this.markBranchesAsRead(newVisibleBranchIds);
     },
 
-    // Batch switch multiple branches at once - much faster for tree navigation
-    // Does all the expensive work once instead of per-branch
-    switchBranchesBatch(switches: Array<{ messageId: string; branchId: string }>) {
-      if (switches.length === 0) return;
+    async activateBranch(messageId: string, branchId: string) {
+      const response = await api.post(`/conversations/${state.currentConversation?.id}/activate-branch`, {
+        messageId: messageId,
+        branchId: branchId,
+        isDetached: state.isDetachedFromMainBranch
+      }).catch(error => {
+        console.error('Failed to activate branch:', error);
+      });
 
-      // Apply all local state changes first
-      const changedMessages = new Map<string, string>(); // messageId -> branchId
-      for (const { messageId, branchId } of switches) {
-        const message = state.allMessages.find(m => m.id === messageId);
-        if (!message) continue;
-
-        if (message.activeBranchId !== branchId) {
-          message.activeBranchId = branchId;
-          changedMessages.set(messageId, branchId);
-        }
-      }
-
-      if (changedMessages.size === 0) {
-        return;
-      }
-
-      // Build the branch path by following parentBranchId from the deepest switch
-      const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
-
-      // Find the deepest switch (furthest from root in the tree)
-      let deepestSwitchBranchId: string | null = null;
-      let deepestIndex = -1;
-
-      for (const { messageId, branchId } of switches) {
-        const idx = sortedMessages.findIndex(m => m.id === messageId);
-        if (idx > deepestIndex) {
-          deepestIndex = idx;
-          deepestSwitchBranchId = branchId;
-        }
-      }
-
-      if (!deepestSwitchBranchId) {
-        console.warn('No valid switch found');
-        return;
-      }
-
-      // Build the branch path by tracing from deepest switch back to root
-      const branchPath: string[] = [];
-      let currentBranchId: string | null = deepestSwitchBranchId;
-
-      while (currentBranchId && currentBranchId !== 'root') {
-        branchPath.unshift(currentBranchId);
-        const msg = state.allMessages.find(m => m.branches.some(b => b.id === currentBranchId));
-        if (!msg) break;
-        const branch = msg.branches.find(b => b.id === currentBranchId);
-        currentBranchId = branch?.parentBranchId || null;
-      }
-
-      // Update all messages to follow this path
-      for (const msg of sortedMessages) {
-        for (const branch of msg.branches) {
-          const parentInPath = branch.parentBranchId === 'root' || branchPath.includes(branch.parentBranchId!);
-          const branchInPath = branchPath.includes(branch.id);
-
-          if (parentInPath && branchInPath && msg.activeBranchId !== branch.id) {
-            msg.activeBranchId = branch.id;
-            changedMessages.set(msg.id, branch.id);
-            break;
+      if (response?.data?.changedBranches) {
+        for (const { messageId, branchId } of response.data.changedBranches) {
+          const message = state.allMessages.find(m => m.id === messageId);
+          if (message) {
+            message.activeBranchId = branchId;
           }
         }
+        state.messagesVersion++;
+        invalidateSortCache();
       }
-
-      // Persist to appropriate endpoint based on mode
-      if (state.currentConversation) {
-        for (const [msgId, branchId] of changedMessages) {
-          if (state.isDetachedFromMainBranch) {
-            api.patch(`/conversations/${state.currentConversation.id}/ui-state`, {
-              detachedBranch: { messageId: msgId, branchId }
-            }).catch(error => {
-              console.error('Failed to persist detached branch:', error);
-            });
-          } else {
-            api.post(`/conversations/${state.currentConversation.id}/set-active-branch`, {
-              messageId: msgId,
-              branchId
-            }).catch(error => {
-              console.error('Failed to persist branch switch:', error);
-            });
-          }
-        }
-      }
-
-      // Invalidate cache and recompute
-      state.messagesVersion++;
-      invalidateSortCache();
-      const newVisible = this.getVisibleMessages();
-
-      // Clear notifications for now-visible branches and mark them as read
-      const newVisibleBranchIds = Array.from(
-        new Set(newVisible.map(m => m.activeBranchId))
-      );
-      for (const branchId of state.hiddenBranchActivities.keys()) {
-        if (newVisibleBranchIds.includes(branchId)) {
-          state.hiddenBranchActivities.delete(branchId);
-        }
-      }
-      this.markBranchesAsRead(newVisibleBranchIds);
     },
 
     async deleteMessage(messageId: string, branchId: string) {
@@ -1085,10 +1040,21 @@ export function createStore(): {
         // console.log(`Message ${i}:`, message.id, 'activeBranchId:', message.activeBranchId, 
         //             'branches:', message.branches.length, 
         //             'activeBranch parentBranchId:', activeBranch?.parentBranchId);
+
+        // Case 0: Active branch doesn't exist or doesn't connect to our path
+        // Be strict: skip this message. Don't try to recover via other branches,
+        // as that can accidentally include orphaned/deleted branches from other roots.
+        // (This mirrors the import preview logic which is strict about following activeBranchId only)
+        if (!activeBranch) {
+          console.log('Skipping message with deleted active branch:', message.id);
+          continue;
+        }
+        // Message is from a different conversation path - skip it
         
         // Case 1: Active branch exists and is a root message
         // Only accept the canonical root - skip others (handles multi-root conversations from looming)
-        if (activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root')) {
+
+        if (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root') {
           // Only accept if this is the canonical root (or if no canonical was determined)
           if (branchPath.length === 0 && (!canonicalRootId || message.id === canonicalRootId)) {
             visibleMessages.push(message);
@@ -1099,8 +1065,18 @@ export function createStore(): {
           continue;
         }
 
-        // Case 2: Active branch exists and continues from our current path
-        if (activeBranch && branchPath.includes(activeBranch.parentBranchId!)) {
+        // Case 2: Active branch is a pseudo-root (earliest loaded message whose parent isn't loaded)
+        // Treat it as a root and build down from here
+        if (!state.allMessages.some(m => m.branches.some(b => b.id === activeBranch.parentBranchId))) {
+          if (branchPath.length === 0) {
+            visibleMessages.push(message);
+            branchPath.push(activeBranch.id);
+            continue;
+          }
+        }
+
+        // Case 3: Active branch exists and continues from our current path
+        if (branchPath.includes(activeBranch.parentBranchId!)) {
           // This message is a valid continuation
           visibleMessages.push(message);
           
@@ -1115,14 +1091,6 @@ export function createStore(): {
           continue;
         }
 
-        // Case 3: Active branch doesn't exist or doesn't connect to our path
-        // Be strict: skip this message. Don't try to recover via other branches,
-        // as that can accidentally include orphaned/deleted branches from other roots.
-        // (This mirrors the import preview logic which is strict about following activeBranchId only)
-        if (!activeBranch) {
-          console.log('Skipping message with deleted active branch:', message.id);
-        }
-        // Message is from a different conversation path - skip it
       }
       
       // Update cache before returning
