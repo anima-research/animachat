@@ -694,12 +694,12 @@ const pseudoPrefillModeOptions = [
 
 const selectedParticipantPseudoPrefillMode = computed(() => {
   const participant = participants.value.find(p => p.id === selectedParticipantId.value);
-  return (participant as any)?.pseudoPrefillMode || 'cat';
+  return participant?.pseudoPrefillMode || 'cat';
 });
 
 const selectedParticipantPseudoPrefillFilename = computed(() => {
   const participant = participants.value.find(p => p.id === selectedParticipantId.value);
-  return (participant as any)?.pseudoPrefillFilename || 'conversation.txt';
+  return participant?.pseudoPrefillFilename || 'conversation.txt';
 });
 
 

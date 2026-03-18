@@ -1258,7 +1258,7 @@ export class InferenceService {
       // The model sees the full log as context and continues from where the cut left off.
       const pseudoPrefillMessages: Message[] = [];
       const responderParticipant = responderId ? participants.find(p => p.id === responderId) : undefined;
-      const filename = (responderParticipant as any)?.pseudoPrefillFilename || 'conversation.txt';
+      const filename = responderParticipant?.pseudoPrefillFilename || 'conversation.txt';
       let messageOrder = 0;
 
       // Build conversation log (same logic as prefill branch, minus cache breakpoints)
@@ -1422,7 +1422,7 @@ export class InferenceService {
       // Two modes available:
       // - 'cat': model repeats entire file, we strip the prefix (more reliable, higher output tokens)
       // - 'tail-cut': model outputs only new content (efficient, needs simulated stop sequences)
-      const pseudoPrefillMode = (responderParticipant as any)?.pseudoPrefillMode || 'cat';
+      const pseudoPrefillMode = responderParticipant?.pseudoPrefillMode || 'cat';
       const continuationContent = pseudoPrefillMode === 'tail-cut'
         ? `<cmd>cut -c ${charCount + 1}- < ${filename}</cmd>`
         : `<cmd>cat ${filename}</cmd>`;
@@ -1970,6 +1970,9 @@ export class InferenceService {
       }
     }
 
+    // Escape regex metacharacters in responder name (user-supplied)
+    const escapedResponderName = responderName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     // The responder turn prefix that marks the end of the log.
     // The model's reproduction won't be byte-for-byte, but this pattern
     // will appear at roughly the expected position.
@@ -2025,9 +2028,24 @@ export class InferenceService {
 
       if (isComplete) {
         if (completionSent) return;
+        // If log hasn't been stripped yet (short response in cat mode),
+        // apply stripping now before flushing
+        if (buffer.length > 0 && !logStripped) {
+          const lastPrefixIdx = buffer.lastIndexOf(responderTurnPrefix);
+          if (lastPrefixIdx >= 0) {
+            buffer = buffer.substring(lastPrefixIdx + responderTurnPrefix.length).replace(/^\s+/, '');
+            logStripped = true;
+            nameStripped = true;
+            console.log(`[PseudoPrefill] Late log strip on completion (short response), remaining: ${buffer.length} chars`);
+          } else {
+            // No responder prefix found at all — emit raw as fallback
+            logStripped = true;
+            console.log(`[PseudoPrefill] WARNING: no responder prefix on completion, emitting raw buffer (${buffer.length} chars)`);
+          }
+        }
         if (buffer.length > 0 && logStripped) {
           if (!nameStripped) {
-            const namePattern = new RegExp(`^\\s*${responderName}:\\s*`);
+            const namePattern = new RegExp(`^\\s*${escapedResponderName}:\\s*`);
             buffer = buffer.replace(namePattern, '');
             nameStripped = true;
           }
@@ -2087,7 +2105,7 @@ export class InferenceService {
 
       // Phase 2: Strip responder name prefix
       if (!nameStripped) {
-        const namePattern = new RegExp(`^\\s*${responderName}:\\s*`);
+        const namePattern = new RegExp(`^\\s*${escapedResponderName}:\\s*`);
         if (namePattern.test(buffer)) {
           buffer = buffer.replace(namePattern, '');
           nameStripped = true;
@@ -2133,7 +2151,8 @@ export class InferenceService {
         }
         
         // Check if buffer starts with "ParticipantName: "
-        const namePattern = new RegExp(`^${responderName}:\\s*`);
+        const escapedName = responderName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const namePattern = new RegExp(`^${escapedName}:\\s*`);
         if (namePattern.test(buffer)) {
           // Strip the name prefix
           buffer = buffer.replace(namePattern, '');

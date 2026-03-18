@@ -367,7 +367,9 @@ export const ParticipantSchema = z.object({
   systemPrompt: z.string().optional(), // Only for assistant participants
   settings: ModelSettingsSchema.optional(), // Only for assistant participants
   contextManagement: ContextManagementSchema.optional(), // Only for assistant participants
-  conversationMode: ConversationModeEnum.optional(), // Per-participant format override (auto, prefill, messages, completion)
+  conversationMode: ConversationModeEnum.optional(), // Per-participant format override (auto, prefill, messages, pseudo-prefill, completion)
+  pseudoPrefillMode: z.enum(['cat', 'tail-cut']).default('cat').optional(), // Pseudo-prefill continuation method
+  pseudoPrefillFilename: z.string().default('conversation.txt').optional(), // Filename for CLI simulation commands
   isActive: z.boolean().default(true),
 
   // Persona context: large text body injected per-participant at inference time
@@ -388,6 +390,8 @@ export const UpdateParticipantSchema = z.object({
   settings: ModelSettingsSchema.optional(),
   contextManagement: ContextManagementSchema.optional(),
   conversationMode: ConversationModeEnum.optional(), // Per-participant format override
+  pseudoPrefillMode: z.enum(['cat', 'tail-cut']).optional(),
+  pseudoPrefillFilename: z.string().optional(),
   isActive: z.boolean().optional(),
   personaContext: z.string().optional(),
   // Persona system fields
@@ -602,7 +606,6 @@ export const ConversationSchema = z.object({
     messageThreshold: z.number().default(10) // Apply CLI prompt for conversations under this many messages
   }).optional(),
   combineConsecutiveMessages: z.boolean().default(true).optional(), // Combine consecutive same-role messages when building context (default: true)
-  pseudoPrefillMode: z.enum(['cat', 'tail-cut']).default('cat').optional(), // Pseudo-prefill continuation mode for non-prefill models in group chat
   totalBranchCount: z.number().default(0).optional() // Cached count of non-system branches (calculated during event replay)
 });
 
