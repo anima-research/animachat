@@ -1257,7 +1257,7 @@ export class InferenceService {
       // Structure: user(cut -c 1-N), assistant(conversation log), user(cat filename)
       // The model sees the full log as context and continues from where the cut left off.
       const pseudoPrefillMessages: Message[] = [];
-      const filename = 'conversation.txt';
+      const filename = (responderForMode as any)?.pseudoPrefillFilename || 'conversation.txt';
       let messageOrder = 0;
 
       // Build conversation log (same logic as prefill branch, minus cache breakpoints)

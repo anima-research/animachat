@@ -498,6 +498,19 @@
             </template>
           </v-select>
 
+          <v-text-field
+            v-if="selectedParticipantConversationMode === 'pseudo-prefill'"
+            :model-value="selectedParticipantPseudoPrefillFilename"
+            @update:model-value="(val) => setParticipantField('pseudoPrefillFilename', val)"
+            label="Filename"
+            placeholder="conversation.txt"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hint="Filename used in the CLI simulation commands"
+            persistent-hint
+          />
+
           <v-alert
             type="info"
             variant="tonal"
@@ -682,6 +695,11 @@ const pseudoPrefillModeOptions = [
 const selectedParticipantPseudoPrefillMode = computed(() => {
   const participant = participants.value.find(p => p.id === selectedParticipantId.value);
   return (participant as any)?.pseudoPrefillMode || 'cat';
+});
+
+const selectedParticipantPseudoPrefillFilename = computed(() => {
+  const participant = participants.value.find(p => p.id === selectedParticipantId.value);
+  return (participant as any)?.pseudoPrefillFilename || 'conversation.txt';
 });
 
 
