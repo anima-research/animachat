@@ -141,8 +141,9 @@ export type Provider = z.infer<typeof ProviderEnum>;
 // - 'auto': Use provider default (prefill for anthropic/bedrock, messages for others)
 // - 'prefill': Force prefill format (conversation log with participant names)
 // - 'messages': Force messages format (alternating user/assistant)
+// - 'pseudo-prefill': CLI simulation trick for non-prefill models in group chat
 // - 'completion': OpenRouter completion mode (prompt field instead of messages)
-export const ConversationModeEnum = z.enum(['auto', 'prefill', 'messages', 'completion']);
+export const ConversationModeEnum = z.enum(['auto', 'prefill', 'messages', 'pseudo-prefill', 'completion']);
 export type ConversationMode = z.infer<typeof ConversationModeEnum>;
 
 // Avatar Pack types
@@ -366,7 +367,9 @@ export const ParticipantSchema = z.object({
   systemPrompt: z.string().optional(), // Only for assistant participants
   settings: ModelSettingsSchema.optional(), // Only for assistant participants
   contextManagement: ContextManagementSchema.optional(), // Only for assistant participants
-  conversationMode: ConversationModeEnum.optional(), // Per-participant format override (auto, prefill, messages, completion)
+  conversationMode: ConversationModeEnum.optional(), // Per-participant format override (auto, prefill, messages, pseudo-prefill, completion)
+  pseudoPrefillMode: z.enum(['cat', 'tail-cut']).default('cat').optional(), // Pseudo-prefill continuation method
+  pseudoPrefillFilename: z.string().default('conversation.txt').optional(), // Filename for CLI simulation commands
   isActive: z.boolean().default(true),
 
   // Persona context: large text body injected per-participant at inference time
@@ -387,6 +390,8 @@ export const UpdateParticipantSchema = z.object({
   settings: ModelSettingsSchema.optional(),
   contextManagement: ContextManagementSchema.optional(),
   conversationMode: ConversationModeEnum.optional(), // Per-participant format override
+  pseudoPrefillMode: z.enum(['cat', 'tail-cut']).optional(),
+  pseudoPrefillFilename: z.string().optional(),
   isActive: z.boolean().optional(),
   personaContext: z.string().optional(),
   // Persona system fields

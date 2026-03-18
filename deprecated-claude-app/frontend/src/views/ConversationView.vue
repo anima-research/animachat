@@ -4448,6 +4448,8 @@ async function updateParticipants(updatedParticipants: Participant[]) {
           existing.systemPrompt !== updated.systemPrompt ||
           existing.personaContext !== updated.personaContext ||
           existing.conversationMode !== updated.conversationMode ||
+          existing.pseudoPrefillMode !== updated.pseudoPrefillMode ||
+          existing.pseudoPrefillFilename !== updated.pseudoPrefillFilename ||
           !isEqual(existing.settings, updated.settings) ||
           !isEqual(existing.contextManagement, updated.contextManagement);
         
@@ -4465,7 +4467,9 @@ async function updateParticipants(updatedParticipants: Participant[]) {
             personaContext: updated.personaContext,
             settings: updated.settings,
             contextManagement: updated.contextManagement,
-            conversationMode: updated.conversationMode
+            conversationMode: updated.conversationMode,
+            pseudoPrefillMode: updated.pseudoPrefillMode,
+            pseudoPrefillFilename: updated.pseudoPrefillFilename
           });
           
           if (!parseResult.success) {
