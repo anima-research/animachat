@@ -10,12 +10,14 @@ import { ModelLoader } from '../config/model-loader.js';
 import { Logger } from '../utils/logger.js';
 import { ContextManager } from './context-manager.js';
 
-// Internal format type that includes 'messages' and 'completion' modes
+// Internal format type that includes 'messages', 'completion', and 'pseudo-prefill' modes
 // - 'standard': Traditional alternating user/assistant (no participant names)
-// - 'prefill': Conversation log format with participant names
+// - 'prefill': Conversation log format with participant names (native prefill)
+// - 'pseudo-prefill': Conversation log format using CLI simulation trick (cut/cat)
+//   for models that don't support native prefill but benefit from log format
 // - 'messages': Like prefill but without actual prefill support (fallback)
 // - 'completion': OpenRouter completion mode (prompt field instead of messages)
-type InternalConversationFormat = ConversationFormat | 'messages' | 'completion';
+type InternalConversationFormat = ConversationFormat | 'messages' | 'completion' | 'pseudo-prefill';
 
 export class InferenceService {
   private bedrockService: BedrockService;
@@ -228,11 +230,20 @@ export class InferenceService {
       personaContext
     );
 
-    // For messages mode, provide a default system prompt if none is provided
+    // For messages/pseudo-prefill mode, provide a default system prompt if none is provided
     // This helps the model understand its role in a multi-participant chat
     // If user provides a custom prompt, use it as-is (full override)
     let effectiveSystemPrompt = systemPrompt;
-    if (actualFormat === 'messages' && responderId) {
+    if (actualFormat === 'pseudo-prefill') {
+      // Pseudo-prefill: append CLI simulation directive to system prompt
+      const cliDirective = 'The assistant is in CLI simulation mode, and responds to the user\'s CLI commands only with the output of the command.';
+      if (effectiveSystemPrompt && effectiveSystemPrompt.trim()) {
+        effectiveSystemPrompt = `${effectiveSystemPrompt}\n\n${cliDirective}`;
+      } else {
+        effectiveSystemPrompt = cliDirective;
+      }
+      Logger.inference(`[InferenceService] Using pseudo-prefill system prompt with CLI directive`);
+    } else if (actualFormat === 'messages' && responderId) {
       const responder = participants.find(p => p.id === responderId);
       if (responder && (!effectiveSystemPrompt || effectiveSystemPrompt.trim() === '')) {
         const responderName = responder.name || 'Assistant';
@@ -250,6 +261,9 @@ export class InferenceService {
     }
 
     // Build stop sequences for prefill/messages formats
+    // NOTE: pseudo-prefill does NOT use API-level stop sequences because the model
+    // outputs the full file content (which starts with participant names that would
+    // trigger stop sequences prematurely). Post-facto stop sequences handle turn-taking.
     let stopSequences: string[] | undefined;
     if (actualFormat === 'prefill' || actualFormat === 'messages') {
       // Always include these common stop sequences
@@ -275,7 +289,8 @@ export class InferenceService {
       }
     }
     
-    // Build post-facto stop sequences for ALL prefill/messages modes
+    // Build post-facto stop sequences for prefill/messages modes
+    // NOTE: pseudo-prefill handles stop sequences in its own chunk handler (after log stripping)
     // This is critical because:
     // 1. Gemini only supports 5 stop sequences max
     // 2. Native API stop sequences may not work reliably with all providers
@@ -325,9 +340,25 @@ export class InferenceService {
     };
     
     // Wrap chunk handler for messages mode to strip participant names
-    let baseOnChunk = actualFormat === 'messages' 
-      ? this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId)
-      : trackingOnChunk;
+    // For pseudo-prefill, use a dedicated handler that strips the repeated conversation log
+    let baseOnChunk: typeof trackingOnChunk;
+    if (actualFormat === 'pseudo-prefill') {
+      // Get the conversation log that was embedded in the assistant turn.
+      const pseudoPrefillLog = formattedMessages.find(m => {
+        const branch = m.branches.find(b => b.id === m.activeBranchId);
+        return branch?.role === 'assistant';
+      });
+      const logContent = pseudoPrefillLog?.branches.find(b => b.id === pseudoPrefillLog.activeBranchId)?.content || '';
+      // Detect mode from the continuation command
+      const catMsg = formattedMessages[formattedMessages.length - 1];
+      const catContent = catMsg?.branches.find(b => b.id === catMsg.activeBranchId)?.content || '';
+      const ppMode: 'cat' | 'tail-cut' = catContent.includes('cat ') && !catContent.includes('cut ') ? 'cat' : 'tail-cut';
+      baseOnChunk = this.createPseudoPrefillChunkHandler(trackingOnChunk, logContent, participants, responderId, ppMode);
+    } else if (actualFormat === 'messages') {
+      baseOnChunk = this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId);
+    } else {
+      baseOnChunk = trackingOnChunk;
+    }
 
     // In prefill mode, disable native API thinking - it's incompatible with prefill format
     // (the model is continuing a pre-filled response, not generating fresh)
@@ -1221,6 +1252,200 @@ export class InferenceService {
       return prefillMessages;
     }
     
+    if (format === 'pseudo-prefill') {
+      // Pseudo-prefill: build conversation log (same as prefill) but wrap in CLI simulation.
+      // Structure: user(cut -c 1-N), assistant(conversation log), user(cat filename)
+      // The model sees the full log as context and continues from where the cut left off.
+      const pseudoPrefillMessages: Message[] = [];
+      const filename = 'conversation.txt';
+      let messageOrder = 0;
+
+      // Build conversation log (same logic as prefill branch, minus cache breakpoints)
+      let conversationContent = '';
+      let lastParticipantName = '';
+
+      // Inject persona context at the start of the log if present
+      if (personaContext && personaContext.trim()) {
+        conversationContent += personaContext.trim() + '\n\n';
+        Logger.inference(`[PseudoPrefill] Injecting persona context (${Math.ceil(personaContext.length / 4)} est. tokens) into conversation log`);
+      }
+
+      // Helper to check if an attachment is an image
+      const isImageAttachmentPP = (attachment: any): boolean => {
+        const imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+        const fileExtension = attachment.fileName?.split('.').pop()?.toLowerCase() || '';
+        return imageExtensions.includes(fileExtension) && !!attachment.content;
+      };
+
+      // Track image messages that need separate user turns
+      const imageTurns: Message[] = [];
+
+      // Helper to flush current log as an assistant message and create image user turn
+      const flushAndInsertImage = (participantName: string, messageContent: string, imageAttachments: any[]) => {
+        // The image turn will be inserted between assistant log and cat command
+        const formattedText = participantName === '' ? messageContent : `${participantName}: ${messageContent}`;
+        const imgBranchId = `pseudo-prefill-img-branch-${imageTurns.length}`;
+        imageTurns.push({
+          id: `pseudo-prefill-img-${imageTurns.length}`,
+          conversationId: expandedMessages[0]?.conversationId || '',
+          branches: [{
+            id: imgBranchId,
+            content: formattedText,
+            role: 'user',
+            createdAt: new Date(),
+            isActive: true,
+            parentBranchId: 'root',
+            attachments: imageAttachments,
+          } as any],
+          activeBranchId: imgBranchId,
+          order: 0,
+        });
+        console.log(`[PseudoPrefill] Queued image user turn with ${imageAttachments.length} image(s)`);
+      };
+
+      for (const message of expandedMessages) {
+        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+        if (!activeBranch) continue;
+
+        // Find participant name
+        let participantName = activeBranch.role === 'user' ? 'User' : 'Assistant';
+        if (activeBranch.participantId) {
+          const participant = participants.find(p => p.id === activeBranch.participantId);
+          if (participant) {
+            participantName = participant.name;
+          }
+        }
+
+        // Skip empty assistant messages (completion targets)
+        if (activeBranch.role === 'assistant' && activeBranch.content === '') continue;
+
+        // Build message content with text attachments
+        let messageContent = activeBranch.content;
+        if (activeBranch.attachments && activeBranch.attachments.length > 0) {
+          for (const attachment of activeBranch.attachments) {
+            if (!isImageAttachmentPP(attachment)) {
+              messageContent += `\n\n<attachment filename="${attachment.fileName}">\n${attachment.content}\n</attachment>`;
+            }
+          }
+        }
+
+        // Check for image attachments
+        const imageAttachments = (activeBranch.attachments || []).filter(isImageAttachmentPP);
+        if (imageAttachments.length > 0) {
+          flushAndInsertImage(participantName, messageContent, imageAttachments);
+          lastParticipantName = participantName;
+          continue;
+        }
+
+        // Add to conversation log (same format as prefill)
+        if (participantName === '') {
+          conversationContent += `${messageContent}`;
+        } else if (participantName === lastParticipantName && lastParticipantName !== '') {
+          conversationContent = conversationContent.trimEnd() + ' ' + messageContent.trimStart() + '\n\n';
+        } else {
+          conversationContent += `${participantName}: ${messageContent}\n\n`;
+        }
+        lastParticipantName = participantName;
+      }
+
+      // Add responder turn prefix at end of log
+      if (responderId && participants.length > 0) {
+        const responder = participants.find(p => p.id === responderId);
+        if (responder && responder.name !== '' && responder.name !== lastParticipantName) {
+          conversationContent = conversationContent.trim() + `\n\n${responder.name}:`;
+        } else if (responder && (responder.name === '' || responder.name === lastParticipantName)) {
+          conversationContent = conversationContent.trim();
+        }
+      }
+
+      const conversationLog = conversationContent.trim();
+      const charCount = conversationLog.length;
+
+      // User: cut command (wrapped in <cmd> tags for CLI simulation)
+      const cutBranchId = `pseudo-prefill-cut-branch`;
+      pseudoPrefillMessages.push({
+        id: 'pseudo-prefill-cut',
+        conversationId: expandedMessages[0]?.conversationId || '',
+        branches: [{
+          id: cutBranchId,
+          content: `<cmd>cut -c 1-${charCount} < ${filename}</cmd>`,
+          role: 'user',
+          createdAt: new Date(),
+          isActive: true,
+          parentBranchId: 'root',
+        } as any],
+        activeBranchId: cutBranchId,
+        order: messageOrder++,
+      });
+
+      // Assistant: the conversation log
+      const logBranchId = `pseudo-prefill-log-branch`;
+      pseudoPrefillMessages.push({
+        id: 'pseudo-prefill-log',
+        conversationId: expandedMessages[0]?.conversationId || '',
+        branches: [{
+          id: logBranchId,
+          content: conversationLog,
+          role: 'assistant',
+          createdAt: new Date(),
+          isActive: true,
+          parentBranchId: cutBranchId,
+        } as any],
+        activeBranchId: logBranchId,
+        order: messageOrder++,
+      });
+
+      // Insert image turns between log and cat command
+      for (const imageTurn of imageTurns) {
+        // Brief assistant acknowledgment to maintain alternating turns
+        const ackBranchId = `pseudo-prefill-ack-branch-${messageOrder}`;
+        pseudoPrefillMessages.push({
+          id: `pseudo-prefill-ack-${messageOrder}`,
+          conversationId: expandedMessages[0]?.conversationId || '',
+          branches: [{
+            id: ackBranchId,
+            content: '[image received]',
+            role: 'assistant',
+            createdAt: new Date(),
+            isActive: true,
+            parentBranchId: 'root',
+          } as any],
+          activeBranchId: ackBranchId,
+          order: messageOrder++,
+        });
+        imageTurn.order = messageOrder++;
+        pseudoPrefillMessages.push(imageTurn);
+      }
+
+      // User: continuation command
+      // Two modes available:
+      // - 'cat': model repeats entire file, we strip the prefix (more reliable, higher output tokens)
+      // - 'tail-cut': model outputs only new content (efficient, needs simulated stop sequences)
+      const responderForMode = responderId ? participants.find(p => p.id === responderId) : undefined;
+      const pseudoPrefillMode = (responderForMode as any)?.pseudoPrefillMode || 'cat';
+      const continuationContent = pseudoPrefillMode === 'tail-cut'
+        ? `<cmd>cut -c ${charCount + 1}- < ${filename}</cmd>`
+        : `<cmd>cat ${filename}</cmd>`;
+      const catBranchId = `pseudo-prefill-cat-branch`;
+      pseudoPrefillMessages.push({
+        id: 'pseudo-prefill-cat',
+        conversationId: expandedMessages[0]?.conversationId || '',
+        branches: [{
+          id: catBranchId,
+          content: continuationContent,
+          role: 'user',
+          createdAt: new Date(),
+          isActive: true,
+          parentBranchId: logBranchId,
+        } as any],
+        activeBranchId: catBranchId,
+        order: messageOrder++,
+      });
+
+      console.log(`[PseudoPrefill] Generated ${pseudoPrefillMessages.length} messages (log: ${charCount} chars, ${imageTurns.length} image turns)`);
+      return pseudoPrefillMessages;
+    }
+
     if (format === 'messages') {
       // Messages mode - format for providers that don't support prefill
       const messagesFormatted: Message[] = [];
@@ -1480,6 +1705,14 @@ export class InferenceService {
           }
           Logger.warn(`[InferenceService] Participant requested prefill but model ${model.id} doesn't support it, using messages`);
           return 'messages';
+
+        case 'pseudo-prefill':
+          // Explicit pseudo-prefill request (CLI simulation trick)
+          if (model.provider === 'anthropic' || model.provider === 'bedrock') {
+            return 'pseudo-prefill';
+          }
+          Logger.warn(`[InferenceService] Pseudo-prefill only works with Anthropic/Bedrock, using messages`);
+          return 'messages';
           
         case 'messages':
           // Force messages mode (no prefill)
@@ -1499,7 +1732,7 @@ export class InferenceService {
     if (this.modelSupportsPrefill(model)) {
       return 'prefill';
     }
-    
+
     Logger.inference(`[InferenceService] Model ${model.id} doesn't support prefill, using messages mode`);
     return 'messages';
   }
@@ -1692,6 +1925,192 @@ export class InferenceService {
     return contentBlocks;
   }
   
+  /**
+   * Chunk handler for pseudo-prefill mode.
+   *
+   * The model outputs the full file (conversation log + new response). We need to:
+   * 1. Buffer output until we've consumed past the known conversation log
+   * 2. Strip the repeated log prefix
+   * 3. Strip the responder's "Name: " prefix from the new content
+   * 4. Only then start emitting content to the client
+   */
+  /**
+   * Chunk handler for pseudo-prefill mode.
+   *
+   * Two modes:
+   * - 'cat': Model repeats the full file (log + new content). We buffer until
+   *   the repeated log is consumed, strip it, strip responder name, then emit.
+   *   Stop sequences are checked only on new content after the log.
+   *
+   * - 'tail-cut': Model outputs only new content (starting with "ResponderName: ...").
+   *   No log stripping needed. "Simulated" stop sequences fire only after \n\n
+   *   (not at position 0, since the responder name is expected there).
+   */
+  private createPseudoPrefillChunkHandler(
+    originalOnChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
+    conversationLog: string,
+    participants: Participant[],
+    responderId?: string,
+    mode: 'cat' | 'tail-cut' = 'cat'
+  ): (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void> {
+    let buffer = '';
+    let logStripped = mode === 'tail-cut'; // tail-cut skips log stripping
+    let nameStripped = false;
+    let hitStopSequence = false;
+    let completionSent = false;
+    let emittedContent = ''; // Track emitted content for stop detection
+    const logLength = conversationLog.length;
+
+    // Get responder name for stripping
+    let responderName = 'Assistant';
+    if (responderId) {
+      const responder = participants.find(p => p.id === responderId);
+      if (responder) {
+        responderName = responder.name;
+      }
+    }
+
+    // The responder turn prefix that marks the end of the log.
+    // The model's reproduction won't be byte-for-byte, but this pattern
+    // will appear at roughly the expected position.
+    const responderTurnPrefix = `\n\n${responderName}:`;
+
+    // Build stop sequences (excluding responder)
+    const baseStopSequences = ['User:', 'A:', 'Claude:'];
+    const participantStopSequences = participants
+      .filter(p => p.name !== '' && p.id !== responderId)
+      .map(p => `${p.name}:`);
+    const stopSequences = [...new Set([...baseStopSequences, ...participantStopSequences])];
+
+    // Check for stop sequences
+    // In 'cat' mode: check at position 0 and after \n\n (log already stripped)
+    // In 'tail-cut' mode: only check after \n\n (position 0 is the responder name)
+    const findStop = (text: string): { index: number; sequence: string } | null => {
+      for (const seq of stopSequences) {
+        // Position 0 check only in cat mode (tail-cut expects responder name at pos 0)
+        if (mode === 'cat' && text.startsWith(seq)) {
+          return { index: 0, sequence: seq };
+        }
+        // Turn boundary check (both modes)
+        const turnIdx = text.indexOf('\n\n' + seq);
+        if (turnIdx !== -1) return { index: turnIdx + 2, sequence: seq };
+      }
+      return null;
+    };
+
+    console.log(`[PseudoPrefill] Chunk handler: mode=${mode}, logLength=${logLength}, responder="${responderName}", stops=${stopSequences.length}`);
+
+    // Emit content with stop sequence checking
+    const emitWithStopCheck = async (text: string, contentBlocks?: any[]) => {
+      if (hitStopSequence || !text) return;
+      emittedContent += text;
+      const stop = findStop(emittedContent);
+      if (stop) {
+        hitStopSequence = true;
+        // Calculate how much of the CURRENT text to emit
+        const prevLen = emittedContent.length - text.length;
+        const cutInText = stop.index - prevLen;
+        const before = cutInText > 0 ? text.substring(0, cutInText).trimEnd() : '';
+        console.log(`[PseudoPrefill] Stop "${stop.sequence}" at pos ${stop.index}, truncating`);
+        if (before) await originalOnChunk(before, false, contentBlocks);
+        completionSent = true;
+        await originalOnChunk('', true, contentBlocks);
+      } else {
+        await originalOnChunk(text, false, contentBlocks);
+      }
+    };
+
+    return async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+      if (hitStopSequence && !isComplete) return;
+
+      if (isComplete) {
+        if (completionSent) return;
+        if (buffer.length > 0 && logStripped) {
+          if (!nameStripped) {
+            const namePattern = new RegExp(`^\\s*${responderName}:\\s*`);
+            buffer = buffer.replace(namePattern, '');
+            nameStripped = true;
+          }
+          await emitWithStopCheck(buffer, contentBlocks);
+          buffer = '';
+        }
+        if (!completionSent) {
+          await originalOnChunk('', true, contentBlocks, usage);
+        }
+        return;
+      }
+
+      buffer += chunk;
+
+      // Phase 1: Strip the repeated conversation log (cat mode only)
+      //
+      // The model doesn't reproduce the log byte-for-byte — it creatively continues
+      // the conversation, often expanding messages. So we can't strip a fixed char count.
+      //
+      // Strategy: buffer the output and track the last occurrence of "\n\nResponderName:".
+      // The model's actual NEW response always comes after the LAST such prefix.
+      // Once we see enough content (50+ chars) after the last prefix without another
+      // participant turn starting, we're confident that's the real response.
+      if (!logStripped) {
+        const lastPrefixIdx = buffer.lastIndexOf(responderTurnPrefix);
+
+        if (lastPrefixIdx >= 0) {
+          const afterPrefix = buffer.substring(lastPrefixIdx + responderTurnPrefix.length);
+          // Check if there's enough content after the prefix to confirm it's the real response
+          // (not just a turn prefix in the middle of the reproduction)
+          const minContentAfterPrefix = 50;
+
+          if (afterPrefix.length >= minContentAfterPrefix) {
+            // Confident this is the real response — strip everything before it
+            buffer = afterPrefix.replace(/^\s+/, '');
+            logStripped = true;
+            nameStripped = true; // Turn prefix includes "Name:"
+            console.log(`[PseudoPrefill] Log stripped at last responder prefix (pos ${lastPrefixIdx}), response: ${buffer.length} chars`);
+            if (buffer.length > 0) {
+              await emitWithStopCheck(buffer, contentBlocks);
+              buffer = '';
+            }
+            return;
+          }
+        }
+
+        // Safety: if buffer grows way beyond expected log size and we never found
+        // the responder prefix, something is wrong. Emit everything as-is.
+        if (buffer.length > logLength * 5 && lastPrefixIdx < 0) {
+          console.log(`[PseudoPrefill] WARNING: buffer at ${buffer.length} chars, no responder prefix found. Emitting raw.`);
+          logStripped = true;
+          // Fall through to name stripping
+        } else {
+          return; // Keep buffering
+        }
+      }
+
+      // Phase 2: Strip responder name prefix
+      if (!nameStripped) {
+        const namePattern = new RegExp(`^\\s*${responderName}:\\s*`);
+        if (namePattern.test(buffer)) {
+          buffer = buffer.replace(namePattern, '');
+          nameStripped = true;
+          console.log(`[PseudoPrefill] Stripped responder name "${responderName}:"`);
+          if (buffer.length > 0) {
+            await emitWithStopCheck(buffer, contentBlocks);
+            buffer = '';
+          }
+        } else if (buffer.length > responderName.length + 5) {
+          // Enough buffer, no name prefix found
+          nameStripped = true;
+          await emitWithStopCheck(buffer, contentBlocks);
+          buffer = '';
+        }
+        return;
+      }
+
+      // Phase 3: Normal streaming with stop sequence checking
+      await emitWithStopCheck(chunk, contentBlocks);
+      buffer = '';
+    };
+  }
+
   private createMessagesModeChunkHandler(
     originalOnChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     participants: Participant[],

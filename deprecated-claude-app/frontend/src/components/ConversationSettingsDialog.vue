@@ -182,6 +182,7 @@
               </v-tooltip>
             </template>
           </v-checkbox>
+
         </div>
         
         <div v-if="selectedModel && settings.format === 'standard'">
@@ -811,6 +812,7 @@ watch(() => props.conversation, async (conversation) => {
     
     // Load combine consecutive messages setting
     combineConsecutiveMessages.value = conversation.combineConsecutiveMessages ?? true;
+
     
     // Load participants if in multi-participant mode
     await loadParticipants();

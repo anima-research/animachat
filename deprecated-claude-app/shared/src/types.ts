@@ -141,8 +141,9 @@ export type Provider = z.infer<typeof ProviderEnum>;
 // - 'auto': Use provider default (prefill for anthropic/bedrock, messages for others)
 // - 'prefill': Force prefill format (conversation log with participant names)
 // - 'messages': Force messages format (alternating user/assistant)
+// - 'pseudo-prefill': CLI simulation trick for non-prefill models in group chat
 // - 'completion': OpenRouter completion mode (prompt field instead of messages)
-export const ConversationModeEnum = z.enum(['auto', 'prefill', 'messages', 'completion']);
+export const ConversationModeEnum = z.enum(['auto', 'prefill', 'messages', 'pseudo-prefill', 'completion']);
 export type ConversationMode = z.infer<typeof ConversationModeEnum>;
 
 // Avatar Pack types
@@ -601,6 +602,7 @@ export const ConversationSchema = z.object({
     messageThreshold: z.number().default(10) // Apply CLI prompt for conversations under this many messages
   }).optional(),
   combineConsecutiveMessages: z.boolean().default(true).optional(), // Combine consecutive same-role messages when building context (default: true)
+  pseudoPrefillMode: z.enum(['cat', 'tail-cut']).default('cat').optional(), // Pseudo-prefill continuation mode for non-prefill models in group chat
   totalBranchCount: z.number().default(0).optional() // Cached count of non-system branches (calculated during event replay)
 });
 

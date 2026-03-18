@@ -476,7 +476,28 @@
               </v-list-item>
             </template>
           </v-select>
-          
+
+          <v-select
+            v-if="selectedParticipantConversationMode === 'pseudo-prefill'"
+            :model-value="selectedParticipantPseudoPrefillMode"
+            @update:model-value="(val) => setParticipantField('pseudoPrefillMode', val)"
+            :items="pseudoPrefillModeOptions"
+            item-title="title"
+            item-value="value"
+            label="Continuation method"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+          >
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template v-slot:subtitle>
+                  {{ item.raw.description }}
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
+
           <v-alert
             type="info"
             variant="tonal"
@@ -634,11 +655,34 @@ const conversationModeOptions = [
     description: 'Alternating user/assistant format (OpenAI compatible)'
   },
   {
+    value: 'pseudo-prefill',
+    title: 'Pseudo-Prefill',
+    description: 'CLI simulation trick for models without native prefill (Opus 4.6, Sonnet 4.6)'
+  },
+  {
     value: 'completion',
     title: 'Completion',
     description: 'OpenRouter completion mode (prompt field)'
   }
 ];
+
+const pseudoPrefillModeOptions = [
+  {
+    value: 'cat',
+    title: 'Full replay (cat)',
+    description: 'Model repeats conversation log then continues. More reliable, uses more output tokens.'
+  },
+  {
+    value: 'tail-cut',
+    title: 'Tail only (cut)',
+    description: 'Model outputs only new content. More efficient, may be less reliable.'
+  }
+];
+
+const selectedParticipantPseudoPrefillMode = computed(() => {
+  const participant = participants.value.find(p => p.id === selectedParticipantId.value);
+  return (participant as any)?.pseudoPrefillMode || 'cat';
+});
 
 
 // generic functions for getting and setting participant fields
@@ -731,7 +775,7 @@ const selectedParticipantConversationMode = computed(() => {
 function updateParticipantConversationMode(mode: string) {
   const participant = participants.value.find(p => p.id === selectedParticipantId.value);
   if (participant) {
-    participant.conversationMode = mode as 'auto' | 'prefill' | 'messages' | 'completion';
+    participant.conversationMode = mode as 'auto' | 'prefill' | 'messages' | 'pseudo-prefill' | 'completion';
     emit('update:participants', [...participants.value]);
   }
 }
