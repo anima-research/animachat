@@ -183,6 +183,29 @@
             </template>
           </v-checkbox>
 
+          <v-select
+            v-model="cacheTTL"
+            :items="cacheTTLOptions"
+            item-title="title"
+            item-value="value"
+            label="Prompt Caching"
+            density="compact"
+            class="mt-2"
+          >
+            <template v-slot:append>
+              <v-tooltip location="top" open-on-click open-on-focus max-width="350">
+                <template v-slot:activator="{ props }">
+                  <v-icon v-bind="props" size="small" class="tooltip-icon">mdi-help-circle-outline</v-icon>
+                </template>
+                <div>
+                  <b>Off:</b> No caching. Best for slow, deep conversations (hours between messages).<br/>
+                  <b>5 min:</b> Cheap writes (1.25x input), expires fast. Best for rapid-fire regeneration sessions.<br/>
+                  <b>1 hour:</b> Expensive writes (2x input), survives between turns. Best for normal interactive chat (5-15 min between messages).
+                </div>
+              </v-tooltip>
+            </template>
+          </v-select>
+
         </div>
         
         <div v-if="selectedModel && settings.format === 'standard'">
@@ -649,6 +672,13 @@ const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
 const cliModeEnabled = ref(true);
 const cliModeThreshold = ref(10);
 const combineConsecutiveMessages = ref(true);
+const cacheTTL = ref<'off' | '5m' | '1h'>('5m');
+
+const cacheTTLOptions = [
+  { value: 'off', title: 'Off (no caching)' },
+  { value: '5m', title: '5 minutes (fast sessions)' },
+  { value: '1h', title: '1 hour (interactive chat)' }
+];
 
 const formatOptions = [
   {
@@ -812,6 +842,7 @@ watch(() => props.conversation, async (conversation) => {
     
     // Load combine consecutive messages setting
     combineConsecutiveMessages.value = conversation.combineConsecutiveMessages ?? true;
+    cacheTTL.value = (conversation as any).cacheTTL || '5m';
 
     
     // Load participants if in multi-participant mode
@@ -1056,7 +1087,8 @@ function save() {
     contextManagement,
     prefillUserMessage,
     cliModePrompt,
-    combineConsecutiveMessages: combineConsecutiveMessages.value
+    combineConsecutiveMessages: combineConsecutiveMessages.value,
+    cacheTTL: cacheTTL.value
   });
   
   // If in multi-participant mode, emit participants for parent to update

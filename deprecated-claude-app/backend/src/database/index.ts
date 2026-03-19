@@ -3449,6 +3449,16 @@ export class Database {
       delete updatesForMemory.debugResponse; // Never store in memory
     }
 
+    if (updatesForMemory.debugMetadata) {
+      try {
+        const debugMetadataBlobId = await blobStore.saveJsonBlob(updatesForMemory.debugMetadata);
+        updatesForMemory.debugMetadataBlobId = debugMetadataBlobId;
+      } catch (err) {
+        console.warn('[Database] Failed to save debugMetadata as blob:', err);
+      }
+      delete updatesForMemory.debugMetadata; // Never store in memory
+    }
+
     // Create new message object with updated branch (debug data stripped, only blob IDs)
     const updatedBranches = message.branches.map(b =>
       b.id === branchId

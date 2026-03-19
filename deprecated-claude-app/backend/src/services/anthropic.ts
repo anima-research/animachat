@@ -90,11 +90,12 @@ export class AnthropicService {
         const firstMessage = messages[0];
         const firstBranch = getActiveBranch(firstMessage);
         if (firstBranch && (firstBranch as any)._cacheControl) {
-          // System prompt should also be cached (1h TTL for OpenRouter compatibility)
+          // Mirror the TTL from the message's cache_control
+          const msgCacheControl = (firstBranch as any)._cacheControl;
           systemContent = [{
             type: 'text',
             text: systemPrompt,
-            cache_control: { type: 'ephemeral' as const, ttl: '1h' as const }
+            cache_control: msgCacheControl
           }];
         }
       }
@@ -521,7 +522,8 @@ export class AnthropicService {
           // Check for cache breakpoint markers (Chapter II style)
           if ((activeBranch as any)._hasCacheBreakpoints && messageContent.includes('<|cache_breakpoint|>')) {
             // Split content at cache breakpoints and create separate text blocks
-            const contentBlocks = this.splitAtCacheBreakpoints(messageContent);
+            const branchCacheTTL = (activeBranch as any)._cacheTTL as '5m' | '1h' | undefined;
+            const contentBlocks = this.splitAtCacheBreakpoints(messageContent, branchCacheTTL);
             formattedMessages.push({
               role: activeBranch.role as 'user' | 'assistant',
               content: contentBlocks
@@ -622,38 +624,34 @@ export class AnthropicService {
    * Each section BEFORE a marker gets cache_control, the last section does not
    * This implements Chapter II's caching approach
    */
-  private splitAtCacheBreakpoints(content: string): Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl: '1h' } }> {
+  private splitAtCacheBreakpoints(content: string, cacheTTL?: '5m' | '1h'): Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl?: '1h' } }> {
     const CACHE_BREAKPOINT = '<|cache_breakpoint|>';
     const sections = content.split(CACHE_BREAKPOINT);
-    
-    console.log(`[Anthropic] 📦 Splitting prefill content at ${sections.length - 1} cache breakpoints`);
-    
-    const contentBlocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl: '1h' } }> = [];
-    
+    const ttlLabel = cacheTTL || '5m';
+
+    console.log(`[Anthropic] 📦 Splitting prefill content at ${sections.length - 1} cache breakpoints (TTL: ${ttlLabel})`);
+
+    const cacheControl = cacheTTL === '1h'
+      ? { type: 'ephemeral' as const, ttl: '1h' as const }
+      : { type: 'ephemeral' as const }; // 5min default
+
+    const contentBlocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl?: '1h' } }> = [];
+
     for (let i = 0; i < sections.length; i++) {
       const section = sections[i].trim();
-      if (!section) continue; // Skip empty sections
-      
+      if (!section) continue;
+
       const isLastSection = i === sections.length - 1;
-      
+
       if (isLastSection) {
-        // Last section (after final marker) - NO cache control
-        contentBlocks.push({
-          type: 'text',
-          text: section
-        });
+        contentBlocks.push({ type: 'text', text: section });
         console.log(`[Anthropic] 📦   Block ${i + 1}: ${section.length} chars (NOT cached - fresh content)`);
       } else {
-        // All sections before the last get cache_control
-        contentBlocks.push({
-          type: 'text',
-          text: section,
-          cache_control: { type: 'ephemeral', ttl: '1h' }
-        });
-        console.log(`[Anthropic] 📦   Block ${i + 1}: ${section.length} chars (CACHED with 1h TTL)`);
+        contentBlocks.push({ type: 'text', text: section, cache_control: cacheControl });
+        console.log(`[Anthropic] 📦   Block ${i + 1}: ${section.length} chars (CACHED with ${ttlLabel} TTL)`);
       }
     }
-    
+
     console.log(`[Anthropic] 📦 Created ${contentBlocks.length} content blocks for Anthropic API`);
     return contentBlocks;
   }
@@ -852,9 +850,9 @@ export class AnthropicService {
     };
     
     const pricePerToken = (pricingPer1M[modelId] || 3.00) / 1_000_000;
-    // Cached tokens are 90% cheaper
+    // Cache reads cost 10% of base — savings = 90% of what base would have cost
     const savings = cachedTokens * pricePerToken * 0.9;
-    
+
     return savings;
   }
   

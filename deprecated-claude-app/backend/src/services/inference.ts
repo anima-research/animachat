@@ -27,6 +27,7 @@ export class InferenceService {
   private db: Database;
   private contextManager: ContextManager;
   public lastRawRequest?: any; // Store the last raw API request for debugging
+  public lastActualUsage?: any; // Store the last API usage response for debugging
 
   constructor(db: Database) {
     this.db = db;
@@ -152,7 +153,8 @@ export class InferenceService {
     responderId?: string,
     conversation?: Conversation,
     cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints (for prefill)
-    personaContext?: string  // Per-participant persona context to inject into prefill
+    personaContext?: string,  // Per-participant persona context to inject into prefill
+    cacheTTL?: '5m' | '1h'  // Cache TTL setting from conversation
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -227,7 +229,8 @@ export class InferenceService {
       conversation,
       shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined,
       shouldTriggerPrefillThinking,
-      personaContext
+      personaContext,
+      cacheTTL
     );
 
     // For messages/pseudo-prefill mode, provide a default system prompt if none is provided
@@ -961,7 +964,8 @@ export class InferenceService {
     conversation?: Conversation,
     cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints
     triggerThinking?: boolean,  // Add opening <think> tag for prefill thinking mode
-    personaContext?: string  // Per-participant persona context to prepend in prefill mode
+    personaContext?: string,  // Per-participant persona context to prepend in prefill mode
+    cacheTTL?: '5m' | '1h'  // Cache TTL for breakpoint markers
   ): Message[] {
     // Expand prefixHistory from the first message into synthetic messages
     // This handles forked conversations with compressed history
@@ -1081,11 +1085,12 @@ export class InferenceService {
             parentBranchId: 'prefill-cmd-branch'
           };
           
-          // Flag cache breakpoints if present
+          // Flag cache breakpoints if present, with TTL
           if (hasCacheMarkers && conversationContent.includes('<|cache_breakpoint|>')) {
             assistantBranch._hasCacheBreakpoints = true;
+            assistantBranch._cacheTTL = cacheTTL;
           }
-          
+
           prefillMessages.push({
             id: `prefill-assistant-${messageOrder}`,
             conversationId: messages[0]?.conversationId || '',
@@ -1235,7 +1240,8 @@ export class InferenceService {
         
         if (hasCacheMarkers && conversationContent.includes('<|cache_breakpoint|>')) {
           assistantBranch._hasCacheBreakpoints = true;
-          console.log(`[PREFILL] 📦 Final content has cache breakpoints (${conversationContent.length} chars total)`);
+          assistantBranch._cacheTTL = cacheTTL;
+          console.log(`[PREFILL] 📦 Final content has cache breakpoints (${conversationContent.length} chars total, TTL: ${cacheTTL || '5m'})`);
         }
         
         prefillMessages.push({

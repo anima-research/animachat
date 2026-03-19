@@ -606,7 +606,8 @@ export const ConversationSchema = z.object({
     messageThreshold: z.number().default(10) // Apply CLI prompt for conversations under this many messages
   }).optional(),
   combineConsecutiveMessages: z.boolean().default(true).optional(), // Combine consecutive same-role messages when building context (default: true)
-  totalBranchCount: z.number().default(0).optional() // Cached count of non-system branches (calculated during event replay)
+  totalBranchCount: z.number().default(0).optional(), // Cached count of non-system branches (calculated during event replay)
+  cacheTTL: z.enum(['off', '5m', '1h']).default('5m').optional() // Prompt caching TTL: off = no caching, 5m = fast sessions, 1h = slower interactive chat
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;

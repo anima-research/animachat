@@ -1223,12 +1223,33 @@ async function handleChatMessage(
             contentBlocks: branchObj.contentBlocks,
             model: branchObj.model
           };
-          
+
+          // Capture API usage metadata for cost debugging
+          const actualUsage = baseInferenceService.lastActualUsage;
+          const debugMetadata = {
+            apiUsage: actualUsage || null,
+            cacheStatus: actualUsage ? {
+              cacheHit: (actualUsage.cacheReadInputTokens || 0) > 0,
+              freshInputTokens: actualUsage.inputTokens ?? 0,
+              cacheWriteTokens: actualUsage.cacheCreationInputTokens || 0,
+              cacheReadTokens: actualUsage.cacheReadInputTokens || 0,
+              outputTokens: actualUsage.outputTokens ?? 0,
+              totalInputTokens: (actualUsage.inputTokens ?? 0) + (actualUsage.cacheCreationInputTokens || 0) + (actualUsage.cacheReadInputTokens || 0),
+            } : null,
+            modelConfig: {
+              provider: modelConfig.provider,
+              contextWindow: modelConfig.contextWindow,
+              supportsPrefill: modelConfig.supportsPrefill,
+            },
+            cacheTTL: (conversation as any).cacheTTL || '5m',
+            timestamp: new Date().toISOString()
+          };
+
           await db.updateMessageBranch(
             assistantMessage.id,
             conversation.userId,
             firstBranchId,
-            { debugRequest, debugResponse }
+            { debugRequest, debugResponse, debugMetadata } as any
           );
           
           console.log(`[DEBUG CAPTURE] Debug data saved for branch ${firstBranchId.substring(0, 8)}`);
@@ -1707,15 +1728,34 @@ async function handleRegenerate(
             model: currentBranch.model
           };
 
+          // Capture API usage metadata
+          const actualUsage = baseInferenceService.lastActualUsage;
+          const debugMetadata = {
+            apiUsage: actualUsage || null,
+            cacheStatus: actualUsage ? {
+              cacheHit: (actualUsage.cacheReadInputTokens || 0) > 0,
+              freshInputTokens: actualUsage.inputTokens ?? 0,
+              cacheWriteTokens: actualUsage.cacheCreationInputTokens || 0,
+              cacheReadTokens: actualUsage.cacheReadInputTokens || 0,
+              outputTokens: actualUsage.outputTokens ?? 0,
+              totalInputTokens: (actualUsage.inputTokens ?? 0) + (actualUsage.cacheCreationInputTokens || 0) + (actualUsage.cacheReadInputTokens || 0),
+            } : null,
+            modelConfig: {
+              provider: modelConfig.provider,
+              contextWindow: modelConfig.contextWindow,
+              supportsPrefill: modelConfig.supportsPrefill,
+            },
+            cacheTTL: (conversation as any).cacheTTL || '5m',
+            source: 'regeneration',
+            timestamp: new Date().toISOString()
+          };
+
           console.log(`[DEBUG CAPTURE] Updating message branch ${firstBranchId}...`);
           await db.updateMessageBranch(
             updatedMessage.id,
             conversation.userId,
             firstBranchId,
-            {
-              debugRequest,
-              debugResponse
-            }
+            { debugRequest, debugResponse, debugMetadata } as any
           );
           console.log(`[DEBUG CAPTURE] Branch ${firstBranchId} updated successfully`);
 
@@ -2141,11 +2181,32 @@ async function handleEdit(
               model: currentBranch.model
             };
 
+            const actualUsage = baseInferenceService.lastActualUsage;
+            const debugMetadata = {
+              apiUsage: actualUsage || null,
+              cacheStatus: actualUsage ? {
+                cacheHit: (actualUsage.cacheReadInputTokens || 0) > 0,
+                freshInputTokens: actualUsage.inputTokens ?? 0,
+                cacheWriteTokens: actualUsage.cacheCreationInputTokens || 0,
+                cacheReadTokens: actualUsage.cacheReadInputTokens || 0,
+                outputTokens: actualUsage.outputTokens ?? 0,
+                totalInputTokens: (actualUsage.inputTokens ?? 0) + (actualUsage.cacheCreationInputTokens || 0) + (actualUsage.cacheReadInputTokens || 0),
+              } : null,
+              modelConfig: {
+                provider: modelConfig.provider,
+                contextWindow: modelConfig.contextWindow,
+                supportsPrefill: modelConfig.supportsPrefill,
+              },
+              cacheTTL: (conversation as any).cacheTTL || '5m',
+              source: 'edit',
+              timestamp: new Date().toISOString()
+            };
+
             await db.updateMessageBranch(
               targetMessage.id,
               conversation.userId,
               firstBranchId,
-              { debugRequest, debugResponse }
+              { debugRequest, debugResponse, debugMetadata } as any
             );
             console.log(`[DEBUG CAPTURE] Edit branch ${firstBranchId} updated successfully`);
 

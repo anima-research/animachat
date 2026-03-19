@@ -41,9 +41,46 @@
               <v-icon start>mdi-import</v-icon>
               Response
             </v-tab>
+            <v-tab value="metadata">
+              <v-icon start>mdi-chart-box</v-icon>
+              Metadata
+            </v-tab>
           </v-tabs>
 
           <v-window v-model="activeTab">
+            <!-- Metadata Tab -->
+            <v-window-item value="metadata" class="pa-4">
+              <div v-if="!debugMetadata" class="text-center text-grey py-8">
+                <v-icon size="64" color="grey-lighten-1">mdi-information-outline</v-icon>
+                <p class="mt-4">No metadata available for this message.</p>
+                <p class="text-caption">Metadata is captured for new messages only.</p>
+              </div>
+              <div v-else>
+                <div class="d-flex mb-2">
+                  <v-chip size="small" class="mr-2" :color="debugMetadata.cacheTTL === 'off' ? 'grey' : debugMetadata.cacheStatus?.cacheHit ? 'success' : 'warning'">
+                    <v-icon start size="small">{{ debugMetadata.cacheTTL === 'off' ? 'mdi-cancel' : debugMetadata.cacheStatus?.cacheHit ? 'mdi-cached' : 'mdi-cache' }}</v-icon>
+                    {{ debugMetadata.cacheTTL === 'off' ? 'Cache OFF' : debugMetadata.cacheStatus?.cacheHit ? 'Cache HIT' : 'Cache MISS' }}
+                  </v-chip>
+                  <v-chip size="small" class="mr-2">
+                    <v-icon start size="small">mdi-server</v-icon>
+                    {{ debugMetadata.modelConfig?.provider }}
+                  </v-chip>
+                  <v-spacer />
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    prepend-icon="mdi-content-copy"
+                    @click="copyToClipboard(JSON.stringify(debugMetadata, null, 2))"
+                  >
+                    Copy
+                  </v-btn>
+                </div>
+                <v-card variant="outlined" class="code-card">
+                  <pre class="code-content">{{ formatJSON(debugMetadata) }}</pre>
+                </v-card>
+              </div>
+            </v-window-item>
+
             <!-- Request Tab -->
             <v-window-item value="request" class="pa-4">
               <div v-if="!debugRequest" class="text-center text-grey py-8">
@@ -138,6 +175,7 @@ const isLoading = ref(false);
 const loadError = ref<string | null>(null);
 const debugRequest = ref<any>(null);
 const debugResponse = ref<any>(null);
+const debugMetadata = ref<any>(null);
 
 // Fetch debug data when dialog opens
 watch(() => props.modelValue, async (isOpen) => {
@@ -146,13 +184,15 @@ watch(() => props.modelValue, async (isOpen) => {
     loadError.value = null;
     debugRequest.value = null;
     debugResponse.value = null;
-    
+    debugMetadata.value = null;
+
     try {
       const response = await api.get(
         `/conversations/${props.conversationId}/messages/${props.messageId}/branches/${props.branchId}/debug`
       );
       debugRequest.value = response.data.debugRequest;
       debugResponse.value = response.data.debugResponse;
+      debugMetadata.value = response.data.debugMetadata;
     } catch (error: any) {
       console.error('Failed to load debug data:', error);
       loadError.value = error.response?.data?.error || 'Failed to load debug data';
