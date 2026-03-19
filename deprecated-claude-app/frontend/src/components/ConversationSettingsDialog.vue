@@ -675,9 +675,9 @@ const combineConsecutiveMessages = ref(true);
 const cacheTTL = ref<'off' | '5m' | '1h'>('5m');
 
 const cacheTTLOptions = [
-  { value: 'off', title: 'Off (no caching)' },
-  { value: '5m', title: '5 minutes (fast sessions)' },
-  { value: '1h', title: '1 hour (interactive chat)' }
+  { value: 'off', title: 'Off' },
+  { value: '5m', title: '5 minutes' },
+  { value: '1h', title: '1 hour' }
 ];
 
 const formatOptions = [
