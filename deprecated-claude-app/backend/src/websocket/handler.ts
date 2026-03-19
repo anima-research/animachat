@@ -2576,10 +2576,31 @@ async function handleContinue(
               contentBlocks: branchObj.contentBlocks,
               model: branchObj.model
             };
-            
-            await db.updateMessageBranch(assistantMessage.id, conversation.userId, firstBranchId, { debugRequest, debugResponse });
+
+            const actualUsage = baseInferenceService.lastActualUsage;
+            const debugMetadata = {
+              apiUsage: actualUsage || null,
+              cacheStatus: actualUsage ? {
+                cacheHit: (actualUsage.cacheReadInputTokens || 0) > 0,
+                freshInputTokens: actualUsage.inputTokens ?? 0,
+                cacheWriteTokens: actualUsage.cacheCreationInputTokens || 0,
+                cacheReadTokens: actualUsage.cacheReadInputTokens || 0,
+                outputTokens: actualUsage.outputTokens ?? 0,
+                totalInputTokens: (actualUsage.inputTokens ?? 0) + (actualUsage.cacheCreationInputTokens || 0) + (actualUsage.cacheReadInputTokens || 0),
+              } : null,
+              modelConfig: {
+                provider: modelConfig.provider,
+                contextWindow: modelConfig.contextWindow,
+                supportsPrefill: modelConfig.supportsPrefill,
+              },
+              cacheTTL: (conversation as any).cacheTTL || '5m',
+              source: 'continue',
+              timestamp: new Date().toISOString()
+            };
+
+            await db.updateMessageBranch(assistantMessage.id, conversation.userId, firstBranchId, { debugRequest, debugResponse, debugMetadata } as any);
             console.log(`[DEBUG CAPTURE] Continue: Debug data saved for branch ${firstBranchId.substring(0, 8)}`);
-            
+
             const refreshedMessage = await db.getMessage(assistantMessage.id, conversationId, conversation.userId);
             if (refreshedMessage) {
               ws.send(JSON.stringify({ type: 'message_edited', message: refreshedMessage }));

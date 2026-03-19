@@ -152,9 +152,8 @@ export class InferenceService {
     participants: Participant[] = [],
     responderId?: string,
     conversation?: Conversation,
-    cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints (for prefill)
     personaContext?: string,  // Per-participant persona context to inject into prefill
-    cacheTTL?: '5m' | '1h'  // Cache TTL setting from conversation
+    cacheTTL?: '5m' | '1h'  // Cache TTL — passed to provider for automatic caching
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -212,12 +211,7 @@ export class InferenceService {
     // Apply post-hoc operations (hide, edit, etc.)
     const processedMessages = this.applyPostHocOperations(contextMessages);
     
-    // Format messages based on conversation format
-    // For prefill format with Anthropic direct, pass cache marker indices to insert breakpoints
-    const shouldInsertCacheBreakpoints = actualFormat === 'prefill' && model.provider === 'anthropic';
     // Trigger thinking via <think> tag in prefill mode if thinking was enabled AND model supports it
-    // NOTE: In prefill mode, native thinking APIs don't work well (model is continuing a pre-filled response)
-    // So we use <think> tags to trigger pseudo-reasoning for all providers that support prefill
     const supportsPrefillThinkingTags = model.provider === 'anthropic' || model.provider === 'bedrock' || (model.provider as string) === 'google';
     const shouldTriggerPrefillThinking = actualFormat === 'prefill' && settings.thinking?.enabled && model.supportsThinking && supportsPrefillThinkingTags;
     const formattedMessages = this.formatMessagesForConversation(
@@ -227,10 +221,8 @@ export class InferenceService {
       responderId,
       model.provider,
       conversation,
-      shouldInsertCacheBreakpoints ? cacheMarkerIndices : undefined,
       shouldTriggerPrefillThinking,
-      personaContext,
-      cacheTTL
+      personaContext
     );
 
     // For messages/pseudo-prefill mode, provide a default system prompt if none is provided
@@ -600,7 +592,8 @@ export class InferenceService {
         effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
-        stopSequences
+        stopSequences,
+        cacheTTL
       );
     } else if (model.provider === 'bedrock') {
       if (!selectedKey) {
@@ -644,7 +637,9 @@ export class InferenceService {
         effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
-        stopSequences
+        stopSequences,
+        undefined,  // onTokenUsage
+        cacheTTL
       );
       }
     } else if (model.provider === 'openai-compatible') {
@@ -962,10 +957,8 @@ export class InferenceService {
     responderId?: string,
     provider?: string,
     conversation?: Conversation,
-    cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints
     triggerThinking?: boolean,  // Add opening <think> tag for prefill thinking mode
-    personaContext?: string,  // Per-participant persona context to prepend in prefill mode
-    cacheTTL?: '5m' | '1h'  // Cache TTL for breakpoint markers
+    personaContext?: string  // Per-participant persona context to prepend in prefill mode
   ): Message[] {
     // Expand prefixHistory from the first message into synthetic messages
     // This handles forked conversations with compressed history
@@ -1011,15 +1004,6 @@ export class InferenceService {
     if (format === 'prefill') {
       // Convert to prefill format with participant names
       const prefillMessages: Message[] = [];
-      
-      // Convert cache marker indices to a Set for fast lookup
-      const cacheBreakpointIndices = new Set(cacheMarkerIndices || []);
-      const hasCacheMarkers = cacheBreakpointIndices.size > 0;
-      
-      if (hasCacheMarkers) {
-        console.log(`[PREFILL] 📦 Will insert ${cacheBreakpointIndices.size} cache breakpoints at message indices:`, 
-          Array.from(cacheBreakpointIndices).sort((a, b) => a - b));
-      }
       
       // Add initial user message if configured
       // Note: Anthropic API accepts assistant-only messages for prefill, so this is optional
@@ -1085,12 +1069,6 @@ export class InferenceService {
             parentBranchId: 'prefill-cmd-branch'
           };
           
-          // Flag cache breakpoints if present, with TTL
-          if (hasCacheMarkers && conversationContent.includes('<|cache_breakpoint|>')) {
-            assistantBranch._hasCacheBreakpoints = true;
-            assistantBranch._cacheTTL = cacheTTL;
-          }
-
           prefillMessages.push({
             id: `prefill-assistant-${messageOrder}`,
             conversationId: messages[0]?.conversationId || '',
@@ -1192,12 +1170,6 @@ export class InferenceService {
           lastMessageWasEmptyAssistant = false;
         }
         
-        // Insert cache breakpoint marker if needed
-        if (cacheBreakpointIndices.has(messageIndex)) {
-          conversationContent += '<|cache_breakpoint|>';
-          console.log(`[PREFILL] 📍 Inserted cache breakpoint after message ${messageIndex} (${participantName})`);
-        }
-        
         messageIndex++;
       }
       
@@ -1238,11 +1210,6 @@ export class InferenceService {
           parentBranchId: 'prefill-cmd-branch'
         };
         
-        if (hasCacheMarkers && conversationContent.includes('<|cache_breakpoint|>')) {
-          assistantBranch._hasCacheBreakpoints = true;
-          assistantBranch._cacheTTL = cacheTTL;
-          console.log(`[PREFILL] 📦 Final content has cache breakpoints (${conversationContent.length} chars total, TTL: ${cacheTTL || '5m'})`);
-        }
         
         prefillMessages.push({
           id: `prefill-assistant-${messageOrder}`,

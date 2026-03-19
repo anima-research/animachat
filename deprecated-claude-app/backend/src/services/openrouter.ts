@@ -16,7 +16,6 @@ interface ContentBlock {
   image_url?: {
     url: string;
   };
-  cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
 }
 
 interface OpenRouterResponse {
@@ -182,7 +181,8 @@ export class OpenRouterService {
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     stopSequences?: string[],
-    onTokenUsage?: (usage: TokenUsage) => Promise<void>
+    onTokenUsage?: (usage: TokenUsage) => Promise<void>,
+    cacheTTL?: '5m' | '1h'  // undefined = no caching
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -237,14 +237,21 @@ export class OpenRouterService {
         })
       };
       
-      // For Anthropic models: force native provider and enable caching
+      // For Anthropic models: force native provider, enable automatic caching if TTL set
       if (provider === 'anthropic') {
         requestBody.provider = {
           order: ['Anthropic'],
           allow_fallbacks: false
         };
-        requestBody.transforms = ['prompt-caching'];
-        Logger.cache(`[OpenRouter] 🔒 Forcing native Anthropic with prompt-caching enabled`);
+        if (cacheTTL) {
+          // Top-level cache_control enables automatic caching — Anthropic places breakpoints optimally
+          requestBody.cache_control = cacheTTL === '1h'
+            ? { type: 'ephemeral', ttl: '1h' }
+            : { type: 'ephemeral' };
+          Logger.cache(`[OpenRouter] 🔒 Native Anthropic with automatic caching (${cacheTTL} TTL)`);
+        } else {
+          Logger.cache(`[OpenRouter] 🔒 Native Anthropic, caching OFF`);
+        }
       }
       
       // Log reasoning configuration
@@ -321,9 +328,9 @@ export class OpenRouterService {
             const data = line.slice(6);
             if (data === '[DONE]') {
               // Pass usage metrics when completing
-              // OpenRouter's prompt_tokens is TOTAL (includes cached)
-              // Report fresh tokens only, to match Anthropic semantics
-              const freshInputTokens = promptTokens - cacheMetrics.cacheReadInputTokens;
+              // OpenRouter's prompt_tokens is TOTAL (includes cached reads AND writes)
+              // Subtract both to get truly fresh (uncached) tokens, matching Anthropic semantics
+              const freshInputTokens = promptTokens - cacheMetrics.cacheReadInputTokens - cacheMetrics.cacheCreationInputTokens;
               
               const actualUsage = {
                 inputTokens: freshInputTokens,
@@ -500,16 +507,23 @@ export class OpenRouterService {
                 promptTokens = parsed.usage.prompt_tokens || 0;
                 completionTokens = parsed.usage.completion_tokens || 0;
                 
-                // OpenRouter format: cache info in prompt_tokens_details.cached_tokens
-                if (parsed.usage.prompt_tokens_details?.cached_tokens) {
-                  // OpenRouter doesn't distinguish creation vs read, just reports cached
-                  cacheMetrics.cacheReadInputTokens = parsed.usage.prompt_tokens_details.cached_tokens;
-                  Logger.cache(`[OpenRouter] ✅ Cache hit detected: ${cacheMetrics.cacheReadInputTokens} tokens`);
-                } else {
-                  Logger.cache(`[OpenRouter] ❌ No cache hit (cached_tokens: ${parsed.usage.prompt_tokens_details?.cached_tokens || 0})`);
+                // OpenRouter cache metrics in prompt_tokens_details
+                const details = parsed.usage.prompt_tokens_details;
+                if (details) {
+                  if (details.cached_tokens) {
+                    cacheMetrics.cacheReadInputTokens = details.cached_tokens;
+                    Logger.cache(`[OpenRouter] ✅ Cache read: ${details.cached_tokens} tokens`);
+                  }
+                  if (details.cache_write_tokens) {
+                    cacheMetrics.cacheCreationInputTokens = details.cache_write_tokens;
+                    Logger.cache(`[OpenRouter] 📦 Cache write: ${details.cache_write_tokens} tokens`);
+                  }
+                  if (!details.cached_tokens && !details.cache_write_tokens) {
+                    Logger.cache(`[OpenRouter] ❌ No cache activity`);
+                  }
                 }
-                
-                // Also check for native Anthropic format (fallback)
+
+                // Fallback: native Anthropic format (some responses pass these through)
                 if (parsed.usage.cache_creation_input_tokens !== undefined) {
                   cacheMetrics.cacheCreationInputTokens = parsed.usage.cache_creation_input_tokens;
                 }
@@ -587,17 +601,7 @@ export class OpenRouterService {
           Logger.cache(`♾️ Cache partial: ${cacheMetrics.cacheReadInputTokens} tokens reused (${efficiency}%), ${cacheMetrics.cacheCreationInputTokens} tokens rebuilt`);
         } else if (hasCreation && !hasRead) {
           // Pure cache creation (no reuse)
-          const duration = '1 hour'; // All caches are 1-hour now
-          const isRebuild = messages.some(msg => {
-            const branch = getActiveBranch(msg);
-            return branch && (branch as any)._cacheControl;
-          });
-          
-          if (isRebuild) {
-            Logger.cache(`🔄 Cache rebuilt: ${cacheMetrics.cacheCreationInputTokens} tokens (expires in ${duration})`);
-          } else {
-            Logger.cache(`📦 Cache created: ${cacheMetrics.cacheCreationInputTokens} tokens (expires in ${duration})`);
-          }
+          Logger.cache(`📦 Cache created: ${cacheMetrics.cacheCreationInputTokens} tokens`);
         } else if (hasRead && !hasCreation) {
           // Pure cache hit (full reuse)
           const efficiency = totalTokens > 0 ? ((cacheMetrics.cacheReadInputTokens / totalTokens) * 100).toFixed(1) : '0';
@@ -677,27 +681,11 @@ export class OpenRouterService {
   formatMessagesForOpenRouter(messages: Message[], systemPrompt?: string, provider?: string): OpenRouterMessage[] {
     const formatted: OpenRouterMessage[] = [];
 
-    // Check if any message has cache control (to determine if we should cache system prompt)
-    const hasCacheControl = messages.some(msg => {
-      const activeBranch = getActiveBranch(msg);
-      return activeBranch && (activeBranch as any)._cacheControl;
-    });
-
-    // Add system prompt if provided
     if (systemPrompt) {
-      // For Anthropic models, wrap system prompt in content blocks if caching is enabled
-      if (hasCacheControl && provider === 'anthropic') {
-        // System prompt should also be cached (but without cache_control marker - it's implicit)
-        formatted.push({
-          role: 'system',
-          content: systemPrompt
-        });
-      } else {
-        formatted.push({
-          role: 'system',
-          content: systemPrompt
-        });
-      }
+      formatted.push({
+        role: 'system',
+        content: systemPrompt
+      });
     }
 
     // Convert messages
@@ -705,9 +693,6 @@ export class OpenRouterService {
       const activeBranch = getActiveBranch(message);
       if (activeBranch && activeBranch.role !== 'system') {
         let content: string | ContentBlock[] = activeBranch.content;
-        
-        // Check if this message has cache control marker
-        const cacheControl = (activeBranch as any)._cacheControl;
         
         // Handle attachments for user messages
         if (activeBranch.role === 'user' && activeBranch.attachments && activeBranch.attachments.length > 0) {
@@ -796,12 +781,6 @@ export class OpenRouterService {
             }
           }
           
-          // Add cache control to the last content block if present
-          if (cacheControl && provider === 'anthropic') {
-            contentBlocks[contentBlocks.length - 1].cache_control = cacheControl;
-            console.log(`[OpenRouter] 🎯 Cache control marker added to message with attachments`);
-          }
-          
           content = contentBlocks;
         } else if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0 && provider === 'anthropic') {
           // Assistant message with thinking blocks - format as content array for Anthropic API
@@ -863,20 +842,7 @@ export class OpenRouterService {
           }
           
           // Add cache control to last block if present
-          if (cacheControl && apiContentBlocks.length > 0) {
-            apiContentBlocks[apiContentBlocks.length - 1].cache_control = cacheControl;
-            console.log(`[OpenRouter] 🎯 Cache control marker added to assistant message with thinking`);
-          }
-          
           content = apiContentBlocks;
-        } else if (cacheControl && provider === 'anthropic') {
-          // Need to convert to content block format to add cache control
-          content = [{
-            type: 'text',
-            text: activeBranch.content,
-            cache_control: cacheControl
-          }];
-          console.log(`[OpenRouter] 🎯 Cache control marker added to message at position ${messages.indexOf(message)}`);
         }
         
         formatted.push({

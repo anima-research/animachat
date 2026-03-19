@@ -523,64 +523,17 @@ export class EnhancedInferenceService {
     expectedCache = window.cacheablePrefix.length > 0 && window.metadata.cacheKey === cacheKey;
     cacheHit = false; // Will be determined from actual response
     
-    // For Anthropic models (direct or via OpenRouter), we need to add cache control metadata
-    // 
-    // CACHING APPROACHES BY PROVIDER:
-    // - Anthropic direct with prefill: Use Chapter II approach - insert text breakpoints into prefill blob
-    // - Anthropic direct with standard: Use message-level cache_control
-    // - OpenRouter with prefill: OpenRouter converts to messages mode, use message-level cache_control
-    // - OpenRouter with standard: Use message-level cache_control
-    //
+    // Automatic prompt caching: just pass the TTL to the provider.
+    // Anthropic places breakpoints optimally. No manual markers needed.
     const cacheTTL = (conversation as any)?.cacheTTL || '5m';
-    const cachingEnabled = cacheTTL !== 'off';
-    const isPrefillFormat = conversation?.format === 'prefill';
-    const isAnthropicDirect = model.provider === 'anthropic' || model.provider === 'bedrock';
+    const effectiveCacheTTL = cacheTTL !== 'off' ? cacheTTL as '5m' | '1h' : undefined;
 
-    // For Anthropic direct + prefill: use Chapter II approach (text breakpoints)
-    // For everything else (standard format, or OpenRouter which converts to messages): use message-level cache_control
-    const useTextBreakpoints = cachingEnabled && isPrefillFormat && isAnthropicDirect;
+    Logger.cache(`[EnhancedInference] Cache: ${effectiveCacheTTL ? effectiveCacheTTL + ' TTL' : 'OFF'}, provider=${model.provider}`);
 
-    console.log(`[EnhancedInference] Cache control decision:`, {
-      cacheTTL,
-      cachingEnabled,
-      conversationFormat: conversation?.format,
-      isPrefillFormat,
-      isAnthropicDirect,
-      useTextBreakpoints,
-      provider: model.provider,
-      cacheablePrefixLength: window.cacheablePrefix.length
-    });
-
-    let messagesToSend = window.messages;
-    let cacheMarkerIndices: number[] | undefined;
-
-    if (!cachingEnabled) {
-      Logger.cache(`[EnhancedInference] ⏹️ Caching OFF for this conversation`);
-    } else if (useTextBreakpoints) {
-      // Chapter II approach for Anthropic prefill: pass cache marker indices to inference
-      // These will be inserted as <|cache_breakpoint|> text markers in the prefill blob
-      const markers = window.cacheMarkers || (window.cacheMarker ? [window.cacheMarker] : []);
-      if (markers.length > 0) {
-        cacheMarkerIndices = markers.map(m => m.messageIndex);
-        Logger.cache(`[EnhancedInference] 📦 Chapter II caching (${cacheTTL} TTL) for Anthropic prefill: ${markers.length} breakpoints`);
-        markers.forEach((m, i) => {
-          Logger.cache(`[EnhancedInference]   Breakpoint ${i + 1}: after message ${m.messageIndex} (${m.tokenCount} tokens)`);
-        });
-      } else {
-        Logger.cache(`[EnhancedInference] No cache markers for prefill (messages=${window.messages.length})`);
-      }
-    } else if (cachingEnabled && (model.provider === 'anthropic' || model.provider === 'openrouter') && window.cacheablePrefix.length > 0) {
-      // Message-level cache_control for standard format or OpenRouter
-      Logger.cache(`[EnhancedInference] Adding message-level cache control (${cacheTTL} TTL) for ${model.provider} (${model.id})`);
-      messagesToSend = this.addCacheControlToMessages(window, model, cacheTTL);
-    } else {
-      Logger.debug(`[EnhancedInference] No cache control: provider=${model.provider}, cacheablePrefix=${window.cacheablePrefix.length}`);
-    }
-    
     // Call inference (actual usage will be passed through the callback)
     await this.inferenceService.streamCompletion(
       model.id,
-      messagesToSend,
+      window.messages,
       systemPrompt,
       settings,
       userId,
@@ -589,44 +542,9 @@ export class EnhancedInferenceService {
       participants || [],
       participant?.id,
       conversation,
-      cacheMarkerIndices,  // Pass cache marker indices for Chapter II prefill caching
       personaContext,  // Per-participant persona context for prefill injection
-      cachingEnabled ? cacheTTL as '5m' | '1h' : undefined  // Cache TTL for system prompt caching
+      effectiveCacheTTL  // Cache TTL — provider handles placement
     );
-  }
-  
-  private addCacheControlToMessages(window: ContextWindow, model?: Model, cacheTTL: '5m' | '1h' = '5m'): Message[] {
-    // Use multiple cache markers if available (Anthropic supports 4)
-    const markers = window.cacheMarkers || (window.cacheMarker ? [window.cacheMarker] : []);
-
-    if (markers.length === 0) {
-      return window.messages; // No caching
-    }
-
-    const cacheControl = cacheTTL === '1h'
-      ? { type: 'ephemeral' as const, ttl: '1h' as const }
-      : { type: 'ephemeral' as const }; // 5min is the default when no ttl specified
-    
-    // Create a set of message indices that should get cache control
-    const cacheIndices = new Set(markers.map(m => m.messageIndex));
-    
-    Logger.cache(`[EnhancedInference] 📦 Adding cache control to ${cacheIndices.size} messages (TTL: ${cacheTTL}):`);
-    markers.forEach((m, i) => {
-      Logger.cache(`[EnhancedInference]   Cache point ${i + 1}: message ${m.messageIndex} (${m.tokenCount} tokens)`);
-    });
-    
-    return window.messages.map((msg, idx) => {
-      if (cacheIndices.has(idx)) {
-        // This message should get cache control
-        const clonedMsg = JSON.parse(JSON.stringify(msg)); // Deep clone
-        const activeBranch = clonedMsg.branches.find((b: any) => b.id === clonedMsg.activeBranchId);
-        if (activeBranch) {
-          activeBranch._cacheControl = cacheControl;
-        }
-        return clonedMsg;
-      }
-      return msg;
-    });
   }
   
   private estimateTokens(content: any): number {
