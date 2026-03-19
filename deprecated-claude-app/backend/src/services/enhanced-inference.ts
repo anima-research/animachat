@@ -28,10 +28,15 @@ interface CacheMetrics {
 }
 
 type CostBreakdown = {
-  inputCost: number;
+  freshInputCost: number;     // uncached input tokens × base price
+  cacheWriteCost: number;     // cache_creation tokens × write price (1.25x or 2x)
+  cacheReadCost: number;      // cache_read tokens × read price (0.1x)
   outputCost: number;
   totalCost: number;
-  inputPrice: number;
+  // Per-token prices used (for usage details)
+  baseInputPrice: number;
+  cacheWritePrice: number;
+  cacheReadPrice: number;
   outputPrice: number;
 };
 
@@ -219,7 +224,11 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'gemini-3-pro-imagegen': 5.00,
 };
 
-const CACHE_DISCOUNT = 0.9;
+// Anthropic cache pricing multipliers (relative to base input price)
+// See: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+const CACHE_WRITE_MULTIPLIER_5MIN = 1.25;  // 5-minute TTL: costs 25% MORE than base input
+const CACHE_WRITE_MULTIPLIER_1H = 2.0;     // 1-hour TTL: costs 100% MORE than base input
+const CACHE_READ_MULTIPLIER = 0.1;          // Cache reads: costs 90% LESS than base input
 
 /**
  * Validate that pricing is available for a model BEFORE making inference calls.
@@ -430,29 +439,31 @@ export class EnhancedInferenceService {
       await streamCallback(chunk, isComplete, contentBlocks);
       
       if (isComplete) {
-        // Update with actual usage from API if provided
+        // Extract actual usage from API response — keep all three input categories separate
+        let freshInputTokens = 0;
+        let cacheCreationTokens = 0;
+        let cacheReadTokens = 0;
+
         if (actualUsage) {
-          // Provider semantics (both Anthropic and OpenRouter now match):
-          // - inputTokens = fresh (non-cached) tokens only
-          // - cacheCreationInputTokens = tokens written to cache
-          // - cacheReadInputTokens = tokens read from cache
-          // Total prompt = fresh + cache_creation + cache_read
-          const freshTokens = actualUsage.inputTokens ?? 0; // Defensive default to prevent NaN
-          const cacheCreation = actualUsage.cacheCreationInputTokens || 0;
-          const cacheRead = actualUsage.cacheReadInputTokens || 0;
-          
-          inputTokens = freshTokens + cacheCreation + cacheRead; // TOTAL input
-          outputTokens = actualUsage.outputTokens ?? 0; // Defensive default
-          // Cache size: creation OR read (whichever is non-zero shows current cache size)
-          cachedTokens = cacheRead > 0 ? cacheRead : cacheCreation;
-          cacheHit = cacheRead > 0;
-          
-          Logger.cache(`[EnhancedInference] ✅ Actual usage: fresh=${freshTokens}, cacheCreate=${cacheCreation}, cacheRead=${cacheRead}, output=${outputTokens}`);
-          Logger.cache(`[EnhancedInference]   Total input=${inputTokens}, cache size=${cachedTokens}`);
+          freshInputTokens = actualUsage.inputTokens ?? 0;
+          cacheCreationTokens = actualUsage.cacheCreationInputTokens || 0;
+          cacheReadTokens = actualUsage.cacheReadInputTokens || 0;
+          outputTokens = actualUsage.outputTokens ?? 0;
+
+          // Update legacy aggregate fields for context manager compatibility
+          inputTokens = freshInputTokens + cacheCreationTokens + cacheReadTokens;
+          cachedTokens = cacheReadTokens; // Only actual cache READS count as "cached"
+          cacheHit = cacheReadTokens > 0;
+
+          // Store for debug capture
+          this.inferenceService.lastActualUsage = actualUsage;
+
+          Logger.cache(`[EnhancedInference] ✅ Actual usage: fresh=${freshInputTokens}, cacheWrite=${cacheCreationTokens}, cacheRead=${cacheReadTokens}, output=${outputTokens}`);
+          Logger.cache(`[EnhancedInference]   Cache ${cacheHit ? 'HIT' : 'MISS'} — total input=${inputTokens}`);
         }
-        
+
         // Log metrics
-        const estimatedSaved = await this.calculateCostSaved(model, cachedTokens);
+        const cacheSavings = await this.calculateCacheSavings(model, cacheReadTokens);
         const metric: CacheMetrics = {
           conversationId: conversation.id,
           participantId: participant?.id,
@@ -463,18 +474,14 @@ export class EnhancedInferenceService {
           inputTokens,
           cachedTokens,
           outputTokens,
-          estimatedCostSaved: estimatedSaved,
+          estimatedCostSaved: cacheSavings,
         };
-        
+
         this.metricsLog.push(metric);
-        
-        // Note: Cache hit/miss details are logged by the provider service (Anthropic/OpenRouter)
-        // which has access to the actual API response metrics. We just track expected vs actual
-        // in our context manager statistics below.
-        
+
         // Update context manager statistics
         this.contextManager.updateAfterInference(
-          conversation.id, 
+          conversation.id,
           {
             cacheHit,
             tokensUsed: inputTokens + outputTokens,
@@ -482,22 +489,26 @@ export class EnhancedInferenceService {
           },
           participant?.id
         );
-        
+
         // Call metrics callback if provided
         if (onMetrics) {
           const endTime = Date.now();
-          const breakdown = await this.calculateCostBreakdown(model, inputTokens, outputTokens);
-          const savings = await this.calculateCostSaved(model, cachedTokens);
+          const breakdown = await this.calculateCostBreakdown(
+            model, freshInputTokens, cacheCreationTokens, cacheReadTokens, outputTokens,
+            cacheTTL as '5m' | '1h'
+          );
           await onMetrics({
             inputTokens,
             outputTokens,
-            cachedTokens,
-            cost: Math.max(breakdown.totalCost - savings, 0),
-            cacheSavings: savings,
+            cachedTokens: cacheReadTokens,
+            cost: breakdown.totalCost,
+            cacheSavings,
             model: model.id,
             timestamp: new Date().toISOString(),
             responseTime: endTime - startTime,
-            details: this.buildUsageDetails(breakdown, inputTokens, outputTokens, cachedTokens),
+            details: this.buildUsageDetails(
+              breakdown, freshInputTokens, cacheCreationTokens, cacheReadTokens, outputTokens
+            ),
             // Pass through failure info if present (for failed request tracking)
             ...(actualUsage?.failed && { failed: true }),
             ...(actualUsage?.error && { error: actualUsage.error })
@@ -512,59 +523,17 @@ export class EnhancedInferenceService {
     expectedCache = window.cacheablePrefix.length > 0 && window.metadata.cacheKey === cacheKey;
     cacheHit = false; // Will be determined from actual response
     
-    // For Anthropic models (direct or via OpenRouter), we need to add cache control metadata
-    // 
-    // CACHING APPROACHES BY PROVIDER:
-    // - Anthropic direct with prefill: Use Chapter II approach - insert text breakpoints into prefill blob
-    // - Anthropic direct with standard: Use message-level cache_control
-    // - OpenRouter with prefill: OpenRouter converts to messages mode, use message-level cache_control
-    // - OpenRouter with standard: Use message-level cache_control
-    //
-    const isPrefillFormat = conversation?.format === 'prefill';
-    const isAnthropicDirect = model.provider === 'anthropic' || model.provider === 'bedrock';
-    
-    // For Anthropic direct + prefill: use Chapter II approach (text breakpoints)
-    // For everything else (standard format, or OpenRouter which converts to messages): use message-level cache_control
-    const useTextBreakpoints = isPrefillFormat && isAnthropicDirect;
-    
-    // DEBUG: Log the cache control decision factors
-    console.log(`[EnhancedInference] Cache control decision:`, {
-      conversationFormat: conversation?.format,
-      isPrefillFormat,
-      isAnthropicDirect,
-      useTextBreakpoints,
-      provider: model.provider,
-      cacheablePrefixLength: window.cacheablePrefix.length
-    });
-    
-    let messagesToSend = window.messages;
-    let cacheMarkerIndices: number[] | undefined;
-    
-    if (useTextBreakpoints) {
-      // Chapter II approach for Anthropic prefill: pass cache marker indices to inference
-      // These will be inserted as <|cache_breakpoint|> text markers in the prefill blob
-      const markers = window.cacheMarkers || (window.cacheMarker ? [window.cacheMarker] : []);
-      if (markers.length > 0) {
-        cacheMarkerIndices = markers.map(m => m.messageIndex);
-        Logger.cache(`[EnhancedInference] 📦 Chapter II caching for Anthropic prefill: ${markers.length} breakpoints`);
-        markers.forEach((m, i) => {
-          Logger.cache(`[EnhancedInference]   Breakpoint ${i + 1}: after message ${m.messageIndex} (${m.tokenCount} tokens)`);
-        });
-      } else {
-        Logger.cache(`[EnhancedInference] No cache markers for prefill (messages=${window.messages.length})`);
-      }
-    } else if ((model.provider === 'anthropic' || model.provider === 'openrouter') && window.cacheablePrefix.length > 0) {
-      // Message-level cache_control for standard format or OpenRouter
-      Logger.cache(`[EnhancedInference] Adding message-level cache control for ${model.provider} (${model.id})`);
-      messagesToSend = this.addCacheControlToMessages(window, model);
-    } else {
-      Logger.debug(`[EnhancedInference] No cache control: provider=${model.provider}, cacheablePrefix=${window.cacheablePrefix.length}`);
-    }
-    
+    // Automatic prompt caching: just pass the TTL to the provider.
+    // Anthropic places breakpoints optimally. No manual markers needed.
+    const cacheTTL = (conversation as any)?.cacheTTL || '5m';
+    const effectiveCacheTTL = cacheTTL !== 'off' ? cacheTTL as '5m' | '1h' : undefined;
+
+    Logger.cache(`[EnhancedInference] Cache: ${effectiveCacheTTL ? effectiveCacheTTL + ' TTL' : 'OFF'}, provider=${model.provider}`);
+
     // Call inference (actual usage will be passed through the callback)
     await this.inferenceService.streamCompletion(
       model.id,
-      messagesToSend,
+      window.messages,
       systemPrompt,
       settings,
       userId,
@@ -573,42 +542,9 @@ export class EnhancedInferenceService {
       participants || [],
       participant?.id,
       conversation,
-      cacheMarkerIndices,  // Pass cache marker indices for Chapter II prefill caching
-      personaContext  // Per-participant persona context for prefill injection
+      personaContext,  // Per-participant persona context for prefill injection
+      effectiveCacheTTL  // Cache TTL — provider handles placement
     );
-  }
-  
-  private addCacheControlToMessages(window: ContextWindow, model?: Model): Message[] {
-    // Use multiple cache markers if available (Anthropic supports 4)
-    const markers = window.cacheMarkers || (window.cacheMarker ? [window.cacheMarker] : []);
-    
-    if (markers.length === 0) {
-      return window.messages; // No caching
-    }
-    
-    // All models get 1-hour cache - MUST specify ttl explicitly for OpenRouter!
-    const cacheControl = { type: 'ephemeral' as const, ttl: '1h' as const };
-    
-    // Create a set of message indices that should get cache control
-    const cacheIndices = new Set(markers.map(m => m.messageIndex));
-    
-    Logger.cache(`[EnhancedInference] 📦 Adding cache control to ${cacheIndices.size} messages (TTL: 1h):`);
-    markers.forEach((m, i) => {
-      Logger.cache(`[EnhancedInference]   Cache point ${i + 1}: message ${m.messageIndex} (${m.tokenCount} tokens)`);
-    });
-    
-    return window.messages.map((msg, idx) => {
-      if (cacheIndices.has(idx)) {
-        // This message should get cache control
-        const clonedMsg = JSON.parse(JSON.stringify(msg)); // Deep clone
-        const activeBranch = clonedMsg.branches.find((b: any) => b.id === clonedMsg.activeBranchId);
-        if (activeBranch) {
-          activeBranch._cacheControl = cacheControl;
-        }
-        return clonedMsg;
-      }
-      return msg;
-    });
   }
   
   private estimateTokens(content: any): number {
@@ -623,45 +559,83 @@ export class EnhancedInferenceService {
     return Math.ceil(text.length / 4);
   }
   
-  private async calculateCostSaved(model: Model, cachedTokens: number): Promise<number> {
-    const pricePerToken = await this.getInputPricePerToken(model);
-    return cachedTokens * pricePerToken * CACHE_DISCOUNT;
-  }
-
-  private async calculateCostBreakdown(model: Model, inputTokens: number, outputTokens: number): Promise<CostBreakdown> {
-    const inputPrice = await this.getInputPricePerToken(model);
+  /**
+   * Calculate the actual cost of a request using Anthropic's tiered pricing.
+   *
+   * Anthropic bills four token categories at different rates:
+   * - Fresh input (uncached): base input price
+   * - Cache write: 1.25x base (5min TTL) or 2x base (1h TTL)
+   * - Cache read: 0.1x base
+   * - Output: output price
+   *
+   * Arc uses 1h TTL everywhere, so cache writes = 2x base.
+   */
+  private async calculateCostBreakdown(
+    model: Model,
+    freshInputTokens: number,
+    cacheCreationTokens: number,
+    cacheReadTokens: number,
+    outputTokens: number,
+    cacheTTL: '5m' | '1h' = '5m'
+  ): Promise<CostBreakdown> {
+    const baseInputPrice = await this.getInputPricePerToken(model);
     const outputPrice = await this.getOutputPricePerToken(model);
-    const inputCost = inputTokens * inputPrice;
+    const cacheWriteMultiplier = cacheTTL === '1h' ? CACHE_WRITE_MULTIPLIER_1H : CACHE_WRITE_MULTIPLIER_5MIN;
+    const cacheWritePrice = baseInputPrice * cacheWriteMultiplier;
+    const cacheReadPrice = baseInputPrice * CACHE_READ_MULTIPLIER;
+
+    const freshInputCost = freshInputTokens * baseInputPrice;
+    const cacheWriteCost = cacheCreationTokens * cacheWritePrice;
+    const cacheReadCost = cacheReadTokens * cacheReadPrice;
     const outputCost = outputTokens * outputPrice;
 
     return {
-      inputCost,
+      freshInputCost,
+      cacheWriteCost,
+      cacheReadCost,
       outputCost,
-      totalCost: inputCost + outputCost,
-      inputPrice,
+      totalCost: freshInputCost + cacheWriteCost + cacheReadCost + outputCost,
+      baseInputPrice,
+      cacheWritePrice,
+      cacheReadPrice,
       outputPrice
     };
   }
 
+  /**
+   * Calculate how much a cache read saved compared to paying base input price.
+   * Only meaningful for cache READS. Cache writes are a cost, not a saving.
+   */
+  private async calculateCacheSavings(model: Model, cacheReadTokens: number): Promise<number> {
+    if (cacheReadTokens <= 0) return 0;
+    const baseInputPrice = await this.getInputPricePerToken(model);
+    // Savings = what we would have paid (base) minus what we actually paid (0.1x base)
+    return cacheReadTokens * baseInputPrice * (1 - CACHE_READ_MULTIPLIER);
+  }
+
   private buildUsageDetails(
     breakdown: CostBreakdown,
-    inputTokens: number,
-    outputTokens: number,
-    cachedTokens: number
+    freshInputTokens: number,
+    cacheCreationTokens: number,
+    cacheReadTokens: number,
+    outputTokens: number
   ): GrantUsageDetails {
     const details: GrantUsageDetails = {};
 
-    if (inputTokens > 0) {
-      details.input = this.createTokenUsage(breakdown.inputPrice, inputTokens);
+    if (freshInputTokens > 0) {
+      details.input = this.createTokenUsage(breakdown.baseInputPrice, freshInputTokens);
+    }
+
+    if (cacheCreationTokens > 0) {
+      details.cache_write = this.createTokenUsage(breakdown.cacheWritePrice, cacheCreationTokens);
+    }
+
+    if (cacheReadTokens > 0) {
+      details.cached_input = this.createTokenUsage(breakdown.cacheReadPrice, cacheReadTokens);
     }
 
     if (outputTokens > 0) {
       details.output = this.createTokenUsage(breakdown.outputPrice, outputTokens);
-    }
-
-    if (cachedTokens > 0) {
-      const cachedPrice = -breakdown.inputPrice * CACHE_DISCOUNT;
-      details.cached_input = this.createTokenUsage(cachedPrice, cachedTokens);
     }
 
     return details;

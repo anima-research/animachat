@@ -30,7 +30,8 @@ export class AnthropicService {
     systemPrompt: string | undefined,
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
-    stopSequences?: string[]
+    stopSequences?: string[],
+    cacheTTL?: '5m' | '1h'  // undefined = no caching
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -83,21 +84,7 @@ export class AnthropicService {
         );
       }
       
-      // Check if we need to cache the system prompt
-      let systemContent: any = systemPrompt;
-      if (systemPrompt && messages.length > 0) {
-        // Check if first message has cache control (indicating it's the cache boundary)
-        const firstMessage = messages[0];
-        const firstBranch = getActiveBranch(firstMessage);
-        if (firstBranch && (firstBranch as any)._cacheControl) {
-          // System prompt should also be cached (1h TTL for OpenRouter compatibility)
-          systemContent = [{
-            type: 'text',
-            text: systemPrompt,
-            cache_control: { type: 'ephemeral' as const, ttl: '1h' as const }
-          }];
-        }
-      }
+      const systemContent: any = systemPrompt;
       
       // Ensure max_tokens > budget_tokens when thinking is enabled
       let effectiveMaxTokens = settings.maxTokens;
@@ -128,6 +115,12 @@ export class AnthropicService {
             type: 'enabled',
             budget_tokens: settings.thinking.budgetTokens
           }
+        }),
+        // Automatic prompt caching: Anthropic places breakpoints optimally
+        ...(cacheTTL && {
+          cache_control: cacheTTL === '1h'
+            ? { type: 'ephemeral', ttl: '1h' }
+            : { type: 'ephemeral' }
         }),
         messages: anthropicMessages,
         stream: true
@@ -506,27 +499,13 @@ export class AnthropicService {
             }
           }
           
-          // Add cache control to the last content part if present
-          if ((activeBranch as any)._cacheControl && contentParts.length > 0) {
-            // Add cache control to the last content block
-            contentParts[contentParts.length - 1].cache_control = (activeBranch as any)._cacheControl;
-          }
-          
           formattedMessages.push({
             role: 'user',
             content: contentParts
           });
         } else {
           // Simple text message
-          // Check for cache breakpoint markers (Chapter II style)
-          if ((activeBranch as any)._hasCacheBreakpoints && messageContent.includes('<|cache_breakpoint|>')) {
-            // Split content at cache breakpoints and create separate text blocks
-            const contentBlocks = this.splitAtCacheBreakpoints(messageContent);
-            formattedMessages.push({
-              role: activeBranch.role as 'user' | 'assistant',
-              content: contentBlocks
-            });
-          } else if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
+          if (activeBranch.role === 'assistant' && activeBranch.contentBlocks && activeBranch.contentBlocks.length > 0) {
             // Assistant message with thinking blocks - format as content array for API
             // This is required for models like Opus 4.5 to maintain chain of thought
             const apiContentBlocks: any[] = [];
@@ -584,24 +563,9 @@ export class AnthropicService {
               });
             }
             
-            // Add cache control to last block if present
-            if ((activeBranch as any)._cacheControl && apiContentBlocks.length > 0) {
-              apiContentBlocks[apiContentBlocks.length - 1].cache_control = (activeBranch as any)._cacheControl;
-            }
-            
             formattedMessages.push({
               role: 'assistant',
               content: apiContentBlocks
-            });
-          } else if ((activeBranch as any)._cacheControl) {
-            // Need to convert to content block format to add cache control
-            formattedMessages.push({
-              role: activeBranch.role as 'user' | 'assistant',
-              content: [{
-                type: 'text',
-                text: messageContent,
-                cache_control: (activeBranch as any)._cacheControl
-              }]
             });
           } else {
             // Regular string content
@@ -615,47 +579,6 @@ export class AnthropicService {
     }
 
     return formattedMessages;
-  }
-  
-  /**
-   * Split content at <|cache_breakpoint|> markers and convert to Anthropic text blocks
-   * Each section BEFORE a marker gets cache_control, the last section does not
-   * This implements Chapter II's caching approach
-   */
-  private splitAtCacheBreakpoints(content: string): Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl: '1h' } }> {
-    const CACHE_BREAKPOINT = '<|cache_breakpoint|>';
-    const sections = content.split(CACHE_BREAKPOINT);
-    
-    console.log(`[Anthropic] 📦 Splitting prefill content at ${sections.length - 1} cache breakpoints`);
-    
-    const contentBlocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl: '1h' } }> = [];
-    
-    for (let i = 0; i < sections.length; i++) {
-      const section = sections[i].trim();
-      if (!section) continue; // Skip empty sections
-      
-      const isLastSection = i === sections.length - 1;
-      
-      if (isLastSection) {
-        // Last section (after final marker) - NO cache control
-        contentBlocks.push({
-          type: 'text',
-          text: section
-        });
-        console.log(`[Anthropic] 📦   Block ${i + 1}: ${section.length} chars (NOT cached - fresh content)`);
-      } else {
-        // All sections before the last get cache_control
-        contentBlocks.push({
-          type: 'text',
-          text: section,
-          cache_control: { type: 'ephemeral', ttl: '1h' }
-        });
-        console.log(`[Anthropic] 📦   Block ${i + 1}: ${section.length} chars (CACHED with 1h TTL)`);
-      }
-    }
-    
-    console.log(`[Anthropic] 📦 Created ${contentBlocks.length} content blocks for Anthropic API`);
-    return contentBlocks;
   }
   
   private isImageAttachment(fileName: string): boolean {
@@ -852,9 +775,9 @@ export class AnthropicService {
     };
     
     const pricePerToken = (pricingPer1M[modelId] || 3.00) / 1_000_000;
-    // Cached tokens are 90% cheaper
+    // Cache reads cost 10% of base — savings = 90% of what base would have cost
     const savings = cachedTokens * pricePerToken * 0.9;
-    
+
     return savings;
   }
   

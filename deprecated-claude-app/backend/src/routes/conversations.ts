@@ -447,7 +447,18 @@ export function conversationRouter(db: Database): Router {
         debugResponse = branchAny.debugResponse;
       }
 
-      res.json({ debugRequest, debugResponse });
+      let debugMetadata = null;
+      if (branchAny.debugMetadataBlobId) {
+        try {
+          debugMetadata = await blobStore.loadJsonBlob(branchAny.debugMetadataBlobId);
+        } catch (err) {
+          console.warn(`[Debug] Failed to load debugMetadata blob ${branchAny.debugMetadataBlobId}:`, err);
+        }
+      } else if (branchAny.debugMetadata) {
+        debugMetadata = branchAny.debugMetadata;
+      }
+
+      res.json({ debugRequest, debugResponse, debugMetadata });
     } catch (error) {
       console.error('Get debug data error:', error);
       res.status(500).json({ error: 'Internal server error' });
