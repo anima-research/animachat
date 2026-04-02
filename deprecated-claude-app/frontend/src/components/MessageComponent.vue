@@ -1025,7 +1025,8 @@ const canViewMetadata = computed(() => {
 });
 
 const branchIndex = computed(() => {
-  return props.message.branches.findIndex(b => b.id === props.message.activeBranchId) || 0;
+  const idx = props.message.branches.findIndex(b => b.id === props.message.activeBranchId);
+  return idx >= 0 ? idx : 0;
 });
 
 const currentBranch = computed(() => {
@@ -1329,7 +1330,8 @@ const siblingBranches = computed(() => {
 
 // Get index among siblings
 const siblingIndex = computed(() => {
-  return siblingBranches.value.findIndex(b => b.id === props.message.activeBranchId) || 0;
+  const idx = siblingBranches.value.findIndex(b => b.id === props.message.activeBranchId);
+  return idx >= 0 ? idx : 0;
 });
 
 // Check if branches are navigable (share the same parent)

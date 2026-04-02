@@ -143,6 +143,7 @@ export class WebSocketService {
         // Remove handlers to prevent double-triggering
         this.ws.onclose = null;
         this.ws.onerror = null;
+        this.ws.onmessage = null;
         this.ws.close();
       } catch (e) {
         // Ignore errors when closing

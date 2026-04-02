@@ -270,9 +270,16 @@ export function conversationRouter(db: Database): Router {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      console.log('[API] Updating conversation with:', JSON.stringify(req.body, null, 2));
-      const updated = await db.updateConversation(req.params.id, conversation.userId, req.body);
-      console.log('[API] Updated conversation settings:', JSON.stringify(updated?.settings, null, 2));
+      // Whitelist allowed update fields — never pass raw req.body
+      const allowedFields = ['title', 'model', 'systemPrompt', 'settings', 'archived',
+        'contextManagement', 'prefillUserMessage', 'cliModePrompt',
+        'combineConsecutiveMessages', 'toolConfig'] as const;
+      const updates: Record<string, unknown> = {};
+      for (const key of allowedFields) {
+        if (key in req.body) updates[key] = req.body[key];
+      }
+
+      const updated = await db.updateConversation(req.params.id, conversation.userId, updates);
       res.json(updated);
     } catch (error) {
       console.error('Update conversation error:', error);
@@ -312,12 +319,14 @@ export function conversationRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      // Parse options from request body
+      // Parse and validate options from request body
+      const rawLast = req.body.lastMessages;
       const options = {
-        newTitle: req.body.newTitle as string | undefined,
-        lastMessages: req.body.lastMessages as number | undefined,
-        includeSystemPrompt: req.body.includeSystemPrompt as boolean | undefined,
-        includeSettings: req.body.includeSettings as boolean | undefined,
+        newTitle: typeof req.body.newTitle === 'string' ? req.body.newTitle : undefined,
+        lastMessages: (typeof rawLast === 'number' && Number.isInteger(rawLast) && rawLast > 0)
+          ? rawLast : undefined,
+        includeSystemPrompt: typeof req.body.includeSystemPrompt === 'boolean' ? req.body.includeSystemPrompt : undefined,
+        includeSettings: typeof req.body.includeSettings === 'boolean' ? req.body.includeSettings : undefined,
       };
 
       const duplicate = await db.duplicateConversation(req.params.id, req.userId, req.userId, options);

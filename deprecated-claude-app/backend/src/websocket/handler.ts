@@ -1777,7 +1777,7 @@ async function handleRegenerate(
       const rawRequest = baseInferenceService.lastRawRequest;
       console.log(`[DEBUG CAPTURE] Raw request available: ${!!rawRequest}`);
 
-      if (rawRequest) {
+      if (rawRequest && generatedBranchIds.length > 0) {
         // Store debug data on the first regenerated branch
         const firstBranchId = generatedBranchIds[0];
         const currentBranch = updatedMessage.branches.find(b => b.id === firstBranchId);
@@ -2221,7 +2221,7 @@ async function handleEdit(
         const rawRequest = baseInferenceService.lastRawRequest;
         console.log(`[DEBUG CAPTURE] Raw request available for edit: ${!!rawRequest}`);
 
-        if (rawRequest && targetMessage) {
+        if (rawRequest && targetMessage && generatedBranchIds.length > 0) {
           const firstBranchId = generatedBranchIds[0];
           const currentBranch = targetMessage.branches.find(b => b.id === firstBranchId);
           if (currentBranch) {

@@ -94,18 +94,8 @@ export function createInvitesRouter(db: Database): Router {
       const { code } = req.params;
       const validation = db.validateInvite(code);
 
-      if (validation.valid && validation.invite) {
-        res.json({
-          valid: true,
-          amount: validation.invite.amount,
-          currency: validation.invite.currency
-        });
-      } else {
-        res.json({
-          valid: false,
-          error: validation.error
-        });
-      }
+      // Only return validity — never leak amount/currency to unauthenticated callers
+      res.json({ valid: validation.valid });
     } catch (error) {
       console.error('Error checking invite:', error);
       res.status(500).json({ error: 'Failed to check invite' });
