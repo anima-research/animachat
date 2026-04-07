@@ -12,7 +12,9 @@
     "dev:backend": "npm run dev -w backend",
     "dev:frontend": "npm run dev -w frontend",
     "build": "npm run build -w shared && npm run build -w backend && npm run build -w frontend",
-    "test": "npm run test --workspaces"
+    "test": "npm run test --workspaces",
+    "test:watch": "concurrently \"npm run test:watch -w backend\" \"npm run test:watch -w frontend\" \"npm run test:watch -w shared\"",
+    "test:coverage": "npm run test:coverage --workspaces"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

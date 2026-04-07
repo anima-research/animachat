@@ -24,3 +24,7 @@ deprecated-claude-app/backend/logs/llm/**
 # Test files
 prompt_caching/***.json
 production-*.json
+deprecated-claude-app/backend/coverage/
+deprecated-claude-app/frontend/coverage/
+deprecated-claude-app/shared/coverage/
+deprecated-claude-app/coverage/
