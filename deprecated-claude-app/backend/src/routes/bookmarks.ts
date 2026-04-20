@@ -79,7 +79,7 @@ export function createBookmarksRouter(db: Database): Router {
     }
   });
 
-  // Get all bookmarks for a conversation
+  // Get all bookmarks for a conversation (enriched with preview data)
   router.get('/conversation/:conversationId', authenticateToken, async (req: AuthRequest, res) => {
     try {
       const { conversationId } = req.params;
@@ -94,7 +94,36 @@ export function createBookmarksRouter(db: Database): Router {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
-      const bookmarks = await db.getConversationBookmarks(conversationId);
+      const bookmarks = await db.getConversationBookmarksEnriched(conversationId, req.userId);
+      res.json(bookmarks);
+    } catch (error) {
+      console.error('Error fetching bookmarks:', error);
+      res.status(500).json({ error: 'Failed to fetch bookmarks' });
+    }
+  });
+
+  // Get all bookmarks in active path for a conversation
+  router.get('/conversation/:conversationId/active-path', authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const { conversationId } = req.params;
+
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Verify the user owns the conversation
+      const conversation = await db.getConversation(conversationId, req.userId);
+      if (!conversation || conversation.userId !== req.userId) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const allBookmarks = await db.getConversationBookmarksEnriched(conversationId, req.userId);
+
+      const visibleMessages = await db.getVisibleMessagePath(conversationId, req.userId);
+      const visibleBranchIds = new Set(visibleMessages.map(m => m.activeBranchId));
+
+      const bookmarks = allBookmarks.filter(b => visibleBranchIds.has(b.branchId));
+
       res.json(bookmarks);
     } catch (error) {
       console.error('Error fetching bookmarks:', error);
