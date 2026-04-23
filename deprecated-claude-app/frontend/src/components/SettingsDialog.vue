@@ -11,6 +11,7 @@
 
       <v-tabs v-model="tab" density="compact">
         <v-tab value="api-keys">API Keys</v-tab>
+        <v-tab value="delegates">Delegates</v-tab>
         <v-tab value="grants">Grants</v-tab>
         <v-tab value="custom-models">Models</v-tab>
         <v-tab value="avatars">Avatars</v-tab>
@@ -181,6 +182,96 @@
           </v-card-text>
         </v-window-item>
 
+        <!-- Delegates Tab -->
+        <v-window-item value="delegates">
+          <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
+            <div class="text-body-2 mb-4">
+              Delegate API keys allow your delegate applications to connect securely.
+              Create a key, then use it in your delegate's configuration instead of JWT tokens.
+            </div>
+
+            <!-- Existing Keys -->
+            <h4 class="text-subtitle-1 mb-2">Your API Keys</h4>
+            <v-list density="compact" v-if="delegateApiKeys.length > 0">
+              <v-list-item
+                v-for="key in delegateApiKeys"
+                :key="key.id"
+              >
+                <template v-slot:prepend>
+                  <v-icon icon="mdi-key" size="small" class="mr-2" />
+                </template>
+                <v-list-item-title>{{ key.name }}</v-list-item-title>
+                <v-list-item-subtitle>
+                  {{ key.keyPrefix }}... ·
+                  <span v-if="key.lastUsedAt">Last used: {{ formatDate(key.lastUsedAt) }}</span>
+                  <span v-else class="text-grey">Never used</span>
+                </v-list-item-subtitle>
+                <template v-slot:append>
+                  <v-btn
+                    icon="mdi-delete"
+                    size="small"
+                    variant="text"
+                    color="error"
+                    @click="revokeDelegateKey(key.id, key.name)"
+                  />
+                </template>
+              </v-list-item>
+            </v-list>
+            <div v-else class="text-grey text-body-2 mb-4">
+              No delegate API keys yet. Create one below.
+            </div>
+
+            <v-divider class="my-4" />
+
+            <!-- Create New Key -->
+            <h4 class="text-subtitle-1 mb-2">Create New Key</h4>
+            <v-text-field
+              v-model="newDelegateKeyName"
+              label="Key Name"
+              placeholder="e.g., My Laptop, Work PC"
+              variant="outlined"
+              density="compact"
+              class="mb-2"
+            />
+            <v-btn
+              :disabled="!newDelegateKeyName.trim()"
+              :loading="creatingDelegateKey"
+              color="primary"
+              variant="elevated"
+              @click="createDelegateKey"
+            >
+              Create Key
+            </v-btn>
+
+            <!-- Show newly created key -->
+            <v-alert
+              v-if="newlyCreatedKey"
+              type="warning"
+              class="mt-4"
+              closable
+              @click:close="newlyCreatedKey = null"
+            >
+              <div class="font-weight-bold mb-2">Save this key now! It won't be shown again.</div>
+              <code class="d-block pa-2 bg-grey-darken-3 rounded">{{ newlyCreatedKey }}</code>
+              <v-btn
+                size="small"
+                variant="tonal"
+                class="mt-2"
+                @click="copyToClipboard(newlyCreatedKey!)"
+              >
+                <v-icon size="small" class="mr-1">mdi-content-copy</v-icon>
+                Copy to Clipboard
+              </v-btn>
+            </v-alert>
+
+            <v-divider class="my-4" />
+
+            <!-- Connected Delegates Status -->
+            <h4 class="text-subtitle-1 mb-2">Connected Delegates</h4>
+            <DelegateStatusPanel @delegates-updated="onDelegatesUpdated" />
+          </v-card-text>
+        </v-window-item>
+
         <!-- Grants Tab -->
         <v-window-item value="grants">
           <GrantsTab
@@ -302,11 +393,12 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useTheme } from 'vuetify';
 import { useStore } from '@/store';
-import { api } from '@/services/api';
+import { api, getDelegateApiKeys, createDelegateApiKey, revokeDelegateApiKey, type DelegateApiKeyPublic } from '@/services/api';
 import { UserGrantSummary } from '@deprecated-claude/shared';
 import CustomModelsTab from './CustomModelsTab.vue';
 import AvatarPacksTab from './AvatarPacksTab.vue';
 import GrantsTab from './GrantsTab.vue';
+import DelegateStatusPanel from './DelegateStatusPanel.vue';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -331,6 +423,12 @@ const models = computed(() => store.state.models);
 const grantSummary = ref<UserGrantSummary | null>(null);
 const grantsLoading = ref(false);
 const grantsError = ref<string | null>(null);
+
+// Delegate API Keys state
+const delegateApiKeys = ref<DelegateApiKeyPublic[]>([]);
+const newDelegateKeyName = ref('');
+const creatingDelegateKey = ref(false);
+const newlyCreatedKey = ref<string | null>(null);
 
 const newKey = ref({
   name: '',
@@ -482,7 +580,7 @@ async function addApiKey() {
 
 async function deleteApiKey(id: string) {
   if (!confirm('Are you sure you want to delete this API key?')) return;
-  
+
   try {
     await api.delete(`/auth/api-keys/${id}`);
     apiKeys.value = apiKeys.value.filter(k => k.id !== id);
@@ -491,17 +589,81 @@ async function deleteApiKey(id: string) {
   }
 }
 
+// =============================================================================
+// Delegate API Keys
+// =============================================================================
+
+async function loadDelegateApiKeys() {
+  try {
+    const response = await getDelegateApiKeys();
+    delegateApiKeys.value = response.keys;
+  } catch (error) {
+    console.error('Failed to load delegate API keys:', error);
+  }
+}
+
+async function createDelegateKey() {
+  if (!newDelegateKeyName.value.trim()) return;
+
+  creatingDelegateKey.value = true;
+  try {
+    const response = await createDelegateApiKey(newDelegateKeyName.value.trim());
+    delegateApiKeys.value.unshift(response.key);
+    newlyCreatedKey.value = response.secretKey;
+    newDelegateKeyName.value = '';
+  } catch (error) {
+    console.error('Failed to create delegate API key:', error);
+    alert('Failed to create API key');
+  } finally {
+    creatingDelegateKey.value = false;
+  }
+}
+
+async function revokeDelegateKey(keyId: string, keyName: string) {
+  if (!confirm(`Revoke API key "${keyName}"? This cannot be undone.`)) return;
+
+  try {
+    await revokeDelegateApiKey(keyId);
+    delegateApiKeys.value = delegateApiKeys.value.filter(k => k.id !== keyId);
+  } catch (error) {
+    console.error('Failed to revoke delegate API key:', error);
+  }
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return 'Never';
+  const date = new Date(dateStr);
+  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    alert('Copied to clipboard!');
+  } catch (error) {
+    console.error('Failed to copy:', error);
+  }
+}
+
+function onDelegatesUpdated(_delegates: any[]) {
+  // Optional: refresh delegate keys when delegates change
+}
+
 // Load data when dialog opens
 watch(() => props.modelValue, (isOpen) => {
   if (isOpen) {
     loadApiKeys();
     loadGrantSummary();
+    loadDelegateApiKeys();
   }
 });
 
 watch(tab, (value) => {
   if (value === 'grants' && !grantSummary.value && !grantsLoading.value) {
     loadGrantSummary();
+  }
+  if (value === 'delegates' && delegateApiKeys.value.length === 0) {
+    loadDelegateApiKeys();
   }
 });
 

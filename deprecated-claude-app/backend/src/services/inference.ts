@@ -152,7 +152,13 @@ export class InferenceService {
     responderId?: string,
     conversation?: Conversation,
     cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints (for prefill)
-    personaContext?: string  // Per-participant persona context to inject into prefill
+    personaContext?: string,  // Per-participant persona context to inject into prefill
+    toolOptions?: {
+      tools?: any[];
+      onToolCall?: (call: any) => void;
+      onToolResult?: (result: any) => void;
+      executeToolCall?: (call: any) => Promise<any>;
+    }
   ): Promise<{
     usage?: {
       inputTokens: number;

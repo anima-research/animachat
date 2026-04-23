@@ -146,15 +146,36 @@ class RoomManager {
   broadcastToRoom(conversationId: string, message: any, exclude?: AuthenticatedWebSocket): void {
     const room = this.rooms.get(conversationId);
     if (!room) return;
-    
+
     const payload = JSON.stringify(message);
-    
+
     for (const member of room.members.values()) {
       if (member.ws !== exclude && member.ws.readyState === WebSocket.OPEN) {
         try {
           member.ws.send(payload);
         } catch (error) {
           console.error(`[RoomManager] Failed to send to user ${member.userId}:`, error);
+        }
+      }
+    }
+  }
+
+  /**
+   * Broadcast a message to all connections of a specific user.
+   * Used for user-wide notifications like delegate status changes.
+   */
+  broadcastToUser(userId: string, message: any): void {
+    const connections = this.userConnections.get(userId);
+    if (!connections || connections.size === 0) return;
+
+    const payload = JSON.stringify(message);
+
+    for (const ws of connections) {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(payload);
+        } catch (error) {
+          console.error(`[RoomManager] Failed to send to user ${userId}:`, error);
         }
       }
     }

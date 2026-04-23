@@ -356,6 +356,56 @@ export const DEFAULT_CONTEXT_MANAGEMENT: ContextManagement = {
   tokensBeforeCaching: 10000
 };
 
+// Tool configuration for participants
+export const ToolConfigSchema = z.object({
+  // Whether tools are enabled for this participant
+  toolsEnabled: z.boolean().default(true),
+  // Which tools this participant can use:
+  // - null/undefined = allow ALL available tools (default)
+  // - [] (empty array) = no tools allowed (selective mode, none selected)
+  // - ['tool1', 'tool2'] = only these specific tools allowed
+  enabledTools: z.array(z.string()).nullable().default(null),
+  // Custom timeout for tool execution (ms)
+  toolTimeout: z.number().min(1000).max(300000).default(30000),
+});
+
+export type ToolConfig = z.infer<typeof ToolConfigSchema>;
+
+// Delegate API Key - for delegate authentication (separate from LLM provider API keys)
+export const DelegateApiKeySchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  name: z.string().min(1).max(100), // User-friendly name like "My Laptop" or "Work PC"
+  keyPrefix: z.string(), // First 8 chars for display, e.g., "dak_abc1..."
+  keyHash: z.string(), // bcrypt hash of full key
+  createdAt: z.date(),
+  lastUsedAt: z.date().nullable().optional(),
+  expiresAt: z.date().nullable().optional(), // null = never expires
+  isRevoked: z.boolean().default(false),
+  revokedAt: z.date().nullable().optional(),
+  // Scope/permissions (for future use)
+  scopes: z.array(z.string()).default(['delegate:connect', 'tools:execute']),
+});
+
+export type DelegateApiKey = z.infer<typeof DelegateApiKeySchema>;
+
+// For API responses - never expose keyHash
+export const DelegateApiKeyPublicSchema = DelegateApiKeySchema.omit({ keyHash: true });
+export type DelegateApiKeyPublic = z.infer<typeof DelegateApiKeyPublicSchema>;
+
+// For creating new keys - returns full key only once
+export const CreateDelegateApiKeyRequestSchema = z.object({
+  name: z.string().min(1).max(100),
+  expiresAt: z.date().nullable().optional(), // null = never expires
+});
+export type CreateDelegateApiKeyRequest = z.infer<typeof CreateDelegateApiKeyRequestSchema>;
+
+export const CreateDelegateApiKeyResponseSchema = z.object({
+  key: DelegateApiKeyPublicSchema,
+  secretKey: z.string(), // Full key - only returned once on creation!
+});
+export type CreateDelegateApiKeyResponse = z.infer<typeof CreateDelegateApiKeyResponseSchema>;
+
 // Participant types
 export const ParticipantSchema = z.object({
   id: z.string().uuid(),
@@ -370,6 +420,7 @@ export const ParticipantSchema = z.object({
   conversationMode: ConversationModeEnum.optional(), // Per-participant format override (auto, prefill, messages, pseudo-prefill, completion)
   pseudoPrefillMode: z.enum(['cat', 'tail-cut']).default('cat').optional(), // Pseudo-prefill continuation method
   pseudoPrefillFilename: z.string().default('conversation.txt').optional(), // Filename for CLI simulation commands
+  toolConfig: ToolConfigSchema.optional(), // Tool configuration (only for assistant participants)
   isActive: z.boolean().default(true),
 
   // Persona context: large text body injected per-participant at inference time
@@ -392,12 +443,13 @@ export const UpdateParticipantSchema = z.object({
   conversationMode: ConversationModeEnum.optional(), // Per-participant format override
   pseudoPrefillMode: z.enum(['cat', 'tail-cut']).optional(),
   pseudoPrefillFilename: z.string().optional(),
+  toolConfig: ToolConfigSchema.optional(), // Tool configuration
   isActive: z.boolean().optional(),
   personaContext: z.string().optional(),
   // Persona system fields
   personaId: z.string().uuid().optional(),
   personaParticipationId: z.string().uuid().optional()
-}).transform((o) => ({ ...o, contextManagement: o.contextManagement })); // specifically pass through undefined and null
+}).transform((o) => ({ ...o, contextManagement: o.contextManagement, toolConfig: o.toolConfig })); // specifically pass through undefined and null
 
 // Attachment types - enhanced for multimodal support
 export const AttachmentSchema = z.object({
@@ -482,12 +534,30 @@ export const AudioContentBlockSchema = z.object({
   transcript: z.string().optional() // Text transcript of the audio
 });
 
+// Tool use content block - when model calls a tool
+export const ToolUseContentBlockSchema = z.object({
+  type: z.literal('tool_use'),
+  id: z.string(), // Tool use ID for matching with result
+  name: z.string(), // Tool name
+  input: z.record(z.unknown()) // Tool input parameters
+});
+
+// Tool result content block - result from tool execution
+export const ToolResultContentBlockSchema = z.object({
+  type: z.literal('tool_result'),
+  tool_use_id: z.string(), // Matches the tool_use id
+  content: z.string(), // Result content
+  is_error: z.boolean().optional() // Whether the result is an error
+});
+
 export const ContentBlockSchema = z.discriminatedUnion('type', [
   TextContentBlockSchema,
   ThinkingContentBlockSchema,
   RedactedThinkingContentBlockSchema,
   ImageContentBlockSchema,
-  AudioContentBlockSchema
+  AudioContentBlockSchema,
+  ToolUseContentBlockSchema,
+  ToolResultContentBlockSchema
 ]);
 
 export type ContentBlock = z.infer<typeof ContentBlockSchema>;
@@ -495,6 +565,8 @@ export type TextContentBlock = z.infer<typeof TextContentBlockSchema>;
 export type ThinkingContentBlock = z.infer<typeof ThinkingContentBlockSchema>;
 export type ImageContentBlock = z.infer<typeof ImageContentBlockSchema>;
 export type AudioContentBlock = z.infer<typeof AudioContentBlockSchema>;
+export type ToolUseContentBlock = z.infer<typeof ToolUseContentBlockSchema>;
+export type ToolResultContentBlock = z.infer<typeof ToolResultContentBlockSchema>;
 
 // Post-hoc operations - modify how previous messages appear in future contexts
 export const PostHocOperationTypeSchema = z.enum(['hide', 'hide_before', 'edit', 'hide_attachment', 'unhide']);
@@ -606,7 +678,8 @@ export const ConversationSchema = z.object({
     messageThreshold: z.number().default(10) // Apply CLI prompt for conversations under this many messages
   }).optional(),
   combineConsecutiveMessages: z.boolean().default(true).optional(), // Combine consecutive same-role messages when building context (default: true)
-  totalBranchCount: z.number().default(0).optional() // Cached count of non-system branches (calculated during event replay)
+  totalBranchCount: z.number().default(0).optional(), // Cached count of non-system branches (calculated during event replay)
+  toolConfig: ToolConfigSchema.optional() // Tool configuration for 1-on-1 chats (applied to the assistant)
 });
 
 export type Conversation = z.infer<typeof ConversationSchema>;

@@ -30,7 +30,10 @@ import { personaRouter } from './routes/personas.js';
 import avatarRouter from './routes/avatars.js';
 import blobRouter from './routes/blobs.js';
 import siteConfigRouter from './routes/site-config.js';
+import { toolsRouter } from './routes/tools.js';
 import { websocketHandler } from './websocket/handler.js';
+// Import server tools for side-effect registration
+import './tools/server-tools.js';
 import { Database } from './database/index.js';
 import { initBlobStore } from './database/blob-store.js';
 import { authenticateToken } from './middleware/auth.js';
@@ -150,6 +153,7 @@ app.use('/api/avatars', authenticateToken, avatarRouter);
 app.use('/api/blobs', blobRouter); // No auth - blobs are served by ID (content-addressed)
 app.use('/api/system', systemRouter());
 app.use('/api/site-config', siteConfigRouter); // No auth - public site configuration
+app.use('/api/tools', authenticateToken, toolsRouter({ db })); // Tool registry, delegate status, API keys
 
 // Health check
 app.get('/api/health', (req, res) => {
