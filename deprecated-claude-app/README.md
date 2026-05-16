@@ -146,34 +146,3 @@ Since there's no UI yet, just add to JSONL of your user lines akin to these:
 ## License
 
 This project is for educational and personal use. Ensure compliance with AWS Bedrock terms of service and Anthropic's usage policies.
-# Test deployment Fri Aug 29 23:55:51 EDT 2025
-# Webhook test Sat Aug 30 00:04:41 EDT 2025
-# Final deployment test Sat Aug 30 00:07:41 EDT 2025
-# Test clean build Sat Aug 30 00:09:59 EDT 2025
-# Test clean build Sat Aug 30 00:10:40 EDT 2025
-# Test clean build Sat Aug 30 00:14:52 EDT 2025
-# Debug test Sat Aug 30 00:18:26 EDT 2025
-# Debug test Sat Aug 30 00:19:15 EDT 2025
-# Debug test Sat Aug 30 00:25:48 EDT 2025
-# Webhook test Sat Aug 30 00:28:17 EDT 2025
-# Webhook test Sat Aug 30 00:38:05 EDT 2025
-# Webhook test Sat Aug 30 00:42:19 EDT 2025
-# Webhook test Sat Aug 30 00:44:19 EDT 2025
-# Webhook test Sat Aug 30 00:56:31 EDT 2025
-# Webhook test Sat Aug 30 01:00:11 EDT 2025
-# Webhook test Sat Aug 30 01:05:27 EDT 2025
-# Webhook test Sat Aug 30 01:07:22 EDT 2025
-# Webhook test Sat Aug 30 01:09:03 EDT 2025
-# Webhook test Sat Aug 30 01:10:46 EDT 2025
-# Webhook test Sat Aug 30 01:13:22 EDT 2025
-# Webhook test Sat Aug 30 01:13:41 EDT 2025
-# Webhook test Sat Aug 30 01:15:40 EDT 2025
-# Webhook test Sat Aug 30 01:18:32 EDT 2025
-# Webhook test Sat Aug 30 01:19:15 EDT 2025
-# Webhook test Sat Aug 30 01:21:38 EDT 2025
-# Webhook test Sat Aug 30 01:27:40 EDT 2025
-# Webhook test Sat Aug 30 01:30:37 EDT 2025
-# Webhook test Sat Aug 30 01:33:26 EDT 2025
-# Webhook test Sat Aug 30 01:34:26 EDT 2025
-# Trigger GitHub Actions deployment
-# Trigger deployment after sudoers fix
