@@ -41,7 +41,18 @@ function readNumberEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  // Greptile review of #92: a fractional value like `0.5` previously slipped
+  // through (`Number.isFinite(0.5) && 0.5 > 0` is true) and got passed
+  // straight to express-rate-limit. The very first request then triggered
+  // 429 because `1 >= 0.5`. Limiter values must be positive integers.
+  if (!Number.isInteger(n) || n < 1) {
+    console.warn(
+      `[rate-limit] Ignoring invalid ${name}="${raw}" — must be a positive ` +
+      `integer. Using default ${fallback}.`,
+    );
+    return fallback;
+  }
+  return n;
 }
 
 const AUTH_MAX = readNumberEnv('AUTH_RATE_LIMIT_MAX', 10);
