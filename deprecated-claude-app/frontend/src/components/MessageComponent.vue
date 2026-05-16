@@ -887,6 +887,7 @@ import DOMPurify from 'dompurify';
 import type { Message, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { extractMath, restoreMath, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
+import '@/utils/dompurify-hooks'; // side-effect: hardens img tags via DOMPurify hook
 import { api } from '@/services/api';
 import { useStore } from '@/store';
 import { getParticipantAvatarUrl, getAvatarColor, loadAvatarPacks } from '@/utils/avatars';
@@ -1429,10 +1430,18 @@ const renderedContent = computed(() => {
   const { text: contentAfterMath, rendered: renderedMath } = extractMath(content);
   content = contentAfterMath;
 
-  // Escape HTML/XML tags that aren't in code blocks
-  // This prevents raw HTML from being rendered but preserves it visually
-  content = content.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  
+  // Note: we intentionally do NOT escape `<` and `>` here. DOMPurify (run
+  // after marked.parse below) is the security boundary for HTML — it strips
+  // dangerous tags (script, iframe, on* event handlers) and malicious
+  // attributes from the rendered output. Escaping `<>` here additionally
+  // caused model-emitted HTML structure (e.g. raw `<p>` / `</strong>` that
+  // some models produce) to display as literal text rather than render as
+  // intended structure. Per the project ethos: trust DOMPurify, allow models
+  // to format as they intend, don't preemptively defend against the model.
+  // SharedMessageComponent.vue already follows this pattern; this brings
+  // MessageComponent into agreement.
+
+
   // Preserve multiple consecutive spaces by converting to non-breaking spaces
   // (do this before markdown rendering, which would collapse them)
   // Convert 2+ spaces to alternating space/nbsp to preserve them
