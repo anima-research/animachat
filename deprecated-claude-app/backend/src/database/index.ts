@@ -4979,12 +4979,15 @@ export class Database {
   // User Model methods
   async createUserModel(userId: string, modelData: import('@deprecated-claude/shared').CreateUserModel): Promise<UserDefinedModel> {
     await this.loadUser(userId); // Ensure user data is loaded
-    
-    // Limit number of custom models per user
-    const existingModels = await this.getUserModels(userId);
-    if (existingModels.length >= 20) {
-      throw new Error('Maximum number of custom models (20) reached');
-    }
+
+    // No per-user cap on custom-model count: a major appeal of Arc is the
+    // ability to add arbitrary OpenRouter models, and a cap of 20 was
+    // visibly insufficient. The earlier ensureUser load + rate limiting on
+    // the auth-protected POST endpoint provide the relevant DoS surface
+    // protection. If a per-user storage budget becomes desirable later,
+    // implement it as an explicit per-tier policy rather than a hardcoded
+    // ceiling here.
+    await this.getUserModels(userId);
 
     // Resolve settings with validation
     let resolvedSettings = modelData.settings;

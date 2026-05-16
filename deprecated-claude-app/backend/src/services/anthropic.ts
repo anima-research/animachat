@@ -21,7 +21,17 @@ export class AnthropicService {
     }
     
     this.client = new Anthropic({
-      apiKey: resolvedKey || 'missing-api-key'
+      apiKey: resolvedKey || 'missing-api-key',
+      // Opt in to the extended-cache-TTL beta so the `cache_control: { ttl: '1h' }`
+      // markers we emit on system prompts and message-history breakpoints actually
+      // mean 1 hour. Without this header the API silently falls back to the
+      // default 5-minute ephemeral TTL — the request still succeeds and caching
+      // still works, just for a shorter window than the code intends. That's a
+      // significant cost-savings regression for long-running conversations
+      // (which were the whole point of the 1h TTL choice).
+      defaultHeaders: {
+        'anthropic-beta': 'extended-cache-ttl-2025-04-11',
+      },
     });
   }
 
