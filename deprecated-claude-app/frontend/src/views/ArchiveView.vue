@@ -275,7 +275,7 @@ onMounted(() => {
 
 <style scoped>
 .archive-view {
-  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   background: rgb(var(--v-theme-background));

@@ -280,7 +280,7 @@
     <v-main
       v-if="!isMobile || mobilePanel === 'conversation'"
       class="d-flex flex-column"
-      style="height: 100vh;"
+      style="height: 100dvh;"
     >
       <!-- Top Bar -->
       <v-app-bar density="compact">
@@ -431,7 +431,7 @@
         <v-container
           ref="messagesContainer"
           class="flex-grow-1 overflow-y-auto messages-container"
-          style="max-height: calc(100vh - 160px);"
+          style="max-height: calc(100dvh - 160px);"
         >
           <div v-if="!currentConversation && !isLoadingConversation" class="text-center mt-12">
             <v-icon size="64" color="grey">mdi-message-text-outline</v-icon>

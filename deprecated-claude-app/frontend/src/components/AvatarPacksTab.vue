@@ -1,5 +1,5 @@
 <template>
-  <v-card-text style="max-height: calc(100vh - 220px); overflow-y: auto; padding: 24px 24px 32px;">
+  <v-card-text style="max-height: calc(100dvh - 220px); overflow-y: auto; padding: 24px 24px 32px;">
     <div class="text-body-2 mb-4">
       Avatar packs provide visual identities for AI models. Select an active pack to use its avatars in conversations.
     </div>
