@@ -2757,44 +2757,44 @@ function scrollToBottom(smooth: boolean = false) {
   // Mark this as a programmatic scroll so the scroll handler doesn't re-enable autoScroll
   isProgrammaticScroll.value = true;
   
-  // For long conversations, we need multiple frames to ensure full render
-  const attemptScroll = (attempts: number = 0) => {
+  // Long conversations render in bursts (markdown, code highlight, images,
+  // late-loading media). The old logic stopped re-scrolling the first time
+  // height didn't grow within one 50ms window — a normal render *lull* —
+  // which left the view stranded near the top. Instead keep re-pinning to
+  // the bottom each tick and only conclude once the height has been stable
+  // for several consecutive ticks (or a bounded number of attempts).
+  const MAX_ATTEMPTS = 40;       // ~2s ceiling for very heavy conversations
+  const STABLE_TICKS_REQUIRED = 3; // ~150ms of quiet before we call it done
+  const finish = () => {
+    setTimeout(() => { isProgrammaticScroll.value = false; }, 100);
+  };
+  const attemptScroll = (attempts: number = 0, stableTicks: number = 0) => {
     requestAnimationFrame(() => {
-      if (messagesContainer.value) {
-        const container = messagesContainer.value;
-        // Vuetify components expose their DOM element via $el
-        const element = (container as any).$el || container;
-        
-        if (element && element.scrollTo) {
-          const previousHeight = element.scrollHeight;
-          
-          element.scrollTo({
-            top: element.scrollHeight,
-            behavior: smooth ? 'smooth' : 'instant'
-          });
-          
-          // Check if content is still loading (scroll height is changing)
-          if (attempts < 10) { // Increased attempts for very long conversations
-            setTimeout(() => {
-              const el = (messagesContainer.value as any)?.$el || messagesContainer.value;
-              if (el && el.scrollHeight > previousHeight) {
-                // Content grew, scroll again
-                attemptScroll(attempts + 1);
-              } else {
-                // Done scrolling, clear the programmatic flag after a short delay
-                setTimeout(() => {
-                  isProgrammaticScroll.value = false;
-                }, 100);
-              }
-            }, 50); // Reduced delay for more responsive scrolling
-          } else {
-            // Max attempts reached, clear the flag
-            setTimeout(() => {
-              isProgrammaticScroll.value = false;
-            }, 100);
-          }
+      const container = messagesContainer.value;
+      if (!container) { finish(); return; }
+      // Vuetify components expose their DOM element via $el
+      const element = (container as any).$el || container;
+      if (!element || !element.scrollTo) { finish(); return; }
+
+      const previousHeight = element.scrollHeight;
+      // Re-pin every tick so any late growth still lands at the bottom.
+      element.scrollTo({
+        top: element.scrollHeight,
+        behavior: smooth ? 'smooth' : 'instant'
+      });
+
+      if (attempts >= MAX_ATTEMPTS) { finish(); return; }
+
+      setTimeout(() => {
+        const el = (messagesContainer.value as any)?.$el || messagesContainer.value;
+        const grew = !!el && el.scrollHeight > previousHeight;
+        const nextStable = grew ? 0 : stableTicks + 1;
+        if (nextStable >= STABLE_TICKS_REQUIRED) {
+          finish();
+        } else {
+          attemptScroll(attempts + 1, nextStable);
         }
-      }
+      }, 50);
     });
   };
   
