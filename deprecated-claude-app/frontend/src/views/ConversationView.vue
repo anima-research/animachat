@@ -653,13 +653,14 @@
             ref="messageTextarea"
             v-model="messageInput"
             :label="typingIndicatorLabel"
-            placeholder="Type your message..."
+            placeholder="Type your message…  (⌘/Ctrl+Enter to send)"
             rows="1"
             auto-grow
             max-rows="15"
             variant="outlined"
             hide-details
-            @keydown.enter.exact.prevent="sendMessage"
+            @keydown.enter.meta.prevent="sendMessage"
+            @keydown.enter.ctrl.prevent="sendMessage"
             @focus="handleTextareaFocus"
             @paste="handlePaste"
             @input="handleTypingInput"
