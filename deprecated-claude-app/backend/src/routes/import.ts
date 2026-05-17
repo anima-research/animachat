@@ -1,17 +1,187 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import multer from 'multer';
+import path from 'path';
+import { mkdirSync } from 'fs';
+import { rm } from 'fs/promises';
 import { AuthRequest } from '../middleware/auth.js';
 import { Database } from '../database/index.js';
 import { ImportParser } from '../services/importParser.js';
+import {
+  ClaudeArchiveContentMode,
+  ClaudeArchiveImportProgress,
+  ClaudeArchivePreview,
+  getDefaultClaudeArchiveModel,
+  importClaudeArchive,
+  previewClaudeArchive
+} from '../services/claudeArchiveImporter.js';
 import { 
   ImportRequestSchema, 
   ImportFormat
 } from '@deprecated-claude/shared';
 
+type ClaudeArchiveJobStatus = 'previewed' | 'running' | 'completed' | 'failed';
+
+interface ClaudeArchiveJob {
+  id: string;
+  userId: string;
+  filePath: string;
+  originalName: string;
+  status: ClaudeArchiveJobStatus;
+  preview: ClaudeArchivePreview;
+  progress: ClaudeArchiveImportProgress;
+  error?: string;
+  result?: any;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt?: Date;
+}
+
+const claudeArchiveJobs = new Map<string, ClaudeArchiveJob>();
+const CLAUDE_ARCHIVE_UPLOAD_LIMIT_BYTES = 500 * 1024 * 1024;
+
+function publicClaudeArchiveJob(job: ClaudeArchiveJob) {
+  const { filePath: _filePath, ...publicJob } = job;
+  return publicJob;
+}
+
+function parseClaudeArchiveContentMode(value: unknown): ClaudeArchiveContentMode {
+  return value === 'text-blocks' || value === 'verbose-blocks' || value === 'rendered'
+    ? value
+    : 'rendered';
+}
+
 export function importRouter(db: Database): Router {
   const router = Router();
   const parser = new ImportParser();
+  const uploadDir = path.resolve(process.cwd(), 'data', 'imports', 'claude-archive');
+  mkdirSync(uploadDir, { recursive: true });
+  const upload = multer({
+    dest: uploadDir,
+    limits: {
+      fileSize: CLAUDE_ARCHIVE_UPLOAD_LIMIT_BYTES,
+      files: 1
+    }
+  });
+
+  // Preview a full Claude.ai conversations.json archive without putting the
+  // 100MB+ file through express.json. The authenticated user owns the job.
+  router.post('/claude-archive/preview', upload.single('archive'), async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: 'Archive file is required' });
+      }
+
+      const preview = previewClaudeArchive(req.file.path);
+      const jobId = uuidv4();
+      const job: ClaudeArchiveJob = {
+        id: jobId,
+        userId: req.userId,
+        filePath: req.file.path,
+        originalName: req.file.originalname,
+        status: 'previewed',
+        preview,
+        progress: {
+          importedConversations: 0,
+          totalConversations: preview.selectedConversations,
+          importedMessages: 0,
+          importedBranches: 0
+        },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      claudeArchiveJobs.set(jobId, job);
+      res.json(publicClaudeArchiveJob(job));
+    } catch (error) {
+      if (req.file?.path) {
+        await rm(req.file.path, { force: true }).catch(() => undefined);
+      }
+      console.error('Claude archive preview error:', error);
+      if (error instanceof SyntaxError) {
+        return res.status(400).json({ error: 'Invalid JSON format' });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Claude archive preview failed' });
+    }
+  });
+
+  router.get('/claude-archive/:jobId', async (req: AuthRequest, res) => {
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const job = claudeArchiveJobs.get(req.params.jobId);
+    if (!job || job.userId !== req.userId) {
+      return res.status(404).json({ error: 'Import job not found' });
+    }
+
+    res.json(publicClaudeArchiveJob(job));
+  });
+
+  router.post('/claude-archive/:jobId/execute', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const job = claudeArchiveJobs.get(req.params.jobId);
+      if (!job || job.userId !== req.userId) {
+        return res.status(404).json({ error: 'Import job not found' });
+      }
+      if (job.status !== 'previewed') {
+        return res.status(400).json({ error: `Import job is already ${job.status}` });
+      }
+
+      const model = typeof req.body?.model === 'string' && req.body.model.trim()
+        ? req.body.model.trim()
+        : getDefaultClaudeArchiveModel();
+      const contentMode = parseClaudeArchiveContentMode(req.body?.contentMode);
+      const skipEmpty = req.body?.includeEmpty === true ? false : true;
+      const limit = Number.isInteger(req.body?.limit) && req.body.limit > 0 ? req.body.limit : undefined;
+
+      job.status = 'running';
+      job.updatedAt = new Date();
+      job.progress = {
+        importedConversations: 0,
+        totalConversations: job.preview.selectedConversations,
+        importedMessages: 0,
+        importedBranches: 0
+      };
+      res.json(publicClaudeArchiveJob(job));
+
+      void importClaudeArchive(db, job.filePath, req.userId, {
+        model,
+        skipEmpty,
+        limit,
+        contentMode,
+        onProgress: progress => {
+          job.progress = progress;
+          job.updatedAt = new Date();
+        }
+      }).then(async result => {
+        job.status = 'completed';
+        job.result = result;
+        job.progress = result;
+        job.updatedAt = new Date();
+        job.completedAt = new Date();
+        await rm(job.filePath, { force: true }).catch(() => undefined);
+      }).catch(async error => {
+        console.error('Claude archive execute error:', error);
+        job.status = 'failed';
+        job.error = error instanceof Error ? error.message : 'Claude archive import failed';
+        job.updatedAt = new Date();
+        job.completedAt = new Date();
+        await rm(job.filePath, { force: true }).catch(() => undefined);
+      });
+    } catch (error) {
+      console.error('Claude archive execute setup error:', error);
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Claude archive import failed' });
+    }
+  });
 
   // Preview import
   router.post('/preview', async (req: AuthRequest, res) => {
