@@ -77,6 +77,27 @@
               </div>
 
               <v-alert
+                v-if="isClaudeArchiveFormat && archiveUploading"
+                type="info"
+                variant="tonal"
+                density="compact"
+                class="mt-4"
+              >
+                <div class="mb-2">
+                  {{ archiveUploadPct < 100
+                    ? `Uploading archive… ${archiveUploadPct}%`
+                    : 'Upload complete — parsing on the server. Large exports can take a minute…' }}
+                </div>
+                <v-progress-linear
+                  :model-value="archiveUploadPct"
+                  :indeterminate="archiveUploadPct >= 100"
+                  color="primary"
+                  height="6"
+                  rounded
+                />
+              </v-alert>
+
+              <v-alert
                 v-if="error"
                 type="error"
                 class="mt-4"
@@ -96,7 +117,8 @@
                 Cancel
               </v-btn>
               <v-btn
-                :disabled="!canProceedToPreview"
+                :disabled="!canProceedToPreview || archiveUploading"
+                :loading="loading || archiveUploading"
                 color="primary"
                 variant="elevated"
                 @click="previewImport"
@@ -553,6 +575,8 @@ const reparsingPreview = ref(false);
 const archiveJob = ref<ClaudeArchiveJob | null>(null);
 const archiveImportJob = ref<ClaudeArchiveJob | null>(null);
 const archivePollTimer = ref<number | null>(null);
+const archiveUploading = ref(false);
+const archiveUploadPct = ref(0);
 
 // Step 3: Configuration
 const conversationTitle = ref('');
@@ -836,14 +860,23 @@ async function previewClaudeArchive() {
   const formData = new FormData();
   formData.append('archive', selectedFile);
 
-  const response = await api.post('/import/claude-archive/preview', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  });
+  archiveUploading.value = true;
+  archiveUploadPct.value = 0;
+  try {
+    const response = await api.post('/import/claude-archive/preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e: any) => {
+        if (e.total) archiveUploadPct.value = Math.round((e.loaded / e.total) * 100);
+      }
+    });
 
-  archiveJob.value = response.data;
-  archiveImportJob.value = null;
-  archiveModel.value = activeModels.value.find(m => m.id === 'claude-sonnet-4.6-openrouter')?.id || activeModels.value[0]?.id || '';
-  step.value = 2;
+    archiveJob.value = response.data;
+    archiveImportJob.value = null;
+    archiveModel.value = activeModels.value.find(m => m.id === 'claude-sonnet-4.6-openrouter')?.id || activeModels.value[0]?.id || '';
+    step.value = 2;
+  } finally {
+    archiveUploading.value = false;
+  }
 }
 
 async function executeImport() {
@@ -927,9 +960,9 @@ function startArchivePolling(jobId: string) {
       if (response.data.status === 'completed') {
         stopArchivePolling();
         await store.loadConversations();
-        // Let the success state render briefly, then exit cleanly so the
-        // user lands back on the (now-populated) sidebar.
-        window.setTimeout(() => { close(); }, 1500);
+        // Close immediately; the populated sidebar is the success signal.
+        // State resets only after the dialog has hidden, so no bounce.
+        close();
       } else if (response.data.status === 'failed') {
         stopArchivePolling();
         error.value = response.data.error || 'Archive import failed';
@@ -1008,8 +1041,7 @@ async function reparseWithCurrentParticipants() {
   }
 }
 
-function close() {
-  stopArchivePolling();
+function resetState() {
   step.value = 1;
   selectedFormat.value = null;
   file.value = null;
@@ -1018,6 +1050,8 @@ function close() {
   preview.value = null;
   archiveJob.value = null;
   archiveImportJob.value = null;
+  archiveUploading.value = false;
+  archiveUploadPct.value = 0;
   participantMappings.value = {};
   editableParticipants.value = [];
   conversationTitle.value = '';
@@ -1027,13 +1061,23 @@ function close() {
   archiveContentMode.value = 'rendered';
   archiveIncludeEmpty.value = false;
   error.value = '';
+}
+
+// Only request the close here. Internal state is reset AFTER the dialog has
+// actually hidden (see the modelValue watcher) so the user never sees the
+// stepper snap back to step 1 mid-fade ("bounce back to preview").
+function close() {
+  stopArchivePolling();
   emit('update:modelValue', false);
 }
 
-// Load models when dialog opens
 watch(() => props.modelValue, async (isOpen) => {
   if (isOpen && models.value.length === 0) {
     await store.loadModels();
+  }
+  if (!isOpen) {
+    // Wait out the v-dialog fade-out transition before wiping state.
+    window.setTimeout(resetState, 350);
   }
 });
 </script>
