@@ -66,6 +66,81 @@
 
         <!-- Scrollable conversations section -->
         <div class="sidebar-conversations flex-grow-1">
+          <div class="sidebar-list-controls px-2 pt-2">
+            <v-text-field
+              v-model="conversationSearch"
+              density="compact"
+              variant="outlined"
+              hide-details
+              clearable
+              placeholder="Search conversations"
+              prepend-inner-icon="mdi-magnify"
+            />
+            <div class="d-flex align-center mt-1">
+              <v-menu location="bottom start">
+                <template v-slot:activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    size="small"
+                    variant="text"
+                    class="text-none"
+                    :title="`Sort: ${activeConversationSortLabel}`"
+                  >
+                    <v-icon size="small" class="mr-1">mdi-sort</v-icon>
+                    <span class="text-caption">{{ activeConversationSortLabel }}</span>
+                    <v-icon size="x-small" class="ml-1">
+                      {{ conversationSortDir === 'desc' ? 'mdi-arrow-down' : 'mdi-arrow-up' }}
+                    </v-icon>
+                  </v-btn>
+                </template>
+                <v-list density="compact">
+                  <v-list-item
+                    v-for="opt in conversationSortOptions"
+                    :key="opt.key"
+                    :active="conversationSortKey === opt.key"
+                    @click="setConversationSort(opt.key)"
+                  >
+                    <v-list-item-title>{{ opt.label }}</v-list-item-title>
+                    <template v-slot:append>
+                      <v-icon v-if="conversationSortKey === opt.key" size="x-small">
+                        {{ conversationSortDir === 'desc' ? 'mdi-arrow-down' : 'mdi-arrow-up' }}
+                      </v-icon>
+                    </template>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+
+              <v-menu location="bottom start">
+                <template v-slot:activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    size="small"
+                    variant="text"
+                    class="text-none"
+                    :color="conversationFormatFilter !== 'all' ? 'primary' : undefined"
+                    title="Filter"
+                  >
+                    <v-icon size="small" class="mr-1">mdi-filter-variant</v-icon>
+                    <span class="text-caption">Filter</span>
+                  </v-btn>
+                </template>
+                <v-list density="compact">
+                  <v-list-subheader class="text-caption">Format</v-list-subheader>
+                  <v-list-item
+                    v-for="opt in conversationFilterOptions"
+                    :key="opt.value"
+                    :active="conversationFormatFilter === opt.value"
+                    @click="conversationFormatFilter = opt.value"
+                  >
+                    <v-list-item-title>{{ opt.label }}</v-list-item-title>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+
+              <v-spacer />
+              <span class="text-caption text-medium-emphasis mr-1">{{ conversations.length }}</span>
+            </div>
+          </div>
           <v-list density="compact" nav>
             <v-list-subheader>Conversations</v-list-subheader>
             
@@ -93,7 +168,7 @@
               <template v-slot:subtitle>
                 <div>
                   <div class="text-caption" v-html="getConversationModelsHtml(conversation)"></div>
-                  <div class="text-caption text-medium-emphasis">{{ formatDate(conversation.updatedAt) }}</div>
+                  <div class="text-caption text-medium-emphasis">{{ conversationDateLabel(conversation) }}</div>
                 </div>
               </template>
               <template v-slot:append>
@@ -1379,12 +1454,66 @@ const isUserScrollingBookmarks = ref(false);
 const currentBookmarkIndex = ref(0);
 
 // Sort conversations by updatedAt on the client side for real-time updates
+// --- Sidebar search / sort / filter (client-side, conversation metadata only) ---
+type ConversationSortKey = 'updated' | 'created' | 'title';
+const conversationSearch = ref('');
+const conversationSortKey = ref<ConversationSortKey>('updated');
+const conversationSortDir = ref<'asc' | 'desc'>('desc');
+const conversationFormatFilter = ref<'all' | 'standard' | 'group'>('all');
+
+const conversationSortOptions: { key: ConversationSortKey; label: string }[] = [
+  { key: 'updated', label: 'Last updated' },
+  { key: 'created', label: 'Date created' },
+  { key: 'title', label: 'Title' }
+];
+const conversationFilterOptions: { value: 'all' | 'standard' | 'group'; label: string }[] = [
+  { value: 'all', label: 'All conversations' },
+  { value: 'standard', label: 'One-on-one' },
+  { value: 'group', label: 'Group' }
+];
+
+function setConversationSort(key: ConversationSortKey) {
+  if (conversationSortKey.value === key) {
+    conversationSortDir.value = conversationSortDir.value === 'desc' ? 'asc' : 'desc';
+  } else {
+    conversationSortKey.value = key;
+    // Sensible default direction per key: newest-first for dates, A–Z for title.
+    conversationSortDir.value = key === 'title' ? 'asc' : 'desc';
+  }
+}
+
+const activeConversationSortLabel = computed(
+  () => conversationSortOptions.find(o => o.key === conversationSortKey.value)?.label ?? 'Sort'
+);
+
+// Date shown on each row follows the active sort key, so "what am I sorted by"
+// is always legible (title sort falls back to last-updated).
+function conversationDateLabel(c: { createdAt: string | Date; updatedAt: string | Date }): string {
+  if (conversationSortKey.value === 'created') return `created ${formatDate(c.createdAt)}`;
+  return `updated ${formatDate(c.updatedAt)}`;
+}
+
 const conversations = computed(() => {
-  return [...store.state.conversations].sort((a, b) => {
-    const dateA = new Date(a.updatedAt).getTime();
-    const dateB = new Date(b.updatedAt).getTime();
-    return dateB - dateA; // Most recent first
-  });
+  const q = conversationSearch.value.trim().toLowerCase();
+  const fmt = conversationFormatFilter.value;
+  const dir = conversationSortDir.value === 'desc' ? -1 : 1;
+  const key = conversationSortKey.value;
+
+  return [...store.state.conversations]
+    .filter(c => {
+      if (q && !(c.title || '').toLowerCase().includes(q)) return false;
+      if (fmt === 'standard' && c.format !== 'standard') return false;
+      if (fmt === 'group' && c.format === 'standard') return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (key === 'title') {
+        return (a.title || '').localeCompare(b.title || '') * dir;
+      }
+      const da = new Date(key === 'created' ? a.createdAt : a.updatedAt).getTime();
+      const db = new Date(key === 'created' ? b.createdAt : b.updatedAt).getTime();
+      return (da - db) * dir;
+    });
 });
 
 // Shared conversations (from other users)
