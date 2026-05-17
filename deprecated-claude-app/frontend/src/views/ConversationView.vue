@@ -1218,6 +1218,11 @@ const treeDrawer = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
+// Tracks a conversation that was just created by "New Conversation" and is
+// still being configured in the auto-opened settings dialog. If that dialog
+// is dismissed without saving, the conversation was never really wanted, so
+// it gets cleaned up (see the conversationSettingsDialog watcher).
+const provisionalNewConversationId = ref<string | null>(null);
 const shareDialog = ref(false);
 const collaborationDialog = ref(false);
 const manageSharesDialog = ref(false);
@@ -2822,10 +2827,13 @@ async function createNewConversation() {
                       store.state.models[0]?.id || 
                       'claude-3.6-sonnet';
   const conversation = await store.createConversation(defaultModel);
+  // Provisional until the user actually confirms settings; dismissing the
+  // auto-opened dialog without saving will discard it.
+  provisionalNewConversationId.value = conversation.id;
   router.push(`/conversation/${conversation.id}`);
   // Load participants for the new conversation
   await loadParticipants();
-  
+
   if (isMobile.value) {
     mobilePanel.value = 'conversation';
   }
@@ -3711,6 +3719,14 @@ async function handleDuplicated(newConversation: Conversation) {
 }
 
 async function updateConversationSettings(updates: Partial<Conversation>) {
+  // The user confirmed settings for the freshly-created conversation, so it
+  // is no longer provisional and must not be discarded on dialog close.
+  if (
+    provisionalNewConversationId.value &&
+    currentConversation.value?.id === provisionalNewConversationId.value
+  ) {
+    provisionalNewConversationId.value = null;
+  }
   if (currentConversation.value) {
     await store.updateConversation(currentConversation.value.id, updates);
     
@@ -3720,6 +3736,33 @@ async function updateConversationSettings(updates: Partial<Conversation>) {
     }
   }
 }
+
+// If the auto-opened settings dialog for a brand-new conversation is closed
+// without saving, the conversation was never actually wanted. Discard it so
+// dismissing/cancelling no longer litters the sidebar with default
+// "New Conversation" entries. (Hard delete does not exist in this
+// event-sourced model; archive is the established cleanup primitive.)
+watch(conversationSettingsDialog, async (isOpen, wasOpen) => {
+  if (!wasOpen || isOpen || !provisionalNewConversationId.value) return;
+
+  const discardId = provisionalNewConversationId.value;
+  provisionalNewConversationId.value = null;
+
+  // Never discard a conversation that already has content.
+  const hasContent =
+    currentConversation.value?.id === discardId && messages.value.length > 0;
+  if (hasContent) return;
+
+  try {
+    await store.archiveConversation(discardId);
+  } catch (e) {
+    console.error('Failed to discard provisional conversation:', e);
+    return;
+  }
+  if (currentConversation.value?.id === discardId || route.params.id === discardId) {
+    router.push('/conversation');
+  }
+});
 
 async function switchToGroupChat() {
   if (!currentConversation.value) return;
