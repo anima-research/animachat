@@ -173,7 +173,7 @@ async function submitReset() {
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
 
 .reset-container {
-  min-height: 100vh;
+  min-height: 100dvh;
   background: #101015;
   color: #fafaf8;
   font-family: 'JetBrains Mono', monospace;
