@@ -369,6 +369,14 @@ function buildArcMessages(
     sourceBranchIds.set(message.uuid, uuidv4());
   }
 
+  // Maps a source message uuid -> the Arc branch id its children should
+  // attach to. For an imported message that's its own branch; for a SKIPPED
+  // (empty) message it's whatever its own parent resolved to, so descendants
+  // bridge over the gap to the nearest surviving ancestor instead of a
+  // phantom branch id (which would orphan the entire subtree). Relies on
+  // sortedClaudeMessages emitting parents before children.
+  const effectiveBranchId = new Map<string, string>();
+
   const activeSet = activeSourceUuids(sourceMessages);
   const grouped = new Map<string, ArcRawMessage>();
   const rawMessages: ArcRawMessage[] = [];
@@ -376,7 +384,7 @@ function buildArcMessages(
   for (const source of sortedClaudeMessages(sourceMessages)) {
     const role = roleFor(source.sender);
     const parentBranchId = source.parent_message_uuid
-      ? sourceBranchIds.get(source.parent_message_uuid) || 'root'
+      ? effectiveBranchId.get(source.parent_message_uuid) ?? 'root'
       : 'root';
     const groupKey = `${parentBranchId}:${role}`;
     const branchId = sourceBranchIds.get(source.uuid) || uuidv4();
@@ -384,8 +392,12 @@ function buildArcMessages(
     const built = applyFileReferences(buildMessageContent(source, contentMode), source);
 
     // Skip only if there is genuinely nothing to import (no text AND no
-    // structured thinking blocks).
-    if (!built.content.trim() && !(built.contentBlocks && built.contentBlocks.length)) continue;
+    // structured thinking blocks). Bridge children over the gap: anything
+    // parented to this message should attach to this message's own parent.
+    if (!built.content.trim() && !(built.contentBlocks && built.contentBlocks.length)) {
+      effectiveBranchId.set(source.uuid, parentBranchId);
+      continue;
+    }
 
     let rawMessage = grouped.get(groupKey);
     if (!rawMessage) {
@@ -412,6 +424,9 @@ function buildArcMessages(
       parentBranchId,
       creationSource: 'import'
     });
+
+    // Imported: children attach directly to this message's branch.
+    effectiveBranchId.set(source.uuid, branchId);
 
     // Point the message at the branch that lies on Claude's active path.
     if (activeSet.has(source.uuid)) {
