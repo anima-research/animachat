@@ -121,7 +121,7 @@
                   <div class="text-h6">{{ archiveJob.preview.totalMessages }}</div>
                 </v-col>
                 <v-col cols="6" sm="3">
-                  <div class="text-caption text-grey">Branches</div>
+                  <div class="text-caption text-grey">Branchy convs</div>
                   <div class="text-h6">{{ archiveJob.preview.branchyConversations }}</div>
                 </v-col>
                 <v-col cols="6" sm="3">
@@ -927,6 +927,9 @@ function startArchivePolling(jobId: string) {
       if (response.data.status === 'completed') {
         stopArchivePolling();
         await store.loadConversations();
+        // Let the success state render briefly, then exit cleanly so the
+        // user lands back on the (now-populated) sidebar.
+        window.setTimeout(() => { close(); }, 1500);
       } else if (response.data.status === 'failed') {
         stopArchivePolling();
         error.value = response.data.error || 'Archive import failed';

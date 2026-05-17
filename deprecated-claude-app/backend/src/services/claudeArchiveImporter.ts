@@ -8,6 +8,7 @@ interface ClaudeContentBlock {
   type?: string;
   text?: string;
   thinking?: string;
+  signature?: string;
   name?: string;
   input?: unknown;
   content?: unknown;
@@ -35,9 +36,17 @@ interface ClaudeConversation {
   chat_messages?: ClaudeMessage[];
 }
 
+interface ArcContentBlock {
+  type: 'thinking' | 'text';
+  thinking?: string;
+  signature?: string;
+  text?: string;
+}
+
 interface ArcBranch {
   id: string;
   content: string;
+  contentBlocks?: ArcContentBlock[];
   role: 'user' | 'assistant';
   participantId?: string;
   sentByUserId?: string;
@@ -134,12 +143,20 @@ function dateFrom(value: string | undefined): Date {
   return Number.isNaN(date.getTime()) ? new Date() : date;
 }
 
-function renderBlock(block: ClaudeContentBlock): string {
+interface BuiltContent {
+  content: string;
+  contentBlocks?: ArcContentBlock[];
+}
+
+// Inline rendering for blocks Arc has no structured representation for
+// (tools, misc). Thinking is intentionally NOT inlined in 'rendered' mode —
+// it becomes a structured thinking contentBlock instead.
+function renderInlineBlock(block: ClaudeContentBlock, includeThinking: boolean): string {
   switch (block.type) {
     case 'text':
       return block.text || '';
     case 'thinking':
-      return block.thinking ? `<thinking>\n${block.thinking}\n</thinking>` : '';
+      return includeThinking && block.thinking ? `<thinking>\n${block.thinking}\n</thinking>` : '';
     case 'tool_use': {
       const label = block.name || 'tool';
       const body = block.input === undefined ? '' : `\n${JSON.stringify(block.input, null, 2)}`;
@@ -158,34 +175,125 @@ function renderBlock(block: ClaudeContentBlock): string {
   }
 }
 
-function extractText(message: ClaudeMessage, mode: ClaudeArchiveContentMode): string {
-  if (mode === 'rendered' && typeof message.text === 'string' && message.text.trim()) {
-    return message.text.trim();
+// Builds display content + (optionally) structured contentBlocks.
+//
+//  - 'rendered' (default): thinking blocks become real {type:'thinking'}
+//    contentBlocks (extended thinking, shown separately), text is the display
+//    content, tools fold into display text. contentBlocks only attached when
+//    the message actually has thinking (keeps simple messages simple).
+//  - 'text-blocks': text only, thinking/tools stripped, no contentBlocks.
+//  - 'verbose-blocks': everything dumped inline as text (archival raw mode),
+//    no structured blocks.
+function buildMessageContent(message: ClaudeMessage, mode: ClaudeArchiveContentMode): BuiltContent {
+  const blocks = Array.isArray(message.content) ? message.content : [];
+  const fallbackText = typeof message.text === 'string' ? message.text.trim() : '';
+
+  if (mode === 'verbose-blocks') {
+    const dumped = blocks
+      .map(block => renderInlineBlock(block, true))
+      .filter(text => text && text.trim())
+      .join('\n\n')
+      .trim();
+    return { content: dumped || fallbackText };
   }
 
-  const blocks = Array.isArray(message.content) ? message.content : [];
-  const rendered = blocks
-    .map(block => {
-      if (mode === 'text-blocks' && block.type !== 'text') return '';
-      return renderBlock(block);
-    })
-    .filter(text => text && text.trim())
-    .join('\n\n')
-    .trim();
+  if (mode === 'text-blocks') {
+    const textOnly = blocks
+      .filter(block => block.type === 'text')
+      .map(block => block.text || '')
+      .filter(text => text.trim())
+      .join('\n\n')
+      .trim();
+    return { content: textOnly || fallbackText };
+  }
 
-  if (rendered) return rendered;
-  return typeof message.text === 'string' ? message.text.trim() : '';
+  // 'rendered'
+  const thinkingBlocks: ArcContentBlock[] = [];
+  const displayParts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === 'thinking') {
+      if (block.thinking && block.thinking.trim()) {
+        thinkingBlocks.push({
+          type: 'thinking',
+          thinking: block.thinking,
+          ...(block.signature ? { signature: block.signature } : {})
+        });
+      }
+      continue;
+    }
+    const rendered = renderInlineBlock(block, false);
+    if (rendered && rendered.trim()) displayParts.push(rendered.trim());
+  }
+
+  let display = displayParts.join('\n\n').trim();
+  if (!display && !thinkingBlocks.length) display = fallbackText;
+
+  if (thinkingBlocks.length === 0) {
+    return { content: display };
+  }
+
+  const contentBlocks: ArcContentBlock[] = [...thinkingBlocks];
+  if (display) contentBlocks.push({ type: 'text', text: display });
+  return { content: display, contentBlocks };
 }
 
-function appendFileReferences(content: string, message: ClaudeMessage): string {
+function applyFileReferences(built: BuiltContent, message: ClaudeMessage): BuiltContent {
   const fileNames = (message.files || [])
     .map(file => file.file_name || file.file_uuid)
     .filter((name): name is string => !!name);
 
-  if (fileNames.length === 0) return content;
+  if (fileNames.length === 0) return built;
 
   const suffix = `\n\n[Imported file references: ${fileNames.join(', ')}]`;
-  return content ? `${content}${suffix}` : suffix.trim();
+  const content = built.content ? `${built.content}${suffix}` : suffix.trim();
+
+  let contentBlocks = built.contentBlocks;
+  if (contentBlocks && contentBlocks.length) {
+    const lastText = [...contentBlocks].reverse().find(b => b.type === 'text');
+    if (lastText) {
+      lastText.text = lastText.text ? `${lastText.text}${suffix}` : suffix.trim();
+    } else {
+      contentBlocks = [...contentBlocks, { type: 'text', text: suffix.trim() }];
+    }
+  }
+
+  return { content, contentBlocks };
+}
+
+// The bulk conversations.json archive has no current_leaf_message_uuid, so we
+// pick the active path the way Claude.ai effectively does: the most recent
+// leaf, walked back to the root. Returns the set of source message uuids that
+// lie on that active path.
+function activeSourceUuids(messages: ClaudeMessage[]): Set<string> {
+  const active = new Set<string>();
+  if (messages.length === 0) return active;
+
+  const byId = new Map<string, ClaudeMessage>();
+  const hasChild = new Set<string>();
+  for (const message of messages) {
+    byId.set(message.uuid, message);
+  }
+  for (const message of messages) {
+    const parentId = message.parent_message_uuid;
+    if (parentId && byId.has(parentId)) hasChild.add(parentId);
+  }
+
+  const leaves = messages.filter(message => !hasChild.has(message.uuid));
+  leaves.sort((a, b) => {
+    const at = dateFrom(a.updated_at || a.created_at).getTime();
+    const bt = dateFrom(b.updated_at || b.created_at).getTime();
+    return bt - at;
+  });
+
+  let current: ClaudeMessage | undefined = leaves[0];
+  let guard = 0;
+  while (current && guard++ <= messages.length) {
+    if (active.has(current.uuid)) break;
+    active.add(current.uuid);
+    const parentId: string | null | undefined = current.parent_message_uuid;
+    current = parentId ? byId.get(parentId) : undefined;
+  }
+  return active;
 }
 
 function sortedClaudeMessages(messages: ClaudeMessage[]): ClaudeMessage[] {
@@ -241,6 +349,7 @@ function buildArcMessages(
     sourceBranchIds.set(message.uuid, uuidv4());
   }
 
+  const activeSet = activeSourceUuids(sourceMessages);
   const grouped = new Map<string, ArcRawMessage>();
   const rawMessages: ArcRawMessage[] = [];
 
@@ -252,9 +361,11 @@ function buildArcMessages(
     const groupKey = `${parentBranchId}:${role}`;
     const branchId = sourceBranchIds.get(source.uuid) || uuidv4();
     const participantId = role === 'user' ? userParticipantId : assistantParticipantId;
-    const content = appendFileReferences(extractText(source, contentMode), source);
+    const built = applyFileReferences(buildMessageContent(source, contentMode), source);
 
-    if (!content.trim()) continue;
+    // Skip only if there is genuinely nothing to import (no text AND no
+    // structured thinking blocks).
+    if (!built.content.trim() && !(built.contentBlocks && built.contentBlocks.length)) continue;
 
     let rawMessage = grouped.get(groupKey);
     if (!rawMessage) {
@@ -271,7 +382,8 @@ function buildArcMessages(
 
     rawMessage.branches.push({
       id: branchId,
-      content,
+      content: built.content,
+      ...(built.contentBlocks ? { contentBlocks: built.contentBlocks } : {}),
       role,
       participantId,
       sentByUserId: role === 'user' ? importingUserId : undefined,
@@ -280,6 +392,11 @@ function buildArcMessages(
       parentBranchId,
       creationSource: 'import'
     });
+
+    // Point the message at the branch that lies on Claude's active path.
+    if (activeSet.has(source.uuid)) {
+      rawMessage.activeBranchId = branchId;
+    }
   }
 
   return rawMessages;
@@ -389,13 +506,11 @@ export async function importClaudeArchive(
       importedBranches += rawMessage.branches.length;
     }
 
-    await (db as any).logUserEvent(user.id, 'conversation_updated', {
-      id: conversation.id,
-      updates: {
-        createdAt: dateFrom(sourceConversation.created_at),
-        updatedAt: dateFrom(sourceConversation.updated_at || sourceConversation.created_at)
-      }
-    });
+    // Reconcile the active branch path so getVisibleMessages renders the
+    // canonical thread (parity with the arc_chat import path). Per-message
+    // time is preserved on each branch.createdAt; the conversation itself
+    // intentionally keeps its import-time created/updated timestamps.
+    await db.alignActiveBranchPath(conversation.id, user.id);
 
     importedConversations++;
     await options.onProgress?.({

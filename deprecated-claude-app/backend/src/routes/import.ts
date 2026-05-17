@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
 import path from 'path';
 import { mkdirSync } from 'fs';
-import { rm } from 'fs/promises';
+import { rm, readdir, stat } from 'fs/promises';
 import { AuthRequest } from '../middleware/auth.js';
 import { Database } from '../database/index.js';
 import { ImportParser } from '../services/importParser.js';
@@ -40,6 +40,43 @@ interface ClaudeArchiveJob {
 
 const claudeArchiveJobs = new Map<string, ClaudeArchiveJob>();
 const CLAUDE_ARCHIVE_UPLOAD_LIMIT_BYTES = 500 * 1024 * 1024;
+// Uploaded archives can be 100MB+. They are only consumed by an /execute that
+// may never come (dialog closed, backend restarted before execute, etc.), and
+// job state is in-memory so it does not survive a restart anyway. Sweep stale
+// upload files so abandoned previews do not leak disk on the VPS.
+const CLAUDE_ARCHIVE_TMP_TTL_MS = 6 * 60 * 60 * 1000;
+const CLAUDE_ARCHIVE_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+async function sweepStaleClaudeArchiveUploads(uploadDir: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(uploadDir);
+  } catch {
+    return;
+  }
+
+  const activePaths = new Set<string>();
+  for (const job of claudeArchiveJobs.values()) {
+    if (job.status === 'previewed' || job.status === 'running') {
+      activePaths.add(path.resolve(job.filePath));
+    }
+  }
+
+  const now = Date.now();
+  for (const entry of entries) {
+    const fullPath = path.resolve(uploadDir, entry);
+    if (activePaths.has(fullPath)) continue;
+    try {
+      const info = await stat(fullPath);
+      if (!info.isFile()) continue;
+      if (now - info.mtimeMs < CLAUDE_ARCHIVE_TMP_TTL_MS) continue;
+      await rm(fullPath, { force: true });
+      console.log(`[Claude archive import] Swept stale upload ${entry}`);
+    } catch {
+      /* best-effort */
+    }
+  }
+}
 
 function publicClaudeArchiveJob(job: ClaudeArchiveJob) {
   const { filePath: _filePath, ...publicJob } = job;
@@ -57,6 +94,14 @@ export function importRouter(db: Database): Router {
   const parser = new ImportParser();
   const uploadDir = path.resolve(process.cwd(), 'data', 'imports', 'claude-archive');
   mkdirSync(uploadDir, { recursive: true });
+  // Clean orphaned uploads now (covers restart-before-execute) and on an
+  // interval (covers abandoned previews during a long-lived process).
+  void sweepStaleClaudeArchiveUploads(uploadDir);
+  const sweepTimer = setInterval(
+    () => { void sweepStaleClaudeArchiveUploads(uploadDir); },
+    CLAUDE_ARCHIVE_SWEEP_INTERVAL_MS
+  );
+  sweepTimer.unref?.();
   const upload = multer({
     dest: uploadDir,
     limits: {
