@@ -460,10 +460,17 @@ export async function importClaudeArchive(
   userId: string,
   options: ClaudeArchiveImportOptions
 ): Promise<ClaudeArchiveImportResult> {
+  const startedAt = Date.now();
   const archive = parseArchive(filePath);
   const selected = selectedConversations(archive, options.skipEmpty ?? true, options.limit);
   const user = await db.getUserById(userId);
   if (!user) throw new Error(`No user found with id ${userId}`);
+
+  console.log(
+    `[claude-archive] import start: user=${userId} selected=${selected.length}/${archive.length} ` +
+    `model=${options.model} contentMode=${options.contentMode || DEFAULT_CONTENT_MODE} ` +
+    `skipEmpty=${options.skipEmpty ?? true}${options.limit ? ` limit=${options.limit}` : ''}`
+  );
 
   let importedConversations = 0;
   let importedMessages = 0;
@@ -513,6 +520,12 @@ export async function importClaudeArchive(
     await db.alignActiveBranchPath(conversation.id, user.id);
 
     importedConversations++;
+    if (importedConversations % 100 === 0 || importedConversations === selected.length) {
+      console.log(
+        `[claude-archive] progress: ${importedConversations}/${selected.length} conversations, ` +
+        `${importedMessages} messages, ${importedBranches} branches`
+      );
+    }
     await options.onProgress?.({
       importedConversations,
       totalConversations: selected.length,
@@ -521,6 +534,13 @@ export async function importClaudeArchive(
       currentTitle: titleFor(sourceConversation)
     });
   }
+
+  console.log(
+    `[claude-archive] import done: user=${userId} ` +
+    `${importedConversations} conversations, ${importedMessages} messages, ` +
+    `${importedBranches} branches, ${skippedConversations} skipped, ` +
+    `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+  );
 
   return {
     importedConversations,

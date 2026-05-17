@@ -123,6 +123,13 @@ export function importRouter(db: Database): Router {
 
       const preview = previewClaudeArchive(req.file.path);
       const jobId = uuidv4();
+      console.log(
+        `[claude-archive] preview: user=${req.userId} file="${req.file.originalname}" ` +
+        `${(req.file.size / 1048576).toFixed(1)}MB job=${jobId} -> ` +
+        `${preview.selectedConversations}/${preview.totalConversations} conversations, ` +
+        `${preview.totalMessages} messages, ${preview.branchyConversations} branchy, ` +
+        `${preview.emptyConversations} empty`
+      );
       const job: ClaudeArchiveJob = {
         id: jobId,
         userId: req.userId,
@@ -197,6 +204,7 @@ export function importRouter(db: Database): Router {
         importedBranches: 0
       };
       res.json(publicClaudeArchiveJob(job));
+      console.log(`[claude-archive] execute: job=${job.id} user=${req.userId} model=${model} contentMode=${contentMode}`);
 
       void importClaudeArchive(db, job.filePath, req.userId, {
         model,
@@ -213,9 +221,10 @@ export function importRouter(db: Database): Router {
         job.progress = result;
         job.updatedAt = new Date();
         job.completedAt = new Date();
+        console.log(`[claude-archive] job=${job.id} completed: ${result.importedConversations} conversations imported`);
         await rm(job.filePath, { force: true }).catch(() => undefined);
       }).catch(async error => {
-        console.error('Claude archive execute error:', error);
+        console.error(`[claude-archive] job=${job.id} failed:`, error);
         job.status = 'failed';
         job.error = error instanceof Error ? error.message : 'Claude archive import failed';
         job.updatedAt = new Date();
