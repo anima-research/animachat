@@ -120,11 +120,31 @@ function parseArchive(filePath: string): ClaudeConversation[] {
   }
 
   const parsed = JSON.parse(readFileSync(filePath, 'utf8'));
-  if (!Array.isArray(parsed)) {
-    throw new Error('Expected a Claude.ai archive array, but the top-level JSON value is not an array.');
+
+  if (Array.isArray(parsed)) {
+    return parsed;
   }
 
-  return parsed;
+  // A single exported conversation (object with chat_messages) is a valid,
+  // common thing to drag in — accept it by wrapping as a one-item archive.
+  if (parsed && typeof parsed === 'object' && Array.isArray(parsed.chat_messages)) {
+    return [parsed as ClaudeConversation];
+  }
+
+  // A Claude *project* file (prompt_template + docs, no chat_messages) is the
+  // usual mistaken upload — give a precise message instead of "not an array".
+  if (parsed && typeof parsed === 'object' && 'prompt_template' in parsed && 'docs' in parsed) {
+    throw new Error(
+      'This looks like a Claude project file, not a conversations export. ' +
+      'Project files contain knowledge docs, not chat history — upload your ' +
+      'conversations.json (the full archive) or a single exported conversation.'
+    );
+  }
+
+  throw new Error(
+    'Unrecognized file. Expected a Claude.ai conversations.json archive ' +
+    '(an array of conversations) or a single exported conversation object.'
+  );
 }
 
 function selectedConversations(archive: ClaudeConversation[], skipEmpty = true, limit?: number): ClaudeConversation[] {

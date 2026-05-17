@@ -157,7 +157,10 @@ export function importRouter(db: Database): Router {
       if (error instanceof SyntaxError) {
         return res.status(400).json({ error: 'Invalid JSON format' });
       }
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Claude archive preview failed' });
+      // Unrecognized/wrong-file shapes are client errors, not server faults.
+      const message = error instanceof Error ? error.message : 'Claude archive preview failed';
+      const isBadInput = /project file|Unrecognized file|not an array/i.test(message);
+      res.status(isBadInput ? 400 : 500).json({ error: message });
     }
   });
 
