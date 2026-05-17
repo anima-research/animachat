@@ -3,6 +3,7 @@ import type { User, Conversation, Message, Model, OpenRouterModel, UserDefinedMo
 import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { api } from '../services/api';
 import { WebSocketService } from '../services/websocket';
+import { createClientUuid } from '../utils/uuid';
 
 // Model availability info - which providers user can use
 interface ModelAvailability {
@@ -675,7 +676,7 @@ export function createStore(): {
       const messageData = {
         type: 'chat' as const,
         conversationId: state.currentConversation.id,
-        messageId: crypto.randomUUID(),
+        messageId: createClientUuid(),
         content,
         parentBranchId,
         participantId,
@@ -723,7 +724,7 @@ export function createStore(): {
       state.wsService.sendMessage({
         type: 'continue',
         conversationId: state.currentConversation.id,
-        messageId: crypto.randomUUID(),
+        messageId: createClientUuid(),
         parentBranchId,
         responderId,
         samplingBranches: samplingBranches && samplingBranches > 1 ? samplingBranches : undefined
