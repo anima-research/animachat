@@ -1253,7 +1253,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
@@ -3892,6 +3892,35 @@ watch(conversationSettingsDialog, async (isOpen, wasOpen) => {
   if (currentConversation.value?.id === discardId || route.params.id === discardId) {
     router.push('/conversation');
   }
+});
+
+// Browser back / sidebar nav / any route change away from a provisional
+// conversation should discard it too — the dialog-close watcher above
+// doesn't fire when the route guard tears down the component before the
+// dialog has a chance to close. Without this, hitting back during the
+// auto-opened settings dialog leaves the provisional conversation behind,
+// re-creating the very bug #99 was meant to fix.
+onBeforeRouteLeave(async (_to, from) => {
+  if (!provisionalNewConversationId.value) return;
+  const discardId = provisionalNewConversationId.value;
+  // Only act if we're navigating away from the provisional conversation itself.
+  if (from.params.id !== discardId) return;
+
+  // Clear the flag first so the dialog-close watcher (if it fires during
+  // teardown) short-circuits and we don't double-archive.
+  provisionalNewConversationId.value = null;
+  conversationSettingsDialog.value = false;
+
+  const hasContent =
+    currentConversation.value?.id === discardId && messages.value.length > 0;
+  if (hasContent) return;
+
+  try {
+    await store.archiveConversation(discardId);
+  } catch (e) {
+    console.error('Failed to discard provisional conversation on route leave:', e);
+  }
+  // Don't return false — navigation should proceed regardless.
 });
 
 async function switchToGroupChat() {
