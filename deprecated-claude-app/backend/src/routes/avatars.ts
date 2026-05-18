@@ -40,12 +40,21 @@ const USER_PACKS_PATH = path.join(AVATARS_BASE_PATH, 'users');
 // avatars after sharp's webp@quality:90 land at 10–100 KB typically,
 // so this allows 500+ avatars per user. Override with AVATAR_USER_QUOTA_MB
 // for ops that want to tune it.
+//
+// Greptile #110 caught the silent-fallback footgun: setting the env var
+// to "0" or any non-positive value used to fall through to the 50 MB
+// default without warning, so an operator trying to lock uploads down
+// would get the opposite of what they configured. Log a warning when
+// the var is set but unusable.
+const _rawAvatarQuotaMB = Number(process.env.AVATAR_USER_QUOTA_MB);
+if (process.env.AVATAR_USER_QUOTA_MB !== undefined && !(_rawAvatarQuotaMB > 0)) {
+  console.warn(
+    `[Avatars] AVATAR_USER_QUOTA_MB="${process.env.AVATAR_USER_QUOTA_MB}" is not a positive number; ` +
+    `falling back to 50 MB default. To disable uploads entirely, gate at a higher layer (e.g. nginx).`,
+  );
+}
 const AVATAR_USER_QUOTA_BYTES =
-  (Number(process.env.AVATAR_USER_QUOTA_MB) > 0
-    ? Number(process.env.AVATAR_USER_QUOTA_MB)
-    : 50) *
-  1024 *
-  1024;
+  (_rawAvatarQuotaMB > 0 ? _rawAvatarQuotaMB : 50) * 1024 * 1024;
 
 console.log(
   `[Avatars] Using avatar storage path: ${AVATARS_BASE_PATH} ` +
@@ -85,6 +94,46 @@ async function getUserAvatarsUsage(userId: string): Promise<number> {
   };
   await walk(userPath);
   return total;
+}
+
+/**
+ * Per-user serialization for the quota-check + write sequence. Greptile
+ * #110 caught the race: two concurrent uploads from the same user both
+ * read pre-write usage, both pass the quota check, both write, and the
+ * combined writes push the user over the cap. JS being single-threaded
+ * means the read-modify-write IS atomic in CPU terms, but it spans
+ * await points (fs I/O), so the only fix is a logical lock.
+ *
+ * Implementation is a chain of promises keyed by userId. Each call
+ * synchronously registers its "slot" (a manually-resolved Promise) as
+ * the new tail of the chain so the next caller sees it as predecessor;
+ * then waits for the previous tail before running `fn`. JS's
+ * single-threaded execution makes the synchronous read+register+set
+ * sequence atomic relative to other calls. The map entry is cleaned up
+ * when the last queued holder finishes, so memory doesn't grow
+ * unboundedly with the user set.
+ *
+ * Caveats: in-process only — multiple Node processes (PM2 cluster
+ * mode, multi-host) would not coordinate. Matches the rest of the
+ * write-path posture (single-process write safety, see P1-7) so it's
+ * not a regression; revisit if/when horizontal scale lands.
+ */
+const userUploadLocks = new Map<string, Promise<void>>();
+async function withUserUploadLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = userUploadLocks.get(userId) ?? Promise.resolve();
+  let releaseSlot!: () => void;
+  const slot = new Promise<void>((resolve) => { releaseSlot = resolve; });
+  userUploadLocks.set(userId, slot);
+  try {
+    await prev;
+    return await fn();
+  } finally {
+    releaseSlot();
+    // Only drop the entry if no one else queued after us.
+    if (userUploadLocks.get(userId) === slot) {
+      userUploadLocks.delete(userId);
+    }
+  }
 }
 
 // Validate IDs used in file paths to prevent path traversal
@@ -380,46 +429,60 @@ router.post('/packs/:packId/avatars', upload.single('avatar'), async (req: Multe
       return res.status(404).json({ error: 'Pack not found' });
     }
 
-    // Quota check: refuse if this upload would push the user past their
-    // per-user avatar disk allowance. Multer's 5 MB-per-file cap stops a
-    // single huge file but does nothing about many small files
-    // accumulating; this is the cumulative-bytes gate.
+    // Quota check + write under a per-user lock so two concurrent uploads
+    // from the same user can't both pass the pre-write check and end up
+    // pushing the user over the cap. Greptile #110 race fix: without the
+    // lock, parallel requests would both see pre-upload usage, both pass,
+    // both write — totalling past the limit.
     //
-    // Uses the incoming buffer size as an upper bound for the post-resize
+    // Multer's 5 MB-per-file cap stops a single huge file but does
+    // nothing about many small files accumulating. The cumulative gate
+    // uses the incoming buffer size as an upper bound for the post-resize
     // footprint (sharp generally shrinks). Approximate-but-safe: errors
     // toward rejecting borderline uploads rather than letting the user
     // creep past the cap.
-    const usage = await getUserAvatarsUsage(userId);
-    if (usage + req.file.size > AVATAR_USER_QUOTA_BYTES) {
-      const usedMB = (usage / (1024 * 1024)).toFixed(1);
-      const quotaMB = Math.round(AVATAR_USER_QUOTA_BYTES / (1024 * 1024));
+    const result = await withUserUploadLock(userId, async () => {
+      const usage = await getUserAvatarsUsage(userId);
+      if (usage + req.file!.size > AVATAR_USER_QUOTA_BYTES) {
+        const usedMB = (usage / (1024 * 1024)).toFixed(1);
+        const quotaMB = Math.round(AVATAR_USER_QUOTA_BYTES / (1024 * 1024));
+        return {
+          quotaExceeded: true as const,
+          details: `Using ${usedMB} MB of ${quotaMB} MB; this upload would exceed the limit. Delete unused avatars or contact an admin to raise the cap.`,
+        };
+      }
+
+      // Process image and create thumbnail
+      const originalExt = path.extname(req.file!.originalname);
+      const { thumbnail, original } = await processAndSaveAvatar(
+        req.file!.buffer,
+        packPath,
+        canonicalId,
+        originalExt
+      );
+
+      // Update pack.json with thumbnail (used for display) and original reference
+      pack.avatars[canonicalId] = thumbnail;
+      if (!pack.originals) pack.originals = {};
+      pack.originals[canonicalId] = original;
+      await writePackJson(packPath, pack);
+
+      return { quotaExceeded: false as const, thumbnail, original };
+    });
+
+    if (result.quotaExceeded) {
       return res.status(413).json({
         error: 'Avatar storage quota exceeded',
-        details: `Using ${usedMB} MB of ${quotaMB} MB; this upload would exceed the limit. Delete unused avatars or contact an admin to raise the cap.`,
+        details: result.details,
       });
     }
 
-    // Process image and create thumbnail
-    const originalExt = path.extname(req.file.originalname);
-    const { thumbnail, original } = await processAndSaveAvatar(
-      req.file.buffer,
-      packPath,
+    res.json({
+      success: true,
       canonicalId,
-      originalExt
-    );
-
-    // Update pack.json with thumbnail (used for display) and original reference
-    pack.avatars[canonicalId] = thumbnail;
-    if (!pack.originals) pack.originals = {};
-    pack.originals[canonicalId] = original;
-    await writePackJson(packPath, pack);
-
-    res.json({ 
-      success: true, 
-      canonicalId, 
-      thumbnail,
-      original,
-      path: `/avatars/users/${userId}/${packId}/${thumbnail}`
+      thumbnail: result.thumbnail,
+      original: result.original,
+      path: `/avatars/users/${userId}/${packId}/${result.thumbnail}`
     });
   } catch (error) {
     console.error('Error uploading avatar:', error);
