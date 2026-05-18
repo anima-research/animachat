@@ -1210,21 +1210,22 @@ async function handleChatMessage(
         personaContext: responderPersonaContext
       });
     
-    // DEBUG CAPTURE: Capture debug data for the first branch after completion
+    // DEBUG CAPTURE: persist the raw provider request + model response on the
+    // first generated branch so researchers can later inspect what was sent
+    // and what came back via the "show debug data" UI. Best-effort — failures
+    // here must never abort the user-visible generation.
     try {
       const rawRequest = baseInferenceService.lastRawRequest;
       if (rawRequest && generatedBranchIds.length > 0) {
         const firstBranchId = generatedBranchIds[0];
         const branchObj = assistantMessage.branches.find((b: any) => b.id === firstBranchId);
         if (branchObj) {
-          console.log(`[DEBUG CAPTURE] Capturing debug data for branch ${firstBranchId.substring(0, 8)}...`);
-          
           // Compute actual format used
           const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
           const participantMode = responder.conversationMode;
           const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
           const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
-          
+
           const debugRequest = {
             ...rawRequest,
             provider: modelConfig.provider,
@@ -1233,22 +1234,20 @@ async function handleChatMessage(
             participantConversationMode: participantMode || 'auto',
             actualFormatUsed: actualFormat
           };
-          
+
           const debugResponse = {
             content: branchObj.content,
             contentBlocks: branchObj.contentBlocks,
             model: branchObj.model
           };
-          
+
           await db.updateMessageBranch(
             assistantMessage.id,
             conversation.userId,
             firstBranchId,
             { debugRequest, debugResponse }
           );
-          
-          console.log(`[DEBUG CAPTURE] Debug data saved for branch ${firstBranchId.substring(0, 8)}`);
-          
+
           // Notify frontend
           const updatedMessage = await db.getMessage(assistantMessage.id, conversation.id, conversation.userId);
           if (updatedMessage) {
@@ -1682,18 +1681,16 @@ async function handleRegenerate(
       roomManager.endAiRequest(message.conversationId);
     }
 
-    // Capture debug request/response for researchers (only for first branch)
-    console.log('[DEBUG CAPTURE] Starting debug data capture for regenerate...');
+    // Capture debug request/response for researchers (only for first branch).
+    // Same shape as the corresponding block in the initial-generation path.
     try {
       // Get the raw API request that was just sent
       const rawRequest = baseInferenceService.lastRawRequest;
-      console.log(`[DEBUG CAPTURE] Raw request available: ${!!rawRequest}`);
 
       if (rawRequest) {
         // Store debug data on the first regenerated branch
         const firstBranchId = generatedBranchIds[0];
         const currentBranch = updatedMessage.branches.find(b => b.id === firstBranchId);
-        console.log(`[DEBUG CAPTURE] Branch ${firstBranchId}: branchObj found = ${!!currentBranch}`);
 
         if (currentBranch) {
           // Get the participant for mode info
@@ -1723,7 +1720,6 @@ async function handleRegenerate(
             model: currentBranch.model
           };
 
-          console.log(`[DEBUG CAPTURE] Updating message branch ${firstBranchId}...`);
           await db.updateMessageBranch(
             updatedMessage.id,
             conversation.userId,
@@ -1733,7 +1729,6 @@ async function handleRegenerate(
               debugResponse
             }
           );
-          console.log(`[DEBUG CAPTURE] Branch ${firstBranchId} updated successfully`);
 
           // Send update to frontend so bug icon appears immediately
           const refreshedMessage = await db.getMessage(updatedMessage.id, conversation.id, conversation.userId);
@@ -1746,9 +1741,6 @@ async function handleRegenerate(
             roomManager.broadcastToRoom(conversation.id, updateEvent, ws);
           }
         }
-        console.log('[DEBUG CAPTURE] Debug data capture complete for regenerate');
-      } else {
-        console.log('[DEBUG CAPTURE] No raw request available (non-Anthropic provider?)');
       }
     } catch (debugError) {
       console.error('[DEBUG CAPTURE] Failed to capture debug data:', debugError);
@@ -2126,11 +2118,10 @@ async function handleEdit(
         roomManager.endAiRequest(message.conversationId);
       }
       
-      // Capture debug request/response for researchers
-      console.log('[DEBUG CAPTURE] Starting debug data capture for edit...');
+      // Capture debug request/response for researchers (edit path; same
+      // shape as the initial-generation and regenerate blocks).
       try {
         const rawRequest = baseInferenceService.lastRawRequest;
-        console.log(`[DEBUG CAPTURE] Raw request available for edit: ${!!rawRequest}`);
 
         if (rawRequest && targetMessage) {
           const firstBranchId = generatedBranchIds[0];
@@ -2163,7 +2154,6 @@ async function handleEdit(
               firstBranchId,
               { debugRequest, debugResponse }
             );
-            console.log(`[DEBUG CAPTURE] Edit branch ${firstBranchId} updated successfully`);
 
             // Send update to frontend
             const refreshedMessage = await db.getMessage(targetMessage.id, conversation.id, conversation.userId);
@@ -2503,15 +2493,14 @@ async function handleContinue(
         personaContext: responder.personaContext
       });
       
-      // DEBUG CAPTURE: Capture debug data for the first branch after completion
+      // DEBUG CAPTURE: same researcher-debug persistence as the other three
+      // paths (initial generation, regenerate, edit), here for /continue.
       try {
         const rawRequest = baseInferenceService.lastRawRequest;
         if (rawRequest && generatedBranchIds.length > 0) {
           const firstBranchId = generatedBranchIds[0];
           const branchObj = assistantMessage.branches.find((b: any) => b.id === firstBranchId);
           if (branchObj) {
-            console.log(`[DEBUG CAPTURE] Continue: Capturing debug data for branch ${firstBranchId.substring(0, 8)}...`);
-            
             const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
             const participantMode = responder.conversationMode;
             const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
@@ -2533,8 +2522,7 @@ async function handleContinue(
             };
             
             await db.updateMessageBranch(assistantMessage.id, conversation.userId, firstBranchId, { debugRequest, debugResponse });
-            console.log(`[DEBUG CAPTURE] Continue: Debug data saved for branch ${firstBranchId.substring(0, 8)}`);
-            
+
             const refreshedMessage = await db.getMessage(assistantMessage.id, conversationId, conversation.userId);
             if (refreshedMessage) {
               ws.send(JSON.stringify({ type: 'message_edited', message: refreshedMessage }));
