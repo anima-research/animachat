@@ -147,8 +147,17 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true
 }));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Body parser limits. Import routes legitimately ingest large
+// conversation-history JSON (the /messages-raw endpoint, and similar);
+// nothing else needs more than a few MB. Mount the larger parser FIRST on
+// the import path so it consumes the body, then the smaller global default
+// applies to everything else (express.json is idempotent — re-parsing a
+// request whose body has already been consumed is a no-op).
+app.use('/api/import', express.json({ limit: '50mb' }));
+app.use('/api/import', express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
 // Routes
 app.use('/api/auth', authRouter(db));
