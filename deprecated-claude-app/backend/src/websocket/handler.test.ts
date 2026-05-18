@@ -1871,6 +1871,19 @@ describe('WebSocket error handling', () => {
 // ── Room management messages ──────────────────────────────────────────
 
 describe('room management messages', () => {
+  beforeEach(() => {
+    // Both `handleJoinRoom` and `handleTyping` in handler.ts do an
+    // access check via `db.getConversation` and silently bail when it
+    // returns null/undefined. The shared `mockDb.getConversation` has
+    // no default return, so these tests would fail in isolation —
+    // they only currently pass because a persistent `mockResolvedValue`
+    // from an earlier describe block bleeds through `vi.clearAllMocks()`
+    // (which clears call state but not mock implementations). Setting
+    // the resolved value explicitly per-block makes each block run
+    // standalone. Greptile #112 caught this latent flake.
+    mockDb.getConversation.mockResolvedValue({ id: 'conv-1', userId: 'user-1' });
+  });
+
   it('handles join_room and returns room state', async () => {
     const convId = randomUUID();
     mockRoomManager.getActiveUsers.mockReturnValue(['user-1']);
@@ -4891,6 +4904,13 @@ describe('pong heartbeat', () => {
 });
 
 describe('typing handler', () => {
+  beforeEach(() => {
+    // `handleTyping` does an access check via `db.getConversation` —
+    // see the matching note on `describe('room management messages')`
+    // above. Tests would fail when run in isolation without this.
+    mockDb.getConversation.mockResolvedValue({ id: 'conv-1', userId: 'user-1' });
+  });
+
   it('broadcasts typing status to room', async () => {
     const convId = randomUUID();
     const ws = createMockWs();

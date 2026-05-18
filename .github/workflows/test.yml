@@ -46,6 +46,12 @@ jobs:
           echo "## Test Coverage Report" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
+          # Track whether any workspace falls below threshold so we can
+          # fail the job at the end. (Greptile #112 catch: previously this
+          # step computed pass/warn but never used it to set an exit code,
+          # so coverage could silently fall to 0% with a green CI.)
+          OVERALL_STATUS="pass"
+
           for workspace in backend frontend; do
             SUMMARY="$workspace/coverage/coverage-summary.json"
             if [ -f "$SUMMARY" ]; then
@@ -57,10 +63,11 @@ jobs:
               if [ "$(node -e "process.stdout.write(($STMTS >= 75 && $BRANCH >= 75) ? 'pass' : 'fail')")" = "pass" ]; then
                 STATUS="pass"
               else
-                STATUS="warn"
+                STATUS="fail"
+                OVERALL_STATUS="fail"
               fi
 
-              echo "### $workspace" >> "$GITHUB_STEP_SUMMARY"
+              echo "### $workspace ($STATUS)" >> "$GITHUB_STEP_SUMMARY"
               echo "" >> "$GITHUB_STEP_SUMMARY"
               echo "| Metric | Coverage | Target |" >> "$GITHUB_STEP_SUMMARY"
               echo "|--------|----------|--------|" >> "$GITHUB_STEP_SUMMARY"
@@ -73,5 +80,16 @@ jobs:
               echo "### $workspace" >> "$GITHUB_STEP_SUMMARY"
               echo "No coverage data found." >> "$GITHUB_STEP_SUMMARY"
               echo "" >> "$GITHUB_STEP_SUMMARY"
+              # Missing coverage data is itself a failure — we ran the step,
+              # so either the test job collapsed or the path is wrong.
+              OVERALL_STATUS="fail"
             fi
           done
+
+          # Fail the job if any workspace dropped below threshold or had
+          # no coverage data. The job-summary tables still render either
+          # way (this `run` step is the LAST step in the job).
+          if [ "$OVERALL_STATUS" != "pass" ]; then
+            echo "❌ Coverage threshold not met (75% statements + 75% branches per workspace)." >&2
+            exit 1
+          fi
