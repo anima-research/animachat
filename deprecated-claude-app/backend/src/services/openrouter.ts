@@ -57,14 +57,19 @@ interface OpenRouterResponse {
   };
 }
 
+// OpenRouter's public API root. Overridable via OPENROUTER_BASE_URL for
+// tests, proxies, and self-hosted reverse-proxy setups.
+const OPENROUTER_DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
+
 export class OpenRouterService {
   private db: Database;
   private apiKey: string;
-  private baseUrl = 'https://openrouter.ai/api/v1';
+  private baseUrl: string;
 
   constructor(db: Database, apiKey?: string) {
     this.db = db;
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
+    this.baseUrl = process.env.OPENROUTER_BASE_URL || OPENROUTER_DEFAULT_BASE_URL;
     
     if (!this.apiKey) {
       console.error('⚠️ API KEY ERROR: No OpenRouter API key provided. Set OPENROUTER_API_KEY environment variable or configure user API keys. OpenRouter API calls will fail.');

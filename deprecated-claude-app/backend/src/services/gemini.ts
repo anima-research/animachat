@@ -100,6 +100,10 @@ interface GeminiStreamChunk {
   };
 }
 
+// Google AI Studio's Gemini API root. Overridable via GEMINI_BASE_URL for
+// tests, proxies, and (eventually) Vertex AI compatibility shims.
+const GEMINI_DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+
 export class GeminiService {
   private apiKey: string;
   private baseUrl: string;
@@ -108,7 +112,7 @@ export class GeminiService {
   constructor(db: Database, apiKey?: string) {
     this.db = db;
     this.apiKey = apiKey || process.env.GEMINI_API_KEY || '';
-    this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+    this.baseUrl = process.env.GEMINI_BASE_URL || GEMINI_DEFAULT_BASE_URL;
     
     if (!this.apiKey) {
       console.error('⚠️ API KEY ERROR: No Gemini API key provided. Set GEMINI_API_KEY environment variable or configure user API keys. Gemini API calls will fail.');
