@@ -15,7 +15,11 @@ describe('SharesStore', () => {
       expect(share.conversationId).toBe('conv-1');
       expect(share.userId).toBe('user-1');
       expect(share.shareType).toBe('tree');
-      expect(share.shareToken).toMatch(/^[0-9a-f]{10}$/);
+      // PR #92 bumped share tokens from 40-bit (10 hex chars) to 128-bit
+      // (32 hex chars). Shares expose private conversation content, so the
+      // entropy floor matters — old 40-bit tokens were brute-forceable for
+      // targeted attacks on a specific known share.
+      expect(share.shareToken).toMatch(/^[0-9a-f]{32}$/);
       expect(share.viewCount).toBe(0);
       expect(share.createdAt).toBeInstanceOf(Date);
       expect(share.settings.allowDownload).toBe(true);

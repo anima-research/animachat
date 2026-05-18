@@ -140,9 +140,13 @@ describe('getMessageTokens (via strategies)', () => {
     expect(result.metadata.totalTokens).toBe(50);
   });
 
-  it('does NOT count gif, bmp, svg as image attachments (excluded)', () => {
+  it('does NOT count bmp, svg as image attachments (still excluded)', () => {
+    // PR #90 promoted GIF into the shared SUPPORTED_IMAGE_EXTENSIONS list
+    // alongside jpg/jpeg/png/webp, so it's now image-counted across all
+    // providers. bmp and svg remain text-counted — see the source-of-truth
+    // list in `services/attachment-utils.ts`.
     const strategy = new AppendContextStrategy({ strategy: 'append', tokensBeforeCaching: 100000 });
-    const nonImageExts = ['gif', 'bmp', 'svg'];
+    const nonImageExts = ['bmp', 'svg'];
     for (const ext of nonImageExts) {
       const content = 'x'.repeat(40); // 10 tokens
       const msg = makeMessage('', 'user', {
@@ -152,6 +156,17 @@ describe('getMessageTokens (via strategies)', () => {
       // Should be counted as text (10 tokens), not as image (1500 tokens)
       expect(result.metadata.totalTokens).toBe(10);
     }
+  });
+
+  it('counts gif as an image attachment (1500 tokens)', () => {
+    // PR #90: GIF was previously inconsistently excluded; now treated as
+    // image like jpg/jpeg/png/webp.
+    const strategy = new AppendContextStrategy({ strategy: 'append', tokensBeforeCaching: 100000 });
+    const msg = makeMessage('', 'user', {
+      attachments: [{ fileName: 'animation.gif', content: 'x'.repeat(40), mimeType: 'image/gif', size: 40 }],
+    });
+    const result = strategy.prepareContext([msg]);
+    expect(result.metadata.totalTokens).toBe(1500);
   });
 
   it('returns 0 tokens for message with no active branch', () => {

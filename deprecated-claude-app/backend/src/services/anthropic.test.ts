@@ -798,17 +798,18 @@ describe('AnthropicService', () => {
   });
 
   describe('isImageAttachment (private)', () => {
-    it('recognizes jpg, jpeg, png, webp as images', () => {
+    it('recognizes jpg, jpeg, png, webp, gif as images', () => {
       const svc = service as any;
       expect(svc.isImageAttachment('photo.jpg')).toBe(true);
       expect(svc.isImageAttachment('photo.jpeg')).toBe(true);
       expect(svc.isImageAttachment('photo.png')).toBe(true);
       expect(svc.isImageAttachment('photo.webp')).toBe(true);
-    });
-
-    it('does NOT recognize gif as an image (Anthropic API issue)', () => {
-      const svc = service as any;
-      expect(svc.isImageAttachment('animation.gif')).toBe(false);
+      // PR #90 unified GIF support across all providers via the shared
+      // `attachment-utils.ts` SUPPORTED_IMAGE_EXTENSIONS. Anthropic/Bedrock
+      // had been excluding GIF (originally framed as "Anthropic API issue")
+      // but the underlying API does accept it; the exclusion was an
+      // inconsistency, not a constraint. Now GIF is recognized everywhere.
+      expect(svc.isImageAttachment('animation.gif')).toBe(true);
     });
 
     it('is case-insensitive for extensions', () => {

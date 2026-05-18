@@ -186,7 +186,10 @@ describe('CollaborationStore', () => {
       expect(invite.conversationId).toBe('conv-1');
       expect(invite.createdByUserId).toBe('user-1');
       expect(invite.permission).toBe('viewer');
-      expect(invite.inviteToken).toMatch(/^[0-9a-f]{12}$/);
+      // PR #92 bumped collaboration invite tokens from 48-bit (12 hex
+      // chars) to 128-bit (32 hex chars) to make brute-force enumeration
+      // of unredeemed invites infeasible.
+      expect(invite.inviteToken).toMatch(/^[0-9a-f]{32}$/);
       expect(invite.useCount).toBe(0);
       expect(invite.expiresAt).toBeUndefined();
       expect(invite.maxUses).toBeUndefined();
