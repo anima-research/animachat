@@ -63,7 +63,7 @@ export class BedrockService {
     messages: Message[],
     systemPrompt: string | undefined,
     settings: ModelSettings,
-    onChunk: (chunk: string, isComplete: boolean) => Promise<void>,
+    onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     stopSequences?: string[]
   ): Promise<{ rawRequest?: any }> {
     // Demo mode - simulate streaming response
@@ -126,13 +126,58 @@ export class BedrockService {
 
       let fullContent = '';
 
+      // Usage tracking — mirrors anthropic.ts. Claude-on-Bedrock returns the
+      // same Anthropic-style event types (`message_start`, `message_delta`,
+      // `message_stop`), each carrying a `usage` block. We also opportunistically
+      // read Bedrock's own `amazon-bedrock-invocationMetrics` chunk (present at
+      // stream end on InvokeModelWithResponseStream) as a fallback / sanity check.
+      //
+      // CRITICAL: input_tokens is canonically on `message_start.message.usage`.
+      // We must capture it there because `message_delta.usage` typically only
+      // carries output_tokens; a wholesale replace would zero out fresh input.
+      // Same bug pattern that was fixed in anthropic.ts.
+      let usage: any = {};
+      const cacheMetrics = {
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+      };
+
       for await (const chunk of response.body) {
         if (chunk.chunk?.bytes) {
           const chunkData = JSON.parse(new TextDecoder().decode(chunk.chunk.bytes));
-          
+
+          // Capture cache + fresh input tokens from message_start (Claude 3+).
+          if (chunkData.type === 'message_start' && chunkData.message?.usage) {
+            const m = chunkData.message.usage;
+            cacheMetrics.cacheCreationInputTokens = m.cache_creation_input_tokens || 0;
+            cacheMetrics.cacheReadInputTokens = m.cache_read_input_tokens || 0;
+            if (typeof m.input_tokens === 'number') usage.input_tokens = m.input_tokens;
+            if (typeof m.output_tokens === 'number') usage.output_tokens = m.output_tokens;
+          }
+
+          // Merge (don't replace) message_delta usage so input_tokens captured
+          // from message_start survives.
+          if (chunkData.type === 'message_delta' && chunkData.usage) {
+            usage = { ...usage, ...chunkData.usage };
+          }
+
+          // Bedrock-specific invocation metrics chunk. Carries `inputTokenCount`
+          // and `outputTokenCount` directly from Bedrock's metering. Used as a
+          // fallback only — the Anthropic-style events are more granular (split
+          // cache vs fresh) so we keep those when present.
+          if (chunkData['amazon-bedrock-invocationMetrics']) {
+            const metrics = chunkData['amazon-bedrock-invocationMetrics'];
+            if (usage.input_tokens === undefined && typeof metrics.inputTokenCount === 'number') {
+              usage.input_tokens = metrics.inputTokenCount;
+            }
+            if (usage.output_tokens === undefined && typeof metrics.outputTokenCount === 'number') {
+              usage.output_tokens = metrics.outputTokenCount;
+            }
+          }
+
           // Handle different response formats based on model
           const content = this.extractContentFromChunk(modelId, chunkData);
-          
+
           if (content) {
             fullContent += content;
             chunks.push(content);
@@ -141,8 +186,23 @@ export class BedrockService {
 
           // Check if stream is complete
           if (this.isStreamComplete(modelId, chunkData)) {
-            await onChunk('', true);
-            
+            // Build actualUsage matching the shape Anthropic/OpenRouter emit.
+            // For Claude 2 / Instant (older Bedrock models) the Anthropic-style
+            // events don't exist; we still pass through whatever fell out of
+            // amazon-bedrock-invocationMetrics, else nothing — the enhanced
+            // inference layer will fall back to its chars/4 estimate.
+            const actualUsage = (usage.input_tokens !== undefined || usage.output_tokens !== undefined)
+              ? {
+                  inputTokens: usage.input_tokens || 0,
+                  outputTokens: usage.output_tokens || 0,
+                  cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
+                  cacheReadInputTokens: cacheMetrics.cacheReadInputTokens,
+                  cacheCreationTtl: '1h' as const,
+                }
+              : undefined;
+
+            await onChunk('', true, undefined, actualUsage);
+
             // Log the response
             const duration = Date.now() - startTime;
             await llmLogger.logResponse({
@@ -150,13 +210,14 @@ export class BedrockService {
               service: 'bedrock',
               model: bedrockModelId || modelId,
               chunks,
-              duration
+              duration,
+              tokenCount: (usage.input_tokens || 0) + (usage.output_tokens || 0),
             });
             break;
           }
         }
       }
-      
+
       return { rawRequest };
     } catch (error) {
       console.error('Bedrock streaming error:', error);
