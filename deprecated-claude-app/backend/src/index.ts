@@ -1,5 +1,6 @@
 import express from 'express';
 import compression from 'compression';
+import helmet from 'helmet';
 import { clearOpenRouterLog } from './utils/openrouterLogger.js';
 
 // Clean up old OpenRouter request logs on startup
@@ -129,6 +130,18 @@ app.use(compression({
   }
 }));
 console.log('[HTTP] Gzip compression enabled (threshold: 1KB)');
+
+// Security headers. `contentSecurityPolicy` is disabled because the backend
+// only serves JSON — CSP is enforced by the frontend's own HTML response
+// served by nginx/Vite, not on API responses. `crossOriginResourcePolicy`
+// is loosened to allow the frontend (which is on a different origin during
+// local dev: localhost:5173 vs localhost:3000) to read API responses.
+// Everything else helmet ships by default — HSTS, X-Content-Type-Options,
+// X-Frame-Options, Referrer-Policy, etc. — is on and useful.
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
