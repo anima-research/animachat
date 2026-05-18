@@ -426,13 +426,22 @@ describe('WebSocket Handler', () => {
   // ── Room Join / Leave ───────────────────────────────────────────────
 
   describe('room join/leave', () => {
-    it('handles join_room message', () => {
+    it('handles join_room message', async () => {
       const convId = randomUUID();
       mockRoomManager.getActiveUsers.mockReturnValue([{ userId: 'user-1', joinedAt: new Date() }]);
       mockRoomManager.getActiveAiRequest.mockReturnValue(null);
+      // `handleJoinRoom` does an access check via `db.getConversation`
+      // before joining; mock it to return a valid conversation. Without
+      // this the handler returns early with "Access denied" and never
+      // touches roomManager.joinRoom.
+      mockDb.getConversation.mockResolvedValueOnce({ id: convId, userId: 'user-1' });
 
       websocketHandler(ws, createMockReq(), db);
       ws.emit('message', JSON.stringify({ type: 'join_room', conversationId: convId }));
+
+      // join_room handler is async (awaits db.getConversation), so we need
+      // to let microtasks settle before asserting on the mock.
+      await new Promise(r => setTimeout(r, 10));
 
       expect(mockRoomManager.joinRoom).toHaveBeenCalledWith(convId, ws);
 
@@ -477,6 +486,11 @@ describe('WebSocket Handler', () => {
     it('broadcasts typing event to room', async () => {
       const convId = randomUUID();
       mockDb.getUserById.mockResolvedValue({ id: 'user-1', email: 'alice@test.com' });
+      // `handleTyping` does an access check via `db.getConversation`
+      // before broadcasting; mock it to return a valid conversation.
+      // Without this the handler silently returns and never touches
+      // roomManager.broadcastToRoom.
+      mockDb.getConversation.mockResolvedValueOnce({ id: convId, userId: 'user-1' });
       websocketHandler(ws, createMockReq(), db);
       ws.emit('message', JSON.stringify({ type: 'typing', conversationId: convId, isTyping: true }));
 

@@ -482,8 +482,18 @@ describe('GeminiService', () => {
       const completionCall = onChunk.mock.calls.find((c: any) => c[1] === true);
       expect(completionCall).toBeDefined();
 
-      // Usage returned
-      expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
+      // Usage returned. PR #104 added explicit cache-channel fields to
+      // every provider's usage shape (cacheCreationInputTokens,
+      // cacheReadInputTokens) so the cost-tracker has four uniform
+      // channels to work with. Gemini reports 0 for both when context
+      // caching isn't in play. Locking in the explicit shape (rather
+      // than relaxing to `objectContaining`) keeps drift detection.
+      expect(result.usage).toEqual({
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+      });
     });
 
     it('builds request URL with model ID and API key', async () => {
@@ -1046,8 +1056,15 @@ describe('GeminiService', () => {
         onChunk
       );
 
-      // Should use ?? 0 defaults for missing prompt/candidates counts
-      expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+      // Should use ?? 0 defaults for missing prompt/candidates counts.
+      // PR #104 added cache-channel fields uniformly — present even when
+      // 0. See the matching note in the "streams text chunks" test above.
+      expect(result.usage).toEqual({
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+      });
     });
 
     it('handles finishReason in candidates', async () => {
@@ -1213,7 +1230,14 @@ describe('GeminiService', () => {
       );
 
       expect(result.content).toBe('The answer is 42');
-      expect(result.usage).toEqual({ inputTokens: 5, outputTokens: 10 });
+      // PR #104 added cache-channel fields uniformly — see the matching
+      // notes above.
+      expect(result.usage).toEqual({
+        inputTokens: 5,
+        outputTokens: 10,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+      });
     });
 
     it('builds URL without SSE params for non-streaming', async () => {
