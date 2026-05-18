@@ -154,6 +154,12 @@ app.use(cors({
 // the import path so it consumes the body, then the smaller global default
 // applies to everything else (express.json is idempotent — re-parsing a
 // request whose body has already been consumed is a no-op).
+//
+// Auth gate runs BEFORE the 50MB parser on the import path so an
+// unauthenticated client can't make us buffer + JSON-parse a 50MB body
+// before being rejected. (Greptile #108 review caught this — the
+// abuse-surface narrowing was incomplete without the auth ordering.)
+app.use('/api/import', authenticateToken);
 app.use('/api/import', express.json({ limit: '50mb' }));
 app.use('/api/import', express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.json({ limit: '5mb' }));
@@ -167,7 +173,7 @@ app.use('/api/conversations', authenticateToken, conversationRouter(db));
 app.use('/api/models/custom', authenticateToken, customModelsRouter(db));
 app.use('/api/models', authenticateToken, modelRouter(db));
 app.use('/api/participants', authenticateToken, participantRouter(db));
-app.use('/api/import', authenticateToken, importRouter(db));
+app.use('/api/import', importRouter(db)); // authenticateToken already applied above (before body parser)
 app.use('/api/prompt', createPromptRouter(db));
 app.use('/api/shares', createShareRouter(db));
 app.use('/api/bookmarks', createBookmarksRouter(db));
