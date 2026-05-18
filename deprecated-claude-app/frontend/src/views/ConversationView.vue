@@ -66,6 +66,81 @@
 
         <!-- Scrollable conversations section -->
         <div class="sidebar-conversations flex-grow-1">
+          <div class="sidebar-list-controls px-2 pt-2">
+            <v-text-field
+              v-model="conversationSearch"
+              density="compact"
+              variant="outlined"
+              hide-details
+              clearable
+              placeholder="Search conversations"
+              prepend-inner-icon="mdi-magnify"
+            />
+            <div class="d-flex align-center mt-1">
+              <v-menu location="bottom start">
+                <template v-slot:activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    size="small"
+                    variant="text"
+                    class="text-none"
+                    :title="`Sort: ${activeConversationSortLabel}`"
+                  >
+                    <v-icon size="small" class="mr-1">mdi-sort</v-icon>
+                    <span class="text-caption">{{ activeConversationSortLabel }}</span>
+                    <v-icon size="x-small" class="ml-1">
+                      {{ conversationSortDir === 'desc' ? 'mdi-arrow-down' : 'mdi-arrow-up' }}
+                    </v-icon>
+                  </v-btn>
+                </template>
+                <v-list density="compact">
+                  <v-list-item
+                    v-for="opt in conversationSortOptions"
+                    :key="opt.key"
+                    :active="conversationSortKey === opt.key"
+                    @click="setConversationSort(opt.key)"
+                  >
+                    <v-list-item-title>{{ opt.label }}</v-list-item-title>
+                    <template v-slot:append>
+                      <v-icon v-if="conversationSortKey === opt.key" size="x-small">
+                        {{ conversationSortDir === 'desc' ? 'mdi-arrow-down' : 'mdi-arrow-up' }}
+                      </v-icon>
+                    </template>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+
+              <v-menu location="bottom start">
+                <template v-slot:activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    size="small"
+                    variant="text"
+                    class="text-none"
+                    :color="conversationFormatFilter !== 'all' ? 'primary' : undefined"
+                    title="Filter"
+                  >
+                    <v-icon size="small" class="mr-1">mdi-filter-variant</v-icon>
+                    <span class="text-caption">Filter</span>
+                  </v-btn>
+                </template>
+                <v-list density="compact">
+                  <v-list-subheader class="text-caption">Format</v-list-subheader>
+                  <v-list-item
+                    v-for="opt in conversationFilterOptions"
+                    :key="opt.value"
+                    :active="conversationFormatFilter === opt.value"
+                    @click="conversationFormatFilter = opt.value"
+                  >
+                    <v-list-item-title>{{ opt.label }}</v-list-item-title>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+
+              <v-spacer />
+              <span class="text-caption text-medium-emphasis mr-1">{{ conversations.length }}</span>
+            </div>
+          </div>
           <v-list density="compact" nav>
             <v-list-subheader>Conversations</v-list-subheader>
             
@@ -93,7 +168,7 @@
               <template v-slot:subtitle>
                 <div>
                   <div class="text-caption" v-html="getConversationModelsHtml(conversation)"></div>
-                  <div class="text-caption text-medium-emphasis">{{ formatDate(conversation.updatedAt) }}</div>
+                  <div class="text-caption text-medium-emphasis">{{ conversationDateLabel(conversation) }}</div>
                 </div>
               </template>
               <template v-slot:append>
@@ -280,7 +355,7 @@
     <v-main
       v-if="!isMobile || mobilePanel === 'conversation'"
       class="d-flex flex-column"
-      style="height: 100vh;"
+      style="height: 100dvh;"
     >
       <!-- Top Bar -->
       <v-app-bar density="compact">
@@ -431,7 +506,7 @@
         <v-container
           ref="messagesContainer"
           class="flex-grow-1 overflow-y-auto messages-container"
-          style="max-height: calc(100vh - 160px);"
+          style="max-height: calc(100dvh - 160px);"
         >
           <div v-if="!currentConversation && !isLoadingConversation" class="text-center mt-12">
             <v-icon size="64" color="grey">mdi-message-text-outline</v-icon>
@@ -653,13 +728,14 @@
             ref="messageTextarea"
             v-model="messageInput"
             :label="typingIndicatorLabel"
-            placeholder="Type your message..."
+            placeholder="Type your message…  (⌘/Ctrl+Enter to send)"
             rows="1"
             auto-grow
             max-rows="15"
             variant="outlined"
             hide-details
-            @keydown.enter.exact.prevent="sendMessage"
+            @keydown.enter.meta.prevent="sendMessage"
+            @keydown.enter.ctrl.prevent="sendMessage"
             @focus="handleTextareaFocus"
             @paste="handlePaste"
             @input="handleTypingInput"
@@ -1218,6 +1294,11 @@ const treeDrawer = ref(false);
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
+// Tracks a conversation that was just created by "New Conversation" and is
+// still being configured in the auto-opened settings dialog. If that dialog
+// is dismissed without saving, the conversation was never really wanted, so
+// it gets cleaned up (see the conversationSettingsDialog watcher).
+const provisionalNewConversationId = ref<string | null>(null);
 const shareDialog = ref(false);
 const collaborationDialog = ref(false);
 const manageSharesDialog = ref(false);
@@ -1379,12 +1460,66 @@ const isUserScrollingBookmarks = ref(false);
 const currentBookmarkIndex = ref(0);
 
 // Sort conversations by updatedAt on the client side for real-time updates
+// --- Sidebar search / sort / filter (client-side, conversation metadata only) ---
+type ConversationSortKey = 'updated' | 'created' | 'title';
+const conversationSearch = ref('');
+const conversationSortKey = ref<ConversationSortKey>('updated');
+const conversationSortDir = ref<'asc' | 'desc'>('desc');
+const conversationFormatFilter = ref<'all' | 'standard' | 'group'>('all');
+
+const conversationSortOptions: { key: ConversationSortKey; label: string }[] = [
+  { key: 'updated', label: 'Last updated' },
+  { key: 'created', label: 'Date created' },
+  { key: 'title', label: 'Title' }
+];
+const conversationFilterOptions: { value: 'all' | 'standard' | 'group'; label: string }[] = [
+  { value: 'all', label: 'All conversations' },
+  { value: 'standard', label: 'One-on-one' },
+  { value: 'group', label: 'Group' }
+];
+
+function setConversationSort(key: ConversationSortKey) {
+  if (conversationSortKey.value === key) {
+    conversationSortDir.value = conversationSortDir.value === 'desc' ? 'asc' : 'desc';
+  } else {
+    conversationSortKey.value = key;
+    // Sensible default direction per key: newest-first for dates, A–Z for title.
+    conversationSortDir.value = key === 'title' ? 'asc' : 'desc';
+  }
+}
+
+const activeConversationSortLabel = computed(
+  () => conversationSortOptions.find(o => o.key === conversationSortKey.value)?.label ?? 'Sort'
+);
+
+// Date shown on each row follows the active sort key, so "what am I sorted by"
+// is always legible (title sort falls back to last-updated).
+function conversationDateLabel(c: { createdAt: string | Date; updatedAt: string | Date }): string {
+  if (conversationSortKey.value === 'created') return `created ${formatDate(c.createdAt)}`;
+  return `updated ${formatDate(c.updatedAt)}`;
+}
+
 const conversations = computed(() => {
-  return [...store.state.conversations].sort((a, b) => {
-    const dateA = new Date(a.updatedAt).getTime();
-    const dateB = new Date(b.updatedAt).getTime();
-    return dateB - dateA; // Most recent first
-  });
+  const q = conversationSearch.value.trim().toLowerCase();
+  const fmt = conversationFormatFilter.value;
+  const dir = conversationSortDir.value === 'desc' ? -1 : 1;
+  const key = conversationSortKey.value;
+
+  return [...store.state.conversations]
+    .filter(c => {
+      if (q && !(c.title || '').toLowerCase().includes(q)) return false;
+      if (fmt === 'standard' && c.format !== 'standard') return false;
+      if (fmt === 'group' && c.format === 'standard') return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (key === 'title') {
+        return (a.title || '').localeCompare(b.title || '') * dir;
+      }
+      const da = new Date(key === 'created' ? a.createdAt : a.updatedAt).getTime();
+      const db = new Date(key === 'created' ? b.createdAt : b.updatedAt).getTime();
+      return (da - db) * dir;
+    });
 });
 
 // Shared conversations (from other users)
@@ -2757,44 +2892,44 @@ function scrollToBottom(smooth: boolean = false) {
   // Mark this as a programmatic scroll so the scroll handler doesn't re-enable autoScroll
   isProgrammaticScroll.value = true;
   
-  // For long conversations, we need multiple frames to ensure full render
-  const attemptScroll = (attempts: number = 0) => {
+  // Long conversations render in bursts (markdown, code highlight, images,
+  // late-loading media). The old logic stopped re-scrolling the first time
+  // height didn't grow within one 50ms window — a normal render *lull* —
+  // which left the view stranded near the top. Instead keep re-pinning to
+  // the bottom each tick and only conclude once the height has been stable
+  // for several consecutive ticks (or a bounded number of attempts).
+  const MAX_ATTEMPTS = 40;       // ~2s ceiling for very heavy conversations
+  const STABLE_TICKS_REQUIRED = 3; // ~150ms of quiet before we call it done
+  const finish = () => {
+    setTimeout(() => { isProgrammaticScroll.value = false; }, 100);
+  };
+  const attemptScroll = (attempts: number = 0, stableTicks: number = 0) => {
     requestAnimationFrame(() => {
-      if (messagesContainer.value) {
-        const container = messagesContainer.value;
-        // Vuetify components expose their DOM element via $el
-        const element = (container as any).$el || container;
-        
-        if (element && element.scrollTo) {
-          const previousHeight = element.scrollHeight;
-          
-          element.scrollTo({
-            top: element.scrollHeight,
-            behavior: smooth ? 'smooth' : 'instant'
-          });
-          
-          // Check if content is still loading (scroll height is changing)
-          if (attempts < 10) { // Increased attempts for very long conversations
-            setTimeout(() => {
-              const el = (messagesContainer.value as any)?.$el || messagesContainer.value;
-              if (el && el.scrollHeight > previousHeight) {
-                // Content grew, scroll again
-                attemptScroll(attempts + 1);
-              } else {
-                // Done scrolling, clear the programmatic flag after a short delay
-                setTimeout(() => {
-                  isProgrammaticScroll.value = false;
-                }, 100);
-              }
-            }, 50); // Reduced delay for more responsive scrolling
-          } else {
-            // Max attempts reached, clear the flag
-            setTimeout(() => {
-              isProgrammaticScroll.value = false;
-            }, 100);
-          }
+      const container = messagesContainer.value;
+      if (!container) { finish(); return; }
+      // Vuetify components expose their DOM element via $el
+      const element = (container as any).$el || container;
+      if (!element || !element.scrollTo) { finish(); return; }
+
+      const previousHeight = element.scrollHeight;
+      // Re-pin every tick so any late growth still lands at the bottom.
+      element.scrollTo({
+        top: element.scrollHeight,
+        behavior: smooth ? 'smooth' : 'instant'
+      });
+
+      if (attempts >= MAX_ATTEMPTS) { finish(); return; }
+
+      setTimeout(() => {
+        const el = (messagesContainer.value as any)?.$el || messagesContainer.value;
+        const grew = !!el && el.scrollHeight > previousHeight;
+        const nextStable = grew ? 0 : stableTicks + 1;
+        if (nextStable >= STABLE_TICKS_REQUIRED) {
+          finish();
+        } else {
+          attemptScroll(attempts + 1, nextStable);
         }
-      }
+      }, 50);
     });
   };
   
@@ -2822,10 +2957,13 @@ async function createNewConversation() {
                       store.state.models[0]?.id || 
                       'claude-3.6-sonnet';
   const conversation = await store.createConversation(defaultModel);
+  // Provisional until the user actually confirms settings; dismissing the
+  // auto-opened dialog without saving will discard it.
+  provisionalNewConversationId.value = conversation.id;
   router.push(`/conversation/${conversation.id}`);
   // Load participants for the new conversation
   await loadParticipants();
-  
+
   if (isMobile.value) {
     mobilePanel.value = 'conversation';
   }
@@ -3711,6 +3849,14 @@ async function handleDuplicated(newConversation: Conversation) {
 }
 
 async function updateConversationSettings(updates: Partial<Conversation>) {
+  // The user confirmed settings for the freshly-created conversation, so it
+  // is no longer provisional and must not be discarded on dialog close.
+  if (
+    provisionalNewConversationId.value &&
+    currentConversation.value?.id === provisionalNewConversationId.value
+  ) {
+    provisionalNewConversationId.value = null;
+  }
   if (currentConversation.value) {
     await store.updateConversation(currentConversation.value.id, updates);
     
@@ -3720,6 +3866,33 @@ async function updateConversationSettings(updates: Partial<Conversation>) {
     }
   }
 }
+
+// If the auto-opened settings dialog for a brand-new conversation is closed
+// without saving, the conversation was never actually wanted. Discard it so
+// dismissing/cancelling no longer litters the sidebar with default
+// "New Conversation" entries. (Hard delete does not exist in this
+// event-sourced model; archive is the established cleanup primitive.)
+watch(conversationSettingsDialog, async (isOpen, wasOpen) => {
+  if (!wasOpen || isOpen || !provisionalNewConversationId.value) return;
+
+  const discardId = provisionalNewConversationId.value;
+  provisionalNewConversationId.value = null;
+
+  // Never discard a conversation that already has content.
+  const hasContent =
+    currentConversation.value?.id === discardId && messages.value.length > 0;
+  if (hasContent) return;
+
+  try {
+    await store.archiveConversation(discardId);
+  } catch (e) {
+    console.error('Failed to discard provisional conversation:', e);
+    return;
+  }
+  if (currentConversation.value?.id === discardId || route.params.id === discardId) {
+    router.push('/conversation');
+  }
+});
 
 async function switchToGroupChat() {
   if (!currentConversation.value) return;

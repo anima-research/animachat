@@ -3404,11 +3404,14 @@ export class Database {
         content: branch.content,
         role: branch.role,
         participantId: branch.participantId,
+        sentByUserId: branch.sentByUserId,
         createdAt: new Date(branch.createdAt),
         model: branch.model,
         // isActive: branch.isActive, // Deprecated field - ignored on import
         parentBranchId: branch.parentBranchId,
-        attachments: branch.attachments
+        attachments: branch.attachments,
+        contentBlocks: branch.contentBlocks,
+        creationSource: branch.creationSource
       })),
       activeBranchId: messageData.activeBranchId,
       order: messageData.order

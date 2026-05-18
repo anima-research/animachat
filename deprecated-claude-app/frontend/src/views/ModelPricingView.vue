@@ -249,7 +249,7 @@ onMounted(() => {
 
 <style scoped>
 .pricing-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   background: radial-gradient(circle at top, rgba(187, 134, 252, 0.15), transparent 45%),
     #0e0e0e;
   color: #f5f5f5;

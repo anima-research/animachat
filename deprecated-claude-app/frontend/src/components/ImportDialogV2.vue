@@ -77,6 +77,27 @@
               </div>
 
               <v-alert
+                v-if="isClaudeArchiveFormat && archiveUploading"
+                type="info"
+                variant="tonal"
+                density="compact"
+                class="mt-4"
+              >
+                <div class="mb-2">
+                  {{ archiveUploadPct < 100
+                    ? `Uploading archive… ${archiveUploadPct}%`
+                    : 'Upload complete — parsing on the server. Large exports can take a minute…' }}
+                </div>
+                <v-progress-linear
+                  :model-value="archiveUploadPct"
+                  :indeterminate="archiveUploadPct >= 100"
+                  color="primary"
+                  height="6"
+                  rounded
+                />
+              </v-alert>
+
+              <v-alert
                 v-if="error"
                 type="error"
                 class="mt-4"
@@ -96,7 +117,8 @@
                 Cancel
               </v-btn>
               <v-btn
-                :disabled="!canProceedToPreview"
+                :disabled="!canProceedToPreview || archiveUploading"
+                :loading="loading || archiveUploading"
                 color="primary"
                 variant="elevated"
                 @click="previewImport"
@@ -108,6 +130,48 @@
 
           <!-- Step 2: Preview & Participant Mapping -->
           <v-stepper-window-item :value="2">
+            <v-card-text v-if="isClaudeArchiveFormat && archiveJob">
+              <h4 class="text-h6 mb-4">Archive Preview</h4>
+
+              <v-row dense>
+                <v-col cols="6" sm="3">
+                  <div class="text-caption text-grey">Conversations</div>
+                  <div class="text-h6">{{ archiveJob.preview.selectedConversations }}</div>
+                </v-col>
+                <v-col cols="6" sm="3">
+                  <div class="text-caption text-grey">Messages</div>
+                  <div class="text-h6">{{ archiveJob.preview.totalMessages }}</div>
+                </v-col>
+                <v-col cols="6" sm="3">
+                  <div class="text-caption text-grey">Branchy convs</div>
+                  <div class="text-h6">{{ archiveJob.preview.branchyConversations }}</div>
+                </v-col>
+                <v-col cols="6" sm="3">
+                  <div class="text-caption text-grey">Skipped Empty</div>
+                  <div class="text-h6">{{ archiveJob.preview.emptyConversations }}</div>
+                </v-col>
+              </v-row>
+
+              <v-alert
+                type="info"
+                variant="tonal"
+                density="compact"
+                class="mt-4"
+              >
+                {{ archiveJob.originalName }} will be imported as separate conversations owned by your account.
+              </v-alert>
+
+              <v-list density="compact" class="mt-4">
+                <v-list-subheader>Sample Conversations</v-list-subheader>
+                <v-list-item
+                  v-for="sample in archiveJob.preview.samples"
+                  :key="sample.uuid"
+                  :title="sample.title"
+                  :subtitle="`${sample.messageCount} messages`"
+                />
+              </v-list>
+            </v-card-text>
+
             <v-card-text v-if="preview">
               <h4 class="text-h6 mb-4">Preview</h4>
               
@@ -262,6 +326,94 @@
 
           <!-- Step 3: Configuration -->
           <v-stepper-window-item :value="3">
+            <template v-if="isClaudeArchiveFormat">
+              <v-card-text>
+                <v-select
+                  v-model="archiveModel"
+                  :items="activeModels"
+                  item-title="displayName"
+                  item-value="id"
+                  label="Model"
+                  variant="outlined"
+                  density="compact"
+                />
+
+                <v-select
+                  v-model="archiveContentMode"
+                  :items="archiveContentModeOptions"
+                  item-title="label"
+                  item-value="value"
+                  label="Content Mode"
+                  variant="outlined"
+                  density="compact"
+                  class="mt-4"
+                />
+
+                <v-checkbox
+                  v-model="archiveIncludeEmpty"
+                  label="Include empty conversations"
+                  density="compact"
+                  hide-details
+                  class="mt-2"
+                />
+
+                <v-alert
+                  v-if="archiveImportJob"
+                  :type="archiveImportJob.status === 'failed' ? 'error' : archiveImportJob.status === 'completed' ? 'success' : 'info'"
+                  variant="tonal"
+                  density="compact"
+                  class="mt-4"
+                >
+                  <template v-if="archiveImportJob.status === 'failed'">
+                    {{ archiveImportJob.error || 'Import failed' }}
+                  </template>
+                  <template v-else-if="archiveImportJob.status === 'completed'">
+                    Imported {{ archiveImportJob.progress.importedConversations }} conversations.
+                  </template>
+                  <template v-else>
+                    Importing {{ archiveImportJob.progress.importedConversations }} of {{ archiveImportJob.progress.totalConversations }} conversations
+                  </template>
+                </v-alert>
+
+                <v-progress-linear
+                  v-if="archiveImportJob && archiveImportJob.status === 'running'"
+                  :model-value="archiveProgressPercent"
+                  color="primary"
+                  height="8"
+                  rounded
+                  class="mt-3"
+                />
+              </v-card-text>
+
+              <v-card-actions>
+                <v-btn
+                  variant="text"
+                  :disabled="archiveImportJob?.status === 'running'"
+                  @click="step = 2"
+                >
+                  Back
+                </v-btn>
+                <v-spacer />
+                <v-btn
+                  variant="text"
+                  :disabled="archiveImportJob?.status === 'running'"
+                  @click="close"
+                >
+                  Cancel
+                </v-btn>
+                <v-btn
+                  :loading="loading || archiveImportJob?.status === 'running'"
+                  :disabled="!archiveModel || archiveImportJob?.status === 'completed'"
+                  color="primary"
+                  variant="elevated"
+                  @click="executeImport"
+                >
+                  Import Archive
+                </v-btn>
+              </v-card-actions>
+            </template>
+
+            <template v-else>
             <v-card-text>
               <v-text-field
                 v-model="conversationTitle"
@@ -337,6 +489,7 @@
                 Import
               </v-btn>
             </v-card-actions>
+            </template>
           </v-stepper-window-item>
         </v-stepper-window>
       </v-stepper>
@@ -356,6 +509,44 @@ import type {
   Model 
 } from '@deprecated-claude/shared';
 
+type ImportFormatOption = ImportFormat | 'claude_archive';
+type ClaudeArchiveContentMode = 'rendered' | 'text-blocks' | 'verbose-blocks';
+
+interface ClaudeArchiveJob {
+  id: string;
+  originalName: string;
+  status: 'previewed' | 'running' | 'completed' | 'failed';
+  preview: {
+    totalConversations: number;
+    selectedConversations: number;
+    nonEmptyConversations: number;
+    emptyConversations: number;
+    totalMessages: number;
+    branchyConversations: number;
+    samples: Array<{
+      uuid: string;
+      title: string;
+      messageCount: number;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+    largestConversation?: {
+      uuid: string;
+      title: string;
+      messageCount: number;
+      sizeBytes: number;
+    };
+  };
+  progress: {
+    importedConversations: number;
+    totalConversations: number;
+    importedMessages: number;
+    importedBranches: number;
+    currentTitle?: string;
+  };
+  error?: string;
+}
+
 const props = defineProps<{
   modelValue: boolean;
 }>();
@@ -371,8 +562,8 @@ const router = useRouter();
 const step = ref(1);
 
 // Step 1: Format selection
-const selectedFormat = ref<ImportFormat | null>(null);
-const file = ref<File | null>(null);
+const selectedFormat = ref<ImportFormatOption | null>(null);
+const file = ref<File | File[] | null>(null);
 const textContent = ref('');
 const fileContent = ref('');
 
@@ -381,11 +572,19 @@ const preview = ref<ImportPreview | null>(null);
 const participantMappings = ref<Record<string, ParticipantMapping>>({});
 const editableParticipants = ref<Array<{ sourceName: string; targetName: string; type: 'user' | 'assistant' }>>([]);
 const reparsingPreview = ref(false);
+const archiveJob = ref<ClaudeArchiveJob | null>(null);
+const archiveImportJob = ref<ClaudeArchiveJob | null>(null);
+const archivePollTimer = ref<number | null>(null);
+const archiveUploading = ref(false);
+const archiveUploadPct = ref(0);
 
 // Step 3: Configuration
 const conversationTitle = ref('');
 const conversationFormat = ref<'standard' | 'prefill'>('standard');
 const selectedModel = ref('');
+const archiveModel = ref('');
+const archiveContentMode = ref<ClaudeArchiveContentMode>('rendered');
+const archiveIncludeEmpty = ref(false);
 
 // UI state
 const error = ref('');
@@ -393,6 +592,11 @@ const loading = ref(false);
 
 // Format options
 const formatOptions = [
+  {
+    value: 'claude_archive',
+    label: 'Claude.ai Archive',
+    description: 'Bulk import a full Claude.ai conversations.json export'
+  },
   {
     value: 'chrome_extension',
     label: 'Claude Conversation Exporter',
@@ -441,6 +645,7 @@ const formatOptions = [
 ];
 
 const formatLabels: Record<string, string> = {
+  claude_archive: 'Claude.ai archive',
   basic_json: 'JSON',
   anthropic: 'Anthropic',
   chrome_extension: 'Claude Conversation Exporter',
@@ -465,6 +670,21 @@ const conversationFormatOptions = [
   }
 ];
 
+const archiveContentModeOptions = [
+  {
+    value: 'rendered',
+    label: 'Rendered text'
+  },
+  {
+    value: 'text-blocks',
+    label: 'Text blocks only'
+  },
+  {
+    value: 'verbose-blocks',
+    label: 'Verbose blocks'
+  }
+];
+
 // Computed properties
 const models = computed(() => store.state.models);
 
@@ -477,8 +697,11 @@ const isTextFormat = computed(() =>
   selectedFormat.value === 'colon_double'
 );
 
+const isClaudeArchiveFormat = computed(() => selectedFormat.value === 'claude_archive');
+
 const acceptedFileTypes = computed(() => {
-  if (selectedFormat.value === 'basic_json' || 
+  if (selectedFormat.value === 'claude_archive' ||
+      selectedFormat.value === 'basic_json' ||
       selectedFormat.value === 'anthropic' ||
       selectedFormat.value === 'chrome_extension' ||
       selectedFormat.value === 'arc_chat' ||
@@ -494,6 +717,7 @@ const acceptedFileTypes = computed(() => {
 
 const canProceedToPreview = computed(() => {
   if (!selectedFormat.value) return false;
+  if (isClaudeArchiveFormat.value) return !!getSelectedFile();
   if (isTextFormat.value) return textContent.value.trim().length > 0;
   return fileContent.value.length > 0;
 });
@@ -502,12 +726,29 @@ const hasMultipleParticipants = computed(() =>
   (preview.value?.detectedParticipants.length || 0) > 2
 );
 
+const archiveProgressPercent = computed(() => {
+  const progress = archiveImportJob.value?.progress;
+  if (!progress || progress.totalConversations === 0) return 0;
+  return Math.round((progress.importedConversations / progress.totalConversations) * 100);
+});
+
 // Methods
+function getSelectedFile(): File | null {
+  if (!file.value) return null;
+  return Array.isArray(file.value) ? file.value[0] || null : file.value;
+}
+
 async function readFile() {
-  if (!file.value) return;
+  if (isClaudeArchiveFormat.value) {
+    fileContent.value = '';
+    return;
+  }
+
+  const selectedFile = getSelectedFile();
+  if (!selectedFile) return;
   
   try {
-    fileContent.value = await file.value.text();
+    fileContent.value = await selectedFile.text();
   } catch (err: any) {
     error.value = 'Failed to read file';
     fileContent.value = '';
@@ -526,6 +767,11 @@ async function previewImport() {
       await store.loadModels();
     }
     
+    if (isClaudeArchiveFormat.value) {
+      await previewClaudeArchive();
+      return;
+    }
+
     const content = isTextFormat.value ? textContent.value : fileContent.value;
     
     const response = await api.post('/import/preview', {
@@ -604,8 +850,44 @@ async function previewImport() {
   }
 }
 
+async function previewClaudeArchive() {
+  const selectedFile = getSelectedFile();
+  if (!selectedFile) {
+    error.value = 'Select a Claude.ai archive file';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('archive', selectedFile);
+
+  archiveUploading.value = true;
+  archiveUploadPct.value = 0;
+  try {
+    const response = await api.post('/import/claude-archive/preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e: any) => {
+        if (e.total) archiveUploadPct.value = Math.round((e.loaded / e.total) * 100);
+      }
+    });
+
+    archiveJob.value = response.data;
+    archiveImportJob.value = null;
+    archiveModel.value = activeModels.value.find(m => m.id === 'claude-sonnet-4.6-openrouter')?.id || activeModels.value[0]?.id || '';
+    step.value = 2;
+  } finally {
+    archiveUploading.value = false;
+  }
+}
+
 async function executeImport() {
-  if (!selectedFormat.value || !preview.value) return;
+  if (!selectedFormat.value) return;
+
+  if (isClaudeArchiveFormat.value) {
+    await executeClaudeArchiveImport();
+    return;
+  }
+
+  if (!preview.value) return;
   
   loading.value = true;
   error.value = '';
@@ -644,6 +926,58 @@ async function executeImport() {
     error.value = err.response?.data?.error || 'Failed to import conversation';
   } finally {
     loading.value = false;
+  }
+}
+
+async function executeClaudeArchiveImport() {
+  if (!archiveJob.value) return;
+
+  loading.value = true;
+  error.value = '';
+
+  try {
+    const response = await api.post(`/import/claude-archive/${archiveJob.value.id}/execute`, {
+      model: archiveModel.value,
+      contentMode: archiveContentMode.value,
+      includeEmpty: archiveIncludeEmpty.value
+    });
+    archiveImportJob.value = response.data;
+    startArchivePolling(response.data.id);
+  } catch (err: any) {
+    error.value = err.response?.data?.error || 'Failed to start archive import';
+  } finally {
+    loading.value = false;
+  }
+}
+
+function startArchivePolling(jobId: string) {
+  stopArchivePolling();
+  archivePollTimer.value = window.setInterval(async () => {
+    try {
+      const response = await api.get(`/import/claude-archive/${jobId}`);
+      archiveImportJob.value = response.data;
+
+      if (response.data.status === 'completed') {
+        stopArchivePolling();
+        await store.loadConversations();
+        // Close immediately; the populated sidebar is the success signal.
+        // State resets only after the dialog has hidden, so no bounce.
+        close();
+      } else if (response.data.status === 'failed') {
+        stopArchivePolling();
+        error.value = response.data.error || 'Archive import failed';
+      }
+    } catch (err: any) {
+      stopArchivePolling();
+      error.value = err.response?.data?.error || 'Failed to poll archive import';
+    }
+  }, 1500);
+}
+
+function stopArchivePolling() {
+  if (archivePollTimer.value !== null) {
+    window.clearInterval(archivePollTimer.value);
+    archivePollTimer.value = null;
   }
 }
 
@@ -707,26 +1041,43 @@ async function reparseWithCurrentParticipants() {
   }
 }
 
-function close() {
+function resetState() {
   step.value = 1;
   selectedFormat.value = null;
   file.value = null;
   textContent.value = '';
   fileContent.value = '';
   preview.value = null;
+  archiveJob.value = null;
+  archiveImportJob.value = null;
+  archiveUploading.value = false;
+  archiveUploadPct.value = 0;
   participantMappings.value = {};
   editableParticipants.value = [];
   conversationTitle.value = '';
   conversationFormat.value = 'standard';
   selectedModel.value = '';
+  archiveModel.value = '';
+  archiveContentMode.value = 'rendered';
+  archiveIncludeEmpty.value = false;
   error.value = '';
+}
+
+// Only request the close here. Internal state is reset AFTER the dialog has
+// actually hidden (see the modelValue watcher) so the user never sees the
+// stepper snap back to step 1 mid-fade ("bounce back to preview").
+function close() {
+  stopArchivePolling();
   emit('update:modelValue', false);
 }
 
-// Load models when dialog opens
 watch(() => props.modelValue, async (isOpen) => {
   if (isOpen && models.value.length === 0) {
     await store.loadModels();
+  }
+  if (!isOpen) {
+    // Wait out the v-dialog fade-out transition before wiping state.
+    window.setTimeout(resetState, 350);
   }
 });
 </script>
