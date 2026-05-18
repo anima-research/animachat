@@ -1059,12 +1059,28 @@ const postHocOperationIcon = computed(() => {
   }
 });
 
-// Look up model details from store
+// Look up model details from store.
+//
+// Branches in storage sometimes record `branch.model` as the canonical
+// internal `id` (e.g. `claude-3-haiku-bedrock`), and other code paths /
+// older conversations sometimes recorded it as the long `providerModelId`
+// (e.g. `apac.anthropic.claude-3-haiku-20240307-v1:0`). Looking up only
+// by `id` left the long form unresolved — the UI then fell through to
+// displaying the raw provider model ID instead of the friendly shortName,
+// surfaced in PR #100 testing as "Haiku 3 displays as
+// `apac.anthropic.claude-3-haiku-20240307-v1:0`".
+//
+// Fix: match either form. The internal id is the canonical key (preferred
+// when both are present in the same record), and providerModelId is a
+// valid fallback.
 function getModelDetails(modelId: string | undefined) {
   if (!modelId) return null;
-  
+
+  const matchesModelId = (m: { id?: string; providerModelId?: string }) =>
+    m.id === modelId || m.providerModelId === modelId;
+
   // Check standard models
-  const standardModel = store.state.models.find(m => m.id === modelId);
+  const standardModel = store.state.models.find(matchesModelId);
   if (standardModel) {
     return {
       displayName: standardModel.displayName || standardModel.shortName || modelId,
@@ -1073,9 +1089,9 @@ function getModelDetails(modelId: string | undefined) {
       isCustom: false
     };
   }
-  
+
   // Check custom models
-  const customModel = store.state.customModels?.find(m => m.id === modelId);
+  const customModel = store.state.customModels?.find(matchesModelId);
   if (customModel) {
     return {
       displayName: customModel.displayName || modelId,
@@ -1084,7 +1100,7 @@ function getModelDetails(modelId: string | undefined) {
       isCustom: true
     };
   }
-  
+
   return null;
 }
 
