@@ -232,11 +232,11 @@
           </v-list>
           
           <!-- Shared with me section -->
-          <v-list v-if="sharedConversations.length > 0" density="compact" nav class="mt-2">
+          <v-list v-if="filteredSharedConversations.length > 0" density="compact" nav class="mt-2">
             <v-list-subheader>Shared with me</v-list-subheader>
-            
+
             <v-list-item
-              v-for="share in sharedConversations"
+              v-for="share in filteredSharedConversations"
               :key="share.id"
               :to="`/conversation/${share.conversationId}`"
               class="conversation-list-item"
@@ -262,8 +262,8 @@
               <template v-slot:subtitle>
                 <div>
                   <div class="text-caption">from {{ share.sharedBy?.name || share.sharedBy?.email }}</div>
-                  <div class="text-caption text-medium-emphasis" v-if="share.conversation?.updatedAt">
-                    {{ formatDate(share.conversation.updatedAt) }}
+                  <div class="text-caption text-medium-emphasis">
+                    {{ sharedConversationDateLabel(share) }}
                   </div>
                 </div>
               </template>
@@ -1532,6 +1532,46 @@ interface SharedConversationEntry {
   createdAt: string;
 }
 const sharedConversations = ref<SharedConversationEntry[]>([]);
+
+// The same sidebar search/sort/filter controls apply to "Shared with me". For
+// shared rows, "Date created" is interpreted as `share.createdAt` (when the
+// share landed in the recipient's list) rather than the conversation's own
+// createdAt, which isn't sent over the wire for shares. That's the more
+// useful semantic for the recipient anyway ("newest shares first").
+const filteredSharedConversations = computed(() => {
+  const q = conversationSearch.value.trim().toLowerCase();
+  const fmt = conversationFormatFilter.value;
+  const dir = conversationSortDir.value === 'desc' ? -1 : 1;
+  const key = conversationSortKey.value;
+
+  return [...sharedConversations.value]
+    .filter(s => {
+      const title = s.conversation?.title || '';
+      if (q && !title.toLowerCase().includes(q)) return false;
+      const format = s.conversation?.format;
+      if (fmt === 'standard' && format !== 'standard') return false;
+      if (fmt === 'group' && format === 'standard') return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (key === 'title') {
+        return (a.conversation?.title || '').localeCompare(b.conversation?.title || '') * dir;
+      }
+      // 'created' uses the share's createdAt (when received); 'updated' uses
+      // the conversation's updatedAt with a safe fallback.
+      const pickDate = (s: SharedConversationEntry) =>
+        key === 'created' ? s.createdAt : (s.conversation?.updatedAt || s.createdAt);
+      return (new Date(pickDate(a)).getTime() - new Date(pickDate(b)).getTime()) * dir;
+    });
+});
+
+// Row date for shared conversations, mirroring `conversationDateLabel` but
+// labeling the 'created' case as "received {date}" — clearer for shares.
+function sharedConversationDateLabel(s: SharedConversationEntry): string {
+  if (conversationSortKey.value === 'created') return `received ${formatDate(s.createdAt)}`;
+  if (s.conversation?.updatedAt) return `updated ${formatDate(s.conversation.updatedAt)}`;
+  return `received ${formatDate(s.createdAt)}`;
+}
 
 // Shares created by the current user (for owner to know their conversation is shared)
 interface MyCreatedShare {
