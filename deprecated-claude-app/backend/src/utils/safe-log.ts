@@ -26,15 +26,32 @@ const INLINE_AUTH_RE = /([a-z][a-z0-9+.-]*:\/\/)([^@/?#\s]+):([^@/?#\s]+)@/gi;
 // 2. URL query-string secrets: `?api_key=...`, `&token=...`, etc.
 // Body stops at any URL delimiter so multiple params get redacted
 // independently rather than the first one eating the rest.
+//
+// Two alternatives in the keyword group:
+//   - long, unambiguous names (api_key, token, secret, password, signature)
+//     can sit anywhere in a compound param name (`my_api_key_v2`, etc.)
+//   - short, ambiguous names (auth, sig) must be the WHOLE param name —
+//     otherwise we'd silently redact `?author=name`, `?signature_date=...`,
+//     etc. Greptile #109 caught this — `auth` and `sig` were matching as
+//     substrings inside longer names. The surrounding `([?&])` and `=`
+//     already anchor word edges for these, so no explicit `\b` is needed.
 const QUERY_SECRET_RE =
-  /([?&])([a-z0-9_.-]*(?:api[_-]?key|token|secret|password|auth|sig|signature)[a-z0-9_.-]*)=[^&#\s'"]*/gi;
+  /([?&])((?:[a-z0-9_.-]*(?:api[_-]?key|token|secret|password|signature)[a-z0-9_.-]*)|(?:auth|sig))=[^&#\s'"]*/gi;
 
 // 3. Header-like contexts: `Authorization: Bearer xxx`, `"x-api-key":"sk-..."`,
-// `x-api-key=...` in a free-form log line. Body class is alphanumeric + a
-// few token-friendly punctuation chars, which intentionally excludes `[`
-// — so a previously-redacted `[REDACTED]` value can't be re-matched.
+// `x-api-key=...` in a free-form log line. The scheme group
+// `(?:[A-Za-z]+\s+)?` consumes ANY auth scheme word (Bearer, Basic, Token,
+// ApiKey, …) before the credential body, not just `Bearer`. Greptile #109
+// caught the original `(?:Bearer\s+)?` silently failing on
+// `Authorization: Basic dXNl…` — the optional group matched empty, the
+// body class consumed the word `Basic`, and the actual credential survived
+// into the log.
+//
+// Body class is alphanumeric + a few token-friendly punctuation chars,
+// which intentionally excludes `[` — so a previously-redacted `[REDACTED]`
+// value can't be re-matched by another pattern.
 const HEADER_RE =
-  /((?:authorization|(?:x-)?api[_-]?key)['"]?\s*[:=]\s*['"]?(?:Bearer\s+)?)[A-Za-z0-9._\-+/=]{4,}/gi;
+  /((?:authorization|(?:x-)?api[_-]?key)['"]?\s*[:=]\s*['"]?(?:[A-Za-z]+\s+)?)[A-Za-z0-9._\-+/=]{4,}/gi;
 
 /**
  * Strip likely-credential substrings from a string. Designed to be applied
