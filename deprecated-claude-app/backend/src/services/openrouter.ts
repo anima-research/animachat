@@ -4,6 +4,7 @@ import { getBlobStore } from '../database/blob-store.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import { Logger } from '../utils/logger.js';
 import { logOpenRouterRequest, logOpenRouterResponse } from '../utils/openrouterLogger.js';
+import { safeErrorLog } from '../utils/safe-log.js';
 import { isImageFile } from './attachment-utils.js';
 
 interface OpenRouterMessage {
@@ -720,7 +721,7 @@ export class OpenRouterService {
       
       return { rawRequest: requestBody }; // No usage data available
     } catch (error) {
-      console.error('OpenRouter streaming error:', error);
+      safeErrorLog('OpenRouter streaming error:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       
       // Log the error
@@ -988,7 +989,7 @@ export class OpenRouterService {
       const data = await response.json();
       return (data as any)?.data || [];
     } catch (error) {
-      console.error('Failed to list OpenRouter models:', error);
+      safeErrorLog('Failed to list OpenRouter models:', error);
       return [];
     }
   }

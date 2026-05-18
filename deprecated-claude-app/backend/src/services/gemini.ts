@@ -1,6 +1,7 @@
 import { Message, getActiveBranch, ModelSettings, ContentBlock } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { getBlobStore } from '../database/blob-store.js';
+import { redactSecrets, safeErrorLog } from '../utils/safe-log.js';
 
 /**
  * Gemini API Service
@@ -232,8 +233,8 @@ export class GeminiService {
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`[Gemini API] Error ${response.status}:`, errorText);
-        throw new Error(`Gemini API error: ${response.status} ${errorText}`);
+        console.error(`[Gemini API] Error ${response.status}:`, redactSecrets(errorText));
+        throw new Error(`Gemini API error: ${response.status} ${redactSecrets(errorText)}`);
       }
       
       if (!response.body) {
@@ -452,7 +453,7 @@ export class GeminiService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const duration = Date.now() - startTime;
-      console.error(`[Gemini API] Request ${requestId} failed after ${duration}ms:`, errorMessage);
+      safeErrorLog(`[Gemini API] Request ${requestId} failed after ${duration}ms:`, error);
       
       // Estimate input tokens from request for cost tracking on failures
       // Google still charges for failed requests that were processed

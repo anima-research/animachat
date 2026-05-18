@@ -1,6 +1,7 @@
 import { Message, getActiveBranch, ModelSettings, TokenUsage } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
+import { redactSecrets, safeErrorLog } from '../utils/safe-log.js';
 
 interface OpenAIMessage {
   role: 'user' | 'assistant' | 'system';
@@ -95,10 +96,14 @@ export class OpenAICompatibleService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`[OpenAI-Compatible] Error response:`, errorText);
-        console.error(`[OpenAI-Compatible] Request URL was: ${endpoint}`);
+        // `endpoint` may be a user-configured custom-model baseUrl that
+        // embeds an API key in the query string or as inline auth; redact
+        // before logging. `errorText` from the upstream provider can echo
+        // request fragments back, so redact that too.
+        console.error(`[OpenAI-Compatible] Error response:`, redactSecrets(errorText));
+        console.error(`[OpenAI-Compatible] Request URL was: ${redactSecrets(endpoint)}`);
         console.error(`[OpenAI-Compatible] Model ID was: ${actualModelId}`);
-        throw new Error(`OpenAI-compatible API error: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(`OpenAI-compatible API error: ${response.status} ${response.statusText} - ${redactSecrets(errorText)}`);
       }
 
       const reader = response.body?.getReader();
@@ -171,8 +176,8 @@ export class OpenAICompatibleService {
       
       return { rawRequest: requestBody };
     } catch (error) {
-      console.error('OpenAI-compatible streaming error:', error);
-      
+      safeErrorLog('OpenAI-compatible streaming error:', error);
+
       // Log the error
       const duration = Date.now() - startTime;
       await llmLogger.logResponse({
@@ -294,7 +299,7 @@ export class OpenAICompatibleService {
       const data = await response.json();
       return (data as any)?.data || [];
     } catch (error) {
-      console.error('Failed to list models:', error);
+      safeErrorLog('Failed to list models:', error);
       return [];
     }
   }
