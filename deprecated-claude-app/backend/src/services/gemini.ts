@@ -51,6 +51,18 @@ interface GeminiResponse {
     promptTokenCount: number;
     candidatesTokenCount: number;
     totalTokenCount: number;
+    // Thinking/reasoning output tokens (Gemini 2.5+ thinking mode). Billed at
+    // the output rate; reported as a SEPARATE count from candidatesTokenCount
+    // per Google's spec (not a subset — total billable output is sum of both).
+    thoughtsTokenCount?: number;
+    // Cache-read input tokens (Gemini context caching). Subset of
+    // promptTokenCount — subtract to get the fresh-input portion. Gemini's
+    // cache pricing is ~25% of input (vs Anthropic's 10%); admin config
+    // should override `cachePricing.read` for accurate billing on Gemini.
+    cachedContentTokenCount?: number;
+    // Tool-use prompt scaffolding tokens. Subset of promptTokenCount; tracked
+    // for visibility but billed at the same input rate as fresh.
+    toolUsePromptTokenCount?: number;
   };
 }
 
@@ -73,6 +85,18 @@ interface GeminiStreamChunk {
     promptTokenCount: number;
     candidatesTokenCount: number;
     totalTokenCount: number;
+    // Thinking/reasoning output tokens (Gemini 2.5+ thinking mode). Billed at
+    // the output rate; reported as a SEPARATE count from candidatesTokenCount
+    // per Google's spec (not a subset — total billable output is sum of both).
+    thoughtsTokenCount?: number;
+    // Cache-read input tokens (Gemini context caching). Subset of
+    // promptTokenCount — subtract to get the fresh-input portion. Gemini's
+    // cache pricing is ~25% of input (vs Anthropic's 10%); admin config
+    // should override `cachePricing.read` for accurate billing on Gemini.
+    cachedContentTokenCount?: number;
+    // Tool-use prompt scaffolding tokens. Subset of promptTokenCount; tracked
+    // for visibility but billed at the same input rate as fresh.
+    toolUsePromptTokenCount?: number;
   };
 }
 
@@ -336,11 +360,31 @@ export class GeminiService {
                 }
               }
               
-              // Extract usage (with defensive defaults to prevent NaN)
+              // Extract usage across all billable channels Gemini reports.
+              //
+              // Channel semantics (per Google's spec):
+              //   promptTokenCount        = total input (includes cached + tool-use)
+              //   cachedContentTokenCount = subset of prompt read from cache
+              //   toolUsePromptTokenCount = subset of prompt used by tool scaffolding
+              //   candidatesTokenCount    = visible output (does NOT include thinking)
+              //   thoughtsTokenCount      = thinking output (separate, both billed at output rate)
+              //
+              // We pass fresh = promptTokenCount − cached so the four-channel
+              // cost model doesn't double-charge cached tokens. cacheRead is the
+              // cached portion; cacheCreation is 0 because Gemini creates caches
+              // out-of-band via a separate API (CachedContent.create), not as
+              // part of generation requests.
               if (chunk.usageMetadata) {
+                const meta = chunk.usageMetadata;
+                const cached = meta.cachedContentTokenCount ?? 0;
+                const promptTotal = meta.promptTokenCount ?? 0;
                 usage = {
-                  inputTokens: chunk.usageMetadata.promptTokenCount ?? 0,
-                  outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0,
+                  inputTokens: Math.max(promptTotal - cached, 0),
+                  outputTokens: meta.candidatesTokenCount ?? 0,
+                  cacheCreationInputTokens: 0,
+                  cacheReadInputTokens: cached,
+                  ...(meta.thoughtsTokenCount ? { thinkingTokens: meta.thoughtsTokenCount } : {}),
+                  ...(meta.toolUsePromptTokenCount ? { toolUsePromptTokens: meta.toolUsePromptTokenCount } : {}),
                 };
               }
             } catch (parseError) {
@@ -569,10 +613,21 @@ export class GeminiService {
     return {
       content,
       contentBlocks,
-      usage: data.usageMetadata ? {
-        inputTokens: data.usageMetadata.promptTokenCount,
-        outputTokens: data.usageMetadata.candidatesTokenCount,
-      } : undefined,
+      // Mirror the per-channel extraction the streaming path now does.
+      // See the streaming branch above for channel semantics.
+      usage: data.usageMetadata ? (() => {
+        const meta = data.usageMetadata!;
+        const cached = meta.cachedContentTokenCount ?? 0;
+        const promptTotal = meta.promptTokenCount ?? 0;
+        return {
+          inputTokens: Math.max(promptTotal - cached, 0),
+          outputTokens: meta.candidatesTokenCount ?? 0,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: cached,
+          ...(meta.thoughtsTokenCount ? { thinkingTokens: meta.thoughtsTokenCount } : {}),
+          ...(meta.toolUsePromptTokenCount ? { toolUsePromptTokens: meta.toolUsePromptTokenCount } : {}),
+        };
+      })() : undefined,
     };
   }
 
