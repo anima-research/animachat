@@ -135,7 +135,7 @@ console.log('[HTTP] Gzip compression enabled (threshold: 1KB)');
 // only serves JSON — CSP is enforced by the frontend's own HTML response
 // served by nginx/Vite, not on API responses. `crossOriginResourcePolicy`
 // is loosened to allow the frontend (which is on a different origin during
-// local dev: localhost:5173 vs localhost:3000) to read API responses.
+// local dev: localhost:5173 vs localhost:3010) to read API responses.
 // Everything else helmet ships by default — HSTS, X-Content-Type-Options,
 // X-Frame-Options, Referrer-Policy, etc. — is on and useful.
 app.use(helmet({
