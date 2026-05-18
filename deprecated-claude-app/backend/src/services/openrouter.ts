@@ -4,6 +4,7 @@ import { getBlobStore } from '../database/blob-store.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import { Logger } from '../utils/logger.js';
 import { logOpenRouterRequest, logOpenRouterResponse } from '../utils/openrouterLogger.js';
+import { isImageFile } from './attachment-utils.js';
 
 interface OpenRouterMessage {
   role: 'user' | 'assistant' | 'system';
@@ -35,6 +36,24 @@ interface OpenRouterResponse {
     // Anthropic cache fields (via OpenRouter)
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    // OpenRouter ground-truth cost — present when the request includes
+    // `usage: { include: true }` (which this service always sends).
+    // Authoritative; bypasses the pricing-table math when set.
+    cost?: number;
+    cost_details?: {
+      upstream_inference_cost?: number;
+      [key: string]: any;
+    };
+    // Reasoning/thinking output breakdown (some models). Billed inside
+    // `completion_tokens`, surfaced separately for accurate token attribution.
+    completion_tokens_details?: {
+      reasoning_tokens?: number;
+      [key: string]: any;
+    };
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+      [key: string]: any;
+    };
   };
 }
 
@@ -156,13 +175,18 @@ export class OpenRouterService {
       // Complete the stream
       // NOTE: inputTokens = fresh only (non-cached), to match Anthropic semantics
       // enhanced-inference.ts will add cacheRead to get total
-      const actualUsage = {
+      const actualUsage: any = {
         inputTokens: freshInputTokens,
         outputTokens: completionTokens,
         cacheCreationInputTokens: 0, // OpenRouter doesn't distinguish
         cacheReadInputTokens: cachedTokens
       };
-      
+
+      // OpenRouter ground-truth cost (when present). Authoritative for billing.
+      if (typeof usage.cost === 'number') {
+        actualUsage.providerReportedCost = usage.cost;
+      }
+
       await onChunk('', true, undefined, actualUsage);
       
       return {
@@ -216,6 +240,18 @@ export class OpenRouterService {
         }
       }
 
+      // Build reasoning config: merges thinking budget (Anthropic/Gemini) and
+      // reasoning effort (OpenAI GPT-5 series) into OpenRouter's unified
+      // `reasoning` object. Both fields can coexist in theory.
+      const reasoningConfig: { max_tokens?: number; effort?: string } = {};
+      if (settings.thinking?.enabled && settings.thinking.budgetTokens) {
+        reasoningConfig.max_tokens = settings.thinking.budgetTokens;
+      }
+      const reasoningEffort = settings.modelSpecific?.reasoningEffort;
+      if (typeof reasoningEffort === 'string') {
+        reasoningConfig.effort = reasoningEffort;
+      }
+
       requestBody = {
         model: modelId,
         messages: openRouterMessages,
@@ -225,16 +261,12 @@ export class OpenRouterService {
         ...(settings.topP !== undefined && { top_p: settings.topP }),
         ...(settings.topK !== undefined && { top_k: settings.topK }),
         ...(stopSequences && stopSequences.length > 0 && { stop: stopSequences }),
-        
+
         // Required for cache metrics in response
         usage: { include: true },
-        
-        // Add reasoning/thinking support for models that support it
-        ...(settings.thinking?.enabled && settings.thinking.budgetTokens && {
-          reasoning: {
-            max_tokens: settings.thinking.budgetTokens
-          }
-        })
+
+        // Reasoning config (effort for OpenAI GPT-5, max_tokens for thinking models)
+        ...(Object.keys(reasoningConfig).length > 0 && { reasoning: reasoningConfig })
       };
       
       // For Anthropic models: force native provider and enable caching
@@ -298,11 +330,17 @@ export class OpenRouterService {
       let totalTokens = 0;
       let promptTokens = 0;
       let completionTokens = 0;
+      let reasoningTokens = 0;
+      // OpenRouter ground-truth cost. Set when the final SSE chunk carries
+      // `usage.cost` (we always request `usage: { include: true }`). Authoritative
+      // when set; passed through `actualUsage.providerReportedCost` so the cost
+      // tracker short-circuits the pricing-table math and surfaces drift.
+      let reportedCost: number | undefined;
       let cacheMetrics = {
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 0
       };
-      
+
       // Track reasoning/thinking content blocks
       const contentBlocks: any[] = [];
       let reasoningContent = '';
@@ -324,21 +362,44 @@ export class OpenRouterService {
               // OpenRouter's prompt_tokens is TOTAL (includes cached)
               // Report fresh tokens only, to match Anthropic semantics
               const freshInputTokens = promptTokens - cacheMetrics.cacheReadInputTokens;
-              
-              const actualUsage = {
+
+              const actualUsage: any = {
                 inputTokens: freshInputTokens,
                 outputTokens: completionTokens,
                 cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
-                cacheReadInputTokens: cacheMetrics.cacheReadInputTokens
+                cacheReadInputTokens: cacheMetrics.cacheReadInputTokens,
               };
-              
+
+              // Ground-truth cost from OpenRouter (when present). Marks this
+              // record as authoritative — enhanced-inference will use it as
+              // `cost` and log the delta vs. its table-computed value as
+              // `pricingDriftDelta` for table-drift detection.
+              if (reportedCost !== undefined) {
+                actualUsage.providerReportedCost = reportedCost;
+                Logger.cache(`[OpenRouter] 💰 Reported cost: $${reportedCost.toFixed(6)}`);
+              }
+
+              // OpenRouter's `reasoning_tokens` are a SUBSET of `completion_tokens`,
+              // not a separate count. To let the four-channel model apply a distinct
+              // `thinking` multiplier (configurable per model) without double-counting,
+              // we split:
+              //   outputTokens   = completion_tokens − reasoning_tokens   (non-thinking)
+              //   thinkingTokens = reasoning_tokens                        (thinking)
+              // With the default 1.0× thinking multiplier this billing is identical
+              // to the pre-split behaviour; admin config can override per model for
+              // premium reasoning rates.
+              if (reasoningTokens > 0 && reasoningTokens <= completionTokens) {
+                actualUsage.outputTokens = completionTokens - reasoningTokens;
+                actualUsage.thinkingTokens = reasoningTokens;
+              }
+
               // Include content blocks (reasoning) in final response
               const finalContentBlocks = contentBlocks.length > 0 ? contentBlocks : undefined;
-              
+
               if (hasReasoningStarted) {
                 console.log(`[OpenRouter] 🧠 Reasoning complete: ${reasoningContent.length} chars`);
               }
-              
+
               await onChunk('', true, finalContentBlocks, actualUsage);
               break;
             }
@@ -499,7 +560,24 @@ export class OpenRouterService {
                 totalTokens = parsed.usage.total_tokens;
                 promptTokens = parsed.usage.prompt_tokens || 0;
                 completionTokens = parsed.usage.completion_tokens || 0;
-                
+
+                // OpenRouter ground-truth cost. Sent in the final SSE chunk
+                // when the request includes `usage: { include: true }` (this
+                // service always sends it). Authoritative — skips the pricing
+                // table downstream. We still want to log it even if the chunk
+                // is parsed multiple times; the value is monotonic for one call.
+                if (typeof parsed.usage.cost === 'number') {
+                  reportedCost = parsed.usage.cost;
+                }
+
+                // Reasoning tokens are billed inside `completion_tokens` already.
+                // Capturing the split so the four-channel cost model can apply
+                // a separate `thinking` multiplier if the model's pricing differs
+                // (e.g., overridden in admin config).
+                if (parsed.usage.completion_tokens_details?.reasoning_tokens !== undefined) {
+                  reasoningTokens = parsed.usage.completion_tokens_details.reasoning_tokens;
+                }
+
                 // OpenRouter format: cache info in prompt_tokens_details.cached_tokens
                 if (parsed.usage.prompt_tokens_details?.cached_tokens) {
                   // OpenRouter doesn't distinguish creation vs read, just reports cached
@@ -508,7 +586,7 @@ export class OpenRouterService {
                 } else {
                   Logger.cache(`[OpenRouter] ❌ No cache hit (cached_tokens: ${parsed.usage.prompt_tokens_details?.cached_tokens || 0})`);
                 }
-                
+
                 // Also check for native Anthropic format (fallback)
                 if (parsed.usage.cache_creation_input_tokens !== undefined) {
                   cacheMetrics.cacheCreationInputTokens = parsed.usage.cache_creation_input_tokens;
@@ -716,7 +794,7 @@ export class OpenRouterService {
           
           for (const attachment of activeBranch.attachments) {
             const extension = attachment.fileName.split('.').pop()?.toLowerCase() || '';
-            const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension);
+            const isImage = isImageFile(attachment.fileName);
             const isPdf = extension === 'pdf';
             
             if (isImage) {

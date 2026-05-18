@@ -73,8 +73,11 @@ export class SharesStore {
   private generateToken(): string {
     let token: string;
     do {
-      // Generate 10 character alphanumeric token
-      token = crypto.randomBytes(5).toString('hex');
+      // 16 bytes = 32 hex chars = 128 bits. Treat as a capability token —
+      // anyone with the share URL can read private conversation content.
+      // Previously 10 hex chars (40 bits), brute-forceable for targeted
+      // attacks against specific known share contexts.
+      token = crypto.randomBytes(16).toString('hex');
     } while (this.sharesByToken.has(token));
     return token;
   }

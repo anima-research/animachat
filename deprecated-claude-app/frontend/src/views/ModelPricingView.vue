@@ -16,6 +16,17 @@
             </v-card-subtitle>
 
             <v-alert
+              type="info"
+              variant="tonal"
+              class="mb-4"
+              icon="mdi-key-variant"
+            >
+              <strong>Arc does not bill users.</strong> Access is supported via Bring Your Own API Key (BYOK)
+              or Anima-issued research grants. The prices below reflect provider costs for transparency —
+              you are never charged by Arc itself.
+            </v-alert>
+
+            <v-alert
               v-if="error"
               type="error"
               variant="tonal"
@@ -238,7 +249,7 @@ onMounted(() => {
 
 <style scoped>
 .pricing-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   background: radial-gradient(circle at top, rgba(187, 134, 252, 0.15), transparent 45%),
     #0e0e0e;
   color: #f5f5f5;

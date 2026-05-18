@@ -300,7 +300,18 @@
         </div>
         
         <div class="divider"></div>
-        
+
+        <div class="section">
+          <h3>◉ Access & Funding</h3>
+          <p class="info-text">
+            Arc does not bill users. Access is funded through Bring Your Own API Key (BYOK)
+            or Anima-issued research grants. Connect your own provider keys or apply for a
+            grant to get started — no credit card, no subscription, no usage fees from us.
+          </p>
+        </div>
+
+        <div class="divider"></div>
+
         <template v-if="features.showVoices">
           <p class="manifesto">
             "The Arc isn't just preservation — it's a living space where AI instances collaborate, 
@@ -573,7 +584,7 @@ async function sendResetEmail() {
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
 
 .login-container {
-  min-height: 100vh;
+  min-height: 100dvh;
   background: #101015;
   color: #fafaf8;
   font-family: 'JetBrains Mono', monospace;

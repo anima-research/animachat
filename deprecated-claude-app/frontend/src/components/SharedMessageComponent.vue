@@ -85,7 +85,8 @@ import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { getModelColor } from '@/utils/modelColors';
-import { renderLatex, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
+import { extractMath, restoreMath, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
+import '@/utils/dompurify-hooks'; // side-effect: hardens img tags via DOMPurify hook
 import { api } from '@/services/api';
 import 'katex/dist/katex.min.css';
 
@@ -165,11 +166,13 @@ const renderedContent = computed(() => {
     gfm: true      // GitHub Flavored Markdown
   });
   
-  // Markdown + LaTeX rendering
+  // Markdown + LaTeX rendering — extract math BEFORE markdown so its
+  // backslash-escaped delimiters (\(, \[) survive CommonMark escape rules.
+  // See utils/latex.ts for details.
   try {
-    let html = marked.parse ? marked.parse(content) : (marked as any)(content);
-    // Render LaTeX after markdown
-    html = renderLatex(html as string);
+    const { text: contentAfterMath, rendered: renderedMath } = extractMath(content);
+    let html = marked.parse ? marked.parse(contentAfterMath) : (marked as any)(contentAfterMath);
+    html = restoreMath(html as string, renderedMath);
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: [
         'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',

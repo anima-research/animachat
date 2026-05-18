@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { Database } from '../database/index.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { tokenLookupLimiter } from '../middleware/rate-limit.js';
 import { SharePermission } from '@deprecated-claude/shared';
 
 export function collaborationRouter(db: Database): Router {
@@ -11,10 +12,11 @@ export function collaborationRouter(db: Database): Router {
   // ==========================================
 
   /**
-   * Get invite details by token (public - for redemption page)
+   * Get invite details by token (public - for redemption page).
+   * Rate-limited per-IP since the token is the only capability check.
    * GET /api/collaboration/invites/token/:token
    */
-  router.get('/invites/token/:token', async (req, res) => {
+  router.get('/invites/token/:token', tokenLookupLimiter, async (req, res) => {
     try {
       const { token } = req.params;
       

@@ -315,8 +315,10 @@ export class CollaborationStore {
   private generateInviteToken(): string {
     let token: string;
     do {
-      // Generate 12 character alphanumeric token (more secure than share tokens)
-      token = crypto.randomBytes(6).toString('hex');
+      // 16 bytes = 32 hex chars = 128 bits. Treat as a capability token —
+      // collaboration invites grant write access to a private conversation
+      // for whoever holds the link. Previously 12 hex chars (48 bits).
+      token = crypto.randomBytes(16).toString('hex');
     } while (this.invitesByToken.has(token));
     return token;
   }

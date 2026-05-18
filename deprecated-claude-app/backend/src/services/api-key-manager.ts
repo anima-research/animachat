@@ -66,9 +66,9 @@ export class ApiKeyManager {
     // Try to find a suitable system API key profile
     const profile = await this.configLoader.getBestProfile(provider, modelId, userGroup);
     if (profile) {
-      const keyInfo = 'apiKey' in profile.credentials 
-        ? `API key ending in ...${profile.credentials.apiKey?.slice(-8)}`
-        : `AWS credentials`;
+      const keyInfo = 'apiKey' in profile.credentials
+        ? `API key ending in ...${profile.credentials.apiKey?.slice(-4)}`
+        : `AWS credentials (key ID ending ...${('accessKeyId' in profile.credentials ? (profile.credentials as any).accessKeyId?.slice(-4) : '****')})`;
       console.log(`[ApiKeyManager] Found config profile: ${profile.id} with ${keyInfo}`);
       return {
         source: 'config',
@@ -82,8 +82,8 @@ export class ApiKeyManager {
     console.log('[ApiKeyManager] Falling back to environment variables');
     const envKey = this.getEnvApiKey(provider);
     if (envKey) {
-      const keyInfo = 'apiKey' in envKey.credentials 
-        ? `API key ending in ...${envKey.credentials.apiKey?.slice(-8)}`
+      const keyInfo = 'apiKey' in envKey.credentials
+        ? `API key ending in ...${envKey.credentials.apiKey?.slice(-4)}`
         : `AWS credentials`;
       console.log(`[ApiKeyManager] Using environment variable ${keyInfo}`);
     } else {

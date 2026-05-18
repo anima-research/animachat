@@ -3,7 +3,11 @@ import { getBlobStore } from '../database/blob-store.js';
 
 const router = Router();
 
-// UUID v4 format validation regex - prevents path traversal attacks
+// Security model: Blobs are accessed by UUID v4 (122 bits of randomness).
+// Brute-force enumeration is computationally infeasible. Blob IDs act as
+// capability tokens — knowing the ID grants read access. This allows shared
+// conversations to render images without requiring authentication.
+// UUID v4 format validation also prevents path traversal attacks.
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isValidBlobId(id: string): boolean {

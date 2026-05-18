@@ -3,6 +3,7 @@ import { Message, getActiveBranch, ModelSettings } from '@deprecated-claude/shar
 import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import sharp from 'sharp';
+import { isImageFile } from './attachment-utils.js';
 
 // Anthropic's image size limit is 5MB, we target 4MB to have margin
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -20,7 +21,17 @@ export class AnthropicService {
     }
     
     this.client = new Anthropic({
-      apiKey: resolvedKey || 'missing-api-key'
+      apiKey: resolvedKey || 'missing-api-key',
+      // Opt in to the extended-cache-TTL beta so the `cache_control: { ttl: '1h' }`
+      // markers we emit on system prompts and message-history breakpoints actually
+      // mean 1 hour. Without this header the API silently falls back to the
+      // default 5-minute ephemeral TTL — the request still succeeds and caching
+      // still works, just for a shorter window than the code intends. That's a
+      // significant cost-savings regression for long-running conversations
+      // (which were the whole point of the 1h TTL choice).
+      defaultHeaders: {
+        'anthropic-beta': 'extended-cache-ttl-2025-04-11',
+      },
     });
   }
 
@@ -99,9 +110,12 @@ export class AnthropicService {
         }
       }
       
-      // Ensure max_tokens > budget_tokens when thinking is enabled
+      // Determine if this model uses adaptive thinking (Opus 4.7+) vs legacy enabled thinking
+      const useAdaptiveThinking = modelId.includes('opus-4-7') || modelId.includes('opus-4-8') || modelId.includes('opus-4-9') || modelId.includes('opus-5');
+
+      // Ensure max_tokens > budget_tokens when legacy thinking is enabled
       let effectiveMaxTokens = settings.maxTokens;
-      if (settings.thinking?.enabled && settings.thinking.budgetTokens) {
+      if (!useAdaptiveThinking && settings.thinking?.enabled && settings.thinking.budgetTokens) {
         // max_tokens must be greater than budget_tokens
         // Add reasonable room for the actual response (at least 4096 tokens)
         const minMaxTokens = settings.thinking.budgetTokens + 4096;
@@ -110,11 +124,27 @@ export class AnthropicService {
           effectiveMaxTokens = minMaxTokens;
         }
       }
-      
+
       // Anthropic API doesn't allow both temperature AND top_p/top_k together
       // If temperature is set, don't send top_p/top_k
       const useTemperature = settings.temperature !== undefined;
-      
+
+      // Build thinking config based on model capabilities
+      let thinkingConfig: any = undefined;
+      let outputConfig: any = undefined;
+      if (settings.thinking?.enabled) {
+        if (useAdaptiveThinking) {
+          // Opus 4.7+: adaptive thinking with effort control
+          thinkingConfig = { type: 'adaptive' };
+          const effort = settings.modelSpecific?.thinkingEffort;
+          outputConfig = { effort: typeof effort === 'string' ? effort : 'medium' };
+          console.log(`[Anthropic API] Using adaptive thinking with effort: ${outputConfig.effort}`);
+        } else {
+          // Legacy models: enabled thinking with budget_tokens
+          thinkingConfig = { type: 'enabled', budget_tokens: settings.thinking.budgetTokens };
+        }
+      }
+
       requestParams = {
         model: modelId,
         max_tokens: effectiveMaxTokens,
@@ -123,12 +153,8 @@ export class AnthropicService {
         ...(!useTemperature && settings.topK !== undefined && { top_k: settings.topK }),
         ...(systemContent && { system: systemContent }),
         ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences }),
-        ...(settings.thinking && settings.thinking.enabled && {
-          thinking: {
-            type: 'enabled',
-            budget_tokens: settings.thinking.budgetTokens
-          }
-        }),
+        ...(thinkingConfig && { thinking: thinkingConfig }),
+        ...(outputConfig && { output_config: outputConfig }),
         messages: anthropicMessages,
         stream: true
       };
@@ -219,12 +245,26 @@ export class AnthropicService {
           console.log(`[Anthropic API] Stream error:`, chunk.error);
         }
         
-        // Capture cache metrics from message_start
+        // Capture cache metrics AND fresh input_tokens from message_start.
+        //
+        // CRITICAL: input_tokens is canonically reported on `message_start.message.usage`.
+        // `message_delta.usage` may or may not re-emit it depending on the API
+        // version / SDK / model. We must capture it here, on the FIRST event of
+        // the stream — otherwise any message_delta that carries only
+        // `output_tokens` will, via the replace-not-merge at line 319, zero out
+        // our fresh-input count and trigger a structural undercount of the
+        // entire fresh-input portion of the bill on every Anthropic-direct call.
         if (chunk.type === 'message_start' && chunk.message?.usage) {
           const messageUsage = chunk.message.usage;
           cacheMetrics.cacheCreationInputTokens = messageUsage.cache_creation_input_tokens || 0;
           cacheMetrics.cacheReadInputTokens = messageUsage.cache_read_input_tokens || 0;
-          console.log('[Anthropic API] Cache metrics:', cacheMetrics);
+          if (typeof messageUsage.input_tokens === 'number') {
+            usage.input_tokens = messageUsage.input_tokens;
+          }
+          if (typeof messageUsage.output_tokens === 'number') {
+            usage.output_tokens = messageUsage.output_tokens;
+          }
+          console.log('[Anthropic API] Cache metrics:', cacheMetrics, 'initial usage:', usage);
         }
         
         // Handle content block start
@@ -290,7 +330,11 @@ export class AnthropicService {
             }
           }
           if (chunk.usage) {
-            usage = chunk.usage;
+            // MERGE, not replace. `message_delta.usage` typically carries only
+            // `output_tokens` (the running output total); replacing the object
+            // would clobber the `input_tokens` we captured from `message_start`
+            // and zero out the fresh-input portion of the bill.
+            usage = { ...usage, ...chunk.usage };
             console.log(`[Anthropic API] Token usage:`, usage);
           }
         } else if (chunk.type === 'message_stop') {
@@ -659,10 +703,7 @@ export class AnthropicService {
   }
   
   private isImageAttachment(fileName: string): boolean {
-    // Note: GIF excluded - Anthropic API has issues with some GIF formats
-    const imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-    const extension = fileName.split('.').pop()?.toLowerCase() || '';
-    return imageExtensions.includes(extension);
+    return isImageFile(fileName);
   }
   
   /**

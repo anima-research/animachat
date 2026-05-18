@@ -115,7 +115,6 @@ export class WebSocketService {
     
     const wsUrl = new URL('/ws', window.location.href);
     wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-    wsUrl.searchParams.set('token', this.token);
     
     // Add unique tab identifier to work around Safari + iCloud Private Relay bug
     // where multiple WebSocket connections to the same host:port are serialized.
@@ -157,7 +156,7 @@ export class WebSocketService {
       return;
     }
     
-    this.ws = new WebSocket(wsUrl.toString());
+    this.ws = new WebSocket(wsUrl.toString(), ['arc-auth', this.token]);
     this.lastPongTime = Date.now();
     
     // Set connection timeout (20 seconds) to avoid hanging in "connecting" state

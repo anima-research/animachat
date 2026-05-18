@@ -1,4 +1,15 @@
-import { Message, Conversation, Model, ModelSettings, Participant, GrantUsageDetails, GrantTokenUsage } from '@deprecated-claude/shared';
+import {
+  Message,
+  Conversation,
+  Model,
+  ModelSettings,
+  Participant,
+  GrantUsageDetails,
+  GrantTokenUsage,
+  ChannelTokens,
+  CachePricingMultipliers,
+  DEFAULT_ANTHROPIC_CACHE_MULTIPLIERS,
+} from '@deprecated-claude/shared';
 import { ContextManager } from './context-manager.js';
 import { InferenceService } from './inference.js';
 import { ContextWindow } from './context-strategies.js';
@@ -27,12 +38,26 @@ interface CacheMetrics {
   estimatedCostSaved: number;
 }
 
+/**
+ * Per-channel cost breakdown for one provider API call.
+ *
+ * Each cache/thinking channel has its own multiplier on the base input/output price.
+ * `inputCost` and `outputCost` are kept as aggregates for display callers that still
+ * expect the flat input/output split.
+ */
 type CostBreakdown = {
-  inputCost: number;
-  outputCost: number;
+  freshInputCost: number;
+  cacheCreationCost: number;
+  cacheReadCost: number;
+  thinkingCost: number;
+  // Aggregates (for backward-compat display paths)
+  inputCost: number;   // = freshInputCost + cacheCreationCost + cacheReadCost
+  outputCost: number;  // = output·outputPrice + thinkingCost
   totalCost: number;
+  // Rates used (for grants + drift detection)
   inputPrice: number;
   outputPrice: number;
+  cacheMultipliers: Required<CachePricingMultipliers>;
 };
 
 // ============================================================================
@@ -53,7 +78,9 @@ type CostBreakdown = {
 
 const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   // Claude 4.x models (2025) - by providerModelId
+  'claude-opus-4-7': 5.00,
   'claude-opus-4-6': 5.00,
+  'claude-sonnet-4-6': 3.00,
   'claude-opus-4-5-20251101': 5.00,
   'claude-opus-4-1-20250805': 15.00,
   'claude-opus-4-20250514': 15.00,
@@ -71,7 +98,9 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-haiku-20240307': 0.25,
   
   // Shorthand model IDs (for backwards compatibility / fallback)
+  'claude-opus-4.7': 5.00,
   'claude-opus-4.6': 5.00,
+  'claude-sonnet-4.6': 3.00,
   'claude-opus-4.5': 5.00,
   'claude-opus-4.1': 15.00,
   'claude-opus-4': 15.00,
@@ -94,15 +123,18 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3.5-haiku-bedrock': 0.80,
   
   // Bedrock providerModelId format (anthropic.model-version:variant)
+  'us.anthropic.claude-3-7-sonnet-20250219-v1:0': 3.00,
   'anthropic.claude-3-5-sonnet-20241022-v2:0': 3.00,
   'anthropic.claude-3-5-sonnet-20240620-v1:0': 3.00,
-  'anthropic.claude-3-5-haiku-20241022-v1:0': 0.80,
+  'us.anthropic.claude-3-5-haiku-20241022-v1:0': 0.80,
   'anthropic.claude-3-opus-20240229-v1:0': 15.00,
   'anthropic.claude-3-sonnet-20240229-v1:0': 3.00,
   'anthropic.claude-3-haiku-20240307-v1:0': 0.25,
   
   // OpenRouter model IDs (anthropic/*)
+  'anthropic/claude-opus-4-7': 5.00,
   'anthropic/claude-opus-4-6': 5.00,
+  'anthropic/claude-sonnet-4-6': 3.00,
   'anthropic/claude-opus-4.5': 5.00,
   'anthropic/claude-sonnet-4': 3.00,
   'anthropic/claude-3.5-sonnet': 3.00,
@@ -122,6 +154,8 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'gemini-2.5-pro': 1.25,
   
   // Gemini 3 Pro (preview pricing, may change)
+  'gemini-3.1-pro-preview': 1.25,
+  'gemini-3.1-pro-text': 1.25,
   'gemini-3-pro-preview': 1.25,
   'gemini-3-pro-image-preview': 1.25,
   
@@ -129,11 +163,17 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'gemini-2.5-flash-imagegen': 0.15,
   'gemini-2.5-flash-image-imagegen': 0.15,
   'gemini-3-pro-imagegen': 1.25,
+
+  // OpenAI models (via OpenRouter)
+  'openai/gpt-5.4': 2.00,
+  'gpt-5.4-openrouter': 2.00,
 };
 
 const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   // Claude 4.x models (2025) - by providerModelId
+  'claude-opus-4-7': 25.00,
   'claude-opus-4-6': 25.00,
+  'claude-sonnet-4-6': 15.00,
   'claude-opus-4-5-20251101': 25.00,
   'claude-opus-4-1-20250805': 75.00,
   'claude-opus-4-20250514': 75.00,
@@ -151,7 +191,9 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-haiku-20240307': 1.25,
   
   // Shorthand model IDs (for backwards compatibility / fallback)
+  'claude-opus-4.7': 25.00,
   'claude-opus-4.6': 25.00,
+  'claude-sonnet-4.6': 15.00,
   'claude-opus-4.5': 25.00,
   'claude-opus-4.1': 75.00,
   'claude-opus-4': 75.00,
@@ -174,15 +216,18 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3.5-haiku-bedrock': 4.00,
   
   // Bedrock providerModelId format (anthropic.model-version:variant)
+  'us.anthropic.claude-3-7-sonnet-20250219-v1:0': 15.00,
   'anthropic.claude-3-5-sonnet-20241022-v2:0': 15.00,
   'anthropic.claude-3-5-sonnet-20240620-v1:0': 15.00,
-  'anthropic.claude-3-5-haiku-20241022-v1:0': 4.00,
+  'us.anthropic.claude-3-5-haiku-20241022-v1:0': 4.00,
   'anthropic.claude-3-opus-20240229-v1:0': 75.00,
   'anthropic.claude-3-sonnet-20240229-v1:0': 15.00,
   'anthropic.claude-3-haiku-20240307-v1:0': 1.25,
   
   // OpenRouter model IDs (anthropic/*)
+  'anthropic/claude-opus-4-7': 25.00,
   'anthropic/claude-opus-4-6': 25.00,
+  'anthropic/claude-sonnet-4-6': 15.00,
   'anthropic/claude-opus-4.5': 25.00,
   'anthropic/claude-sonnet-4': 15.00,
   'anthropic/claude-3.5-sonnet': 15.00,
@@ -202,6 +247,8 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'gemini-2.5-pro': 5.00,
   
   // Gemini 3 Pro (preview pricing)
+  'gemini-3.1-pro-preview': 5.00,
+  'gemini-3.1-pro-text': 5.00,
   'gemini-3-pro-preview': 5.00,
   'gemini-3-pro-image-preview': 5.00,
   
@@ -209,9 +256,59 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'gemini-2.5-flash-imagegen': 0.60,
   'gemini-2.5-flash-image-imagegen': 0.60,
   'gemini-3-pro-imagegen': 5.00,
+
+  // OpenAI models (via OpenRouter)
+  'openai/gpt-5.4': 8.00,
+  'gpt-5.4-openrouter': 8.00,
 };
 
-const CACHE_DISCOUNT = 0.9;
+/**
+ * Map the loosely-typed `actualUsage` payload that flows from provider services
+ * onto a structured `ChannelTokens`.
+ *
+ * Recognised fields (all optional):
+ *   - `tokens: ChannelTokens` — pre-built, used directly if present
+ *   - `inputTokens` — fresh prompt tokens
+ *   - `cacheCreationInputTokens`, `cacheReadInputTokens`
+ *   - `cacheCreationTtl` (defaults to '1h' to match current cache_control usage)
+ *   - `outputTokens` (falls back to streaming chars/4 estimate if absent)
+ *   - `thinkingTokens` (Gemini thoughtsTokenCount; Anthropic includes thinking
+ *     in `outputTokens` and should not double-count by populating this)
+ *   - `toolUsePromptTokens` (Gemini)
+ */
+function tokensFromActualUsage(actualUsage: any, fallbackOutput: number = 0): ChannelTokens {
+  if (actualUsage?.tokens) return actualUsage.tokens as ChannelTokens;
+  return {
+    freshInput: actualUsage?.inputTokens ?? 0,
+    cacheCreationInput: actualUsage?.cacheCreationInputTokens ?? 0,
+    cacheCreationTtl: actualUsage?.cacheCreationTtl ?? '1h',
+    cacheReadInput: actualUsage?.cacheReadInputTokens ?? 0,
+    output: actualUsage?.outputTokens ?? fallbackOutput,
+    thinking: actualUsage?.thinkingTokens,
+    toolUsePrompt: actualUsage?.toolUsePromptTokens,
+  };
+}
+
+/**
+ * Hypothetical cost as if no caching were used — every cache-creation and cache-read
+ * token billed at the fresh input rate. Used as the baseline for the savings display
+ * metric ("you saved $X by caching"). Savings = max(baseline − actualCost, 0).
+ *
+ * Note: on cache-rebuild turns, actualCost can briefly exceed baseline (1h-TTL
+ * creation is 2× input); the clamp keeps the display sensible while the rebuilt
+ * cache amortises over subsequent reads.
+ */
+function hypotheticalNoCacheCost(
+  tokens: ChannelTokens,
+  inputPrice: number,
+  outputPrice: number,
+  thinkingMultiplier: number
+): number {
+  const allInput = tokens.freshInput + tokens.cacheCreationInput + tokens.cacheReadInput;
+  return allInput * inputPrice
+    + tokens.output * outputPrice
+    + (tokens.thinking || 0) * outputPrice * thinkingMultiplier;
+}
 
 /**
  * Validate that pricing is available for a model BEFORE making inference calls.
@@ -309,7 +406,8 @@ export class EnhancedInferenceService {
     participant?: Participant,
     onMetrics?: (metrics: any) => Promise<void>,
     participants?: Participant[],
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    personaContext?: string // Per-participant persona context to inject into prefill
   ): Promise<void> {
     // If no conversation provided, fall back to original behavior
     if (!conversation) {
@@ -327,15 +425,46 @@ export class EnhancedInferenceService {
       );
       return;
     }
-    
-    // Prepare context using context manager
-    const { formattedMessages, cacheKey, window } = await this.contextManager.prepareContext(
-      conversation,
-      messages,
-      undefined, // newMessage is already included in messages
-      participant,
-      model.contextWindow // Pass model's max context for cache arithmetic
-    );
+
+    // When persona context is present, handler.ts already truncated messages
+    // to fit within the model's context window. Skip the context manager's
+    // rolling window to avoid double-truncation — handler is the authority.
+    let window: import('./context-strategies.js').ContextWindow;
+    let cacheKey: string | undefined;
+
+    if (personaContext) {
+      // Build a minimal context window from pre-truncated messages
+      const totalTokens = messages.reduce((sum, m) => {
+        const branch = m.branches?.find((b: any) => b.id === m.activeBranchId) || m.branches?.[0];
+        return sum + Math.ceil((branch?.content?.length || 0) / 4);
+      }, 0);
+
+      window = {
+        messages,
+        cacheablePrefix: [],
+        activeWindow: messages,
+        metadata: {
+          totalMessages: messages.length,
+          totalTokens,
+          windowStart: 0,
+          windowEnd: messages.length,
+          lastRotation: null
+        }
+      };
+      cacheKey = undefined;
+      Logger.context(`[EnhancedInference] Persona context present — bypassing context manager (${messages.length} pre-truncated messages, ~${totalTokens} tokens)`);
+    } else {
+      // Normal path: use context manager for rolling window + cache management
+      const result = await this.contextManager.prepareContext(
+        conversation,
+        messages,
+        undefined, // newMessage is already included in messages
+        participant,
+        model.contextWindow // Pass model's max context for cache arithmetic
+      );
+      window = result.window;
+      cacheKey = result.cacheKey;
+    }
     
     // Debug logging with visual indicators
     const hasCaching = window.cacheablePrefix.length > 0;
@@ -390,29 +519,62 @@ export class EnhancedInferenceService {
       await streamCallback(chunk, isComplete, contentBlocks);
       
       if (isComplete) {
-        // Update with actual usage from API if provided
+        // Build structured per-channel token counts. When the provider returned a
+        // usage object we trust it (after mapping); otherwise we fall back to the
+        // pre-call context-window estimate for input and the streaming chars/4
+        // estimate for output. Providers that don't return usage (currently
+        // Bedrock; openai-compatible) take the fallback path until they're wired
+        // up in subsequent commits.
+        const tokens: ChannelTokens = actualUsage
+          ? tokensFromActualUsage(actualUsage, outputTokens)
+          : {
+              freshInput: inputTokens,
+              cacheCreationInput: 0,
+              cacheReadInput: 0,
+              output: outputTokens,
+            };
+
+        // Sync the legacy scalar variables for backward-compatible downstream
+        // consumers: the CacheMetrics log entry, the context manager, and the
+        // flat fields on the onMetrics payload.
+        inputTokens = tokens.freshInput + tokens.cacheCreationInput + tokens.cacheReadInput;
+        outputTokens = tokens.output + (tokens.thinking || 0);
+        cachedTokens = tokens.cacheReadInput > 0 ? tokens.cacheReadInput : tokens.cacheCreationInput;
+        cacheHit = tokens.cacheReadInput > 0;
+
         if (actualUsage) {
-          // Provider semantics (both Anthropic and OpenRouter now match):
-          // - inputTokens = fresh (non-cached) tokens only
-          // - cacheCreationInputTokens = tokens written to cache
-          // - cacheReadInputTokens = tokens read from cache
-          // Total prompt = fresh + cache_creation + cache_read
-          const freshTokens = actualUsage.inputTokens ?? 0; // Defensive default to prevent NaN
-          const cacheCreation = actualUsage.cacheCreationInputTokens || 0;
-          const cacheRead = actualUsage.cacheReadInputTokens || 0;
-          
-          inputTokens = freshTokens + cacheCreation + cacheRead; // TOTAL input
-          outputTokens = actualUsage.outputTokens ?? 0; // Defensive default
-          // Cache size: creation OR read (whichever is non-zero shows current cache size)
-          cachedTokens = cacheRead > 0 ? cacheRead : cacheCreation;
-          cacheHit = cacheRead > 0;
-          
-          Logger.cache(`[EnhancedInference] ✅ Actual usage: fresh=${freshTokens}, cacheCreate=${cacheCreation}, cacheRead=${cacheRead}, output=${outputTokens}`);
+          Logger.cache(
+            `[EnhancedInference] ✅ Actual usage: fresh=${tokens.freshInput}, ` +
+            `cacheCreate=${tokens.cacheCreationInput} (ttl=${tokens.cacheCreationTtl}), ` +
+            `cacheRead=${tokens.cacheReadInput}, output=${tokens.output}` +
+            `${tokens.thinking ? `, thinking=${tokens.thinking}` : ''}`
+          );
           Logger.cache(`[EnhancedInference]   Total input=${inputTokens}, cache size=${cachedTokens}`);
         }
-        
-        // Log metrics
-        const estimatedSaved = await this.calculateCostSaved(model, cachedTokens);
+
+        // Compute cost per-channel using the four-channel multiplier model.
+        const breakdown = await this.calculateCostBreakdown(model, tokens);
+
+        // Provider-reported cost (currently OpenRouter via `usage.cost`) is
+        // authoritative when present. We still compute from tokens so we can
+        // surface pricing-table drift as a continuous regression signal.
+        const providerReportedCost: number | undefined = actualUsage?.providerReportedCost;
+        const computedCost = breakdown.totalCost;
+        const cost = providerReportedCost ?? computedCost;
+        const pricingDriftDelta = providerReportedCost !== undefined
+          ? computedCost - providerReportedCost
+          : undefined;
+
+        // Savings is a display-only derived metric: hypothetical cost if NO
+        // caching were used, minus actual cost. Clamped at 0 for display.
+        const baseline = hypotheticalNoCacheCost(
+          tokens,
+          breakdown.inputPrice,
+          breakdown.outputPrice,
+          breakdown.cacheMultipliers.thinking
+        );
+        const cacheSavings = Math.max(baseline - cost, 0);
+
         const metric: CacheMetrics = {
           conversationId: conversation.id,
           participantId: participant?.id,
@@ -423,18 +585,18 @@ export class EnhancedInferenceService {
           inputTokens,
           cachedTokens,
           outputTokens,
-          estimatedCostSaved: estimatedSaved,
+          estimatedCostSaved: cacheSavings,
         };
-        
+
         this.metricsLog.push(metric);
-        
+
         // Note: Cache hit/miss details are logged by the provider service (Anthropic/OpenRouter)
         // which has access to the actual API response metrics. We just track expected vs actual
         // in our context manager statistics below.
-        
+
         // Update context manager statistics
         this.contextManager.updateAfterInference(
-          conversation.id, 
+          conversation.id,
           {
             cacheHit,
             tokensUsed: inputTokens + outputTokens,
@@ -442,25 +604,39 @@ export class EnhancedInferenceService {
           },
           participant?.id
         );
-        
+
         // Call metrics callback if provided
         if (onMetrics) {
           const endTime = Date.now();
-          const breakdown = await this.calculateCostBreakdown(model, inputTokens, outputTokens);
-          const savings = await this.calculateCostSaved(model, cachedTokens);
+
+          if (pricingDriftDelta !== undefined && Math.abs(pricingDriftDelta) > 0.0001) {
+            const sign = pricingDriftDelta > 0 ? 'over' : 'under';
+            Logger.cache(
+              `[EnhancedInference] ⚖️  Pricing drift on ${model.displayName}: ` +
+              `computed=$${computedCost.toFixed(6)} provider=$${providerReportedCost!.toFixed(6)} ` +
+              `(table ${sign}estimates by $${Math.abs(pricingDriftDelta).toFixed(6)})`
+            );
+          }
+
           await onMetrics({
+            // --- Legacy flat fields (unchanged contract for existing consumers) ---
             inputTokens,
             outputTokens,
             cachedTokens,
-            cost: Math.max(breakdown.totalCost - savings, 0),
-            cacheSavings: savings,
+            cost,
+            cacheSavings,
             model: model.id,
             timestamp: new Date().toISOString(),
             responseTime: endTime - startTime,
-            details: this.buildUsageDetails(breakdown, inputTokens, outputTokens, cachedTokens),
-            // Pass through failure info if present (for failed request tracking)
+            details: this.buildUsageDetails(breakdown, tokens),
+            // --- New structured fields ---
+            tokens,
+            providerReportedCost,
+            computedCost,
+            pricingDriftDelta,
+            // --- Failure passthrough (unchanged) ---
             ...(actualUsage?.failed && { failed: true }),
-            ...(actualUsage?.error && { error: actualUsage.error })
+            ...(actualUsage?.error && { error: actualUsage.error }),
           });
         }
       }
@@ -533,7 +709,8 @@ export class EnhancedInferenceService {
       participants || [],
       participant?.id,
       conversation,
-      cacheMarkerIndices  // Pass cache marker indices for Chapter II prefill caching
+      cacheMarkerIndices,  // Pass cache marker indices for Chapter II prefill caching
+      personaContext  // Per-participant persona context for prefill injection
     );
   }
   
@@ -582,45 +759,151 @@ export class EnhancedInferenceService {
     return Math.ceil(text.length / 4);
   }
   
-  private async calculateCostSaved(model: Model, cachedTokens: number): Promise<number> {
-    const pricePerToken = await this.getInputPricePerToken(model);
-    return cachedTokens * pricePerToken * CACHE_DISCOUNT;
-  }
-
-  private async calculateCostBreakdown(model: Model, inputTokens: number, outputTokens: number): Promise<CostBreakdown> {
+  /**
+   * Four-channel cost calculation.
+   *
+   * Each channel is billed at the model's base input/output rate times the
+   * channel's multiplier (default Anthropic-published values, overridable per
+   * model via `ModelCost.cachePricing`).
+   *
+   *   freshInput        :  inputPrice  × 1.0
+   *   cacheCreationInput:  inputPrice  × (1.25 if 5m TTL, 2.0 if 1h TTL)
+   *   cacheReadInput    :  inputPrice  × 0.1
+   *   output            :  outputPrice × 1.0
+   *   thinking          :  outputPrice × 1.0  (separate channel where provider reports it)
+   *
+   * Replaces the previous flat `inputCost + outputCost − 90%·savings` formula,
+   * which structurally undercounted cache-creation by ~20× on 1h-TTL writes
+   * (charged at ~10% when reality is 200%).
+   */
+  private async calculateCostBreakdown(model: Model, tokens: ChannelTokens): Promise<CostBreakdown> {
     const inputPrice = await this.getInputPricePerToken(model);
     const outputPrice = await this.getOutputPricePerToken(model);
-    const inputCost = inputTokens * inputPrice;
-    const outputCost = outputTokens * outputPrice;
+    const mults = await this.getCacheMultipliers(model);
+
+    const ttl = tokens.cacheCreationTtl ?? '1h';
+    const creationMult = ttl === '5m' ? mults.creation5m : mults.creation1h;
+
+    const freshInputCost = tokens.freshInput * inputPrice;
+    const cacheCreationCost = tokens.cacheCreationInput * inputPrice * creationMult;
+    const cacheReadCost = tokens.cacheReadInput * inputPrice * mults.read;
+    const baseOutputCost = tokens.output * outputPrice;
+    const thinkingCost = (tokens.thinking || 0) * outputPrice * mults.thinking;
+
+    const inputCost = freshInputCost + cacheCreationCost + cacheReadCost;
+    const outputCost = baseOutputCost + thinkingCost;
+    const totalCost = inputCost + outputCost;
 
     return {
+      freshInputCost,
+      cacheCreationCost,
+      cacheReadCost,
+      thinkingCost,
       inputCost,
       outputCost,
-      totalCost: inputCost + outputCost,
+      totalCost,
       inputPrice,
-      outputPrice
+      outputPrice,
+      cacheMultipliers: mults,
     };
   }
 
+  /**
+   * Resolve cache pricing multipliers for a model.
+   *
+   * Order: (1) admin-configured override in `ModelCost.cachePricing`, (2) default
+   * Anthropic-published multipliers. The defaults are correct for every
+   * Anthropic-family model regardless of access path (direct, Bedrock, OpenRouter);
+   * non-Anthropic providers with different cache pricing should be overridden in
+   * admin config.
+   */
+  private async getCacheMultipliers(model: Model): Promise<Required<CachePricingMultipliers>> {
+    try {
+      const configLoader = ConfigLoader.getInstance();
+      const config = await configLoader.loadConfig();
+      const profiles = config.providers[model.provider as keyof typeof config.providers];
+      if (profiles && profiles.length > 0) {
+        for (const profile of profiles) {
+          if (profile.modelCosts) {
+            const modelCost = profile.modelCosts.find(mc =>
+              mc.modelId === model.providerModelId || mc.modelId === model.id
+            );
+            if (modelCost?.cachePricing) {
+              const merged = { ...DEFAULT_ANTHROPIC_CACHE_MULTIPLIERS, ...modelCost.cachePricing };
+              return {
+                ...merged,
+                thinking: merged.thinking ?? DEFAULT_ANTHROPIC_CACHE_MULTIPLIERS.thinking,
+              };
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[Pricing] Error loading cache multipliers from config:', error);
+    }
+    return DEFAULT_ANTHROPIC_CACHE_MULTIPLIERS;
+  }
+
+  /**
+   * Produce a per-channel `GrantUsageDetails` for the grant ledger and usage
+   * aggregation. Each entry records (price-per-token, token-count, credits) for
+   * one channel; `credits` reflects the actual billed amount for that channel.
+   *
+   * Legacy `cached_input` is kept populated for downstream consumers (database
+   * usage-summary at `database/index.ts:1848` reads `details.cached_input?.tokens`).
+   * Its `price` is the effective per-token rate weighted across creation and read.
+   */
   private buildUsageDetails(
     breakdown: CostBreakdown,
-    inputTokens: number,
-    outputTokens: number,
-    cachedTokens: number
+    tokens: ChannelTokens
   ): GrantUsageDetails {
     const details: GrantUsageDetails = {};
 
-    if (inputTokens > 0) {
-      details.input = this.createTokenUsage(breakdown.inputPrice, inputTokens);
+    if (tokens.freshInput > 0) {
+      details.input = this.createTokenUsage(breakdown.inputPrice, tokens.freshInput, breakdown.freshInputCost);
     }
 
-    if (outputTokens > 0) {
-      details.output = this.createTokenUsage(breakdown.outputPrice, outputTokens);
+    if (tokens.cacheCreationInput > 0) {
+      const ttl = tokens.cacheCreationTtl ?? '1h';
+      const mult = ttl === '5m' ? breakdown.cacheMultipliers.creation5m : breakdown.cacheMultipliers.creation1h;
+      details.cache_creation_input = this.createTokenUsage(
+        breakdown.inputPrice * mult,
+        tokens.cacheCreationInput,
+        breakdown.cacheCreationCost
+      );
     }
 
-    if (cachedTokens > 0) {
-      const cachedPrice = -breakdown.inputPrice * CACHE_DISCOUNT;
-      details.cached_input = this.createTokenUsage(cachedPrice, cachedTokens);
+    if (tokens.cacheReadInput > 0) {
+      details.cache_read_input = this.createTokenUsage(
+        breakdown.inputPrice * breakdown.cacheMultipliers.read,
+        tokens.cacheReadInput,
+        breakdown.cacheReadCost
+      );
+    }
+
+    if (tokens.output > 0) {
+      details.output = this.createTokenUsage(
+        breakdown.outputPrice,
+        tokens.output,
+        tokens.output * breakdown.outputPrice
+      );
+    }
+
+    if (tokens.thinking && tokens.thinking > 0) {
+      details.reasoning_output = this.createTokenUsage(
+        breakdown.outputPrice * breakdown.cacheMultipliers.thinking,
+        tokens.thinking,
+        breakdown.thinkingCost
+      );
+    }
+
+    // Legacy aggregated `cached_input` — downstream usage summary still reads
+    // `details.cached_input?.tokens` (database/index.ts:1848).
+    const totalCached = tokens.cacheCreationInput + tokens.cacheReadInput;
+    if (totalCached > 0) {
+      const totalCachedCost = breakdown.cacheCreationCost + breakdown.cacheReadCost;
+      const effectivePrice = totalCachedCost / totalCached;
+      details.cached_input = this.createTokenUsage(effectivePrice, totalCached, totalCachedCost);
     }
 
     return details;
@@ -692,6 +975,13 @@ export class EnhancedInferenceService {
       ?? INPUT_PRICING_PER_MILLION[model.id];
     
     if (price === undefined) {
+      if (model.provider === 'openai-compatible') {
+        console.warn(
+          `[Pricing] No pricing configured for openai-compatible model ${model.id} (${model.providerModelId || 'none'}), assuming $0 for metrics`
+        );
+        return 0;
+      }
+
       // Throw error instead of silently returning $0 - prevents untracked charges
       throw new PricingNotConfiguredError(model.id, model.provider, model.providerModelId);
     }
@@ -719,6 +1009,13 @@ export class EnhancedInferenceService {
       ?? OUTPUT_PRICING_PER_MILLION[model.id];
     
     if (price === undefined) {
+      if (model.provider === 'openai-compatible') {
+        console.warn(
+          `[Pricing] No pricing configured for openai-compatible model ${model.id} (${model.providerModelId || 'none'}), assuming $0 for metrics`
+        );
+        return 0;
+      }
+
       // Throw error instead of silently returning $0 - prevents untracked charges
       throw new PricingNotConfiguredError(model.id, model.provider, model.providerModelId);
     }

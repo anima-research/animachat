@@ -38,6 +38,12 @@ const USER_PACKS_PATH = path.join(AVATARS_BASE_PATH, 'users');
 
 console.log(`[Avatars] Using avatar storage path: ${AVATARS_BASE_PATH}`);
 
+// Validate IDs used in file paths to prevent path traversal
+const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
+function isSafeId(id: string): boolean {
+  return SAFE_ID_RE.test(id) && !id.includes('..');
+}
+
 // Ensure directories exist
 async function ensureDirectories() {
   try {
@@ -177,6 +183,9 @@ router.get('/packs', async (req: Request, res) => {
 router.get('/packs/:packId', async (req: Request, res) => {
   try {
     const { packId } = req.params;
+    if (!isSafeId(packId)) {
+      return res.status(400).json({ error: 'Invalid pack ID' });
+    }
     const userId = (req as any).userId;
 
     // Try system pack first
@@ -260,9 +269,12 @@ router.put('/packs/:packId', async (req: Request, res) => {
   try {
     const userId = (req as any).userId;
     const { packId } = req.params;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'Authentication required' });
+    }
+    if (!isSafeId(packId)) {
+      return res.status(400).json({ error: 'Invalid pack ID' });
     }
 
     const packPath = path.join(USER_PACKS_PATH, userId, packId);
@@ -303,6 +315,9 @@ router.post('/packs/:packId/avatars', upload.single('avatar'), async (req: Multe
 
     if (!canonicalId) {
       return res.status(400).json({ error: 'canonicalId is required' });
+    }
+    if (!isSafeId(packId) || !isSafeId(canonicalId)) {
+      return res.status(400).json({ error: 'Invalid pack ID or avatar ID' });
     }
 
     if (!req.file || !req.file.buffer) {
@@ -353,6 +368,9 @@ router.delete('/packs/:packId/avatars/:canonicalId', async (req: Request, res) =
     if (!userId) {
       return res.status(401).json({ error: 'Authentication required' });
     }
+    if (!isSafeId(packId) || !isSafeId(canonicalId)) {
+      return res.status(400).json({ error: 'Invalid pack ID or avatar ID' });
+    }
 
     const packPath = path.join(USER_PACKS_PATH, userId, packId);
     const pack = await readPackJson(packPath);
@@ -401,6 +419,9 @@ router.put('/packs/:packId/colors/:canonicalId', async (req: Request, res) => {
     if (!userId) {
       return res.status(401).json({ error: 'Authentication required' });
     }
+    if (!isSafeId(packId) || !isSafeId(canonicalId)) {
+      return res.status(400).json({ error: 'Invalid pack ID or avatar ID' });
+    }
 
     const packPath = path.join(USER_PACKS_PATH, userId, packId);
     const pack = await readPackJson(packPath);
@@ -440,9 +461,12 @@ router.delete('/packs/:packId', async (req: Request, res) => {
     if (!userId) {
       return res.status(401).json({ error: 'Authentication required' });
     }
+    if (!isSafeId(packId)) {
+      return res.status(400).json({ error: 'Invalid pack ID' });
+    }
 
     const packPath = path.join(USER_PACKS_PATH, userId, packId);
-    
+
     // Check if pack exists
     try {
       await fs.access(packPath);
@@ -473,6 +497,9 @@ router.post('/packs/:packId/clone', async (req: Request, res) => {
 
     if (!newId || !newName) {
       return res.status(400).json({ error: 'newId and newName are required' });
+    }
+    if (!isSafeId(packId) || !isSafeId(newId)) {
+      return res.status(400).json({ error: 'Invalid pack ID' });
     }
 
     // Find source pack (try system first, then user)

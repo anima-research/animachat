@@ -218,7 +218,7 @@ const { config: siteConfig, links, operator } = useSiteConfig();
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
 
 .legal-container {
-  min-height: 100vh;
+  min-height: 100dvh;
   background: #101015;
   color: #fafaf8;
   font-family: 'JetBrains Mono', monospace;

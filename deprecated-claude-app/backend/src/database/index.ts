@@ -1,4 +1,4 @@
-import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults } from '@deprecated-claude/shared';
+import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults, ChannelTokens } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -28,12 +28,20 @@ import {
 } from '@deprecated-claude/shared';
 import { encryption } from '../utils/encryption.js';
 
-// Metrics interface for tracking token usage
+// Metrics interface for tracking token usage.
+//
+// Persisted to the JSONL event log as `metrics_added.metrics`. All fields below
+// the legacy block are additive — old events that lack them replay fine, and
+// downstream readers that don't recognise them ignore them. The raw `tokens`
+// block is the source of truth; `computedCost` is the cached result of running
+// the pricing table over those tokens at write time; `providerReportedCost` is
+// authoritative when present (currently OpenRouter via `usage.cost`).
 export interface MetricsData {
+  // --- Legacy fields (display contract — unchanged) ---
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
-  cost: number;
+  cost: number;          // = providerReportedCost ?? computedCost
   cacheSavings: number;
   model: string;
   timestamp: string;
@@ -41,6 +49,18 @@ export interface MetricsData {
   details?: GrantUsageDetails;
   failed?: boolean;  // True if this was a failed request (still costs input tokens)
   error?: string;    // Error message if failed
+
+  // --- Four-channel cost tracking (additive; safe for old logs) ---
+  /** Raw per-channel token counts. Source of truth for re-deriving cost. */
+  tokens?: ChannelTokens;
+  /** Cost reported directly by the provider (OpenRouter). Authoritative when set. */
+  providerReportedCost?: number;
+  /** Cost computed from `tokens × pricing table` at write time. */
+  computedCost?: number;
+  /** `computedCost − providerReportedCost`. Non-null only when both are set. */
+  pricingDriftDelta?: number;
+  /** Hash or version stamp of the pricing table snapshot used to compute `computedCost`. */
+  pricingVersion?: string;
 }
 
 // Usage analytics types
@@ -690,7 +710,8 @@ export class Database {
       currency,
       expiresAt,
       maxUses,
-      useCount: 0
+      useCount: 0,
+      claimedByUsers: []
     };
 
     this.invites.set(code, invite);
@@ -703,7 +724,7 @@ export class Database {
     return this.invites.get(code) || null;
   }
 
-  validateInvite(code: string): { valid: boolean; error?: string; invite?: Invite } {
+  validateInvite(code: string, userId?: string): { valid: boolean; error?: string; invite?: Invite } {
     const invite = this.invites.get(code);
 
     if (!invite) {
@@ -714,6 +735,11 @@ export class Database {
     const useCount = invite.useCount ?? 0;
     if (invite.maxUses !== undefined && useCount >= invite.maxUses) {
       return { valid: false, error: 'This invite has reached its maximum uses' };
+    }
+
+    // Prevent the same user from claiming an invite more than once
+    if (userId && invite.claimedByUsers?.includes(userId)) {
+      return { valid: false, error: 'You have already claimed this invite' };
     }
 
     // Legacy check for old single-use invites that predate the useCount system
@@ -729,16 +755,18 @@ export class Database {
   }
 
   async claimInvite(code: string, claimedBy: string): Promise<void> {
-    const validation = this.validateInvite(code);
+    const validation = this.validateInvite(code, claimedBy);
     if (!validation.valid || !validation.invite) {
       throw new Error(validation.error || 'Invalid invite');
     }
 
     const invite = validation.invite;
     const claimedAt = new Date().toISOString();
-    
-    // Increment use count
+
+    // Increment use count and track claiming user
     invite.useCount = (invite.useCount ?? 0) + 1;
+    if (!invite.claimedByUsers) invite.claimedByUsers = [];
+    invite.claimedByUsers.push(claimedBy);
     // Store last claimer info (for backwards compatibility and tracking)
     invite.claimedBy = claimedBy;
     invite.claimedAt = claimedAt;
@@ -1885,13 +1913,23 @@ export class Database {
     
     // Sort daily data by date
     const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-    
-    // Convert model map to object
+
+    // Convert model map to object, resolving custom model UUIDs to display names
     const byModel: Record<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cost: number; requests: number }> = {};
     for (const [model, data] of modelMap.entries()) {
-      byModel[model] = data;
+      const customModel = this.userModels.get(model);
+      const displayName = customModel?.displayName || model;
+      if (byModel[displayName]) {
+        byModel[displayName].inputTokens += data.inputTokens;
+        byModel[displayName].outputTokens += data.outputTokens;
+        byModel[displayName].cachedTokens += data.cachedTokens;
+        byModel[displayName].cost += data.cost;
+        byModel[displayName].requests += data.requests;
+      } else {
+        byModel[displayName] = data;
+      }
     }
-    
+
     return { daily, totals, byModel };
   }
 
@@ -1976,16 +2014,26 @@ export class Database {
         modelData.requests += 1;
       }
     }
-    
+
     // Sort daily data by date
     const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-    
-    // Convert model map to object
+
+    // Convert model map to object, resolving custom model UUIDs to display names
     const byModel: Record<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cost: number; requests: number }> = {};
     for (const [model, data] of modelMap.entries()) {
-      byModel[model] = data;
+      const customModel = this.userModels.get(model);
+      const displayName = customModel?.displayName || model;
+      if (byModel[displayName]) {
+        byModel[displayName].inputTokens += data.inputTokens;
+        byModel[displayName].outputTokens += data.outputTokens;
+        byModel[displayName].cachedTokens += data.cachedTokens;
+        byModel[displayName].cost += data.cost;
+        byModel[displayName].requests += data.requests;
+      } else {
+        byModel[displayName] = data;
+      }
     }
-    
+
     return { daily, totals, byModel };
   }
 
@@ -2387,7 +2435,9 @@ export class Database {
         participant.model,
         includeSystemPrompt ? participant.systemPrompt : undefined,
         includeSettings && participant.settings ? JSON.parse(JSON.stringify(participant.settings)) : undefined,
-        includeSettings && participant.contextManagement ? JSON.parse(JSON.stringify(participant.contextManagement)) : undefined
+        includeSettings && participant.contextManagement ? JSON.parse(JSON.stringify(participant.contextManagement)) : undefined,
+        undefined, // participantUserId
+        includeSystemPrompt ? participant.personaContext : undefined
       );
       // We need to mirror this flag as well, by default they are active
       if (!participant.isActive) {
@@ -3354,11 +3404,14 @@ export class Database {
         content: branch.content,
         role: branch.role,
         participantId: branch.participantId,
+        sentByUserId: branch.sentByUserId,
         createdAt: new Date(branch.createdAt),
         model: branch.model,
         // isActive: branch.isActive, // Deprecated field - ignored on import
         parentBranchId: branch.parentBranchId,
-        attachments: branch.attachments
+        attachments: branch.attachments,
+        contentBlocks: branch.contentBlocks,
+        creationSource: branch.creationSource
       })),
       activeBranchId: messageData.activeBranchId,
       order: messageData.order
@@ -3393,15 +3446,19 @@ export class Database {
   }
   
   async updateMessageContent(messageId: string, conversationId: string, conversationOwnerUserId: string, branchId: string, content: string, contentBlocks?: any[]): Promise<boolean> {
-    const message = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
+    const verified = await this.tryLoadAndVerifyMessage(messageId, conversationId, conversationOwnerUserId);
+    if (!verified) return false;
+
+    // Re-read current state to avoid race conditions with parallel branch updates
+    const message = this.messages.get(messageId);
     if (!message) return false;
-    
+
     const branch = message.branches.find(b => b.id === branchId);
     if (!branch) return false;
-    
+
     // Create new message object with updated content
-    const updatedBranches = message.branches.map(b => 
-      b.id === branchId 
+    const updatedBranches = message.branches.map(b =>
+      b.id === branchId
         ? { ...b, content, contentBlocks }
         : b
     );
@@ -3415,17 +3472,17 @@ export class Database {
   }
 
   async updateMessageBranch(messageId: string, conversationOwnerUserId: string, branchId: string, updates: Partial<MessageBranch>): Promise<boolean> {
-    const message = this.messages.get(messageId);
-    if (!message) return false;
+    const initialMessage = this.messages.get(messageId);
+    if (!initialMessage) return false;
 
-    const branch = message.branches.find(b => b.id === branchId);
+    const branch = initialMessage.branches.find(b => b.id === branchId);
     if (!branch) return false;
 
     // Store debug data as blobs - NEVER keep in memory
     // The full debugRequest includes the entire conversation context and can be 8+ MB
     const updatesForMemory = { ...updates } as any;
     const blobStore = getBlobStore();
-    
+
     // Strip debug data from memory, save to blobs, store only blob IDs
     if (updatesForMemory.debugRequest) {
       try {
@@ -3436,7 +3493,7 @@ export class Database {
       }
       delete updatesForMemory.debugRequest; // Never store in memory
     }
-    
+
     if (updatesForMemory.debugResponse) {
       try {
         const debugResponseBlobId = await blobStore.saveJsonBlob(updatesForMemory.debugResponse);
@@ -3446,6 +3503,10 @@ export class Database {
       }
       delete updatesForMemory.debugResponse; // Never store in memory
     }
+
+    // Re-read current state to avoid race conditions with parallel branch updates
+    const message = this.messages.get(messageId);
+    if (!message) return false;
 
     // Create new message object with updated branch (debug data stripped, only blob IDs)
     const updatedBranches = message.branches.map(b =>
@@ -4193,7 +4254,8 @@ export class Database {
     systemPrompt?: string,
     settings?: any,
     contextManagement?: any,
-    participantUserId?: string // The user who "owns" this participant (for collaborative user participants)
+    participantUserId?: string, // The user who "owns" this participant (for collaborative user participants)
+    personaContext?: string // Large text body: memories, conversation history, persona material
   ): Promise<Participant> {
     await this.loadUser(conversationOwnerUserId);
     const participant: Participant = {
@@ -4206,6 +4268,7 @@ export class Database {
       systemPrompt,
       settings,
       contextManagement,
+      personaContext,
       isActive: true
     };
     
@@ -4293,10 +4356,13 @@ export class Database {
     const messages = await this.getConversationMessages(conversationId, conversationOwnerUserId);
     const participants = await this.getConversationParticipants(conversationId, conversationOwnerUserId);
 
+    const bookmarks = await this.getConversationBookmarks(conversationId);
+
     return {
       conversation,
       messages,
       participants,
+      bookmarks,
       exportedAt: new Date(),
       version: '1.0' // Version for future compatibility
     };
@@ -4305,15 +4371,25 @@ export class Database {
   // Metrics methods
   
   /**
-   * Sanitize numeric fields in metrics to prevent NaN contamination
+   * Sanitize numeric fields in metrics to prevent NaN contamination.
+   *
+   * Covers both legacy aggregate fields and the four-channel `tokens` block.
+   * Optional numeric fields (`providerReportedCost`, `computedCost`,
+   * `pricingDriftDelta`) are sanitized only when present — undefined stays
+   * undefined so absence-vs-zero remains distinguishable on read.
    */
   private sanitizeMetrics(metrics: MetricsData): MetricsData {
     const safeNumber = (val: any): number => {
       const num = Number(val);
       return Number.isFinite(num) ? num : 0;
     };
-    
-    return {
+    const safeOptional = (val: any): number | undefined => {
+      if (val === undefined || val === null) return undefined;
+      const num = Number(val);
+      return Number.isFinite(num) ? num : undefined;
+    };
+
+    const sanitized: MetricsData = {
       ...metrics,
       inputTokens: safeNumber(metrics.inputTokens),
       outputTokens: safeNumber(metrics.outputTokens),
@@ -4322,6 +4398,31 @@ export class Database {
       cacheSavings: safeNumber(metrics.cacheSavings),
       responseTime: safeNumber(metrics.responseTime),
     };
+
+    if (metrics.tokens) {
+      sanitized.tokens = {
+        freshInput: safeNumber(metrics.tokens.freshInput),
+        cacheCreationInput: safeNumber(metrics.tokens.cacheCreationInput),
+        cacheCreationTtl: metrics.tokens.cacheCreationTtl,
+        cacheReadInput: safeNumber(metrics.tokens.cacheReadInput),
+        output: safeNumber(metrics.tokens.output),
+        ...(metrics.tokens.thinking !== undefined && {
+          thinking: safeNumber(metrics.tokens.thinking),
+        }),
+        ...(metrics.tokens.toolUsePrompt !== undefined && {
+          toolUsePrompt: safeNumber(metrics.tokens.toolUsePrompt),
+        }),
+      };
+    }
+
+    const reported = safeOptional(metrics.providerReportedCost);
+    if (reported !== undefined) sanitized.providerReportedCost = reported;
+    const computed = safeOptional(metrics.computedCost);
+    if (computed !== undefined) sanitized.computedCost = computed;
+    const drift = safeOptional(metrics.pricingDriftDelta);
+    if (drift !== undefined) sanitized.pricingDriftDelta = drift;
+
+    return sanitized;
   }
   
   async addMetrics(conversationId: string, conversationOwnerUserId: string, metrics: MetricsData): Promise<void> {
@@ -4936,12 +5037,15 @@ export class Database {
   // User Model methods
   async createUserModel(userId: string, modelData: import('@deprecated-claude/shared').CreateUserModel): Promise<UserDefinedModel> {
     await this.loadUser(userId); // Ensure user data is loaded
-    
-    // Limit number of custom models per user
-    const existingModels = await this.getUserModels(userId);
-    if (existingModels.length >= 20) {
-      throw new Error('Maximum number of custom models (20) reached');
-    }
+
+    // No per-user cap on custom-model count: a major appeal of Arc is the
+    // ability to add arbitrary OpenRouter models, and a cap of 20 was
+    // visibly insufficient. The earlier ensureUser load + rate limiting on
+    // the auth-protected POST endpoint provide the relevant DoS surface
+    // protection. If a per-user storage budget becomes desirable later,
+    // implement it as an explicit per-tier policy rather than a hardcoded
+    // ceiling here.
+    await this.getUserModels(userId);
 
     // Resolve settings with validation
     let resolvedSettings = modelData.settings;

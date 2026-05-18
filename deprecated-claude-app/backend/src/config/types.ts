@@ -2,6 +2,8 @@
  * Configuration types for API provider profiles
  */
 
+import type { CachePricingMultipliers } from '@deprecated-claude/shared';
+
 export interface ModelCost {
   modelId: string;
   // What we pay to the provider
@@ -14,6 +16,13 @@ export interface ModelCost {
     inputTokensPerMillion: number;
     outputTokensPerMillion: number;
   };
+  /**
+   * Per-channel cache/thinking multipliers, applied to `providerCost` rates.
+   * Falls back to DEFAULT_ANTHROPIC_CACHE_MULTIPLIERS when omitted — correct for
+   * all Anthropic models (direct, via Bedrock, and via OpenRouter). Override
+   * per-model only when the provider's cache pricing genuinely differs.
+   */
+  cachePricing?: CachePricingMultipliers;
 }
 
 export interface ApiKeyProfile {

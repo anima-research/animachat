@@ -1,5 +1,6 @@
 import { Message, ContextManagement } from '@deprecated-claude/shared';
 import { Logger } from '../utils/logger.js';
+import { isImageFile } from './attachment-utils.js';
 
 export interface CacheMarker {
   messageId: string;
@@ -41,12 +42,7 @@ function estimateTokens(content: string): number {
 }
 
 function isImageAttachment(fileName?: string): boolean {
-  if (!fileName) return false;
-  // Note: GIF excluded - Anthropic API has issues with some GIF formats
-  // BMP and SVG also excluded - not widely supported by vision APIs
-  const imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  return imageExtensions.includes(ext);
+  return isImageFile(fileName);
 }
 
 function getMessageTokens(message: Message): number {

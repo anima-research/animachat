@@ -99,7 +99,7 @@ function applyBackroomPromptIfNeeded(params: BackroomPromptParams): string {
   }
   
   // Check if model supports prefill
-  const supportsPrefill = modelProvider === 'anthropic' || modelProvider === 'bedrock' || modelSupportsPrefill === true;
+  const supportsPrefill = modelSupportsPrefill !== false && (modelProvider === 'anthropic' || modelProvider === 'bedrock' || modelSupportsPrefill === true);
   if (!supportsPrefill) {
     return existingSystemPrompt;
   }
@@ -163,7 +163,7 @@ function applyIdentityPromptIfNeeded(params: IdentityPromptParams): string {
   }
   
   // Check if model supports prefill
-  const supportsPrefill = modelProvider === 'anthropic' || modelProvider === 'bedrock' || modelSupportsPrefill === true;
+  const supportsPrefill = modelSupportsPrefill !== false && (modelProvider === 'anthropic' || modelProvider === 'bedrock' || modelSupportsPrefill === true);
   
   // Determine if we're actually using messages mode
   // (either explicitly set to 'messages', or 'auto'/undefined with a model that doesn't support prefill)
@@ -309,6 +309,56 @@ function sendInsufficientCreditsError(ws: AuthenticatedWebSocket): void {
 }
 
 /**
+ * Truncate messages to fit within the model's context window when persona context is present.
+ * The persona context is a fixed block injected into every API call, so conversation messages
+ * must fit in whatever space remains. Without persona context, returns messages unchanged.
+ */
+function truncateForPersonaBudget(
+  messages: any[],
+  personaContext: string | undefined,
+  systemPrompt: string,
+  maxOutputTokens: number,
+  contextWindow: number,
+  participantName: string
+): any[] {
+  if (!personaContext || !personaContext.trim()) return messages;
+
+  const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+  const personaTokens = estimateTokens(personaContext);
+  const systemTokens = estimateTokens(systemPrompt);
+  const outputTokens = maxOutputTokens || 8192;
+  const safetyBuffer = 2000;
+  const available = contextWindow - personaTokens - systemTokens - outputTokens - safetyBuffer;
+
+  console.log(`[PersonaContext] Budget for ${participantName}: contextWindow=${contextWindow}, persona=${personaTokens}, system=${systemTokens}, output=${outputTokens}, available=${available}`);
+
+  if (available <= 0) {
+    console.warn(`[PersonaContext] WARNING: Persona context (${personaTokens} tokens) exceeds available budget for ${participantName}. Sending last message only.`);
+    // Return only the last message to maximize chance of a successful inference.
+    // Returning more risks exceeding the context window entirely.
+    return messages.slice(-1);
+  }
+
+  let totalTokens = 0;
+  let startIndex = messages.length;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    const branch = msg.branches?.find((b: any) => b.id === msg.activeBranchId) || msg.branches?.[0];
+    const msgTokens = estimateTokens(branch?.content || '');
+    if (totalTokens + msgTokens > available && startIndex < messages.length) break;
+    totalTokens += msgTokens;
+    startIndex = i;
+  }
+
+  if (startIndex > 0) {
+    console.log(`[PersonaContext] Truncating: keeping ${messages.length - startIndex}/${messages.length} messages (${totalTokens} est. tokens)`);
+    return messages.slice(startIndex);
+  }
+
+  return messages;
+}
+
+/**
  * Parameters for running parallel branch inference.
  * This shared utility handles creating multiple branches and running inference on them in parallel.
  */
@@ -333,6 +383,7 @@ interface ParallelInferenceParams {
   abortSignal: AbortSignal;
   creationSource: 'inference' | 'regeneration';
   conversationId: string; // For room broadcasts
+  personaContext?: string; // Per-participant persona context to inject
 }
 
 /**
@@ -361,7 +412,8 @@ async function runParallelBranchInference(params: ParallelInferenceParams): Prom
     userContext,
     abortSignal,
     creationSource,
-    conversationId
+    conversationId,
+    personaContext
   } = params;
 
   // Track branches to generate
@@ -533,7 +585,7 @@ async function runParallelBranchInference(params: ParallelInferenceParams): Prom
         // Store metrics only for first branch to avoid duplicate counting
         if (branchIndex === 0) {
           await db.addMetrics(conversation.id, conversation.userId, metrics);
-          
+
           // Send metrics update to client
           safeSend({
             type: 'metrics_update',
@@ -544,7 +596,8 @@ async function runParallelBranchInference(params: ParallelInferenceParams): Prom
         }
       },
       participants,
-      abortSignal
+      abortSignal,
+      personaContext
     );
     
     return branchContent;
@@ -560,9 +613,11 @@ async function runParallelBranchInference(params: ParallelInferenceParams): Prom
 }
 
 export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessage, db: Database) {
-  // Extract token from query params
+  // Extract token from Sec-WebSocket-Protocol header (preferred) or query params (legacy fallback)
+  const protocols = req.headers['sec-websocket-protocol']?.split(',').map(s => s.trim()) || [];
+  const protocolToken = protocols.find(p => p !== 'arc-auth');
   const url = new URL(req.url || '', `http://${req.headers.host}`);
-  const token = url.searchParams.get('token');
+  const token = protocolToken || url.searchParams.get('token');
 
   if (!token) {
     ws.send(JSON.stringify({ type: 'error', error: 'Authentication required' }));
@@ -627,15 +682,15 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
           break;
         
         case 'join_room':
-          handleJoinRoom(ws, message);
+          await handleJoinRoom(ws, message, db);
           break;
-        
+
         case 'leave_room':
           handleLeaveRoom(ws, message);
           break;
         
         case 'typing':
-          handleTyping(ws, message, db);
+          await handleTyping(ws, message, db);
           break;
         
         case 'ping':
@@ -694,14 +749,22 @@ function handleAbort(
 }
 
 // Multi-user room handlers
-function handleJoinRoom(
+async function handleJoinRoom(
   ws: AuthenticatedWebSocket,
-  message: { type: 'join_room'; conversationId: string }
+  message: { type: 'join_room'; conversationId: string },
+  db: Database
 ) {
   if (!ws.userId) return;
-  
+
+  // Verify user has access to this conversation before joining the room
+  const conversation = await db.getConversation(message.conversationId, ws.userId);
+  if (!conversation) {
+    ws.send(JSON.stringify({ type: 'error', error: 'Access denied' }));
+    return;
+  }
+
   roomManager.joinRoom(message.conversationId, ws);
-  
+
   // Send back room state
   ws.send(JSON.stringify({
     type: 'room_joined',
@@ -731,7 +794,11 @@ async function handleTyping(
   db: Database
 ) {
   if (!ws.userId) return;
-  
+
+  // Verify user has access to this conversation
+  const conversation = await db.getConversation(message.conversationId, ws.userId);
+  if (!conversation) return;
+
   // Get user info for display
   const user = await db.getUserById(ws.userId);
   const userDisplayName = user?.email?.split('@')[0] || 'Someone'; // Use username part of email
@@ -1101,10 +1168,21 @@ async function handleChatMessage(
     
     // Create abort controller for this generation
     const abortController = startGeneration(conversation.userId, conversation.id);
-    
+
     // Track AI request in room manager for multi-user sync
     roomManager.startAiRequest(message.conversationId, ws.userId!, assistantMessage.id);
-    
+
+    // Per-participant context budgeting
+    const responderPersonaContext = responder.personaContext;
+    const truncatedMessages = truncateForPersonaBudget(
+      messagesForInference,
+      responderPersonaContext,
+      inferenceSystemPrompt || '',
+      inferenceSettings.maxTokens || 8192,
+      modelConfig.contextWindow || 200000,
+      responder.name
+    );
+
     let generatedBranchIds: string[];
     try {
       // Run parallel inference using shared utility
@@ -1119,7 +1197,7 @@ async function handleChatMessage(
         samplingBranchCount,
         modelConfig,
         model: responder.model || conversation.model,
-        historyMessages: messagesForInference,
+        historyMessages: truncatedMessages,
         systemPrompt: inferenceSystemPrompt || '',
         settings: inferenceSettings,
         participants,
@@ -1128,7 +1206,8 @@ async function handleChatMessage(
         userContext,
         abortSignal: abortController.signal,
         creationSource: 'inference',
-        conversationId: message.conversationId
+        conversationId: message.conversationId,
+        personaContext: responderPersonaContext
       });
     
     // DEBUG CAPTURE: Capture debug data for the first branch after completion
@@ -1141,7 +1220,7 @@ async function handleChatMessage(
           console.log(`[DEBUG CAPTURE] Capturing debug data for branch ${firstBranchId.substring(0, 8)}...`);
           
           // Compute actual format used
-          const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+          const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
           const participantMode = responder.conversationMode;
           const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
           const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
@@ -1184,6 +1263,90 @@ async function handleChatMessage(
 
     // Update conversation timestamp after all branches complete
     await db.updateConversation(conversation.id, conversation.userId, { updatedAt: new Date() });
+
+    try {
+      const needsTitle = !conversation.title || conversation.title === 'New Conversation';
+      
+      // Check if this is the first assistant message in the conversation
+      // We check filteredHistory length (which is previous messages) + 1 (current user message)
+      // If it's small (e.g., just 1 user message), it's the start.
+      const isFirstExchange = filteredHistory.length <= 1;
+
+
+      if (needsTitle && isFirstExchange) {
+        const firstUserMessage = filteredHistory.find(m => {
+          const activeBranch = m.branches.find(b => b.id === m.activeBranchId);
+          return activeBranch?.role === 'user';
+        });
+        const firstAssistantContent = generatedBranchIds.length > 0 
+          ? assistantMessage.branches.find((b: any) => b.id === generatedBranchIds[0])?.content 
+          : undefined;
+        if (firstUserMessage && firstAssistantContent) {
+          // Get the active branch's content, not branches[0]
+          const userActiveBranch = firstUserMessage.branches.find(b => b.id === firstUserMessage.activeBranchId);
+          const userContent = userActiveBranch?.content?.substring(0, 500) ?? '';
+          
+          const titlePrompt = `Generate a short, concise title (3-6 words) for this conversation. Output only the title text, no formatting or markdown:\n\nUser: ${userContent}\n\nAssistant: ${firstAssistantContent.substring(0, 500)}`;
+          // Use baseInferenceService for a raw, simple call
+          // Signature: (modelId, messages, systemPrompt, settings, userId, onChunk, format, ...)
+          let generatedTitle = '';
+          const tempBranchId = 'temp-branch-' + Date.now();
+          const tempMessage: any = {
+            id: 'temp-title-msg',
+            conversationId: 'temp',
+            userId: conversation.userId,
+            activeBranchId: tempBranchId,
+            branches: [{
+              id: tempBranchId,
+              content: titlePrompt,
+              role: 'user',
+              createdAt: new Date(),
+              isActive: true,
+              parentBranchId: 'root'
+            }],
+            order: 0
+          };
+
+          await baseInferenceService.streamCompletion(
+            responder.model || conversation.model,
+            [tempMessage],
+            'You are a helpful assistant.',
+            { temperature: 0.7, maxTokens: 50 },
+            conversation.userId,
+            async (chunk: string) => {
+              generatedTitle += chunk;
+            }
+          );
+
+
+          const cleanTitle = generatedTitle.trim()
+            .replace(/^#+\s*/, '')           // Remove markdown heading markers
+            .replace(/^\*\*(.+)\*\*$/, '$1') // Remove ** only if it wraps the ENTIRE title
+            .replace(/^["']|["']$/g, '')     // Remove quotes at start/end
+            .substring(0, 60);
+
+
+          if (cleanTitle) {
+            await db.updateConversation(conversation.id, conversation.userId, { title: cleanTitle });
+            
+            // Notify frontend
+            const updatedConv = await db.getConversation(conversation.id, conversation.userId);
+            if (updatedConv) {
+               ws.send(JSON.stringify({ 
+                 type: 'conversation_updated', 
+                 id: conversation.id,
+                 updates: { 
+                   title: cleanTitle,
+                   updatedAt: updatedConv.updatedAt
+                 }
+               }));
+            }
+          }
+        }
+      }
+    } catch (titleError) {
+      console.error('[Auto-title] Failed to generate title:', titleError);
+    }
     
     } finally {
       endGeneration(conversation.userId, conversation.id);
@@ -1495,7 +1658,14 @@ async function handleRegenerate(
         samplingBranchCount,
         modelConfig,
         model: regenerateModel,
-        historyMessages: filteredHistoryMessages,
+        historyMessages: truncateForPersonaBudget(
+          filteredHistoryMessages,
+          responderParticipant?.personaContext,
+          responderSystemPrompt || '',
+          responderSettings?.maxTokens || 8192,
+          modelConfig.contextWindow || 200000,
+          responderParticipant?.name || 'unknown'
+        ),
         systemPrompt: responderSystemPrompt || '',
         settings: responderSettings,
         participants,
@@ -1504,7 +1674,8 @@ async function handleRegenerate(
         userContext,
         abortSignal: abortController.signal,
         creationSource: 'regeneration',
-        conversationId: message.conversationId
+        conversationId: message.conversationId,
+        personaContext: responderParticipant?.personaContext
       });
     } finally {
       endGeneration(conversation.userId, conversation.id);
@@ -1529,7 +1700,7 @@ async function handleRegenerate(
           const responderParticipantForDebug = participants.find(p => p.id === participantId);
           
           // Compute actual format used (same logic as applyBackroomPromptIfNeeded)
-          const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+          const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
           const participantMode = responderParticipantForDebug?.conversationMode;
           const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
           const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
@@ -1931,7 +2102,14 @@ async function handleEdit(
           samplingBranchCount,
           modelConfig,
           model: responderModel,
-          historyMessages: filteredHistoryMessages,
+          historyMessages: truncateForPersonaBudget(
+            filteredHistoryMessages,
+            responderParticipant?.personaContext,
+            responderSystemPrompt || '',
+            responderSettings?.maxTokens || 8192,
+            modelConfig.contextWindow || 200000,
+            responderParticipant?.name || 'unknown'
+          ),
           systemPrompt: responderSystemPrompt || '',
           settings: responderSettings,
           participants,
@@ -1940,7 +2118,8 @@ async function handleEdit(
           userContext,
           abortSignal: abortController.signal,
           creationSource: 'inference',
-          conversationId: message.conversationId
+          conversationId: message.conversationId,
+          personaContext: responderParticipant?.personaContext
         });
       } finally {
         endGeneration(conversation.userId, conversation.id);
@@ -1958,7 +2137,7 @@ async function handleEdit(
           const currentBranch = targetMessage.branches.find(b => b.id === firstBranchId);
           if (currentBranch) {
             // Compute actual format used
-            const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+            const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
             const participantMode = responderParticipantEdit?.conversationMode;
             const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
             const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';
@@ -2304,7 +2483,14 @@ async function handleContinue(
         samplingBranchCount,
         modelConfig,
         model: responder.model || conversation.model,
-        historyMessages: messagesWithNewAssistant,
+        historyMessages: truncateForPersonaBudget(
+          messagesWithNewAssistant,
+          responder.personaContext,
+          continueSystemPrompt,
+          inferenceSettings.maxTokens || 8192,
+          modelConfig.contextWindow || 200000,
+          responder.name
+        ),
         systemPrompt: continueSystemPrompt,
         settings: inferenceSettings,
         participants,
@@ -2313,7 +2499,8 @@ async function handleContinue(
         userContext,
         abortSignal: abortController.signal,
         creationSource: 'inference',
-        conversationId
+        conversationId,
+        personaContext: responder.personaContext
       });
       
       // DEBUG CAPTURE: Capture debug data for the first branch after completion
@@ -2325,7 +2512,7 @@ async function handleContinue(
           if (branchObj) {
             console.log(`[DEBUG CAPTURE] Continue: Capturing debug data for branch ${firstBranchId.substring(0, 8)}...`);
             
-            const modelSupportsPrefill = modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true;
+            const modelSupportsPrefill = modelConfig.supportsPrefill !== false && (modelConfig.provider === 'anthropic' || modelConfig.provider === 'bedrock' || modelConfig.supportsPrefill === true);
             const participantMode = responder.conversationMode;
             const wantsPrefill = !participantMode || participantMode === 'auto' || participantMode === 'prefill';
             const actualFormat = (conversation.format === 'prefill' && modelSupportsPrefill && wantsPrefill) ? 'prefill' : 'messages';

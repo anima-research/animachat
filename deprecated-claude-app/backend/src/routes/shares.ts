@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { Database } from '../database/index.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { tokenLookupLimiter } from '../middleware/rate-limit.js';
 import { ModelLoader } from '../config/model-loader.js';
 
 const router = Router();
@@ -101,8 +102,9 @@ export function createShareRouter(db: Database): Router {
     }
   });
   
-  // Get shared conversation data (no auth required - public endpoint)
-  router.get('/:token', async (req: Request, res: Response) => {
+  // Get shared conversation data (no auth required - public endpoint).
+  // Rate-limited per-IP because the token is the only capability check.
+  router.get('/:token', tokenLookupLimiter, async (req: Request, res: Response) => {
     try {
       const { token } = req.params;
       

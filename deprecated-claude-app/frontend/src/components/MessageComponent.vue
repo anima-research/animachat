@@ -886,7 +886,8 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Message, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
-import { renderLatex, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
+import { extractMath, restoreMath, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
+import '@/utils/dompurify-hooks'; // side-effect: hardens img tags via DOMPurify hook
 import { api } from '@/services/api';
 import { useStore } from '@/store';
 import { getParticipantAvatarUrl, getAvatarColor, loadAvatarPacks } from '@/utils/avatars';
@@ -1419,11 +1420,28 @@ const renderedContent = computed(() => {
     inlineCode.push(match);
     return `__INLINE_CODE_${index}__`;
   });
-  
-  // Escape HTML/XML tags that aren't in code blocks
-  // This prevents raw HTML from being rendered but preserves it visually
-  content = content.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  
+
+  // Extract LaTeX math regions BEFORE markdown runs. CommonMark backslash
+  // escapes (\(, \), \[, \]) would otherwise be consumed by marked.parse,
+  // destroying the math delimiters before KaTeX ever sees them. The returned
+  // placeholders are plain alphanumerics, so they survive markdown unchanged.
+  // Code blocks are already placeholdered above, so math inside ``` blocks
+  // is not affected.
+  const { text: contentAfterMath, rendered: renderedMath } = extractMath(content);
+  content = contentAfterMath;
+
+  // Note: we intentionally do NOT escape `<` and `>` here. DOMPurify (run
+  // after marked.parse below) is the security boundary for HTML — it strips
+  // dangerous tags (script, iframe, on* event handlers) and malicious
+  // attributes from the rendered output. Escaping `<>` here additionally
+  // caused model-emitted HTML structure (e.g. raw `<p>` / `</strong>` that
+  // some models produce) to display as literal text rather than render as
+  // intended structure. Per the project ethos: trust DOMPurify, allow models
+  // to format as they intend, don't preemptively defend against the model.
+  // SharedMessageComponent.vue already follows this pattern; this brings
+  // MessageComponent into agreement.
+
+
   // Preserve multiple consecutive spaces by converting to non-breaking spaces
   // (do this before markdown rendering, which would collapse them)
   // Convert 2+ spaces to alternating space/nbsp to preserve them
@@ -1467,9 +1485,10 @@ const renderedContent = computed(() => {
   if (html instanceof Promise) {
     html = ''; // Fallback, but this shouldn't happen with sync parse
   }
-  
-  // Render LaTeX after markdown (so LaTeX in code blocks is protected)
-  html = renderLatex(html as string);
+
+  // Substitute rendered KaTeX HTML back in for the math placeholders we
+  // extracted before markdown ran.
+  html = restoreMath(html as string, renderedMath);
   
   // Convert leading/trailing spaces to non-breaking spaces to preserve them
   const leadingNbsp = leadingSpaces.replace(/ /g, '&nbsp;').replace(/\n/g, '<br>');

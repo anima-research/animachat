@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { Database } from '../database/index.js';
 import { generateToken, authenticateToken, AuthRequest } from '../middleware/auth.js';
+import { authLimiter, tokenLookupLimiter } from '../middleware/rate-limit.js';
 import { ConfigLoader } from '../config/loader.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email.js';
@@ -65,7 +66,7 @@ export function authRouter(db: Database): Router {
   });
 
   // Register - now requires email verification
-  router.post('/register', async (req, res) => {
+  router.post('/register', authLimiter, async (req, res) => {
     try {
       const data = RegisterSchema.parse(req.body);
       
@@ -178,7 +179,7 @@ export function authRouter(db: Database): Router {
   });
   
   // Verify email
-  router.post('/verify-email', async (req, res) => {
+  router.post('/verify-email', authLimiter, async (req, res) => {
     try {
       const { token } = req.body;
       
@@ -212,7 +213,7 @@ export function authRouter(db: Database): Router {
   });
   
   // Resend verification email
-  router.post('/resend-verification', async (req, res) => {
+  router.post('/resend-verification', authLimiter, async (req, res) => {
     try {
       const data = ResendVerificationSchema.parse(req.body);
       
@@ -249,7 +250,7 @@ export function authRouter(db: Database): Router {
   });
 
   // Login
-  router.post('/login', async (req, res) => {
+  router.post('/login', authLimiter, async (req, res) => {
     try {
       const data = LoginSchema.parse(req.body);
       
@@ -301,7 +302,7 @@ export function authRouter(db: Database): Router {
   });
   
   // Forgot password - request reset email
-  router.post('/forgot-password', async (req, res) => {
+  router.post('/forgot-password', authLimiter, async (req, res) => {
     try {
       const data = ForgotPasswordSchema.parse(req.body);
       
@@ -324,7 +325,7 @@ export function authRouter(db: Database): Router {
   });
   
   // Reset password with token
-  router.post('/reset-password', async (req, res) => {
+  router.post('/reset-password', authLimiter, async (req, res) => {
     try {
       const data = ResetPasswordSchema.parse(req.body);
       
@@ -345,7 +346,7 @@ export function authRouter(db: Database): Router {
   });
   
   // Validate reset token (to check before showing reset form)
-  router.get('/reset-password/:token', async (req, res) => {
+  router.get('/reset-password/:token', tokenLookupLimiter, async (req, res) => {
     try {
       const { token } = req.params;
       const tokenData = db.getPasswordResetTokenData(token);
@@ -589,7 +590,11 @@ export function authRouter(db: Database): Router {
         return res.status(401).json({ error: 'Unauthorized' });
       }
       const { id } = req.params;
-      const didRemove = db.deleteApiKey(id);
+      const apiKey = await db.getApiKey(id);
+      if (!apiKey || apiKey.userId !== req.userId) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      const didRemove = await db.deleteApiKey(id);
       res.json({ success: didRemove });
     } catch (error) {
       console.error('Delete API key error:', error);

@@ -10,6 +10,7 @@ const CreateParticipantSchema = z.object({
   type: z.enum(['user', 'assistant']),
   model: z.string().optional(),
   systemPrompt: z.string().optional(),
+  personaContext: z.string().optional(),
   settings: z.object({
     temperature: z.number(),
     maxTokens: z.number(),
@@ -66,7 +67,9 @@ export function participantRouter(db: Database): Router {
         data.model,
         data.systemPrompt,
         data.settings,
-        data.contextManagement
+        data.contextManagement,
+        undefined, // participantUserId
+        data.personaContext
       );
 
       res.json(participant);
