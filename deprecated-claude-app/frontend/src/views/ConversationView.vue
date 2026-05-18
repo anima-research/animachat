@@ -1567,10 +1567,15 @@ const filteredSharedConversations = computed(() => {
 
 // Row date for shared conversations, mirroring `conversationDateLabel` but
 // labeling the 'created' case as "received {date}" — clearer for shares.
+// `s.createdAt` is typed as string but populated from API response; guard
+// against missing values to match the conditional-render intent the
+// pre-PR-#105 template had (Greptile #105 catch).
 function sharedConversationDateLabel(s: SharedConversationEntry): string {
-  if (conversationSortKey.value === 'created') return `received ${formatDate(s.createdAt)}`;
+  if (conversationSortKey.value === 'created') {
+    return s.createdAt ? `received ${formatDate(s.createdAt)}` : '';
+  }
   if (s.conversation?.updatedAt) return `updated ${formatDate(s.conversation.updatedAt)}`;
-  return `received ${formatDate(s.createdAt)}`;
+  return s.createdAt ? `received ${formatDate(s.createdAt)}` : '';
 }
 
 // Shares created by the current user (for owner to know their conversation is shared)
@@ -3940,7 +3945,7 @@ watch(conversationSettingsDialog, async (isOpen, wasOpen) => {
 // dialog has a chance to close. Without this, hitting back during the
 // auto-opened settings dialog leaves the provisional conversation behind,
 // re-creating the very bug #99 was meant to fix.
-onBeforeRouteLeave(async (_to, from) => {
+onBeforeRouteLeave((_to, from) => {
   if (!provisionalNewConversationId.value) return;
   const discardId = provisionalNewConversationId.value;
   // Only act if we're navigating away from the provisional conversation itself.
@@ -3955,12 +3960,14 @@ onBeforeRouteLeave(async (_to, from) => {
     currentConversation.value?.id === discardId && messages.value.length > 0;
   if (hasContent) return;
 
-  try {
-    await store.archiveConversation(discardId);
-  } catch (e) {
+  // Fire-and-forget. The guard must return synchronously — Vue Router 4
+  // awaits any Promise we return, which would stall the user's navigation
+  // (back button, sidebar click) on the archive API call. Greptile #105
+  // caught this: the previous `async` form did exactly that. Catch errors
+  // off the floating promise so they're still logged.
+  void store.archiveConversation(discardId).catch((e) => {
     console.error('Failed to discard provisional conversation on route leave:', e);
-  }
-  // Don't return false — navigation should proceed regardless.
+  });
 });
 
 async function switchToGroupChat() {
