@@ -36,7 +36,56 @@ const AVATARS_BASE_PATH = getAvatarsBasePath();
 const SYSTEM_PACKS_PATH = path.join(AVATARS_BASE_PATH, 'system');
 const USER_PACKS_PATH = path.join(AVATARS_BASE_PATH, 'users');
 
-console.log(`[Avatars] Using avatar storage path: ${AVATARS_BASE_PATH}`);
+// Per-user disk quota for uploaded avatars. 50 MB is generous —
+// avatars after sharp's webp@quality:90 land at 10–100 KB typically,
+// so this allows 500+ avatars per user. Override with AVATAR_USER_QUOTA_MB
+// for ops that want to tune it.
+const AVATAR_USER_QUOTA_BYTES =
+  (Number(process.env.AVATAR_USER_QUOTA_MB) > 0
+    ? Number(process.env.AVATAR_USER_QUOTA_MB)
+    : 50) *
+  1024 *
+  1024;
+
+console.log(
+  `[Avatars] Using avatar storage path: ${AVATARS_BASE_PATH} ` +
+  `(per-user quota: ${Math.round(AVATAR_USER_QUOTA_BYTES / (1024 * 1024))} MB)`,
+);
+
+/**
+ * Sum of all file sizes under the user's avatar tree. Returns 0 if the
+ * user has no avatar dir yet. Walks recursively because each user has a
+ * `<packId>/` subdir per pack containing thumbnails + originals.
+ */
+async function getUserAvatarsUsage(userId: string): Promise<number> {
+  if (!isSafeId(userId)) return 0;
+  const userPath = path.join(USER_PACKS_PATH, userId);
+  let total = 0;
+  const walk = async (dir: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (e: any) {
+      if (e.code === 'ENOENT') return;
+      throw e;
+    }
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        await walk(full);
+      } else if (ent.isFile()) {
+        try {
+          const st = await fs.stat(full);
+          total += st.size;
+        } catch {
+          // File vanished between readdir and stat — ignore, treat as 0.
+        }
+      }
+    }
+  };
+  await walk(userPath);
+  return total;
+}
 
 // Validate IDs used in file paths to prevent path traversal
 const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -329,6 +378,25 @@ router.post('/packs/:packId/avatars', upload.single('avatar'), async (req: Multe
 
     if (!pack) {
       return res.status(404).json({ error: 'Pack not found' });
+    }
+
+    // Quota check: refuse if this upload would push the user past their
+    // per-user avatar disk allowance. Multer's 5 MB-per-file cap stops a
+    // single huge file but does nothing about many small files
+    // accumulating; this is the cumulative-bytes gate.
+    //
+    // Uses the incoming buffer size as an upper bound for the post-resize
+    // footprint (sharp generally shrinks). Approximate-but-safe: errors
+    // toward rejecting borderline uploads rather than letting the user
+    // creep past the cap.
+    const usage = await getUserAvatarsUsage(userId);
+    if (usage + req.file.size > AVATAR_USER_QUOTA_BYTES) {
+      const usedMB = (usage / (1024 * 1024)).toFixed(1);
+      const quotaMB = Math.round(AVATAR_USER_QUOTA_BYTES / (1024 * 1024));
+      return res.status(413).json({
+        error: 'Avatar storage quota exceeded',
+        details: `Using ${usedMB} MB of ${quotaMB} MB; this upload would exceed the limit. Delete unused avatars or contact an admin to raise the cap.`,
+      });
     }
 
     // Process image and create thumbnail
