@@ -1,4 +1,4 @@
-import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults } from '@deprecated-claude/shared';
+import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults, ChannelTokens } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -28,12 +28,20 @@ import {
 } from '@deprecated-claude/shared';
 import { encryption } from '../utils/encryption.js';
 
-// Metrics interface for tracking token usage
+// Metrics interface for tracking token usage.
+//
+// Persisted to the JSONL event log as `metrics_added.metrics`. All fields below
+// the legacy block are additive — old events that lack them replay fine, and
+// downstream readers that don't recognise them ignore them. The raw `tokens`
+// block is the source of truth; `computedCost` is the cached result of running
+// the pricing table over those tokens at write time; `providerReportedCost` is
+// authoritative when present (currently OpenRouter via `usage.cost`).
 export interface MetricsData {
+  // --- Legacy fields (display contract — unchanged) ---
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
-  cost: number;
+  cost: number;          // = providerReportedCost ?? computedCost
   cacheSavings: number;
   model: string;
   timestamp: string;
@@ -41,6 +49,18 @@ export interface MetricsData {
   details?: GrantUsageDetails;
   failed?: boolean;  // True if this was a failed request (still costs input tokens)
   error?: string;    // Error message if failed
+
+  // --- Four-channel cost tracking (additive; safe for old logs) ---
+  /** Raw per-channel token counts. Source of truth for re-deriving cost. */
+  tokens?: ChannelTokens;
+  /** Cost reported directly by the provider (OpenRouter). Authoritative when set. */
+  providerReportedCost?: number;
+  /** Cost computed from `tokens × pricing table` at write time. */
+  computedCost?: number;
+  /** `computedCost − providerReportedCost`. Non-null only when both are set. */
+  pricingDriftDelta?: number;
+  /** Hash or version stamp of the pricing table snapshot used to compute `computedCost`. */
+  pricingVersion?: string;
 }
 
 // Usage analytics types
@@ -4351,15 +4371,25 @@ export class Database {
   // Metrics methods
   
   /**
-   * Sanitize numeric fields in metrics to prevent NaN contamination
+   * Sanitize numeric fields in metrics to prevent NaN contamination.
+   *
+   * Covers both legacy aggregate fields and the four-channel `tokens` block.
+   * Optional numeric fields (`providerReportedCost`, `computedCost`,
+   * `pricingDriftDelta`) are sanitized only when present — undefined stays
+   * undefined so absence-vs-zero remains distinguishable on read.
    */
   private sanitizeMetrics(metrics: MetricsData): MetricsData {
     const safeNumber = (val: any): number => {
       const num = Number(val);
       return Number.isFinite(num) ? num : 0;
     };
-    
-    return {
+    const safeOptional = (val: any): number | undefined => {
+      if (val === undefined || val === null) return undefined;
+      const num = Number(val);
+      return Number.isFinite(num) ? num : undefined;
+    };
+
+    const sanitized: MetricsData = {
       ...metrics,
       inputTokens: safeNumber(metrics.inputTokens),
       outputTokens: safeNumber(metrics.outputTokens),
@@ -4368,6 +4398,31 @@ export class Database {
       cacheSavings: safeNumber(metrics.cacheSavings),
       responseTime: safeNumber(metrics.responseTime),
     };
+
+    if (metrics.tokens) {
+      sanitized.tokens = {
+        freshInput: safeNumber(metrics.tokens.freshInput),
+        cacheCreationInput: safeNumber(metrics.tokens.cacheCreationInput),
+        cacheCreationTtl: metrics.tokens.cacheCreationTtl,
+        cacheReadInput: safeNumber(metrics.tokens.cacheReadInput),
+        output: safeNumber(metrics.tokens.output),
+        ...(metrics.tokens.thinking !== undefined && {
+          thinking: safeNumber(metrics.tokens.thinking),
+        }),
+        ...(metrics.tokens.toolUsePrompt !== undefined && {
+          toolUsePrompt: safeNumber(metrics.tokens.toolUsePrompt),
+        }),
+      };
+    }
+
+    const reported = safeOptional(metrics.providerReportedCost);
+    if (reported !== undefined) sanitized.providerReportedCost = reported;
+    const computed = safeOptional(metrics.computedCost);
+    if (computed !== undefined) sanitized.computedCost = computed;
+    const drift = safeOptional(metrics.pricingDriftDelta);
+    if (drift !== undefined) sanitized.pricingDriftDelta = drift;
+
+    return sanitized;
   }
   
   async addMetrics(conversationId: string, conversationOwnerUserId: string, metrics: MetricsData): Promise<void> {
