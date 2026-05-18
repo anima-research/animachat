@@ -215,16 +215,28 @@ describe('EncryptionService', () => {
       expect(() => serviceB.decrypt(encrypted)).toThrow('Failed to decrypt data');
     });
 
-    it('uses a default key when no secret is provided and JWT_SECRET is unset', () => {
+    it('throws when neither ENCRYPTION_KEY nor JWT_SECRET is set', () => {
+      // PR #91 made the credential-encryption setup strict: any unset env
+      // var that would have silently fallen back to a default key now
+      // throws at construction. The fallback existed to keep local dev
+      // ergonomic, but in production it meant a misconfigured server
+      // would silently encrypt API keys with a known constant, which is
+      // the same failure mode as not encrypting them at all. Failing
+      // loudly at startup is the safer default.
       const originalJwtSecret = process.env.JWT_SECRET;
+      const originalEncryptionKey = process.env.ENCRYPTION_KEY;
       delete process.env.JWT_SECRET;
+      delete process.env.ENCRYPTION_KEY;
       try {
-        const defaultService = new EncryptionService();
-        // Should still work with the default fallback key
-        expect(defaultService.test()).toBe(true);
+        expect(() => new EncryptionService()).toThrow(
+          /ENCRYPTION_KEY or JWT_SECRET environment variable is required/,
+        );
       } finally {
         if (originalJwtSecret !== undefined) {
           process.env.JWT_SECRET = originalJwtSecret;
+        }
+        if (originalEncryptionKey !== undefined) {
+          process.env.ENCRYPTION_KEY = originalEncryptionKey;
         }
       }
     });
