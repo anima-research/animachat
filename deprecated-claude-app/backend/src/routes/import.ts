@@ -1,17 +1,244 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import multer from 'multer';
+import path from 'path';
+import { mkdirSync } from 'fs';
+import { rm, readdir, stat } from 'fs/promises';
 import { AuthRequest } from '../middleware/auth.js';
 import { Database } from '../database/index.js';
 import { ImportParser } from '../services/importParser.js';
+import {
+  ClaudeArchiveContentMode,
+  ClaudeArchiveImportProgress,
+  ClaudeArchivePreview,
+  getDefaultClaudeArchiveModel,
+  importClaudeArchive,
+  previewClaudeArchive
+} from '../services/claudeArchiveImporter.js';
 import { 
   ImportRequestSchema, 
   ImportFormat
 } from '@deprecated-claude/shared';
 
+type ClaudeArchiveJobStatus = 'previewed' | 'running' | 'completed' | 'failed';
+
+interface ClaudeArchiveJob {
+  id: string;
+  userId: string;
+  filePath: string;
+  originalName: string;
+  status: ClaudeArchiveJobStatus;
+  preview: ClaudeArchivePreview;
+  progress: ClaudeArchiveImportProgress;
+  error?: string;
+  result?: any;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt?: Date;
+}
+
+const claudeArchiveJobs = new Map<string, ClaudeArchiveJob>();
+const CLAUDE_ARCHIVE_UPLOAD_LIMIT_BYTES = 500 * 1024 * 1024;
+// Uploaded archives can be 100MB+. They are only consumed by an /execute that
+// may never come (dialog closed, backend restarted before execute, etc.), and
+// job state is in-memory so it does not survive a restart anyway. Sweep stale
+// upload files so abandoned previews do not leak disk on the VPS.
+const CLAUDE_ARCHIVE_TMP_TTL_MS = 6 * 60 * 60 * 1000;
+const CLAUDE_ARCHIVE_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+async function sweepStaleClaudeArchiveUploads(uploadDir: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(uploadDir);
+  } catch {
+    return;
+  }
+
+  const activePaths = new Set<string>();
+  for (const job of claudeArchiveJobs.values()) {
+    if (job.status === 'previewed' || job.status === 'running') {
+      activePaths.add(path.resolve(job.filePath));
+    }
+  }
+
+  const now = Date.now();
+  for (const entry of entries) {
+    const fullPath = path.resolve(uploadDir, entry);
+    if (activePaths.has(fullPath)) continue;
+    try {
+      const info = await stat(fullPath);
+      if (!info.isFile()) continue;
+      if (now - info.mtimeMs < CLAUDE_ARCHIVE_TMP_TTL_MS) continue;
+      await rm(fullPath, { force: true });
+      console.log(`[Claude archive import] Swept stale upload ${entry}`);
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+function publicClaudeArchiveJob(job: ClaudeArchiveJob) {
+  const { filePath: _filePath, ...publicJob } = job;
+  return publicJob;
+}
+
+function parseClaudeArchiveContentMode(value: unknown): ClaudeArchiveContentMode {
+  return value === 'text-blocks' || value === 'verbose-blocks' || value === 'rendered'
+    ? value
+    : 'rendered';
+}
+
 export function importRouter(db: Database): Router {
   const router = Router();
   const parser = new ImportParser();
+  const uploadDir = path.resolve(process.cwd(), 'data', 'imports', 'claude-archive');
+  mkdirSync(uploadDir, { recursive: true });
+  // Clean orphaned uploads now (covers restart-before-execute) and on an
+  // interval (covers abandoned previews during a long-lived process).
+  void sweepStaleClaudeArchiveUploads(uploadDir);
+  const sweepTimer = setInterval(
+    () => { void sweepStaleClaudeArchiveUploads(uploadDir); },
+    CLAUDE_ARCHIVE_SWEEP_INTERVAL_MS
+  );
+  sweepTimer.unref?.();
+  const upload = multer({
+    dest: uploadDir,
+    limits: {
+      fileSize: CLAUDE_ARCHIVE_UPLOAD_LIMIT_BYTES,
+      files: 1
+    }
+  });
+
+  // Preview a full Claude.ai conversations.json archive without putting the
+  // 100MB+ file through express.json. The authenticated user owns the job.
+  router.post('/claude-archive/preview', upload.single('archive'), async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: 'Archive file is required' });
+      }
+
+      const preview = previewClaudeArchive(req.file.path);
+      const jobId = uuidv4();
+      console.log(
+        `[claude-archive] preview: user=${req.userId} file="${req.file.originalname}" ` +
+        `${(req.file.size / 1048576).toFixed(1)}MB job=${jobId} -> ` +
+        `${preview.selectedConversations}/${preview.totalConversations} conversations, ` +
+        `${preview.totalMessages} messages, ${preview.branchyConversations} branchy, ` +
+        `${preview.emptyConversations} empty`
+      );
+      const job: ClaudeArchiveJob = {
+        id: jobId,
+        userId: req.userId,
+        filePath: req.file.path,
+        originalName: req.file.originalname,
+        status: 'previewed',
+        preview,
+        progress: {
+          importedConversations: 0,
+          totalConversations: preview.selectedConversations,
+          importedMessages: 0,
+          importedBranches: 0
+        },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      claudeArchiveJobs.set(jobId, job);
+      res.json(publicClaudeArchiveJob(job));
+    } catch (error) {
+      if (req.file?.path) {
+        await rm(req.file.path, { force: true }).catch(() => undefined);
+      }
+      console.error('Claude archive preview error:', error);
+      if (error instanceof SyntaxError) {
+        return res.status(400).json({ error: 'Invalid JSON format' });
+      }
+      // Unrecognized/wrong-file shapes are client errors, not server faults.
+      const message = error instanceof Error ? error.message : 'Claude archive preview failed';
+      const isBadInput = /project file|Unrecognized file|not an array/i.test(message);
+      res.status(isBadInput ? 400 : 500).json({ error: message });
+    }
+  });
+
+  router.get('/claude-archive/:jobId', async (req: AuthRequest, res) => {
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const job = claudeArchiveJobs.get(req.params.jobId);
+    if (!job || job.userId !== req.userId) {
+      return res.status(404).json({ error: 'Import job not found' });
+    }
+
+    res.json(publicClaudeArchiveJob(job));
+  });
+
+  router.post('/claude-archive/:jobId/execute', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const job = claudeArchiveJobs.get(req.params.jobId);
+      if (!job || job.userId !== req.userId) {
+        return res.status(404).json({ error: 'Import job not found' });
+      }
+      if (job.status !== 'previewed') {
+        return res.status(400).json({ error: `Import job is already ${job.status}` });
+      }
+
+      const model = typeof req.body?.model === 'string' && req.body.model.trim()
+        ? req.body.model.trim()
+        : getDefaultClaudeArchiveModel();
+      const contentMode = parseClaudeArchiveContentMode(req.body?.contentMode);
+      const skipEmpty = req.body?.includeEmpty === true ? false : true;
+      const limit = Number.isInteger(req.body?.limit) && req.body.limit > 0 ? req.body.limit : undefined;
+
+      job.status = 'running';
+      job.updatedAt = new Date();
+      job.progress = {
+        importedConversations: 0,
+        totalConversations: job.preview.selectedConversations,
+        importedMessages: 0,
+        importedBranches: 0
+      };
+      res.json(publicClaudeArchiveJob(job));
+      console.log(`[claude-archive] execute: job=${job.id} user=${req.userId} model=${model} contentMode=${contentMode}`);
+
+      void importClaudeArchive(db, job.filePath, req.userId, {
+        model,
+        skipEmpty,
+        limit,
+        contentMode,
+        onProgress: progress => {
+          job.progress = progress;
+          job.updatedAt = new Date();
+        }
+      }).then(async result => {
+        job.status = 'completed';
+        job.result = result;
+        job.progress = result;
+        job.updatedAt = new Date();
+        job.completedAt = new Date();
+        console.log(`[claude-archive] job=${job.id} completed: ${result.importedConversations} conversations imported`);
+        await rm(job.filePath, { force: true }).catch(() => undefined);
+      }).catch(async error => {
+        console.error(`[claude-archive] job=${job.id} failed:`, error);
+        job.status = 'failed';
+        job.error = error instanceof Error ? error.message : 'Claude archive import failed';
+        job.updatedAt = new Date();
+        job.completedAt = new Date();
+        await rm(job.filePath, { force: true }).catch(() => undefined);
+      });
+    } catch (error) {
+      console.error('Claude archive execute setup error:', error);
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Claude archive import failed' });
+    }
+  });
 
   // Preview import
   router.post('/preview', async (req: AuthRequest, res) => {
