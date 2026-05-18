@@ -245,12 +245,26 @@ export class AnthropicService {
           console.log(`[Anthropic API] Stream error:`, chunk.error);
         }
         
-        // Capture cache metrics from message_start
+        // Capture cache metrics AND fresh input_tokens from message_start.
+        //
+        // CRITICAL: input_tokens is canonically reported on `message_start.message.usage`.
+        // `message_delta.usage` may or may not re-emit it depending on the API
+        // version / SDK / model. We must capture it here, on the FIRST event of
+        // the stream — otherwise any message_delta that carries only
+        // `output_tokens` will, via the replace-not-merge at line 319, zero out
+        // our fresh-input count and trigger a structural undercount of the
+        // entire fresh-input portion of the bill on every Anthropic-direct call.
         if (chunk.type === 'message_start' && chunk.message?.usage) {
           const messageUsage = chunk.message.usage;
           cacheMetrics.cacheCreationInputTokens = messageUsage.cache_creation_input_tokens || 0;
           cacheMetrics.cacheReadInputTokens = messageUsage.cache_read_input_tokens || 0;
-          console.log('[Anthropic API] Cache metrics:', cacheMetrics);
+          if (typeof messageUsage.input_tokens === 'number') {
+            usage.input_tokens = messageUsage.input_tokens;
+          }
+          if (typeof messageUsage.output_tokens === 'number') {
+            usage.output_tokens = messageUsage.output_tokens;
+          }
+          console.log('[Anthropic API] Cache metrics:', cacheMetrics, 'initial usage:', usage);
         }
         
         // Handle content block start
@@ -316,7 +330,11 @@ export class AnthropicService {
             }
           }
           if (chunk.usage) {
-            usage = chunk.usage;
+            // MERGE, not replace. `message_delta.usage` typically carries only
+            // `output_tokens` (the running output total); replacing the object
+            // would clobber the `input_tokens` we captured from `message_start`
+            // and zero out the fresh-input portion of the bill.
+            usage = { ...usage, ...chunk.usage };
             console.log(`[Anthropic API] Token usage:`, usage);
           }
         } else if (chunk.type === 'message_stop') {
