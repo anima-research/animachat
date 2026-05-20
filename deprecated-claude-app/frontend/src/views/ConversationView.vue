@@ -728,14 +728,13 @@
             ref="messageTextarea"
             v-model="messageInput"
             :label="typingIndicatorLabel"
-            placeholder="Type your message…  (⌘/Ctrl+Enter to send)"
+            :placeholder="messageInputPlaceholder"
             rows="1"
             auto-grow
             max-rows="15"
             variant="outlined"
             hide-details
-            @keydown.enter.meta.prevent="sendMessage"
-            @keydown.enter.ctrl.prevent="sendMessage"
+            @keydown.enter="handleMessageEnterKey"
             @focus="handleTextareaFocus"
             @paste="handlePaste"
             @input="handleTypingInput"
@@ -1383,6 +1382,12 @@ const isMultiuserConversation = computed(() => {
     sharedConversations.value.some(s => s.conversationId === conversationId) ||
     myCreatedShares.value.some(s => s.conversationId === conversationId) ||
     currentConversationCollaborators.value.length > 0;
+});
+
+const messageInputPlaceholder = computed(() => {
+  return isMobile.value
+    ? 'Type your message...'
+    : 'Type your message...  (Enter to send, Shift+Enter for newline)';
 });
 
 // Computed label for the input field - shows who is typing
@@ -3496,6 +3501,23 @@ function handleTextareaFocus() {
       }
     }, 300);
   }
+}
+
+function handleMessageEnterKey(event: KeyboardEvent) {
+  if (event.isComposing) return;
+
+  if (event.metaKey || event.ctrlKey) {
+    event.preventDefault();
+    sendMessage();
+    return;
+  }
+
+  if (isMobile.value || event.shiftKey) {
+    return;
+  }
+
+  event.preventDefault();
+  sendMessage();
 }
 
 // Typing notification state
