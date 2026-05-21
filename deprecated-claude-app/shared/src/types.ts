@@ -429,6 +429,16 @@ export const AttachmentSchema = z.object({
 
 export type Attachment = z.infer<typeof AttachmentSchema>;
 
+const WsAttachmentSchema = z.object({
+  fileName: z.string(),
+  fileType: z.string(),
+  content: z.string(),
+  fileSize: z.number().optional(),
+  mimeType: z.string().optional(),
+  encoding: z.enum(['base64', 'text', 'url']).optional()
+});
+export type WsAttachment = z.infer<typeof WsAttachmentSchema>;
+
 // Bookmark types
 export const BookmarkSchema = z.object({
   id: z.string().uuid(),
@@ -628,11 +638,7 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     parentBranchId: z.string().uuid().optional(),
     participantId: z.string().uuid().optional(),
     responderId: z.string().uuid().optional(), // Which assistant should respond (if any)
-    attachments: z.array(z.object({
-      fileName: z.string(),
-      fileType: z.string(),
-      content: z.string()
-    })).optional(),
+    attachments: z.array(WsAttachmentSchema).optional(),
     hiddenFromAi: z.boolean().optional(), // If true, message is visible to humans but not included in AI context
     samplingBranches: z.number().min(1).max(10).optional() // Number of parallel response branches to generate
   }),
@@ -650,6 +656,7 @@ export const WsMessageSchema = z.discriminatedUnion('type', [
     messageId: z.string().uuid(),
     branchId: z.string().uuid(),
     content: z.string(),
+    attachments: z.array(WsAttachmentSchema).optional(), // Replacement attachments for the edited branch
     responderId: z.string().uuid().optional(), // Which assistant should respond after edit
     skipRegeneration: z.boolean().optional(), // If true, don't generate AI response after edit
     samplingBranches: z.number().min(1).max(10).optional() // Number of parallel response branches to generate
