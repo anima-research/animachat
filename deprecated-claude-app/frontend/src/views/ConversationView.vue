@@ -2903,7 +2903,7 @@ function scrollToBottom(smooth: boolean = false) {
   // which left the view stranded near the top. Instead keep re-pinning to
   // the bottom each tick and only conclude once the height has been stable
   // for several consecutive ticks (or a bounded number of attempts).
-  const MAX_ATTEMPTS = 40;       // ~2s ceiling for very heavy conversations
+  const MAX_ATTEMPTS = 20;       // ~1s ceiling for very heavy conversations
   const STABLE_TICKS_REQUIRED = 3; // ~150ms of quiet before we call it done
   const finish = () => {
     setTimeout(() => { isProgrammaticScroll.value = false; }, 100);
