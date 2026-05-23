@@ -555,6 +555,26 @@
           </v-chip>
         </template>
       </div>
+
+      <div v-if="canEditAttachments" class="mt-2">
+        <input
+          ref="editFileInput"
+          type="file"
+          :accept="EDIT_ATTACHMENT_ACCEPT"
+          multiple
+          style="display: none"
+          @change="handleEditAttachmentSelect"
+        />
+        <v-btn
+          size="small"
+          variant="text"
+          color="primary"
+          prepend-icon="mdi-paperclip-plus"
+          @click="triggerEditAttachmentInput"
+        >
+          Add attachment
+        </v-btn>
+      </div>
       
       <div v-if="isEditing" class="d-flex gap-2 mt-2">
         <v-btn
@@ -956,6 +976,7 @@ const editContent = ref('');
 type EditableAttachment = Pick<Attachment, 'fileName' | 'fileType' | 'content'> & Partial<Pick<Attachment, 'id' | 'fileSize' | 'mimeType' | 'encoding'>>;
 const editAttachments = ref<EditableAttachment[]>([]);
 const editAttachmentsDirty = ref(false);
+const editFileInput = ref<HTMLInputElement | null>(null);
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
 const isHovered = ref(false);
@@ -1052,7 +1073,7 @@ const currentBranch = computed(() => {
   return branch;
 });
 
-const canEditAttachments = computed(() => isEditing.value && !isPostHocEditing.value);
+const canEditAttachments = computed(() => currentBranch.value?.role === 'user' && isEditing.value && !isPostHocEditing.value);
 const displayedAttachments = computed(() => {
   if (canEditAttachments.value) {
     return editAttachments.value;
@@ -1580,6 +1601,120 @@ function attachmentsChanged(): boolean {
 function removeEditAttachment(index: number) {
   editAttachments.value.splice(index, 1);
   editAttachmentsDirty.value = true;
+}
+
+const EDIT_ATTACHMENT_ACCEPT = '.txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp,.jpg,.jpeg,.png,.gif,.webp,.svg,.pdf,application/pdf,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.avi,.mkv,.webm';
+const EDIT_FILE_TYPES = {
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'],
+  pdf: ['pdf'],
+  audio: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'webm'],
+  video: ['mp4', 'mov', 'avi', 'mkv', 'webm'],
+};
+const EDIT_TEXT_EXTENSIONS = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'java', 'cpp', 'c', 'h', 'hpp'];
+const EDIT_MIME_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  pdf: 'application/pdf',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  flac: 'audio/flac',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  avi: 'video/x-msvideo',
+  mkv: 'video/x-matroska',
+  webm: 'video/webm',
+};
+
+function triggerEditAttachmentInput() {
+  editFileInput.value?.click();
+}
+
+function getEditFileCategory(extension: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' {
+  if (EDIT_FILE_TYPES.image.includes(extension)) return 'image';
+  if (EDIT_FILE_TYPES.pdf.includes(extension)) return 'pdf';
+  if (EDIT_FILE_TYPES.audio.includes(extension)) return 'audio';
+  if (EDIT_FILE_TYPES.video.includes(extension)) return 'video';
+  return 'text';
+}
+
+function isSupportedEditAttachment(file: File, extension: string): boolean {
+  const supportedExtensions = [
+    ...EDIT_FILE_TYPES.image,
+    ...EDIT_FILE_TYPES.pdf,
+    ...EDIT_FILE_TYPES.audio,
+    ...EDIT_FILE_TYPES.video,
+    ...EDIT_TEXT_EXTENSIONS,
+  ];
+  return supportedExtensions.includes(extension) ||
+    file.type.startsWith('image/') ||
+    file.type.startsWith('audio/') ||
+    file.type.startsWith('video/') ||
+    file.type === 'application/pdf';
+}
+
+function getEditMimeType(extension: string, file: File): string {
+  return file.type || EDIT_MIME_TYPES[extension] || 'application/octet-stream';
+}
+
+async function handleEditAttachmentSelect(event: Event) {
+  const input = event.target as HTMLInputElement;
+  if (!input.files) return;
+
+  for (const file of Array.from(input.files)) {
+    const extensionFromName = file.name.split('.').pop()?.toLowerCase() || '';
+    const extensionFromMime = file.type.split('/')[1]?.toLowerCase() || '';
+    const fileExtension = extensionFromName || extensionFromMime || 'txt';
+
+    if (!isSupportedEditAttachment(file, fileExtension)) {
+      console.log(`Unsupported edit attachment type: ${file.name}`);
+      continue;
+    }
+
+    const category = getEditFileCategory(fileExtension);
+    const mimeType = getEditMimeType(fileExtension, file);
+    const isBinary = category !== 'text' || file.type.startsWith('image/') || file.type.startsWith('audio/') || file.type.startsWith('video/') || file.type === 'application/pdf';
+    const content = isBinary ? await readEditFileAsBase64(file) : await readEditFileAsText(file);
+
+    editAttachments.value.push({
+      fileName: file.name || `attachment-${Date.now()}.${fileExtension}`,
+      fileType: fileExtension,
+      mimeType,
+      fileSize: file.size,
+      content,
+      encoding: isBinary ? 'base64' : 'text',
+    });
+    editAttachmentsDirty.value = true;
+  }
+
+  input.value = '';
+}
+
+function readEditFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result as string);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+function readEditFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      resolve(result.split(',')[1] || '');
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 function startEdit() {
