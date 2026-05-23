@@ -1347,19 +1347,69 @@ const hasNavigableBranches = computed(() => {
 const CLOSED_INLINE_THINKING = /<thinking>([\s\S]*?)<\/thinking>/gi;
 const TRAILING_OPEN_THINKING = /<thinking>([\s\S]*)$/i;
 
-function extractInlineThinking(text: string): { closed: string[]; partial?: string } {
-  if (!text) return { closed: [] };
+function getMarkdownCodeRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+
+  for (const match of text.matchAll(/```[\s\S]*?```/g)) {
+    const start = match.index ?? 0;
+    ranges.push([start, start + match[0].length]);
+  }
+
+  for (const match of text.matchAll(/`[^`\n]+`/g)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (!ranges.some(([rangeStart, rangeEnd]) => start >= rangeStart && start < rangeEnd)) {
+      ranges.push([start, end]);
+    }
+  }
+
+  return ranges.sort(([a], [b]) => a - b);
+}
+
+function isInsideRange(index: number, ranges: Array<[number, number]>): boolean {
+  return ranges.some(([start, end]) => index >= start && index < end);
+}
+
+function extractInlineThinking(text: string): { closed: string[]; partial?: string; visibleContent: string; hasInlineThinking: boolean } {
+  if (!text) return { closed: [], visibleContent: '', hasInlineThinking: false };
   const closed: string[] = [];
+  const ranges = getMarkdownCodeRanges(text);
+  const visibleParts: string[] = [];
+  let lastIndex = 0;
+  let hasInlineThinking = false;
+
   for (const m of text.matchAll(CLOSED_INLINE_THINKING)) {
+    const start = m.index ?? 0;
+    if (isInsideRange(start, ranges)) continue;
+
     const t = m[1].trim();
     if (t) closed.push(t);
+    visibleParts.push(text.slice(lastIndex, start));
+    lastIndex = start + m[0].length;
+    hasInlineThinking = true;
   }
+
+  visibleParts.push(text.slice(lastIndex));
+
   // After stripping closed pairs, a dangling open tag means streaming is
   // mid-thought; surface what's been streamed so far in the panel too.
-  const withoutClosed = text.replace(CLOSED_INLINE_THINKING, '');
-  const dangling = withoutClosed.match(TRAILING_OPEN_THINKING);
+  let visibleContent = visibleParts.join('');
+  const dangling = visibleContent.match(TRAILING_OPEN_THINKING);
+  const danglingStart = dangling?.index ?? -1;
+  const visibleRanges = dangling ? getMarkdownCodeRanges(visibleContent) : [];
+  const hasDanglingThinking = dangling && !isInsideRange(danglingStart, visibleRanges);
+  if (hasDanglingThinking) {
+    visibleContent = visibleContent.slice(0, danglingStart);
+    hasInlineThinking = true;
+  }
   const partial = dangling ? dangling[1].trim() : '';
-  return { closed, partial: partial.length > 0 ? partial : undefined };
+
+  return {
+    closed,
+    partial: hasDanglingThinking && partial.length > 0 ? partial : undefined,
+    visibleContent: visibleContent.replace(/\n{3,}/g, '\n\n'),
+    hasInlineThinking
+  };
 }
 
 // Extract thinking blocks from content blocks (and salvage inline tags)
@@ -1397,9 +1447,10 @@ const thinkingPanelOpen = ref<number | undefined>(undefined);
 
 // Check if thinking is currently streaming (has thinking blocks, is streaming, no content yet)
 const isThinkingStreaming = computed(() => {
+  const visibleContent = extractInlineThinking(currentBranch.value.content || '').visibleContent.trim();
   const streaming = props.isStreaming && 
          thinkingBlocks.value.length > 0 && 
-         !currentBranch.value.content?.trim();
+         !visibleContent;
   return streaming;
 });
 
@@ -1424,6 +1475,12 @@ watch(isThinkingStreaming, (streaming, oldStreaming) => {
 const renderedContent = computed(() => {
   // Use edited content if this message has a post-hoc edit applied
   let content = props.postHocAffected?.editedContent ?? currentBranch.value.content;
+
+  // Lift inline <thinking>…</thinking> tags out of the displayed body. Their
+  // contents are surfaced separately via the thinking toggle (see
+  // thinkingBlocks). The extractor ignores tags inside Markdown code fences and
+  // inline backtick spans, so examples remain visible as literal code.
+  content = extractInlineThinking(content).visibleContent;
   
   // Preserve leading/trailing whitespace by converting to non-breaking spaces
   const leadingSpaces = content.match(/^(\s+)/)?.[1] || '';
@@ -1446,17 +1503,6 @@ const renderedContent = computed(() => {
     inlineCode.push(match);
     return `__INLINE_CODE_${index}__`;
   });
-
-  // Lift inline <thinking>…</thinking> tags out of the displayed body. Their
-  // contents are surfaced separately via the thinking toggle (see
-  // thinkingBlocks). This runs AFTER code-block / inline-code protection so
-  // literal <thinking> inside ``` fences or backticks is preserved verbatim.
-  // Also drops a dangling unclosed <thinking> at the very end of the stream
-  // so it doesn't flash as raw text mid-response.
-  content = content
-    .replace(CLOSED_INLINE_THINKING, '')
-    .replace(TRAILING_OPEN_THINKING, '')
-    .replace(/\n{3,}/g, '\n\n');
 
   // Extract LaTeX math regions BEFORE markdown runs. CommonMark backslash
   // escapes (\(, \), \[, \]) would otherwise be consumed by marked.parse,
@@ -2552,4 +2598,3 @@ watch(() => currentBranch.value.id, async () => {
   transform: translate(2px, 2px);
 }
 </style>
-
