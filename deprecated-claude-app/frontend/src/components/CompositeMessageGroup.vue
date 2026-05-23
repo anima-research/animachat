@@ -93,8 +93,8 @@
         :authenticity-status="getAuthenticityStatus(message)"
         @regenerate="(msgId: string, branchId: string) => emit('regenerate', msgId, branchId)"
         @stuck-clicked="() => emit('stuck-clicked')"
-        @edit="(msgId: string, branchId: string, content: string) => emit('edit', msgId, branchId, content)"
-        @edit-only="(msgId: string, branchId: string, content: string) => emit('edit-only', msgId, branchId, content)"
+        @edit="(msgId: string, branchId: string, content: string, attachments?: WsAttachment[]) => emit('edit', msgId, branchId, content, attachments)"
+        @edit-only="(msgId: string, branchId: string, content: string, attachments?: WsAttachment[]) => emit('edit-only', msgId, branchId, content, attachments)"
         @switch-branch="(msgId: string, branchId: string) => emit('switch-branch', msgId, branchId)"
         @delete="(msgId: string, branchId: string) => emit('delete', msgId, branchId)"
         @delete-all-branches="(msgId: string) => emit('delete-all-branches', msgId)"
@@ -120,7 +120,7 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import MessageComponent from './MessageComponent.vue';
 import AuthenticityIcon from './AuthenticityIcon.vue';
-import type { Message, Participant } from '@deprecated-claude/shared';
+import type { Message, Participant, WsAttachment } from '@deprecated-claude/shared';
 import { getAvatarUrl, getParticipantColor } from '@/utils/avatars';
 import { type AuthenticityStatus, getAuthenticityLevel } from '@/utils/authenticity';
 
@@ -140,8 +140,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   regenerate: [msgId: string, branchId: string];
-  edit: [msgId: string, branchId: string, content: string];
-  'edit-only': [msgId: string, branchId: string, content: string];
+  edit: [msgId: string, branchId: string, content: string, attachments?: WsAttachment[]];
+  'edit-only': [msgId: string, branchId: string, content: string, attachments?: WsAttachment[]];
   'switch-branch': [msgId: string, branchId: string];
   delete: [msgId: string, branchId: string];
   'delete-all-branches': [msgId: string];
