@@ -955,6 +955,7 @@ const isPostHocEditing = ref(false); // True when editing for post-hoc operation
 const editContent = ref('');
 type EditableAttachment = Pick<Attachment, 'fileName' | 'fileType' | 'content'> & Partial<Pick<Attachment, 'id' | 'fileSize' | 'mimeType' | 'encoding'>>;
 const editAttachments = ref<EditableAttachment[]>([]);
+const editAttachmentsDirty = ref(false);
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
 const isHovered = ref(false);
@@ -1578,6 +1579,7 @@ function attachmentsChanged(): boolean {
 
 function removeEditAttachment(index: number) {
   editAttachments.value.splice(index, 1);
+  editAttachmentsDirty.value = true;
 }
 
 function startEdit() {
@@ -1585,6 +1587,7 @@ function startEdit() {
   isPostHocEditing.value = false;
   editContent.value = currentBranch.value.content;
   editAttachments.value = cloneEditableAttachments(currentBranch.value.attachments || []);
+  editAttachmentsDirty.value = false;
 }
 
 async function toggleBranchPrivacy() {
@@ -1609,6 +1612,7 @@ function startPostHocEdit() {
   isPostHocEditing.value = true;
   editContent.value = currentBranch.value.content;
   editAttachments.value = [];
+  editAttachmentsDirty.value = false;
 }
 
 function cancelEdit() {
@@ -1616,11 +1620,12 @@ function cancelEdit() {
   isPostHocEditing.value = false;
   editContent.value = '';
   editAttachments.value = [];
+  editAttachmentsDirty.value = false;
 }
 
 function saveEdit() {
   const contentChanged = editContent.value !== currentBranch.value.content;
-  const attachmentListChanged = !isPostHocEditing.value && attachmentsChanged();
+  const attachmentListChanged = !isPostHocEditing.value && (editAttachmentsDirty.value || attachmentsChanged());
   if (contentChanged || attachmentListChanged) {
     if (isPostHocEditing.value) {
       // Create a post-hoc edit operation (no regeneration)
@@ -1635,7 +1640,7 @@ function saveEdit() {
 
 function saveEditOnly() {
   const contentChanged = editContent.value !== currentBranch.value.content;
-  const attachmentListChanged = !isPostHocEditing.value && attachmentsChanged();
+  const attachmentListChanged = !isPostHocEditing.value && (editAttachmentsDirty.value || attachmentsChanged());
   if (contentChanged || attachmentListChanged) {
     // Edit and branch without triggering regeneration
     emit('edit-only', props.message.id, currentBranch.value.id, editContent.value, attachmentListChanged ? editAttachments.value : undefined);
