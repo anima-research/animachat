@@ -1338,17 +1338,43 @@ const hasNavigableBranches = computed(() => {
   return siblingBranches.value.length > 1;
 });
 
-// Extract thinking blocks from content blocks
+// Some routes (e.g. Anthropic models via OpenRouter when the reasoning
+// signature isn't propagated) emit thinking as literal <thinking>…</thinking>
+// inside delta.content rather than via structured reasoning fields. The right
+// fix is upstream, but in the meantime the UI lifts those tags out of the
+// body and surfaces them in the same thinking toggle as structured blocks.
+// Acts on the rendered branch's content only — stored data is untouched.
+const CLOSED_INLINE_THINKING = /<thinking>([\s\S]*?)<\/thinking>/gi;
+const TRAILING_OPEN_THINKING = /<thinking>([\s\S]*)$/i;
+
+function extractInlineThinking(text: string): { closed: string[]; partial?: string } {
+  if (!text) return { closed: [] };
+  const closed: string[] = [];
+  for (const m of text.matchAll(CLOSED_INLINE_THINKING)) {
+    const t = m[1].trim();
+    if (t) closed.push(t);
+  }
+  // After stripping closed pairs, a dangling open tag means streaming is
+  // mid-thought; surface what's been streamed so far in the panel too.
+  const withoutClosed = text.replace(CLOSED_INLINE_THINKING, '');
+  const dangling = withoutClosed.match(TRAILING_OPEN_THINKING);
+  const partial = dangling ? dangling[1].trim() : '';
+  return { closed, partial: partial.length > 0 ? partial : undefined };
+}
+
+// Extract thinking blocks from content blocks (and salvage inline tags)
 const thinkingBlocks = computed(() => {
   const branch = currentBranch.value;
-  if (!branch.contentBlocks || branch.contentBlocks.length === 0) {
-    return [];
-  }
-  
-  // Filter for thinking and redacted_thinking blocks
-  return branch.contentBlocks.filter((block: any) => 
+  const structured = (branch?.contentBlocks || []).filter((block: any) =>
     block.type === 'thinking' || block.type === 'redacted_thinking'
   );
+
+  const source = props.postHocAffected?.editedContent ?? branch?.content ?? '';
+  const { closed, partial } = extractInlineThinking(source);
+  const inline = closed.map(t => ({ type: 'thinking' as const, thinking: t }));
+  if (partial) inline.push({ type: 'thinking' as const, thinking: partial });
+
+  return [...structured, ...inline];
 });
 
 // Extract generated image blocks from content blocks
@@ -1420,6 +1446,17 @@ const renderedContent = computed(() => {
     inlineCode.push(match);
     return `__INLINE_CODE_${index}__`;
   });
+
+  // Lift inline <thinking>…</thinking> tags out of the displayed body. Their
+  // contents are surfaced separately via the thinking toggle (see
+  // thinkingBlocks). This runs AFTER code-block / inline-code protection so
+  // literal <thinking> inside ``` fences or backticks is preserved verbatim.
+  // Also drops a dangling unclosed <thinking> at the very end of the stream
+  // so it doesn't flash as raw text mid-response.
+  content = content
+    .replace(CLOSED_INLINE_THINKING, '')
+    .replace(TRAILING_OPEN_THINKING, '')
+    .replace(/\n{3,}/g, '\n\n');
 
   // Extract LaTeX math regions BEFORE markdown runs. CommonMark backslash
   // escapes (\(, \), \[, \]) would otherwise be consumed by marked.parse,
