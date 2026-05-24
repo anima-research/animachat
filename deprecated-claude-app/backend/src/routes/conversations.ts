@@ -374,9 +374,27 @@ export function conversationRouter(db: Database): Router {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
+      // Pagination params (PR #64 foundation): if `cursor` is unset the
+      // call falls back to "return everything" via `limit = Infinity`,
+      // matching the pre-pagination contract for backward compatibility
+      // with clients that don't speak the cursor API yet.
+      const cursor = req.query.cursor as string | undefined;
+      const direction = req.query.direction === 'newer' ? 'newer' : 'older';
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : Infinity;
+      if (req.query.limit && (!Number.isFinite(limit) || limit < 1)) {
+        return res.status(400).json({ error: 'limit must be a positive integer' });
+      }
+
       // Note: Access control is handled in getConversation
       // Pass requesting user to filter private branches
-      const messages = await db.getConversationMessages(req.params.id, conversation.userId, req.userId);
+      const messages = await db.getConversationMessageBranchPage(
+        req.params.id,
+        conversation.userId,
+        limit,
+        cursor,
+        direction,
+        req.userId,
+      );
 
       // Prepare messages for client: strip debug data, convert old images to blob refs
       // Pass db and userId so conversions can be persisted (avoiding duplicate blobs after restart)
@@ -385,6 +403,47 @@ export function conversationRouter(db: Database): Router {
       res.json(preparedMessages);
     } catch (error) {
       console.error('Get messages error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/conversations/:id/activate-branch — server-side branch
+  // activation. Returns the {messageId, branchId} pairs that changed as a
+  // side effect (e.g. switching a deep branch may cascade up through
+  // parents). Lets clients flip the active branch without needing the
+  // full message tree loaded — the foundation move for the paginated /
+  // virtualized conversation view.
+  router.post('/:id/activate-branch', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { messageId, branchId, isDetached } = req.body;
+      if (!messageId || !branchId) {
+        return res.status(400).json({ error: 'messageId and branchId are required' });
+      }
+
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation || conversation.userId !== req.userId) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const changedBranches = await db.activateBranch(
+        messageId,
+        branchId,
+        conversation.id,
+        conversation.userId,
+        isDetached,
+      );
+      res.json({
+        success: true,
+        changedBranches: changedBranches
+          ? Array.from(changedBranches.entries()).map(([messageId, branchId]) => ({ messageId, branchId }))
+          : [],
+      });
+    } catch (error) {
+      console.error('Activate branch error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

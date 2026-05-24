@@ -441,6 +441,22 @@ export const BookmarkSchema = z.object({
 
 export type Bookmark = z.infer<typeof BookmarkSchema>;
 
+// Bookmark with denormalized fields needed for sidebar/jump-list rendering
+// without fetching the underlying message. `preview` is a short excerpt of
+// the bookmarked branch's content; `participantName`, `model`, and `role`
+// describe the message the bookmark anchors. Returned by
+// `Database.getConversationBookmarksEnriched` — useful when the client
+// doesn't have the full message tree loaded (e.g. paginated/virtualized
+// conversation views).
+export const EnrichedBookmarkSchema = BookmarkSchema.extend({
+  preview: z.string(),
+  participantName: z.string(),
+  model: z.string().nullable(),
+  role: z.enum(['user', 'assistant', 'system'])
+});
+
+export type EnrichedBookmark = z.infer<typeof EnrichedBookmarkSchema>;
+
 // Content block types for messages
 export const TextContentBlockSchema = z.object({
   type: z.literal('text'),
