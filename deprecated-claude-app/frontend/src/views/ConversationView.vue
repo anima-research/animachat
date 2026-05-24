@@ -524,9 +524,17 @@
           </div>
           
           <div v-else>
-            <CompositeMessageGroup
-              v-for="(group, groupIndex) in groupedMessages"
-              :key="group.id"
+            <template v-for="(group, groupIndex) in groupedMessages" :key="group.id">
+              <div
+                v-if="showContextDivider && groupIndex === firstInWindowGroupIndex"
+                class="context-window-divider"
+                :title="contextPreview && contextPreview.current.droppedFromHistory > 0
+                  ? `${contextPreview.current.droppedFromHistory} earlier message(s) are outside the rolling window and not sent to the model.`
+                  : 'Rolling context window starts here.'"
+              >
+                <span class="context-window-divider-label">context window</span>
+              </div>
+              <CompositeMessageGroup
               :messages="group.messages"
               :participants="participants"
               :is-last-group="groupIndex === groupedMessages.length - 1"
@@ -557,6 +565,7 @@
               @split="handleSplit"
               @fork="handleFork"
             />
+            </template>
           </div>
         </v-container>
         
@@ -724,6 +733,11 @@
             </span>
           </div>
           
+          <div v-if="contextRollWarning" class="context-roll-warning">
+            <v-icon size="x-small" class="mr-1">mdi-information-outline</v-icon>
+            <span class="text-caption">{{ contextRollWarning }}</span>
+          </div>
+
           <v-textarea
             ref="messageTextarea"
             v-model="messageInput"
@@ -1826,6 +1840,84 @@ const currentBranchId = computed(() => {
   return undefined;
 });
 const currentModel = computed(() => store.currentModel);
+
+// --- Rolling-context preview (dashed divider + pre-send "context rolls" warning) ---
+interface ContextPreview {
+  strategy: 'append' | 'rolling';
+  current: { firstInWindowMessageId: string | null; droppedFromHistory: number };
+  prospective?: { wouldRotate: boolean; droppedCount: number; droppedMessageIds: string[]; wouldTriggerCompaction: boolean };
+}
+const contextPreview = ref<ContextPreview | null>(null);
+let contextPreviewDebounce: number | null = null;
+
+async function refreshContextPreview(draft?: string) {
+  const conv = currentConversation.value;
+  if (!conv) { contextPreview.value = null; return; }
+  // Only run when the rolling strategy is in play — append mode has no
+  // rotation and therefore nothing to render.
+  const strategy = conv.contextManagement?.strategy
+    ?? (selectedResponder.value
+        ? participants.value.find(p => p.id === selectedResponder.value)?.contextManagement?.strategy
+        : undefined);
+  if (strategy && strategy !== 'rolling') { contextPreview.value = null; return; }
+  try {
+    const responderId = selectedResponder.value
+      || participants.value.find(p => p.type === 'assistant')?.id
+      || undefined;
+    const { data } = await api.post(`/conversations/${conv.id}/context-preview`, {
+      branchId: currentBranchId.value,
+      participantId: responderId,
+      draftContent: draft && draft.length > 0 ? draft : undefined
+    });
+    contextPreview.value = data;
+  } catch (e) {
+    // Silent fail — preview is purely informational; don't disrupt the user.
+    console.debug('[ContextPreview] refresh failed', e);
+  }
+}
+
+// Refresh whenever the conversation, branch, or selected responder changes.
+watch(
+  () => [currentConversation.value?.id, currentBranchId.value, selectedResponder.value],
+  () => { void refreshContextPreview(messageInput.value); }
+);
+
+// Refresh after a streaming turn completes (new message in window).
+watch(() => isStreaming.value, (now, prev) => {
+  if (prev && !now) void refreshContextPreview(messageInput.value);
+});
+
+// Debounced refresh as the draft changes, so the warning updates while typing.
+watch(() => messageInput.value, (draft) => {
+  if (contextPreviewDebounce !== null) window.clearTimeout(contextPreviewDebounce);
+  contextPreviewDebounce = window.setTimeout(() => { void refreshContextPreview(draft); }, 400);
+});
+
+// Group index containing the first in-window message — divider renders above it.
+const firstInWindowGroupIndex = computed(() => {
+  const id = contextPreview.value?.current.firstInWindowMessageId;
+  if (!id) return -1;
+  const groups = groupedMessages.value;
+  for (let i = 0; i < groups.length; i++) {
+    if (groups[i].messages.some((m: any) => m.id === id)) return i;
+  }
+  return -1;
+});
+
+const showContextDivider = computed(() =>
+  contextPreview.value?.strategy === 'rolling' &&
+  firstInWindowGroupIndex.value > 0
+);
+
+const contextRollWarning = computed(() => {
+  const p = contextPreview.value?.prospective;
+  if (!p || !p.wouldRotate) return null;
+  const n = p.droppedCount;
+  // Phase 2 hook: if compaction is wired, the verb shifts to "compact".
+  return p.wouldTriggerCompaction
+    ? `Context rolls this turn — compacts ${n} earlier message${n === 1 ? '' : 's'}.`
+    : `Context rolls this turn — drops ${n} earlier message${n === 1 ? '' : 's'} from context.`;
+});
 
 // Thinking/reasoning toggle
 const thinkingEnabled = computed(() => {
@@ -5465,5 +5557,38 @@ function formatDate(date: Date | string): string {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Rolling-context window divider: appears above the first message inside the
+   current rolling window, so it's visible where the model's view actually
+   starts. Intentionally subtle — informational, not alarming. */
+.context-window-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 8px 8px;
+  opacity: 0.55;
+}
+.context-window-divider::before,
+.context-window-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed currentColor;
+}
+.context-window-divider-label {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Pre-send "context rolls this turn" warning, sits just above the composer */
+.context-roll-warning {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  color: rgb(var(--v-theme-warning));
+  opacity: 0.9;
 }
 </style>
