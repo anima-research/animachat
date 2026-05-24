@@ -1854,12 +1854,15 @@ async function refreshContextPreview(draft?: string) {
   const conv = currentConversation.value;
   if (!conv) { contextPreview.value = null; return; }
   // Only run when the rolling strategy is in play — append mode has no
-  // rotation and therefore nothing to render.
-  const strategy = conv.contextManagement?.strategy
-    ?? (selectedResponder.value
-        ? participants.value.find(p => p.id === selectedResponder.value)?.contextManagement?.strategy
-        : undefined);
-  if (strategy && strategy !== 'rolling') { contextPreview.value = null; return; }
+  // rotation and therefore nothing to render. Precedence mirrors backend
+  // ContextManager: responder participant overrides conversation default.
+  const responderParticipant = selectedResponder.value
+    ? participants.value.find(p => p.id === selectedResponder.value)
+    : participants.value.find(p => p.type === 'assistant');
+  const strategy = responderParticipant?.contextManagement?.strategy
+    ?? conv.contextManagement?.strategy
+    ?? 'append';
+  if (strategy !== 'rolling') { contextPreview.value = null; return; }
   try {
     const responderId = selectedResponder.value
       || participants.value.find(p => p.type === 'assistant')?.id

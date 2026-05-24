@@ -196,7 +196,7 @@ function applyIdentityPromptIfNeeded(params: IdentityPromptParams): string {
  * @param includeMessage - Optional message to include/replace in the history
  * @returns Array of messages in chronological order (oldest first)
  */
-function buildConversationHistory(
+export function buildConversationHistory(
   allMessages: Message[],
   fromBranchId: string | undefined,
   includeMessage?: { messageId: string; message: Message }
@@ -260,7 +260,7 @@ function buildConversationHistory(
  * @param messages - Array of messages to filter
  * @returns Array of messages with hiddenFromAi branches removed
  */
-function filterHiddenFromAiMessages(messages: Message[]): Message[] {
+export function filterHiddenFromAiMessages(messages: Message[]): Message[] {
   return messages
     .map(msg => {
       // Get the active branch

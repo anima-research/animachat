@@ -8,6 +8,7 @@ import { roomManager } from '../websocket/room-manager.js';
 import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, ContentBlockSchema, Message } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { ContextManager } from '../services/context-manager.js';
+import { buildConversationHistory, filterHiddenFromAiMessages } from '../websocket/handler.js';
 
 /**
  * Prepare messages for client by:
@@ -664,23 +665,15 @@ export function conversationRouter(db: Database): Router {
         : undefined;
 
       const allMessages = await db.getConversationMessages(req.params.id, conversation.userId, req.userId);
-      // Build the active-branch path (linear history) the same way the
-      // inference path does — strategies expect this shape, not the raw tree.
-      const messagesByBranchId = new Map<string, Message>();
-      for (const msg of allMessages) {
-        for (const branch of msg.branches) {
-          messagesByBranchId.set(branch.id, msg);
-        }
-      }
-      const history: Message[] = [];
-      let currentBranchId: string | undefined = branchId;
-      while (currentBranchId && currentBranchId !== 'root') {
-        const m: Message | undefined = messagesByBranchId.get(currentBranchId);
-        if (!m) break;
-        history.unshift(m);
-        const branch = m.branches.find(b => b.id === currentBranchId);
-        currentBranchId = branch?.parentBranchId;
-      }
+      // Reuse the inference path's canonical history builder + hidden-message
+      // filter so the preview matches what actually gets sent to the model.
+      // buildConversationHistory rewrites each message's activeBranchId to the
+      // branch being traversed (critical for branchy convs; strategies count
+      // tokens via activeBranchId). filterHiddenFromAiMessages drops messages
+      // whose active branch is hidden from AI, matching inference behavior.
+      const history = filterHiddenFromAiMessages(
+        buildConversationHistory(allMessages, branchId)
+      );
 
       const participant = participantId
         ? await db.getParticipant(participantId, conversation.userId)
