@@ -380,8 +380,11 @@ export function conversationRouter(db: Database): Router {
       // with clients that don't speak the cursor API yet.
       const cursor = req.query.cursor as string | undefined;
       const direction = req.query.direction === 'newer' ? 'newer' : 'older';
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : Infinity;
-      if (req.query.limit && (!Number.isFinite(limit) || limit < 1)) {
+      // Use Number() rather than parseInt — parseInt silently accepts
+      // mixed strings (`?limit=5abc` → 5), Number() rejects them as NaN.
+      // Greptile #118 catch.
+      const limit = req.query.limit ? Number(req.query.limit) : Infinity;
+      if (req.query.limit && (!Number.isInteger(limit) || limit < 1)) {
         return res.status(400).json({ error: 'limit must be a positive integer' });
       }
 

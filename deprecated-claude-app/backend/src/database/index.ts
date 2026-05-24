@@ -5697,6 +5697,20 @@ export class Database {
   async getConversationMessageBranchPage(conversationId: string, conversationOwnerUserId: string, limit: number, cursorMessageId?: string, direction: 'older' | 'newer' = 'older', requestingUserId?: string): Promise<Message[]> {
     await this.loadUser(conversationOwnerUserId);
     await this.loadConversation(conversationId, conversationOwnerUserId);
+
+    // Backward-compatibility fallback: with no cursor and no limit, the
+    // contract of the route this backs (`GET /:id/messages`) is "return
+    // all messages across all branches" — that's what the previous
+    // `getConversationMessages` returned and what `store.allMessages`
+    // depends on for `switchBranch` to find off-active-path messages.
+    // Greptile #118 caught the regression: the cursor walk below only
+    // visits the active branch path, so branch-switching UI breaks for
+    // any conversation that has ever branched. Skip the walk in the
+    // unpaginated case.
+    if (!cursorMessageId && !Number.isFinite(limit)) {
+      return await this.getConversationMessages(conversationId, conversationOwnerUserId, requestingUserId);
+    }
+
     const messageIds = this.conversationMessages.get(conversationId) || [];
 
     const message = await (async () => {
@@ -5749,7 +5763,25 @@ export class Database {
       );
 
       const page: Message[] = [];
+
+      // When a cursor is provided, the cursor message itself is the
+      // boundary — exclude it from the page (the `newer` branch below
+      // already does this by starting from `parentToChildren.get(...)`
+      // i.e. the cursor's child). Without this, paginating backward
+      // would return the cursor message twice: once as the last item of
+      // the previous page and again as the first item of the next page.
+      // Greptile #118 catch. When no cursor is provided, `message` is
+      // the latest message in the tree and should be included as the
+      // first item of the initial page.
       let nextMessage: Message | undefined = message;
+      if (cursorMessageId) {
+        const cursorActiveBranch = message.branches.find(b => b.id === message.activeBranchId);
+        const parentMessageId = cursorActiveBranch?.parentBranchId
+          && cursorActiveBranch.parentBranchId !== 'root'
+          ? branchesMap.get(cursorActiveBranch.parentBranchId)
+          : undefined;
+        nextMessage = parentMessageId ? this.messages.get(parentMessageId) : undefined;
+      }
 
       for (let i = 0; i < limit && nextMessage; i++) {
         page.push(nextMessage);
