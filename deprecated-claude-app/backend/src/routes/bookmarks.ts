@@ -79,7 +79,10 @@ export function createBookmarksRouter(db: Database): Router {
     }
   });
 
-  // Get all bookmarks for a conversation
+  // Get all bookmarks for a conversation (enriched with preview/participant/
+  // model/role for sidebar rendering without loading the full message tree —
+  // see EnrichedBookmark in shared/types.ts. The response shape is a
+  // superset of the prior Bookmark[] so older clients still parse correctly.
   router.get('/conversation/:conversationId', authenticateToken, async (req: AuthRequest, res) => {
     try {
       const { conversationId } = req.params;
@@ -94,10 +97,38 @@ export function createBookmarksRouter(db: Database): Router {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
-      const bookmarks = await db.getConversationBookmarks(conversationId);
+      const bookmarks = await db.getConversationBookmarksEnriched(conversationId, req.userId);
       res.json(bookmarks);
     } catch (error) {
       console.error('Error fetching bookmarks:', error);
+      res.status(500).json({ error: 'Failed to fetch bookmarks' });
+    }
+  });
+
+  // Get bookmarks restricted to the currently-visible message path (i.e.
+  // bookmarks anchored to branches that are on the active conversation
+  // path). Used by clients that want to render only the bookmarks
+  // reachable from the current view rather than all branches' bookmarks.
+  router.get('/conversation/:conversationId/active-path', authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const { conversationId } = req.params;
+
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const conversation = await db.getConversation(conversationId, req.userId);
+      if (!conversation || conversation.userId !== req.userId) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const allBookmarks = await db.getConversationBookmarksEnriched(conversationId, req.userId);
+      const visibleMessages = await db.getVisibleMessagePath(conversationId, req.userId);
+      const visibleBranchIds = new Set(visibleMessages.map(m => m.activeBranchId));
+
+      res.json(allBookmarks.filter(b => visibleBranchIds.has(b.branchId)));
+    } catch (error) {
+      console.error('Error fetching active-path bookmarks:', error);
       res.status(500).json({ error: 'Failed to fetch bookmarks' });
     }
   });
