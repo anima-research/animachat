@@ -232,11 +232,11 @@
           </v-list>
           
           <!-- Shared with me section -->
-          <v-list v-if="sharedConversations.length > 0" density="compact" nav class="mt-2">
+          <v-list v-if="filteredSharedConversations.length > 0" density="compact" nav class="mt-2">
             <v-list-subheader>Shared with me</v-list-subheader>
-            
+
             <v-list-item
-              v-for="share in sharedConversations"
+              v-for="share in filteredSharedConversations"
               :key="share.id"
               :to="`/conversation/${share.conversationId}`"
               class="conversation-list-item"
@@ -262,8 +262,8 @@
               <template v-slot:subtitle>
                 <div>
                   <div class="text-caption">from {{ share.sharedBy?.name || share.sharedBy?.email }}</div>
-                  <div class="text-caption text-medium-emphasis" v-if="share.conversation?.updatedAt">
-                    {{ formatDate(share.conversation.updatedAt) }}
+                  <div class="text-caption text-medium-emphasis">
+                    {{ sharedConversationDateLabel(share) }}
                   </div>
                 </div>
               </template>
@@ -1252,7 +1252,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
@@ -1537,6 +1537,51 @@ interface SharedConversationEntry {
   createdAt: string;
 }
 const sharedConversations = ref<SharedConversationEntry[]>([]);
+
+// The same sidebar search/sort/filter controls apply to "Shared with me". For
+// shared rows, "Date created" is interpreted as `share.createdAt` (when the
+// share landed in the recipient's list) rather than the conversation's own
+// createdAt, which isn't sent over the wire for shares. That's the more
+// useful semantic for the recipient anyway ("newest shares first").
+const filteredSharedConversations = computed(() => {
+  const q = conversationSearch.value.trim().toLowerCase();
+  const fmt = conversationFormatFilter.value;
+  const dir = conversationSortDir.value === 'desc' ? -1 : 1;
+  const key = conversationSortKey.value;
+
+  return [...sharedConversations.value]
+    .filter(s => {
+      const title = s.conversation?.title || '';
+      if (q && !title.toLowerCase().includes(q)) return false;
+      const format = s.conversation?.format;
+      if (fmt === 'standard' && format !== 'standard') return false;
+      if (fmt === 'group' && format === 'standard') return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (key === 'title') {
+        return (a.conversation?.title || '').localeCompare(b.conversation?.title || '') * dir;
+      }
+      // 'created' uses the share's createdAt (when received); 'updated' uses
+      // the conversation's updatedAt with a safe fallback.
+      const pickDate = (s: SharedConversationEntry) =>
+        key === 'created' ? s.createdAt : (s.conversation?.updatedAt || s.createdAt);
+      return (new Date(pickDate(a)).getTime() - new Date(pickDate(b)).getTime()) * dir;
+    });
+});
+
+// Row date for shared conversations, mirroring `conversationDateLabel` but
+// labeling the 'created' case as "received {date}" — clearer for shares.
+// `s.createdAt` is typed as string but populated from API response; guard
+// against missing values to match the conditional-render intent the
+// pre-PR-#105 template had (Greptile #105 catch).
+function sharedConversationDateLabel(s: SharedConversationEntry): string {
+  if (conversationSortKey.value === 'created') {
+    return s.createdAt ? `received ${formatDate(s.createdAt)}` : '';
+  }
+  if (s.conversation?.updatedAt) return `updated ${formatDate(s.conversation.updatedAt)}`;
+  return s.createdAt ? `received ${formatDate(s.createdAt)}` : '';
+}
 
 // Shares created by the current user (for owner to know their conversation is shared)
 interface MyCreatedShare {
@@ -3914,6 +3959,37 @@ watch(conversationSettingsDialog, async (isOpen, wasOpen) => {
   if (currentConversation.value?.id === discardId || route.params.id === discardId) {
     router.push('/conversation');
   }
+});
+
+// Browser back / sidebar nav / any route change away from a provisional
+// conversation should discard it too — the dialog-close watcher above
+// doesn't fire when the route guard tears down the component before the
+// dialog has a chance to close. Without this, hitting back during the
+// auto-opened settings dialog leaves the provisional conversation behind,
+// re-creating the very bug #99 was meant to fix.
+onBeforeRouteLeave((_to, from) => {
+  if (!provisionalNewConversationId.value) return;
+  const discardId = provisionalNewConversationId.value;
+  // Only act if we're navigating away from the provisional conversation itself.
+  if (from.params.id !== discardId) return;
+
+  // Clear the flag first so the dialog-close watcher (if it fires during
+  // teardown) short-circuits and we don't double-archive.
+  provisionalNewConversationId.value = null;
+  conversationSettingsDialog.value = false;
+
+  const hasContent =
+    currentConversation.value?.id === discardId && messages.value.length > 0;
+  if (hasContent) return;
+
+  // Fire-and-forget. The guard must return synchronously — Vue Router 4
+  // awaits any Promise we return, which would stall the user's navigation
+  // (back button, sidebar click) on the archive API call. Greptile #105
+  // caught this: the previous `async` form did exactly that. Catch errors
+  // off the floating promise so they're still logged.
+  void store.archiveConversation(discardId).catch((e) => {
+    console.error('Failed to discard provisional conversation on route leave:', e);
+  });
 });
 
 async function switchToGroupChat() {
