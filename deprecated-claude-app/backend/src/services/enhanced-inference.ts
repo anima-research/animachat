@@ -78,6 +78,7 @@ type CostBreakdown = {
 
 const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   // Claude 4.x models (2025) - by providerModelId
+  'claude-opus-4-8': 5.00,
   'claude-opus-4-7': 5.00,
   'claude-opus-4-6': 5.00,
   'claude-sonnet-4-6': 3.00,
@@ -98,6 +99,7 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-haiku-20240307': 0.25,
   
   // Shorthand model IDs (for backwards compatibility / fallback)
+  'claude-opus-4.8': 5.00,
   'claude-opus-4.7': 5.00,
   'claude-opus-4.6': 5.00,
   'claude-sonnet-4.6': 3.00,
@@ -171,6 +173,7 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
 
 const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   // Claude 4.x models (2025) - by providerModelId
+  'claude-opus-4-8': 25.00,
   'claude-opus-4-7': 25.00,
   'claude-opus-4-6': 25.00,
   'claude-sonnet-4-6': 15.00,
@@ -191,6 +194,7 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-haiku-20240307': 1.25,
   
   // Shorthand model IDs (for backwards compatibility / fallback)
+  'claude-opus-4.8': 25.00,
   'claude-opus-4.7': 25.00,
   'claude-opus-4.6': 25.00,
   'claude-sonnet-4.6': 15.00,
