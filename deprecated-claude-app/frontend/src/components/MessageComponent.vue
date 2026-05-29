@@ -1354,17 +1354,93 @@ const hasNavigableBranches = computed(() => {
   return siblingBranches.value.length > 1;
 });
 
-// Extract thinking blocks from content blocks
+// Some routes (e.g. Anthropic models via OpenRouter when the reasoning
+// signature isn't propagated) emit thinking as literal <thinking>…</thinking>
+// inside delta.content rather than via structured reasoning fields. The right
+// fix is upstream, but in the meantime the UI lifts those tags out of the
+// body and surfaces them in the same thinking toggle as structured blocks.
+// Acts on the rendered branch's content only — stored data is untouched.
+const CLOSED_INLINE_THINKING = /<thinking>([\s\S]*?)<\/thinking>/gi;
+const TRAILING_OPEN_THINKING = /<thinking>([\s\S]*)$/i;
+
+function getMarkdownCodeRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+
+  for (const match of text.matchAll(/```[\s\S]*?```/g)) {
+    const start = match.index ?? 0;
+    ranges.push([start, start + match[0].length]);
+  }
+
+  for (const match of text.matchAll(/`[^`\n]+`/g)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (!ranges.some(([rangeStart, rangeEnd]) => start >= rangeStart && start < rangeEnd)) {
+      ranges.push([start, end]);
+    }
+  }
+
+  return ranges.sort(([a], [b]) => a - b);
+}
+
+function isInsideRange(index: number, ranges: Array<[number, number]>): boolean {
+  return ranges.some(([start, end]) => index >= start && index < end);
+}
+
+function extractInlineThinking(text: string): { closed: string[]; partial?: string; visibleContent: string; hasInlineThinking: boolean } {
+  if (!text) return { closed: [], visibleContent: '', hasInlineThinking: false };
+  const closed: string[] = [];
+  const ranges = getMarkdownCodeRanges(text);
+  const visibleParts: string[] = [];
+  let lastIndex = 0;
+  let hasInlineThinking = false;
+
+  for (const m of text.matchAll(CLOSED_INLINE_THINKING)) {
+    const start = m.index ?? 0;
+    if (isInsideRange(start, ranges)) continue;
+
+    const t = m[1].trim();
+    if (t) closed.push(t);
+    visibleParts.push(text.slice(lastIndex, start));
+    lastIndex = start + m[0].length;
+    hasInlineThinking = true;
+  }
+
+  visibleParts.push(text.slice(lastIndex));
+
+  // After stripping closed pairs, a dangling open tag means streaming is
+  // mid-thought; surface what's been streamed so far in the panel too.
+  let visibleContent = visibleParts.join('');
+  const dangling = visibleContent.match(TRAILING_OPEN_THINKING);
+  const danglingStart = dangling?.index ?? -1;
+  const visibleRanges = dangling ? getMarkdownCodeRanges(visibleContent) : [];
+  const hasDanglingThinking = dangling && !isInsideRange(danglingStart, visibleRanges);
+  if (hasDanglingThinking) {
+    visibleContent = visibleContent.slice(0, danglingStart);
+    hasInlineThinking = true;
+  }
+  const partial = dangling ? dangling[1].trim() : '';
+
+  return {
+    closed,
+    partial: hasDanglingThinking && partial.length > 0 ? partial : undefined,
+    visibleContent: visibleContent.replace(/\n{3,}/g, '\n\n'),
+    hasInlineThinking
+  };
+}
+
+// Extract thinking blocks from content blocks (and salvage inline tags)
 const thinkingBlocks = computed(() => {
   const branch = currentBranch.value;
-  if (!branch.contentBlocks || branch.contentBlocks.length === 0) {
-    return [];
-  }
-  
-  // Filter for thinking and redacted_thinking blocks
-  return branch.contentBlocks.filter((block: any) => 
+  const structured = (branch?.contentBlocks || []).filter((block: any) =>
     block.type === 'thinking' || block.type === 'redacted_thinking'
   );
+
+  const source = props.postHocAffected?.editedContent ?? branch?.content ?? '';
+  const { closed, partial } = extractInlineThinking(source);
+  const inline = closed.map(t => ({ type: 'thinking' as const, thinking: t }));
+  if (partial) inline.push({ type: 'thinking' as const, thinking: partial });
+
+  return [...structured, ...inline];
 });
 
 // Extract generated image blocks from content blocks
@@ -1387,9 +1463,10 @@ const thinkingPanelOpen = ref<number | undefined>(undefined);
 
 // Check if thinking is currently streaming (has thinking blocks, is streaming, no content yet)
 const isThinkingStreaming = computed(() => {
+  const visibleContent = extractInlineThinking(currentBranch.value.content || '').visibleContent.trim();
   const streaming = props.isStreaming && 
          thinkingBlocks.value.length > 0 && 
-         !currentBranch.value.content?.trim();
+         !visibleContent;
   return streaming;
 });
 
@@ -1414,6 +1491,12 @@ watch(isThinkingStreaming, (streaming, oldStreaming) => {
 const renderedContent = computed(() => {
   // Use edited content if this message has a post-hoc edit applied
   let content = props.postHocAffected?.editedContent ?? currentBranch.value.content;
+
+  // Lift inline <thinking>…</thinking> tags out of the displayed body. Their
+  // contents are surfaced separately via the thinking toggle (see
+  // thinkingBlocks). The extractor ignores tags inside Markdown code fences and
+  // inline backtick spans, so examples remain visible as literal code.
+  content = extractInlineThinking(content).visibleContent;
   
   // Preserve leading/trailing whitespace by converting to non-breaking spaces
   const leadingSpaces = content.match(/^(\s+)/)?.[1] || '';
@@ -2531,4 +2614,3 @@ watch(() => currentBranch.value.id, async () => {
   transform: translate(2px, 2px);
 }
 </style>
-
