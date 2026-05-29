@@ -16,10 +16,38 @@ import {
   importClaudeArchive,
   previewClaudeArchive
 } from '../services/claudeArchiveImporter.js';
-import { 
-  ImportRequestSchema, 
-  ImportFormat
+import {
+  ImportRequestSchema,
+  ImportFormat,
+  Model
 } from '@deprecated-claude/shared';
+import { ModelLoader } from '../config/model-loader.js';
+
+/**
+ * Resolve a chapterx-emitted raw model identifier (e.g. "claude-opus-4-8")
+ * against Arc's model registry. Match attempts, in order:
+ *   1. exact match on `providerModelId`
+ *   2. exact match on `id` or `canonicalId`
+ *   3. normalized match (lowercase, dots→dashes) on any of the above
+ *
+ * Returns the canonical Arc model entry on match, or null on miss.
+ * UI uses the result to decide between "ready to import" and "please pick a model".
+ */
+function resolveChapterXModelId(rawId: string | undefined, models: Model[]): Model | null {
+  if (!rawId) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/\./g, '-').replace(/_/g, '-');
+  const target = norm(rawId);
+  for (const m of models) {
+    if (m.providerModelId === rawId || m.id === rawId || (m as any).canonicalId === rawId) return m;
+  }
+  for (const m of models) {
+    if (norm(m.providerModelId) === target) return m;
+    if (norm(m.id) === target) return m;
+    const canonical = (m as any).canonicalId;
+    if (canonical && norm(canonical) === target) return m;
+  }
+  return null;
+}
 
 type ClaudeArchiveJobStatus = 'previewed' | 'running' | 'completed' | 'failed';
 
@@ -257,6 +285,26 @@ export function importRouter(db: Database): Router {
       const preview = await parser.parse(format as ImportFormat, content, {
         allowedParticipants: allowedParticipants as string[] | undefined
       });
+
+      // For chapterx_prompt, enrich metadata with a model-registry lookup so
+      // the UI can decide between "model resolved, ready to import" and
+      // "no match, please pick a model from the dropdown" without a second
+      // round trip. Strict lookup per the locked decision; no fuzzy fallback.
+      if (format === 'chapterx_prompt' && preview.metadata?.model?.raw) {
+        const modelLoader = ModelLoader.getInstance();
+        const models = await modelLoader.getAllModels(req.userId);
+        const resolved = resolveChapterXModelId(preview.metadata.model.raw, models);
+        preview.metadata.model = {
+          ...preview.metadata.model,
+          resolved: resolved ? {
+            matched: true,
+            id: resolved.id,
+            displayName: resolved.displayName,
+            provider: resolved.provider,
+          } : { matched: false }
+        };
+      }
+
       res.json(preview);
     } catch (error) {
       console.error('Import preview error:', error);
@@ -288,15 +336,49 @@ export function importRouter(db: Database): Router {
       });
       
       // Determine the model to use for the conversation
-      // Priority: 1. Explicit model in request, 2. First assistant from arc_chat participants, 3. Default
+      // Priority: 1. Explicit model in request, 2. First assistant from arc_chat participants,
+      //           3. Resolved chapterx model header, 4. Default
       let conversationModel = importRequest.model;
       if (!conversationModel && importRequest.format === 'arc_chat' && preview.metadata?.participants) {
         const firstAssistant = preview.metadata.participants.find((p: any) => p.type === 'assistant');
         conversationModel = firstAssistant?.model;
       }
-      // Fallback to a sensible default
+      if (importRequest.format === 'chapterx_prompt' && !conversationModel && preview.metadata?.model?.raw) {
+        const modelLoader = ModelLoader.getInstance();
+        const models = await modelLoader.getAllModels(req.userId);
+        const resolved = resolveChapterXModelId(preview.metadata.model.raw, models);
+        if (resolved) {
+          conversationModel = resolved.id;
+          console.log(`[chapterx_prompt] resolved model "${preview.metadata.model.raw}" -> "${resolved.id}"`);
+        }
+      }
+
+      // Strict-on-miss for chapterx_prompt: if neither the user nor the
+      // registry resolution produced a model, reject the import rather than
+      // silently importing under the global default. The UI is supposed to
+      // force a dropdown choice on miss; this is the defensive backstop.
+      if (importRequest.format === 'chapterx_prompt' && !conversationModel) {
+        return res.status(400).json({
+          error: `ChapterX import: model "${preview.metadata?.model?.raw ?? 'unknown'}" not in registry. Pick a model in the import dialog before retrying.`
+        });
+      }
+
+      // Fallback to a sensible default for non-chapterx formats
       conversationModel = conversationModel || 'anthropic/claude-sonnet-4-20250514';
-      
+
+      // Compute conversation-level contextManagement from chapterx rolling
+      // defaults so the imported conversation behaves like it did in chapterx
+      // (rolling window at roughly the current conversation size).
+      let conversationContextManagement: any = undefined;
+      if (importRequest.format === 'chapterx_prompt' && preview.metadata?.rollingDefaults) {
+        conversationContextManagement = {
+          strategy: 'rolling',
+          maxTokens: preview.metadata.rollingDefaults.maxTokens,
+          maxGraceTokens: preview.metadata.rollingDefaults.maxGraceTokens,
+        };
+        console.log(`[chapterx_prompt] applying rolling context: maxTokens=${conversationContextManagement.maxTokens}, grace=${conversationContextManagement.maxGraceTokens}`);
+      }
+
       // Create the conversation
       const conversation = await db.createConversation(
         req.userId,
@@ -304,7 +386,8 @@ export function importRouter(db: Database): Router {
         conversationModel,
         undefined, // System prompt will be set on participants
         undefined, // Settings will be set on participants
-        importRequest.conversationFormat
+        importRequest.conversationFormat,
+        conversationContextManagement
       );
 
       // Get default participants
@@ -403,12 +486,68 @@ export function importRouter(db: Database): Router {
         }
       }
 
+      // ChapterX-specific: apply source system prompt + sampling params to the
+      // source-side assistant participant ONLY. We resolve the target by name
+      // (parser metadata's `assistantName`) via `participantMap`, falling back
+      // to a unique-default lookup if mappings weren't provided. This avoids
+      // contaminating other assistant participants the user may have created
+      // through remapping or that exist as Arc defaults alongside the mapped
+      // chapterx assistant.
+      if (importRequest.format === 'chapterx_prompt' && preview.metadata) {
+        const importSystemPrompt = importRequest.importSystemPrompt !== false;
+        const sysPrompt: string | undefined = importSystemPrompt
+          ? preview.metadata.systemPrompt
+          : undefined;
+        const params = preview.metadata.params || {};
+        const targetAssistantName: string | undefined = preview.metadata.assistantName;
+
+        // Resolve the target participant id. Strategy:
+        //   1. If parser surfaced an assistantName AND mappings produced an
+        //      entry for it, use that (typical: UI sends mappings).
+        //   2. Else if there's exactly one assistant in the conversation,
+        //      that's unambiguously the target (typical: no mappings sent).
+        //   3. Else: ambiguous — skip with a warning so we don't apply
+        //      chapterx settings to the wrong participant.
+        const allParticipants = await db.getConversationParticipants(conversation.id, conversation.userId);
+        const assistantParticipants = allParticipants.filter((p: any) => p.type === 'assistant');
+
+        let targetId: string | undefined;
+        if (targetAssistantName && participantMap.has(targetAssistantName)) {
+          targetId = participantMap.get(targetAssistantName);
+        } else if (assistantParticipants.length === 1) {
+          targetId = assistantParticipants[0].id;
+        }
+
+        if (targetId) {
+          const ap = assistantParticipants.find((p: any) => p.id === targetId);
+          if (ap) {
+            const updates: any = {};
+            if (sysPrompt) updates.systemPrompt = sysPrompt;
+            const settingsUpdate: any = {};
+            if (typeof params.temperature === 'number') settingsUpdate.temperature = params.temperature;
+            if (typeof params.maxTokens === 'number') settingsUpdate.maxTokens = params.maxTokens;
+            if (Object.keys(settingsUpdate).length > 0) {
+              // updateParticipant merges top-level keys, but settings is itself
+              // an object on the participant — merge with existing settings so
+              // we don't blow away other keys.
+              updates.settings = { ...(ap.settings || {}), ...settingsUpdate };
+            }
+            if (Object.keys(updates).length > 0) {
+              await db.updateParticipant(ap.id, conversation.userId, updates);
+              console.log(`[chapterx_prompt] applied to assistant ${ap.id} (${ap.name}): ${Object.keys(updates).join(', ')}`);
+            }
+          }
+        } else {
+          console.log(`[chapterx_prompt] could not resolve unique target assistant (mapping miss + ${assistantParticipants.length} assistants); skipping system-prompt/settings application`);
+        }
+      }
+
       // Import messages with branch support
-      const messageIdMap = new Map<string, string>(); // originalUuid -> createdMessageId  
+      const messageIdMap = new Map<string, string>(); // originalUuid -> createdMessageId
       const branchIdMap = new Map<string, string>(); // originalUuid -> createdBranchId
       // Track messages by their parent and role to group branches correctly
       const messagesByParentAndRole = new Map<string, string>(); // "parentUuid:role" -> messageId
-      
+
       console.log(`Importing ${preview.messages.length} messages to conversation ${conversation.id}`);
       
       // Special handling for Arc Chat format - filter out orphaned messages, import all legitimate content
