@@ -1846,6 +1846,17 @@ async function handleEdit(
     return;
   }
 
+  const attachments = message.attachments !== undefined
+    ? message.attachments.map(att => ({
+        fileName: att.fileName,
+        fileType: att.fileType,
+        content: att.content,
+        fileSize: att.fileSize ?? Math.round(att.content.replace(/=+$/, '').length * 3 / 4),
+        mimeType: att.mimeType,
+        encoding: att.encoding
+      }))
+    : branch.attachments;
+
   // Create new branch with edited content
   // The parent should be the same as the original branch's parent (the previous message)
   const updatedMessage = await db.addMessageBranch(
@@ -1857,7 +1868,7 @@ async function handleEdit(
     branch.parentBranchId, // Use the same parent as the original branch
     branch.model,
     branch.participantId, // Keep the same participant
-    undefined, // no attachments
+    attachments,
     ws.userId, // user who made the edit
     undefined, // hiddenFromAi
     false,     // preserveActiveBranch - select this new branch

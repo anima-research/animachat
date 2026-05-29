@@ -515,16 +515,29 @@
       </div>
       
       <!-- Attachments display (for user messages) -->
-      <div v-if="currentBranch.role === 'user' && currentBranch.attachments && currentBranch.attachments.length > 0" class="mt-2">
-        <template v-for="attachment in currentBranch.attachments" :key="attachment.id">
+      <div v-if="currentBranch.role === 'user' && displayedAttachments.length > 0" class="mt-2">
+        <template v-for="(attachment, index) in displayedAttachments" :key="attachment.id || `${attachment.fileName}-${index}`">
           <!-- Image attachments -->
           <div v-if="isImageAttachment(attachment)" class="mb-2">
-            <img 
-              :src="getImageSrc(attachment)"
-              :alt="attachment.fileName"
-              style="max-width: 300px; max-height: 300px; border-radius: 8px; cursor: pointer;"
-              @click="openImageInNewTab(attachment)"
-            />
+            <div class="attachment-image-wrapper">
+              <img 
+                :src="getImageSrc(attachment)"
+                :alt="attachment.fileName"
+                style="max-width: 300px; max-height: 300px; border-radius: 8px; cursor: pointer;"
+                @click="openImageInNewTab(attachment)"
+              />
+              <v-btn
+                v-if="canEditAttachments"
+                icon="mdi-close"
+                size="x-small"
+                color="error"
+                variant="flat"
+                density="compact"
+                class="attachment-remove-btn"
+                title="Remove attachment"
+                @click.stop="removeEditAttachment(index)"
+              />
+            </div>
             <div class="text-caption mt-1">{{ attachment.fileName }} ({{ formatFileSize(attachment.fileSize || 0) }})</div>
           </div>
           <!-- Text attachments -->
@@ -533,12 +546,34 @@
             class="mr-2 mb-1"
             size="small"
             color="grey-lighten-2"
+            :closable="canEditAttachments"
+            @click:close="removeEditAttachment(index)"
           >
             <v-icon start size="x-small">mdi-paperclip</v-icon>
             {{ attachment.fileName }}
             <span class="ml-1 text-caption">({{ formatFileSize(attachment.fileSize || 0) }})</span>
           </v-chip>
         </template>
+      </div>
+
+      <div v-if="canEditAttachments" class="mt-2">
+        <input
+          ref="editFileInput"
+          type="file"
+          :accept="EDIT_ATTACHMENT_ACCEPT"
+          multiple
+          style="display: none"
+          @change="handleEditAttachmentSelect"
+        />
+        <v-btn
+          size="small"
+          variant="text"
+          color="primary"
+          prepend-icon="mdi-paperclip-plus"
+          @click="triggerEditAttachmentInput"
+        >
+          Add attachment
+        </v-btn>
       </div>
       
       <div v-if="isEditing" class="d-flex gap-2 mt-2">
@@ -884,7 +919,7 @@
 import { ref, computed, onMounted, onUnmounted, onUpdated, watch } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import type { Message, Participant } from '@deprecated-claude/shared';
+import type { Attachment, Message, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { extractMath, restoreMath, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import '@/utils/dompurify-hooks'; // side-effect: hardens img tags via DOMPurify hook
@@ -916,8 +951,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   regenerate: [messageId: string, branchId: string];
-  edit: [messageId: string, branchId: string, content: string];
-  'edit-only': [messageId: string, branchId: string, content: string];  // Edit and branch without regeneration
+  edit: [messageId: string, branchId: string, content: string, attachments?: EditableAttachment[]];
+  'edit-only': [messageId: string, branchId: string, content: string, attachments?: EditableAttachment[]];  // Edit and branch without regeneration
   'switch-branch': [messageId: string, branchId: string];
   delete: [messageId: string, branchId: string];
   'delete-all-branches': [messageId: string];
@@ -938,6 +973,10 @@ const emit = defineEmits<{
 const isEditing = ref(false);
 const isPostHocEditing = ref(false); // True when editing for post-hoc operation (no regeneration)
 const editContent = ref('');
+type EditableAttachment = Pick<Attachment, 'fileName' | 'fileType' | 'content'> & Partial<Pick<Attachment, 'id' | 'fileSize' | 'mimeType' | 'encoding'>>;
+const editAttachments = ref<EditableAttachment[]>([]);
+const editAttachmentsDirty = ref(false);
+const editFileInput = ref<HTMLInputElement | null>(null);
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
 const isHovered = ref(false);
@@ -1032,6 +1071,14 @@ const branchIndex = computed(() => {
 const currentBranch = computed(() => {
   const branch = props.message.branches[branchIndex.value];
   return branch;
+});
+
+const canEditAttachments = computed(() => currentBranch.value?.role === 'user' && isEditing.value && !isPostHocEditing.value);
+const displayedAttachments = computed(() => {
+  if (canEditAttachments.value) {
+    return editAttachments.value;
+  }
+  return currentBranch.value?.attachments || [];
 });
 
 // Check if this message is a post-hoc operation
@@ -1621,10 +1668,160 @@ function escapeHtml(text: string): string {
   return div.innerHTML;
 }
 
+function cloneEditableAttachments(attachments: Attachment[] = []): EditableAttachment[] {
+  return attachments.map(att => ({
+    id: att.id,
+    fileName: att.fileName,
+    fileSize: att.fileSize,
+    fileType: att.fileType,
+    mimeType: att.mimeType,
+    content: att.content,
+    encoding: att.encoding
+  }));
+}
+
+function normalizedAttachmentList(attachments: EditableAttachment[]) {
+  return attachments.map(att => ({
+    id: att.id,
+    fileName: att.fileName,
+    fileSize: att.fileSize,
+    fileType: att.fileType,
+    mimeType: att.mimeType,
+    encoding: att.encoding,
+    content: att.content
+  }));
+}
+
+function attachmentsChanged(): boolean {
+  return JSON.stringify(normalizedAttachmentList(editAttachments.value)) !==
+    JSON.stringify(normalizedAttachmentList(cloneEditableAttachments(currentBranch.value.attachments || [])));
+}
+
+function removeEditAttachment(index: number) {
+  editAttachments.value.splice(index, 1);
+  editAttachmentsDirty.value = true;
+}
+
+const EDIT_ATTACHMENT_ACCEPT = '.txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp,.jpg,.jpeg,.png,.gif,.webp,.svg,.pdf,application/pdf,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.avi,.mkv,.webm';
+const EDIT_FILE_TYPES = {
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'],
+  pdf: ['pdf'],
+  audio: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'webm'],
+  video: ['mp4', 'mov', 'avi', 'mkv', 'webm'],
+};
+const EDIT_TEXT_EXTENSIONS = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'java', 'cpp', 'c', 'h', 'hpp'];
+const EDIT_MIME_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  pdf: 'application/pdf',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  flac: 'audio/flac',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  avi: 'video/x-msvideo',
+  mkv: 'video/x-matroska',
+  webm: 'video/webm',
+};
+
+function triggerEditAttachmentInput() {
+  editFileInput.value?.click();
+}
+
+function getEditFileCategory(extension: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' {
+  if (EDIT_FILE_TYPES.image.includes(extension)) return 'image';
+  if (EDIT_FILE_TYPES.pdf.includes(extension)) return 'pdf';
+  if (EDIT_FILE_TYPES.audio.includes(extension)) return 'audio';
+  if (EDIT_FILE_TYPES.video.includes(extension)) return 'video';
+  return 'text';
+}
+
+function isSupportedEditAttachment(file: File, extension: string): boolean {
+  const supportedExtensions = [
+    ...EDIT_FILE_TYPES.image,
+    ...EDIT_FILE_TYPES.pdf,
+    ...EDIT_FILE_TYPES.audio,
+    ...EDIT_FILE_TYPES.video,
+    ...EDIT_TEXT_EXTENSIONS,
+  ];
+  return supportedExtensions.includes(extension) ||
+    file.type.startsWith('image/') ||
+    file.type.startsWith('audio/') ||
+    file.type.startsWith('video/') ||
+    file.type === 'application/pdf';
+}
+
+function getEditMimeType(extension: string, file: File): string {
+  return file.type || EDIT_MIME_TYPES[extension] || 'application/octet-stream';
+}
+
+async function handleEditAttachmentSelect(event: Event) {
+  const input = event.target as HTMLInputElement;
+  if (!input.files) return;
+
+  for (const file of Array.from(input.files)) {
+    const extensionFromName = file.name.split('.').pop()?.toLowerCase() || '';
+    const extensionFromMime = file.type.split('/')[1]?.toLowerCase() || '';
+    const fileExtension = extensionFromName || extensionFromMime || 'txt';
+
+    if (!isSupportedEditAttachment(file, fileExtension)) {
+      console.log(`Unsupported edit attachment type: ${file.name}`);
+      continue;
+    }
+
+    const category = getEditFileCategory(fileExtension);
+    const mimeType = getEditMimeType(fileExtension, file);
+    const isBinary = category !== 'text' || file.type.startsWith('image/') || file.type.startsWith('audio/') || file.type.startsWith('video/') || file.type === 'application/pdf';
+    const content = isBinary ? await readEditFileAsBase64(file) : await readEditFileAsText(file);
+
+    editAttachments.value.push({
+      fileName: file.name || `attachment-${Date.now()}.${fileExtension}`,
+      fileType: fileExtension,
+      mimeType,
+      fileSize: file.size,
+      content,
+      encoding: isBinary ? 'base64' : 'text',
+    });
+    editAttachmentsDirty.value = true;
+  }
+
+  input.value = '';
+}
+
+function readEditFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result as string);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+function readEditFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      resolve(result.split(',')[1] || '');
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function startEdit() {
   isEditing.value = true;
   isPostHocEditing.value = false;
   editContent.value = currentBranch.value.content;
+  editAttachments.value = cloneEditableAttachments(currentBranch.value.attachments || []);
+  editAttachmentsDirty.value = false;
 }
 
 async function toggleBranchPrivacy() {
@@ -1648,31 +1845,39 @@ function startPostHocEdit() {
   isEditing.value = true;
   isPostHocEditing.value = true;
   editContent.value = currentBranch.value.content;
+  editAttachments.value = [];
+  editAttachmentsDirty.value = false;
 }
 
 function cancelEdit() {
   isEditing.value = false;
   isPostHocEditing.value = false;
   editContent.value = '';
+  editAttachments.value = [];
+  editAttachmentsDirty.value = false;
 }
 
 function saveEdit() {
-  if (editContent.value !== currentBranch.value.content) {
+  const contentChanged = editContent.value !== currentBranch.value.content;
+  const attachmentListChanged = !isPostHocEditing.value && (editAttachmentsDirty.value || attachmentsChanged());
+  if (contentChanged || attachmentListChanged) {
     if (isPostHocEditing.value) {
       // Create a post-hoc edit operation (no regeneration)
       emit('post-hoc-edit-content', props.message.id, currentBranch.value.id, editContent.value);
     } else {
       // Regular edit that triggers regeneration
-      emit('edit', props.message.id, currentBranch.value.id, editContent.value);
+      emit('edit', props.message.id, currentBranch.value.id, editContent.value, attachmentListChanged ? editAttachments.value : undefined);
     }
   }
   cancelEdit();
 }
 
 function saveEditOnly() {
-  if (editContent.value !== currentBranch.value.content) {
+  const contentChanged = editContent.value !== currentBranch.value.content;
+  const attachmentListChanged = !isPostHocEditing.value && (editAttachmentsDirty.value || attachmentsChanged());
+  if (contentChanged || attachmentListChanged) {
     // Edit and branch without triggering regeneration
-    emit('edit-only', props.message.id, currentBranch.value.id, editContent.value);
+    emit('edit-only', props.message.id, currentBranch.value.id, editContent.value, attachmentListChanged ? editAttachments.value : undefined);
   }
   cancelEdit();
 }
@@ -2197,6 +2402,18 @@ watch(() => currentBranch.value.id, async () => {
 .post-hoc-hidden .message-header,
 .post-hoc-hidden .message-meta {
   opacity: 0.6;
+}
+
+.attachment-image-wrapper {
+  position: relative;
+  display: inline-block;
+  max-width: 300px;
+}
+
+.attachment-remove-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
 }
 
 /* Messages affected by post-hoc edit operations */

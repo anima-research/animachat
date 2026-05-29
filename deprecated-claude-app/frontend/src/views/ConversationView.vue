@@ -1270,7 +1270,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
-import type { Conversation, Message, Participant, Model, Bookmark, Persona } from '@deprecated-claude/shared';
+import type { Conversation, Message, Participant, Model, Bookmark, Persona, WsAttachment } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema, getValidatedModelDefaults } from '@deprecated-claude/shared';
 import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
@@ -3430,7 +3430,7 @@ function dismissStuckDialog() {
   showStuckButton.value = false;
 }
 
-async function editMessage(messageId: string, branchId: string, content: string) {
+async function editMessage(messageId: string, branchId: string, content: string, attachments?: WsAttachment[]) {
   // Pass the currently selected responder for multi-participant mode
   let responderId: string | undefined;
   
@@ -3445,12 +3445,12 @@ async function editMessage(messageId: string, branchId: string, content: string)
     responderId = selectedResponder.value || undefined;
   }
   
-  await store.editMessage(messageId, branchId, content, responderId, false, samplingBranches.value);
+  await store.editMessage(messageId, branchId, content, responderId, false, samplingBranches.value, attachments);
 }
 
-async function editMessageOnly(messageId: string, branchId: string, content: string) {
+async function editMessageOnly(messageId: string, branchId: string, content: string, attachments?: WsAttachment[]) {
   // Edit and branch without triggering AI regeneration
-  await store.editMessage(messageId, branchId, content, undefined, true);
+  await store.editMessage(messageId, branchId, content, undefined, true, undefined, attachments);
 }
 
 function switchBranch(messageId: string, branchId: string) {
