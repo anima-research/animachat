@@ -1480,7 +1480,7 @@ export class InferenceService {
         if (participantName === '') {
           // Raw continuation - no prefix
           formattedContent = activeBranch.content;
-        } else if (role === 'assistant' && (provider === 'openai-compatible' || provider === 'anthropic' || provider === 'bedrock')) {
+        } else if (role === 'assistant' && (provider === 'openai-compatible' || provider === 'openrouter' || provider === 'anthropic' || provider === 'bedrock')) {
           // Assistant's own messages - no prefix (prevents the model from echoing its name,
           // which triggers stop sequences in messages mode)
           formattedContent = activeBranch.content;
