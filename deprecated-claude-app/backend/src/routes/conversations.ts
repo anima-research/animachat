@@ -6,6 +6,9 @@ import { compactConversation, getConversationFilePath, formatCompactionResult } 
 import { AuthRequest } from '../middleware/auth.js';
 import { roomManager } from '../websocket/room-manager.js';
 import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, ContentBlockSchema, Message } from '@deprecated-claude/shared';
+import { v4 as uuidv4 } from 'uuid';
+import { ContextManager } from '../services/context-manager.js';
+import { buildConversationHistory, filterHiddenFromAiMessages } from '../websocket/handler.js';
 
 /**
  * Prepare messages for client by:
@@ -698,6 +701,78 @@ export function conversationRouter(db: Database): Router {
       res.json({ success: true });
     } catch (error) {
       console.error('Mark branches read error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Preview the rolling context window for a branch — used by the UI to
+  // render the cutoff divider and the pre-send "context rolls this turn"
+  // warning. Stateless: instantiates a fresh ContextManager per request and
+  // discards it (small grace-period drift vs the live inference CM is an
+  // accepted v1 limitation; see ContextManager.previewWindow).
+  router.post('/:id/context-preview', async (req: AuthRequest, res) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      const conversation = await db.getConversation(req.params.id, req.userId);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const branchId: string | undefined = typeof req.body?.branchId === 'string' ? req.body.branchId : undefined;
+      const participantId: string | undefined = typeof req.body?.participantId === 'string' ? req.body.participantId : undefined;
+      const draftContent: string | undefined = typeof req.body?.draftContent === 'string' && req.body.draftContent.length > 0
+        ? req.body.draftContent
+        : undefined;
+
+      const allMessages = await db.getConversationMessages(req.params.id, conversation.userId, req.userId);
+      // Reuse the inference path's canonical history builder + hidden-message
+      // filter so the preview matches what actually gets sent to the model.
+      // buildConversationHistory rewrites each message's activeBranchId to the
+      // branch being traversed (critical for branchy convs; strategies count
+      // tokens via activeBranchId). filterHiddenFromAiMessages drops messages
+      // whose active branch is hidden from AI, matching inference behavior.
+      const history = filterHiddenFromAiMessages(
+        buildConversationHistory(allMessages, branchId)
+      );
+
+      const participant = participantId
+        ? await db.getParticipant(participantId, conversation.userId)
+        : null;
+
+      let prospectiveMessage: Message | undefined;
+      if (draftContent !== undefined) {
+        // Synthesize a stand-in user message so the strategy can measure
+        // its token cost. Real send will replace this with the actual one.
+        const branchId = uuidv4();
+        prospectiveMessage = {
+          id: uuidv4(),
+          conversationId: conversation.id,
+          activeBranchId: branchId,
+          order: history.length,
+          branches: [{
+            id: branchId,
+            content: draftContent,
+            role: 'user',
+            createdAt: new Date(),
+            parentBranchId: history.length > 0 ? history[history.length - 1].activeBranchId : 'root'
+          }]
+        } as Message;
+      }
+
+      const cm = new ContextManager({}, db);
+      const preview = cm.previewWindow(
+        conversation,
+        history,
+        participant || undefined,
+        undefined, // modelMaxContext — strategy uses its own config, model cap is for cache arithmetic
+        prospectiveMessage
+      );
+
+      res.json(preview);
+    } catch (error) {
+      console.error('Context preview error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

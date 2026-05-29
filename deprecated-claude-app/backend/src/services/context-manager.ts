@@ -312,6 +312,73 @@ export class ContextManager {
     }).filter(Boolean);
   }
   
+  /**
+   * Compute the rolling window for the current state of a branch — and, if
+   * given a prospective new message, the window *after* that message would be
+   * appended. Used by the frontend to render the rolling-window divider in
+   * the message list and the pre-send "context rolls this turn" warning.
+   *
+   * Intentionally read-ish: this instance's strategy state is still mutated
+   * (the strategy was designed to track grace periods etc. as it goes), so
+   * preview routes should construct a fresh ContextManager per request and
+   * discard it. This accepts a small grace-period drift vs the live inference
+   * ContextManager — acceptable for v1; lift state to durable storage if it
+   * matters later.
+   *
+   * Persona-mediated contexts bypass this path entirely (see
+   * persona-context-builder), so the preview is approximate for personas.
+   * TODO: surface a preview from persona-context-builder too.
+   */
+  previewWindow(
+    conversation: Conversation,
+    messages: Message[],
+    participant?: Participant,
+    modelMaxContext?: number,
+    prospectiveMessage?: Message
+  ): {
+    strategy: 'append' | 'rolling';
+    current: { firstInWindowMessageId: string | null; droppedFromHistory: number };
+    prospective?: { wouldRotate: boolean; droppedCount: number; droppedMessageIds: string[]; wouldTriggerCompaction: boolean };
+  } {
+    const contextManagement = participant?.contextManagement ||
+                             conversation.contextManagement ||
+                             DEFAULT_CONTEXT_MANAGEMENT;
+    const stateKey = participant ? `${conversation.id}:${participant.id}` : conversation.id;
+    const strategy = this.getOrCreateStrategy(contextManagement, stateKey);
+    const state = this.getOrCreateState(stateKey, contextManagement.strategy);
+
+    const baseWindow = strategy.prepareContext(messages, undefined, state.cacheMarker, modelMaxContext);
+    const baseIds = new Set(baseWindow.messages.map(m => m.id));
+    const firstInWindowMessageId = baseWindow.messages.length > 0 ? baseWindow.messages[0].id : null;
+    const droppedFromHistory = messages.length - baseWindow.messages.length;
+
+    let prospective: { wouldRotate: boolean; droppedCount: number; droppedMessageIds: string[]; wouldTriggerCompaction: boolean } | undefined;
+    if (prospectiveMessage) {
+      const projected = strategy.prepareContext(messages, prospectiveMessage, state.cacheMarker, modelMaxContext);
+      const projectedIds = new Set(projected.messages.map(m => m.id));
+      // Anything in the existing window that is NOT in the projected window
+      // is being rolled out by the prospective send.
+      const droppedMessageIds: string[] = [];
+      for (const id of baseIds) {
+        if (!projectedIds.has(id)) droppedMessageIds.push(id);
+      }
+      prospective = {
+        wouldRotate: droppedMessageIds.length > 0,
+        droppedCount: droppedMessageIds.length,
+        droppedMessageIds,
+        // Phase 2 hook: compaction would set this when the rolled-out chunk
+        // triggers a summary. For Phase 1 the rolling strategy just drops.
+        wouldTriggerCompaction: false
+      };
+    }
+
+    return {
+      strategy: contextManagement.strategy,
+      current: { firstInWindowMessageId, droppedFromHistory },
+      prospective
+    };
+  }
+
   // For testing and debugging
   exportState(): Record<string, any> {
     const result: Record<string, any> = {};
