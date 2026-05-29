@@ -266,9 +266,13 @@ export class InferenceService {
     // outputs the full file content (which starts with participant names that would
     // trigger stop sequences prematurely). Post-facto stop sequences handle turn-taking.
     let stopSequences: string[] | undefined;
+    const responderForStopSequences = responderId
+      ? participants.find(p => p.id === responderId && p.name !== '')
+      : undefined;
+    const responderStopSequence = responderForStopSequences ? `${responderForStopSequences.name}:` : undefined;
     if (actualFormat === 'prefill' || actualFormat === 'messages') {
       // Always include these common stop sequences
-      const baseStopSequences = ['User:', 'A:', "Claude:"];
+      const baseStopSequences = ['User:', 'A:', "Claude:"].filter(s => s !== responderStopSequence);
       // Add participant names as stop sequences (excluding empty names and the current responder)
       // The responder must be excluded because the model will prefix its response with its own name
       const participantStopSequences = participants
@@ -299,7 +303,7 @@ export class InferenceService {
     // Since this is applied in our code, not the API, we can check for ALL participants
     const needsPostFactoStopSequences = (actualFormat === 'prefill' || actualFormat === 'messages') && participants.length > 0;
     const postFactoStopSequences = needsPostFactoStopSequences ? (() => {
-      const baseStopSequences = ['User:', 'A:', "Claude:"];
+      const baseStopSequences = ['User:', 'A:', "Claude:"].filter(s => s !== responderStopSequence);
       const participantStopSequences = participants
         .filter(p => p.name !== '' && p.id !== responderId)
         .map(p => `${p.name}:`);
