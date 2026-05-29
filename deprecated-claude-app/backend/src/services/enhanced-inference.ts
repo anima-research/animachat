@@ -78,6 +78,7 @@ type CostBreakdown = {
 
 const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   // Claude 4.x models (2025) - by providerModelId
+  'claude-opus-4-8': 5.00,
   'claude-opus-4-7': 5.00,
   'claude-opus-4-6': 5.00,
   'claude-sonnet-4-6': 3.00,
@@ -98,6 +99,7 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-haiku-20240307': 0.25,
   
   // Shorthand model IDs (for backwards compatibility / fallback)
+  'claude-opus-4.8': 5.00,
   'claude-opus-4.7': 5.00,
   'claude-opus-4.6': 5.00,
   'claude-sonnet-4.6': 3.00,
@@ -171,6 +173,7 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
 
 const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   // Claude 4.x models (2025) - by providerModelId
+  'claude-opus-4-8': 25.00,
   'claude-opus-4-7': 25.00,
   'claude-opus-4-6': 25.00,
   'claude-sonnet-4-6': 15.00,
@@ -191,6 +194,7 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-3-haiku-20240307': 1.25,
   
   // Shorthand model IDs (for backwards compatibility / fallback)
+  'claude-opus-4.8': 25.00,
   'claude-opus-4.7': 25.00,
   'claude-opus-4.6': 25.00,
   'claude-sonnet-4.6': 15.00,
@@ -318,11 +322,53 @@ function hypotheticalNoCacheCost(
  * @param db Database instance for admin-configured pricing lookup
  * @returns { valid: true } if pricing is available, or { valid: false, error: string } if not
  */
+/**
+ * Look up admin-configured pricing from the loaded config (providers[].modelCosts).
+ *
+ * Shared source of truth for BOTH the pre-inference validation gate
+ * (validatePricingAvailable) and the per-token price getters
+ * (getInputPricePerToken / getOutputPricePerToken). Previously the validation
+ * gate called a `db.getAdminPricingConfig()` that was never implemented, so
+ * admin-config pricing was silently ignored at validation time and every model
+ * was forced to have an entry in the hardcoded table — even when config.json
+ * already priced it. This function closes that gap.
+ */
+export async function getConfigPricingFromLoader(
+  provider: string,
+  modelId: string,
+  providerModelId?: string
+): Promise<{ input: number; output: number } | null> {
+  try {
+    const configLoader = ConfigLoader.getInstance();
+    const config = await configLoader.loadConfig();
+    const profiles = config.providers[provider as keyof typeof config.providers];
+    if (!profiles || profiles.length === 0) return null;
+    for (const profile of profiles) {
+      if (profile.modelCosts) {
+        // Match by providerModelId first, then modelId.
+        const modelCost = profile.modelCosts.find(mc =>
+          mc.modelId === providerModelId || mc.modelId === modelId
+        );
+        if (modelCost) {
+          return {
+            input: modelCost.providerCost.inputTokensPerMillion,
+            output: modelCost.providerCost.outputTokensPerMillion
+          };
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    console.warn('[Pricing] Error loading config pricing:', error);
+    return null;
+  }
+}
+
 export async function validatePricingAvailable(
   model: Model,
   db?: { getAdminPricingConfig?: (provider: string, modelId: string, providerModelId?: string) => Promise<any> }
 ): Promise<{ valid: true } | { valid: false; error: string }> {
-  
+
   // 0. User-defined custom models bypass pricing validation
   // These are models the user created themselves (identified by UUID ID or customEndpoint)
   // The user accepts responsibility for costs when they set up their own API key/endpoint
@@ -332,8 +378,15 @@ export async function validatePricingAvailable(
     console.log(`[Pricing] Bypassing validation for user-defined model "${model.displayName}" (${model.id})`);
     return { valid: true };
   }
-  
-  // 1. Check admin-configured pricing
+
+  // 1. Check admin-configured pricing (config.json providers[].modelCosts).
+  //    This is the SAME source the cost calculation uses, so a model priced in
+  //    config.json validates here without also needing a hardcoded-table entry.
+  const adminConfigPricing = await getConfigPricingFromLoader(model.provider, model.id, model.providerModelId);
+  if (adminConfigPricing) {
+    return { valid: true };
+  }
+  // Legacy hook: honour an explicit db.getAdminPricingConfig if a caller provides one.
   if (db?.getAdminPricingConfig) {
     try {
       const configPricing = await db.getAdminPricingConfig(model.provider, model.id, model.providerModelId);
@@ -344,7 +397,7 @@ export async function validatePricingAvailable(
       // Admin config lookup failed, continue to other sources
     }
   }
-  
+
   // 2. For OpenRouter models, check the cached pricing
   if (model.provider === 'openrouter' && model.providerModelId) {
     let orPricing = getOpenRouterPricing(model.providerModelId);
@@ -922,36 +975,9 @@ export class EnhancedInferenceService {
    * Returns { input, output } in per-million rates, or null if not configured.
    */
   private async getConfigPricing(provider: string, modelId: string, providerModelId?: string): Promise<{ input: number; output: number } | null> {
-    try {
-      const configLoader = ConfigLoader.getInstance();
-      const config = await configLoader.loadConfig();
-      const profiles = config.providers[provider as keyof typeof config.providers];
-      
-      if (!profiles || profiles.length === 0) return null;
-      
-      // Search through all profiles for this provider
-      for (const profile of profiles) {
-        if (profile.modelCosts) {
-          // Try to find by providerModelId first, then modelId
-          const modelCost = profile.modelCosts.find(mc => 
-            mc.modelId === providerModelId || mc.modelId === modelId
-          );
-          
-          if (modelCost) {
-            console.log(`[Pricing] Using admin config pricing for ${modelId} (provider: ${provider})`);
-            return {
-              input: modelCost.providerCost.inputTokensPerMillion,
-              output: modelCost.providerCost.outputTokensPerMillion
-            };
-          }
-        }
-      }
-      
-      return null;
-    } catch (error) {
-      console.warn('[Pricing] Error loading config pricing:', error);
-      return null;
-    }
+    // Delegate to the shared module-level helper so the validation gate
+    // (validatePricingAvailable) and the cost calculation use one source of truth.
+    return getConfigPricingFromLoader(provider, modelId, providerModelId);
   }
 
   private async getInputPricePerToken(model: Model): Promise<number> {
