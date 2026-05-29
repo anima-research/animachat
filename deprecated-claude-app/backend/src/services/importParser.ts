@@ -220,6 +220,43 @@ export class ImportParser {
 
   private async parseChromeExtension(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
     const data = JSON.parse(content);
+
+    // ai-chat-exporter.net / "Claude Exporter" JSON shape:
+    // {
+    //   metadata: { title, dates, link, powered_by },
+    //   messages: [{ role: "human" | "assistant", time, say }]
+    // }
+    // This is distinct from the Claude Conversation Exporter extension's
+    // `chat_messages` shape below, but it is exposed to users under the same
+    // "Claude Exporter" naming, so support it in this importer.
+    if (data.metadata && Array.isArray(data.messages) && data.messages.some((msg: any) => typeof msg.say === 'string')) {
+      const messages: ParsedMessage[] = data.messages
+        .map((msg: any) => {
+          const textContent = typeof msg.say === 'string' ? msg.say : '';
+          if (!textContent.trim()) return null;
+
+          return {
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: textContent,
+            timestamp: msg.time ? new Date(msg.time) : undefined,
+            model: msg.model || data.metadata?.model
+          } satisfies ParsedMessage;
+        })
+        .filter((msg: ParsedMessage | null): msg is ParsedMessage => msg !== null);
+
+      return {
+        messages,
+        title: data.metadata.title || 'Imported Conversation',
+        metadata: {
+          source: 'ai-chat-exporter',
+          link: data.metadata.link,
+          powered_by: data.metadata.powered_by,
+          created_at: data.metadata.dates?.created,
+          updated_at: data.metadata.dates?.updated,
+          exported_at: data.metadata.dates?.exported
+        }
+      };
+    }
     
     // Extract basic conversation metadata
     const title = data.name || data.summary || 'Imported Conversation';
