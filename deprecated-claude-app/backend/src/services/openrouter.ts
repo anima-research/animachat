@@ -798,30 +798,16 @@ export class OpenRouterService {
             const isPdf = extension === 'pdf';
             
             if (isImage) {
-              // Add image - use Anthropic format for Claude, file format for others
+              // OpenRouter expects images in the OpenAI-style image_url shape,
+              // even when routing to Anthropic-backed Claude models.
               const mediaType = this.getMediaType(attachment.fileName, (attachment as any).mimeType);
-              
-              if (provider === 'anthropic') {
-                // Anthropic format for Claude models
-                contentBlocks.push({
-                  type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: mediaType,
-                    data: attachment.content
-                  }
-                } as any);
-              } else {
-                // OpenRouter file format for other models (OpenAI, Gemini, etc.)
-                const fileData = `data:${mediaType};base64,${attachment.content}`;
-                contentBlocks.push({
-                  type: 'file',
-                  file: {
-                    filename: attachment.fileName,
-                    file_data: fileData,
-                  }
-                } as any);
-              }
+              const imageData = `data:${mediaType};base64,${attachment.content}`;
+              contentBlocks.push({
+                type: 'image_url',
+                image_url: {
+                  url: imageData
+                }
+              });
               console.log(`[OpenRouter] Added image attachment: ${attachment.fileName} (${mediaType})`);
             } else if (isPdf) {
               // OpenRouter PDF processing - uses file type with data URI format
@@ -874,9 +860,12 @@ export class OpenRouterService {
             }
           }
           
-          // Add cache control to the last content block if present
+          // For Anthropic-backed routes, keep the cache marker on a text block.
+          // OpenRouter documents images as image_url blocks, but may not forward
+          // cache_control from image_url to Anthropic's native cache controls.
           if (cacheControl && provider === 'anthropic') {
-            contentBlocks[contentBlocks.length - 1].cache_control = cacheControl;
+            const textBlock = [...contentBlocks].reverse().find(block => block.type === 'text');
+            (textBlock || contentBlocks[contentBlocks.length - 1]).cache_control = cacheControl;
             console.log(`[OpenRouter] 🎯 Cache control marker added to message with attachments`);
           }
           
