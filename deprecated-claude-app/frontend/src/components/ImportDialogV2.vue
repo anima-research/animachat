@@ -444,7 +444,7 @@
               <!-- Only show model selector for standard (1-on-1) format -->
               <!-- Group chats get models from participant mappings -->
               <v-select
-                v-if="conversationFormat === 'standard'"
+                v-if="conversationFormat === 'standard' || selectedFormat === 'chapterx_prompt'"
                 v-model="selectedModel"
                 :items="activeModels"
                 item-title="displayName"
@@ -456,13 +456,78 @@
               />
 
               <v-alert
-                v-if="conversationFormat === 'prefill' && hasMultipleParticipants"
+                v-if="conversationFormat === 'prefill' && hasMultipleParticipants && selectedFormat !== 'chapterx_prompt'"
                 type="info"
                 density="compact"
                 class="mt-4"
               >
                 Group chat detected. Participant models will be preserved from the import.
               </v-alert>
+
+              <!-- ChapterX-specific: model resolution + system prompt toggle + rolling context info -->
+              <template v-if="selectedFormat === 'chapterx_prompt' && preview?.metadata">
+                <v-alert
+                  :type="preview.metadata.model?.resolved?.matched ? 'success' : 'warning'"
+                  density="compact"
+                  class="mt-4"
+                  variant="tonal"
+                >
+                  <div v-if="preview.metadata.model?.resolved?.matched">
+                    Model resolved: <strong>{{ preview.metadata.model.resolved.displayName }}</strong>
+                    <span class="text-caption d-block mt-1">
+                      Source identifier: <code>{{ preview.metadata.model.raw }}</code>
+                    </span>
+                  </div>
+                  <div v-else>
+                    Model <code>{{ preview.metadata.model?.raw || 'unknown' }}</code> not in registry.
+                    <span class="text-caption d-block mt-1">
+                      Pick a substitute from the dropdown above. You can change it later on the assistant participant.
+                    </span>
+                  </div>
+                </v-alert>
+
+                <v-alert
+                  type="info"
+                  density="compact"
+                  class="mt-4"
+                  variant="tonal"
+                >
+                  Rolling context will be set to
+                  <strong>{{ formatTokenCount(preview.metadata.rollingDefaults?.maxTokens) }}</strong>
+                  + <strong>{{ formatTokenCount(preview.metadata.rollingDefaults?.maxGraceTokens) }}</strong> grace
+                  <span class="text-caption d-block mt-1">
+                    Estimated conversation size: {{ formatTokenCount(preview.metadata.rollingDefaults?.estimatedConversationTokens) }}.
+                    Editable in conversation settings post-import.
+                  </span>
+                </v-alert>
+
+                <v-checkbox
+                  v-model="importSystemPrompt"
+                  :disabled="!preview.metadata.systemPrompt"
+                  label="Import system prompt onto assistant participant"
+                  density="compact"
+                  hide-details
+                  class="mt-2"
+                />
+                <div v-if="preview.metadata.systemPrompt" class="text-caption text-medium-emphasis ml-10">
+                  {{ preview.metadata.systemPrompt.length }} chars. Includes chapterx framing
+                  (Discord connection, rolling context). Untoggle to start fresh.
+                </div>
+                <div v-else class="text-caption text-medium-emphasis ml-10">
+                  No system prompt found in source.
+                </div>
+
+                <v-alert
+                  v-for="(warning, idx) in preview.metadata.warnings || []"
+                  :key="idx"
+                  type="warning"
+                  density="compact"
+                  variant="tonal"
+                  class="mt-3"
+                >
+                  {{ warning }}
+                </v-alert>
+              </template>
             </v-card-text>
 
             <v-card-actions>
@@ -481,7 +546,7 @@
               </v-btn>
               <v-btn
                 :loading="loading"
-                :disabled="conversationFormat === 'standard' && !selectedModel"
+                :disabled="(conversationFormat === 'standard' || selectedFormat === 'chapterx_prompt') && !selectedModel"
                 color="primary"
                 variant="elevated"
                 @click="executeImport"
@@ -581,6 +646,19 @@ const archiveUploadPct = ref(0);
 // Step 3: Configuration
 const conversationTitle = ref('');
 const conversationFormat = ref<'standard' | 'prefill'>('standard');
+// ChapterX-specific: whether to import the source system prompt onto the
+// assistant participant. Toggleable in step 2. Default true — most users want
+// the imported conversation ready to continue with the same identity framing.
+const importSystemPrompt = ref(true);
+
+// Small helper for token counts in the chapterx info alerts.
+// Renders e.g. 70000 as "70k", 1500 as "1.5k", undefined as "—".
+function formatTokenCount(n: number | undefined | null): string {
+  if (n == null || isNaN(n)) return '—';
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return (k >= 10 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, '')) + 'k';
+}
 const selectedModel = ref('');
 const archiveModel = ref('');
 const archiveContentMode = ref<ClaudeArchiveContentMode>('rendered');
@@ -641,6 +719,11 @@ const formatOptions = [
     value: 'colon_double',
     label: 'Colon Format (Double Line)',
     description: 'Name: message\\n\\nName: message'
+  },
+  {
+    value: 'chapterx_prompt',
+    label: 'ChapterX Prompt',
+    description: 'Text dump from chapterx\'s Discord prompt command (.txt). Preserves system prompt, model identity, and rolling-context settings.'
   }
 ];
 
@@ -654,7 +737,8 @@ const formatLabels: Record<string, string> = {
   cursor_json: 'Cursor (JSON)',
   openai: 'OpenAI',
   colon_single: 'text',
-  colon_double: 'text'
+  colon_double: 'text',
+  chapterx_prompt: 'ChapterX prompt'
 };
 
 const conversationFormatOptions = [
@@ -816,6 +900,18 @@ async function previewImport() {
           selectedModel.value = matchingModel.id;
         }
       }
+    } else if (selectedFormat.value === 'chapterx_prompt') {
+      // ChapterX metadata.model is structured: { raw, resolved? }
+      // resolved.matched signals whether the backend found a registry hit.
+      // On match: pre-select it. On miss: leave selectedModel empty so the
+      // user has to pick consciously (Import button is disabled until then).
+      // Defensive: backend also returns 400 if no model is sent on a miss.
+      const cxModel = preview.value.metadata?.model;
+      if (cxModel?.resolved?.matched && cxModel.resolved.id) {
+        selectedModel.value = cxModel.resolved.id;
+      } else {
+        selectedModel.value = '';
+      }
     } else {
       // Try to match the model from the import metadata for other formats
       const importedModel = preview.value.metadata?.model;
@@ -912,8 +1008,13 @@ async function executeImport() {
       allowedParticipants, // Pass to server for re-parsing
       conversationFormat: conversationFormat.value,
       title: conversationTitle.value,
-      // Only include model for standard format - group chats derive from participants
-      ...(conversationFormat.value === 'standard' && selectedModel.value && { model: selectedModel.value })
+      // Include model for standard format (group chats normally derive from
+      // participants). chapterx_prompt is an exception: it has a single
+      // canonical assistant model that the dropdown lets the user override.
+      ...((conversationFormat.value === 'standard' || selectedFormat.value === 'chapterx_prompt')
+        && selectedModel.value && { model: selectedModel.value }),
+      // ChapterX-specific: respect the system-prompt-import toggle.
+      ...(selectedFormat.value === 'chapterx_prompt' && { importSystemPrompt: importSystemPrompt.value })
     });
     
     // Reload conversations to include the new one
@@ -1057,6 +1158,7 @@ function resetState() {
   conversationTitle.value = '';
   conversationFormat.value = 'standard';
   selectedModel.value = '';
+  importSystemPrompt.value = true;
   archiveModel.value = '';
   archiveContentMode.value = 'rendered';
   archiveIncludeEmpty.value = false;

@@ -5,8 +5,14 @@ import {
   RawMessageSchema 
 } from '@deprecated-claude/shared';
 
-// Maximum number of automatically detected participants to limit false positives
-const MAX_AUTO_DETECTED_PARTICIPANTS = 15;
+// Maximum number of automatically detected participants. Originally 15 to
+// guard against false positives in noisy text formats (cursor markdown,
+// colon-delimited dumps). Raised to 100 for chapterx_prompt and other
+// structured-marker formats where detection is reliable and large Discord
+// rooms routinely exceed 15 distinct speakers. The cap still exists as a
+// safety net against pathological inputs. Antra follow-up: confirm 100 is
+// the right ceiling, or whether the cap should be per-format.
+const MAX_AUTO_DETECTED_PARTICIPANTS = 100;
 
 export interface ParseOptions {
   // If provided, only these names will be treated as message headers
@@ -47,6 +53,9 @@ export class ImportParser {
         break;
       case 'colon_double':
         ({ messages, title, metadata } = await this.parseColonFormat(content, '\n\n', options?.allowedParticipants));
+        break;
+      case 'chapterx_prompt':
+        ({ messages, title, metadata } = await this.parseChapterXPrompt(content));
         break;
       default:
         throw new Error(`Unsupported format: ${format}`);
@@ -1040,5 +1049,232 @@ export class ImportParser {
     
     // Return messages in sorted order
     return sortedIndices.map(i => messages[i]);
+  }
+
+  /**
+   * Parse a ChapterX prompt-dump TXT export.
+   *
+   * Format spec (observed from chapterx's user-accessible Discord prompt-dump
+   * command, rendered via @animalabs/membrane):
+   *
+   *   # Prompt — <modelId>
+   *   # temperature: <n>
+   *   # max_tokens: <n>
+   *   <blank line>
+   *   === SYSTEM ===
+   *   <multi-line system prompt>
+   *   <blank line>
+   *   === CONVERSATION ===
+   *   <blank line>
+   *   [user]                      <- block-start marker, role=user
+   *   SkyeShark (Utah Teapot): <message content possibly spanning multiple lines>
+   *   <blank line>
+   *   --- user ---                <- continuation marker, role=user
+   *   Opus 4.7: <message content>
+   *   <blank line>
+   *   [assistant]                 <- block-start marker, role=assistant
+   *   <message content, no speaker prefix>
+   *
+   * Both `[role]` and `--- role ---` denote a new message of `role`. Membrane
+   * uses the bracket form for first-in-block and the dash form for subsequent
+   * same-role messages from different speakers; for Arc, both yield a fresh
+   * ParsedMessage with that role.
+   *
+   * Speaker name policy: verbatim. We do not split "SkyeShark (Utah Teapot)"
+   * into username/displayName because chapterx's <@mention> syntax uses the
+   * full display string; preserving it as-is keeps mention cross-references
+   * intact in message content.
+   *
+   * Role policy: trust the marker. Models that appear as user-role (e.g.
+   * `[user] Opus 4.7: ...`) are imported as user-role participants, because
+   * that is how the source-of-truth assistant saw them at generation time.
+   *
+   * Decisions documented in PR description.
+   */
+  private async parseChapterXPrompt(content: string): Promise<{ messages: ParsedMessage[], title?: string, metadata?: any }> {
+    // 1. Extract header lines (model / temperature / max_tokens)
+    const headerModelMatch = content.match(/^#\s*Prompt\s*[—-]\s*(.+?)\s*$/m);
+    const headerTempMatch = content.match(/^#\s*temperature:\s*([\d.]+)\s*$/m);
+    const headerMaxTokensMatch = content.match(/^#\s*max_tokens:\s*(\d+)\s*$/m);
+
+    const modelRaw = headerModelMatch ? headerModelMatch[1].trim() : undefined;
+    const temperature = headerTempMatch ? parseFloat(headerTempMatch[1]) : undefined;
+    const maxTokensHeader = headerMaxTokensMatch ? parseInt(headerMaxTokensMatch[1], 10) : undefined;
+
+    // 2. Extract system prompt and conversation body
+    let systemPrompt = '';
+    let conversation = content;
+    const systemRegex = /===\s*SYSTEM\s*===\s*\n([\s\S]*?)\n\s*===\s*CONVERSATION\s*===/i;
+    const systemMatch = content.match(systemRegex);
+    if (systemMatch) {
+      systemPrompt = systemMatch[1].trim();
+      conversation = content.slice(systemMatch.index! + systemMatch[0].length).trim();
+    } else {
+      const convoOnly = content.match(/===\s*CONVERSATION\s*===/i);
+      if (convoOnly) {
+        conversation = content.slice(convoOnly.index! + convoOnly[0].length).trim();
+      } else {
+        throw new Error('ChapterX prompt: missing === CONVERSATION === marker');
+      }
+    }
+
+    // 3. Walk the conversation, splitting on role markers.
+    //
+    // A "marker line" is one of:
+    //   [user]       [assistant]
+    //   --- user --- --- assistant ---
+    // Each marker starts a new ParsedMessage of that role. Content lines that
+    // follow accumulate into the current message until the next marker or EOF.
+    const MARKER_RE = /^\s*(?:\[(user|assistant)\]|---\s*(user|assistant)\s*---)\s*$/i;
+
+    type Block = { role: 'user' | 'assistant'; lines: string[] };
+    const blocks: Block[] = [];
+    let current: Block | null = null;
+
+    for (const line of conversation.split('\n')) {
+      const m = line.match(MARKER_RE);
+      if (m) {
+        if (current) blocks.push(current);
+        const role = (m[1] || m[2]).toLowerCase() as 'user' | 'assistant';
+        current = { role, lines: [] };
+      } else if (current) {
+        current.lines.push(line);
+      }
+      // Lines before the first marker (shouldn't happen after our slicing,
+      // but be defensive) are dropped.
+    }
+    if (current) blocks.push(current);
+
+    // 4. Convert blocks into ParsedMessages.
+    //
+    // For user blocks: the first non-empty line is `SpeakerName: content`.
+    // For assistant blocks: no speaker prefix; the whole block is content,
+    // and we infer the assistant participant name from the model header (or
+    // fall back to "Assistant").
+    const assistantName = this.inferChapterXAssistantName(modelRaw);
+    const messages: ParsedMessage[] = [];
+
+    for (const block of blocks) {
+      const text = block.lines.join('\n').trim();
+      if (!text) continue;
+
+      if (block.role === 'assistant') {
+        messages.push({
+          role: 'assistant',
+          content: text,
+          participantName: assistantName,
+        });
+      } else {
+        const { name, body } = this.parseChapterXUserBlock(text);
+        if (!body) continue;
+        messages.push({
+          role: 'user',
+          content: body,
+          participantName: name,
+        });
+      }
+    }
+
+    // 5. Estimate rolling-context defaults from total content size.
+    //
+    // Arc's existing token-estimation heuristic is `chars / 4`. We round
+    // maxTokens down to the nearest 10k (floor at 20k) so future turns are
+    // poised to roll at roughly the conversation's current size, mirroring
+    // chapterx's rolling-context behavior. Grace is a flat 10k.
+    const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0)
+      + systemPrompt.length;
+    const estimatedTokens = Math.ceil(totalChars / 4);
+    const rollingMaxTokens = Math.max(20_000, Math.floor(estimatedTokens / 10_000) * 10_000);
+    const rollingGraceTokens = 10_000;
+
+    const warnings: string[] = [];
+    // The TXT format references attachments by URL only; base64 image data is
+    // stripped by the chapterx render path. Flag this so users know the import
+    // is lossy for media. (Detection is heuristic: if message bodies reference
+    // URLs that look like attachment CDNs, mention them.)
+    const cdnHits = messages.filter(m => /https?:\/\/[^\s]+(cdn\.discordapp|attachments|media\.discordapp)/i.test(m.content)).length;
+    if (cdnHits > 0) {
+      warnings.push(`${cdnHits} message(s) reference Discord attachments by URL; base64 image data is not preserved in this format.`);
+    }
+
+    return {
+      messages,
+      title: modelRaw ? `Discord Transcript — ${modelRaw}` : 'Discord Transcript',
+      metadata: {
+        source: 'chapterx_prompt',
+        systemPrompt,
+        // The cosmetic name used for the assistant participant. Persisted in
+        // metadata so the import route can target the source-side assistant
+        // specifically (system prompt + sampling params should apply only to
+        // it, not to other assistant participants the user may have created
+        // via remapping or that exist as Arc defaults).
+        assistantName,
+        model: { raw: modelRaw },
+        params: {
+          temperature,
+          maxTokens: maxTokensHeader,
+        },
+        rollingDefaults: {
+          maxTokens: rollingMaxTokens,
+          maxGraceTokens: rollingGraceTokens,
+          estimatedConversationTokens: estimatedTokens,
+        },
+        warnings,
+      }
+    };
+  }
+
+  /**
+   * Parse a single user-block body of the form `Speaker Name: message text`.
+   * Multi-line messages: only the first non-empty line carries the prefix; the
+   * remainder is preserved verbatim. If no `Name:` prefix is found (unusual
+   * but possible), we attribute to a generic "User" participant and keep the
+   * full body as content.
+   */
+  private parseChapterXUserBlock(text: string): { name: string; body: string } {
+    const lines = text.split('\n');
+    const firstNonEmptyIdx = lines.findIndex(l => l.trim().length > 0);
+    if (firstNonEmptyIdx === -1) return { name: 'User', body: '' };
+
+    const firstLine = lines[firstNonEmptyIdx];
+    // Speaker prefix: up to ~80 chars, no newlines, followed by ": ".
+    // We accept paren-wrapped display names (e.g. "SkyeShark (Utah Teapot):").
+    const prefixMatch = firstLine.match(/^([^:\n]{1,80}):\s*(.*)$/);
+    if (!prefixMatch) {
+      return { name: 'User', body: text };
+    }
+
+    const name = prefixMatch[1].trim();
+    const firstLineRest = prefixMatch[2];
+    const rest = lines.slice(firstNonEmptyIdx + 1);
+    const bodyLines = firstLineRest ? [firstLineRest, ...rest] : rest;
+    return { name, body: bodyLines.join('\n').trim() };
+  }
+
+  /**
+   * Infer a human-readable assistant participant name from the model header.
+   * This is purely cosmetic (used as participantName); the actual Arc model
+   * binding is resolved separately at import time against Arc's model registry.
+   * Examples:
+   *   "claude-opus-4-8" -> "Opus 4.8"
+   *   "claude-sonnet-4-5" -> "Sonnet 4.5"
+   *   "gpt-5" -> "GPT 5"
+   *   unknown -> "Assistant"
+   */
+  private inferChapterXAssistantName(modelRaw: string | undefined): string {
+    if (!modelRaw) return 'Assistant';
+    const opus = modelRaw.match(/claude[-_ ]?opus[-_ ]?(\d+)[-_ ]?(\d+)/i);
+    if (opus) return `Opus ${opus[1]}.${opus[2]}`;
+    const sonnet = modelRaw.match(/claude[-_ ]?sonnet[-_ ]?(\d+)[-_ ]?(\d+)/i);
+    if (sonnet) return `Sonnet ${sonnet[1]}.${sonnet[2]}`;
+    const haiku = modelRaw.match(/claude[-_ ]?haiku[-_ ]?(\d+)[-_ ]?(\d+)/i);
+    if (haiku) return `Haiku ${haiku[1]}.${haiku[2]}`;
+    const gpt = modelRaw.match(/^gpt[-_ ]?(\d+(?:[.-]\d+)?)/i);
+    if (gpt) return `GPT ${gpt[1].replace('-', '.')}`;
+    // Fallback: humanize the raw identifier
+    return modelRaw
+      .replace(/[-_]/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase())
+      .trim() || 'Assistant';
   }
 }

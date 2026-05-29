@@ -54,7 +54,20 @@ export const ImportFormatSchema = z.enum([
   'cursor',
   'cursor_json',
   'colon_single',
-  'colon_double'
+  'colon_double',
+  // ChapterX prompt export — text format produced by chapterx's user-accessible
+  // prompt-dump Discord command (rendered via @animalabs/membrane). Format:
+  //   # Prompt — <modelId>
+  //   # temperature: <n>
+  //   # max_tokens: <n>
+  //   === SYSTEM ===
+  //   <system prompt text>
+  //   === CONVERSATION ===
+  //   [user] | [assistant] | --- user --- | --- assistant ---
+  //   <SpeakerName: content> (user blocks) or <content> (assistant blocks)
+  // Speaker names are preserved verbatim (e.g. "SkyeShark (Utah Teapot)").
+  // Mentions like <@Opus 4.7> are name-based and preserved as raw text.
+  'chapterx_prompt'
 ]);
 
 export type ImportFormat = z.infer<typeof ImportFormatSchema>;
@@ -91,7 +104,11 @@ export const ImportRequestSchema = z.object({
   participantMappings: z.array(ParticipantMappingSchema).optional(),
   conversationFormat: z.enum(['standard', 'prefill']),
   title: z.string().optional(),
-  model: z.string().optional() // Optional for group chats - derived from first assistant participant
+  model: z.string().optional(), // Optional for group chats - derived from first assistant participant
+  // ChapterX-specific: import the source system prompt onto the assistant
+  // participant. Defaults to true server-side. UI toggle exposes this so users
+  // can opt out and start with Arc defaults.
+  importSystemPrompt: z.boolean().optional()
 });
 
 export type ImportRequest = z.infer<typeof ImportRequestSchema>;
