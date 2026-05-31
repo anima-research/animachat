@@ -2087,7 +2087,7 @@ export class Database {
     }
     
     const user = await this.getUserById(userId);
-    if (user) {
+    if (user && apiKey.provider != 'stripe') {
       // Create new user object with updated apiKeys
       const updatedUser = {
         ...user,

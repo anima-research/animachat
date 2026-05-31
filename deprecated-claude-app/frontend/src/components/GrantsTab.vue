@@ -24,6 +24,8 @@
         <p v-else class="text-grey text-body-2 mb-0">No grants recorded yet.</p>
       </section>
 
+      <BuyCreditsSection @refresh="emit('refresh')" />
+
       <section>
         <h4 class="text-h6 mb-3">Capabilities</h4>
         <div v-if="capabilityBadges.length" class="d-flex flex-wrap" style="gap: 8px;">
@@ -81,6 +83,7 @@
 import { computed, ref } from 'vue';
 import { GrantCapability, UserGrantSummary } from '@deprecated-claude/shared';
 import GrantActions from './GrantActions.vue';
+import BuyCreditsSection from './BuyCreditsSection.vue';
 import { api } from '@/services/api.js';
 
 const props = defineProps<{ summary: UserGrantSummary | null; loading: boolean; error: string | null }>();
