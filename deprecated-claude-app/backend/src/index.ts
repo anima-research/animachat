@@ -1,3 +1,4 @@
+import 'dotenv/config'; // MUST be first: loads .env before any import (e.g. auth.ts) reads process.env at module top-level
 import express from 'express';
 import compression from 'compression';
 import { clearOpenRouterLog } from './utils/openrouterLogger.js';
