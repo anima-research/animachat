@@ -74,17 +74,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { api } from '@/services/api';
+import type { BillingConfig } from '@deprecated-claude/shared';
 
 const emit = defineEmits<{ refresh: [] }>();
-
-interface BillingConfig {
-  enabled: boolean;
-  usdPerCredit: number;
-  creditMarkup: number;
-  minCredits: number;
-  maxCredits: number;
-  presetsCredits?: number[];
-}
 
 const config = ref<BillingConfig | null>(null);
 const credits = ref<number | null>(null);

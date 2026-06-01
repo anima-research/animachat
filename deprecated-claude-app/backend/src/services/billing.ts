@@ -1,9 +1,21 @@
 import { Stripe } from 'stripe';
 import { v4 as uuidv4 } from 'uuid';
 import { Database } from '../database/index.js';
-import type { StripeCredentials } from '@deprecated-claude/shared';
 
 type CheckoutSession = Stripe.Checkout.Session;
+
+/**
+ * A webhook event that verified fine but cannot be processed (e.g. malformed
+ * metadata, amount mismatch). These are *permanent* failures: retrying won't
+ * help, so the route should ack (2xx) to stop Stripe re-delivering, rather than
+ * returning an error that triggers retries for days.
+ */
+export class UnprocessableWebhookError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnprocessableWebhookError';
+  }
+}
 
 /**
  * The peg between the generic `credit` currency and US dollars.
@@ -41,9 +53,15 @@ function centsPerCredit(): number {
   return Math.round(USD_PER_CREDIT * getCreditMarkup() * 100);
 }
 
-/** True when Stripe is configured. Lets the app boot (and the UI hide) without keys. */
+/**
+ * True when Stripe is fully configured. Requires BOTH the secret key (for
+ * creating checkout sessions) and the webhook secret (for verifying the payment
+ * confirmation that mints credits). Requiring both means we never enter a state
+ * where a user can pay but the webhook silently fails to credit them. Lets the
+ * app boot (and the UI hide) when billing isn't set up.
+ */
 export function isBillingEnabled(): boolean {
-  return !!process.env.STRIPE_SECRET_KEY;
+  return !!process.env.STRIPE_SECRET_KEY && !!process.env.STRIPE_WEBHOOK_SECRET;
 }
 
 /** Guard rails on a single purchase. Whole credits only — Stripe quantity is an integer. */
@@ -80,9 +98,9 @@ export class BillingService {
   private db: Database;
   private webhookSecret?: string;
 
-  constructor(db: Database, credentials?: StripeCredentials) {
+  constructor(db: Database) {
     this.db = db;
-    this.stripeClient = new Stripe(credentials?.apiKey || process.env.STRIPE_SECRET_KEY!, {
+    this.stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!, {
       apiVersion: '2026-05-27.dahlia',
     });
     this.webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -169,8 +187,9 @@ export class BillingService {
   }
 
   /**
-   * Mint purchased credits for a confirmed checkout session. Idempotent: keyed on
-   * the session id via the grant `causeId`, so Stripe webhook retries (and the
+   * Mint purchased credits for a confirmed checkout session. Idempotent: minting
+   * is keyed on the session id via the grant `causeId` inside
+   * {@link Database.recordGrantInfo}, so Stripe webhook retries (and the
    * completed/async_payment_succeeded overlap) credit the user exactly once.
    *
    * Returns the number of credits minted (0 if already fulfilled or not payable).
@@ -185,19 +204,27 @@ export class BillingService {
     const currency = session.metadata?.currency || PURCHASE_CURRENCY;
 
     if (!userId || !Number.isFinite(credits) || credits <= 0) {
-      throw new Error(`checkout session ${session.id} is missing valid userId/credits metadata`);
+      // Permanent failure (bad/missing metadata) — surface as unprocessable so
+      // the webhook acks rather than asking Stripe to retry forever.
+      throw new UnprocessableWebhookError(
+        `checkout session ${session.id} is missing valid userId/credits metadata`,
+      );
     }
 
-    // Idempotency guard: bail if we've already minted for this session.
-    const summary = await this.db.getUserGrantSummary(userId);
-    const alreadyFulfilled = summary.grantInfos.some(
-      (grant) => grant.type === 'mint' && grant.causeId === session.id,
-    );
-    if (alreadyFulfilled) {
-      return 0;
+    // Reconcile the credits we're about to mint against what was actually paid.
+    // metadata.credits is what we stamped at session creation; amount_total is
+    // what Stripe charged. They must match credits × the per-credit price, or
+    // pricing/metadata has drifted and we should not mint a wrong amount.
+    const expectedTotal = credits * centsPerCredit();
+    if (typeof session.amount_total === 'number' && session.amount_total !== expectedTotal) {
+      throw new UnprocessableWebhookError(
+        `checkout session ${session.id} amount_total ${session.amount_total} != expected ${expectedTotal} for ${credits} credits`,
+      );
     }
 
-    await this.db.recordGrantInfo({
+    // recordGrantInfo enforces mint idempotency on causeId atomically, so a
+    // replayed/duplicate webhook returns false here and credits exactly once.
+    const minted = await this.db.recordGrantInfo({
       id: uuidv4(),
       time: new Date().toISOString(),
       type: 'mint',
@@ -208,6 +235,6 @@ export class BillingService {
       causeId: session.id,
     });
 
-    return credits;
+    return minted ? credits : 0;
   }
 }

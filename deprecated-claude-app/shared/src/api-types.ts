@@ -32,10 +32,6 @@ export const OpenAICompatibleCredentialsSchema = z.object({
   modelPrefix: z.string().optional() // Some providers prefix their models
 });
 
-export const StripeCredentialsSchema = z.object({
-  apiKey: z.string()
-});
-
 // Combined API key schema with provider-specific credentials
 export const ApiKeySchema = z.discriminatedUnion('provider', [
   BaseApiKeySchema.extend({
@@ -53,10 +49,6 @@ export const ApiKeySchema = z.discriminatedUnion('provider', [
   BaseApiKeySchema.extend({
     provider: z.literal('openai-compatible'),
     credentials: OpenAICompatibleCredentialsSchema
-  }),
-  BaseApiKeySchema.extend({
-    provider: z.literal('stripe'),
-    credentials: StripeCredentialsSchema
   })
 ]);
 
@@ -65,7 +57,6 @@ export type AnthropicCredentials = z.infer<typeof AnthropicCredentialsSchema>;
 export type BedrockCredentials = z.infer<typeof BedrockCredentialsSchema>;
 export type OpenRouterCredentials = z.infer<typeof OpenRouterCredentialsSchema>;
 export type OpenAICompatibleCredentials = z.infer<typeof OpenAICompatibleCredentialsSchema>;
-export type StripeCredentials = z.infer<typeof StripeCredentialsSchema>;
 
 // API key creation/update schemas
 export const CreateApiKeySchema = z.discriminatedUnion('provider', [
@@ -88,15 +79,27 @@ export const CreateApiKeySchema = z.discriminatedUnion('provider', [
     name: z.string(),
     provider: z.literal('openai-compatible'),
     credentials: OpenAICompatibleCredentialsSchema
-  }),
-  z.object({
-    name: z.string(),
-    provider: z.literal('stripe'),
-    credentials: StripeCredentialsSchema
   })
 ]);
 
 export type CreateApiKey = z.infer<typeof CreateApiKeySchema>;
+
+// Non-secret billing config returned by GET /billing/config and consumed by the
+// Buy Credits UI. Shared so the frontend and backend can't drift on field names.
+export const BillingConfigSchema = z.object({
+  /** Whether Stripe is fully configured; the UI hides itself when false. */
+  enabled: z.boolean(),
+  /** The credit↔USD peg (burn-side value of one credit). */
+  usdPerCredit: z.number(),
+  /** Purchase-side premium over the peg: price per credit = usdPerCredit × markup. */
+  creditMarkup: z.number(),
+  minCredits: z.number(),
+  maxCredits: z.number(),
+  /** Suggested quick-pick amounts (whole credits). */
+  presetsCredits: z.array(z.number()).optional()
+});
+
+export type BillingConfig = z.infer<typeof BillingConfigSchema>;
 
 // Provider configuration (for system-level providers)
 export const ProviderConfigSchema = z.object({

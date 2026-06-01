@@ -5,12 +5,14 @@ import { Database } from '../database/index.js';
 import { AuthRequest } from '../middleware/auth.js';
 import {
   BillingService,
+  UnprocessableWebhookError,
   USD_PER_CREDIT,
   getCreditMarkup,
   isBillingEnabled,
   MIN_CREDITS,
   MAX_CREDITS,
 } from '../services/billing.js';
+import type { BillingConfig } from '@deprecated-claude/shared';
 
 /** Suggested purchase amounts (in whole credits) shown as quick-pick buttons. */
 const PRESET_CREDITS = [5, 10, 25, 50];
@@ -32,14 +34,15 @@ export function createBillingRouter(db: Database): Router {
   // Non-secret config for the Buy Credits UI. Mounted behind auth, but returns
   // nothing sensitive — just the pricing knobs the frontend needs to render.
   router.get('/config', (_req: Request, res: Response) => {
-    res.json({
+    const config: BillingConfig = {
       enabled: isBillingEnabled(),
       usdPerCredit: USD_PER_CREDIT,
       creditMarkup: getCreditMarkup(),
       minCredits: MIN_CREDITS,
       maxCredits: MAX_CREDITS,
       presetsCredits: PRESET_CREDITS,
-    });
+    };
+    res.json(config);
   });
 
   // Create a Stripe Checkout session for a whole-credit purchase.
@@ -95,7 +98,16 @@ export function createBillingWebhookHandler(db: Database) {
       const result = await getService().handleWebhookEvent(req.body, signature);
       res.json(result);
     } catch (error) {
-      // Bad signature or malformed payload — 400 tells Stripe to retry later.
+      if (error instanceof UnprocessableWebhookError) {
+        // Verified fine but permanently unprocessable (bad metadata, amount
+        // mismatch). Ack with 200 so Stripe stops re-delivering — retrying can't
+        // fix it, and we don't want days of retries spamming logs.
+        console.error('[billing] webhook unprocessable, acking:', error.message);
+        return res.status(200).json({ received: true, minted: 0 });
+      }
+      // Signature verification failed or a transient processing error — 4xx tells
+      // Stripe to retry later (correct for transient failures, harmless for a
+      // genuinely bad signature it will never resend successfully).
       console.error('[billing] webhook error:', error);
       res.status(400).json({ error: 'Webhook verification failed' });
     }

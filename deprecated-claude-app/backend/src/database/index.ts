@@ -672,7 +672,17 @@ export class Database {
     return ordered;
   }
 
-  async recordGrantInfo(grant: GrantInfo): Promise<void> {
+  /**
+   * Record a grant. Returns false (and is a no-op) if this is a `mint` whose
+   * `causeId` has already been minted for the recipient — making mints idempotent
+   * on `causeId`. This is the dedup primitive that protects credit purchases:
+   * Stripe sends both `checkout.session.completed` and `async_payment_succeeded`
+   * for one payment and retries on timeout, so the same session id can arrive
+   * concurrently. The check below and the in-memory push in `applyGrantInfo`
+   * happen synchronously (no `await` between them), so two concurrent webhook
+   * requests can't both pass the guard — exactly once is enforced.
+   */
+  async recordGrantInfo(grant: GrantInfo): Promise<boolean> {
     const normalized = this.normaliseGrantInfo(grant);
     const userIds = new Set<string>();
 
@@ -684,10 +694,28 @@ export class Database {
       if (normalized.toUserId) userIds.add(normalized.toUserId);
     }
 
+    // Idempotency guard for mints keyed on causeId. Loading users must happen
+    // before the synchronous check-then-write below so no `await` splits them.
+    if (normalized.type === 'mint' && normalized.causeId) {
+      for (const userId of userIds) {
+        await this.loadUser(userId);
+        this.ensureGrantContainers(userId);
+      }
+      const recipient = normalized.toUserId;
+      if (recipient && userIds.has(recipient)) {
+        const existing = this.userGrantInfos.get(recipient) || [];
+        const alreadyMinted = existing.some(
+          (g) => g.type === 'mint' && g.causeId === normalized.causeId,
+        );
+        if (alreadyMinted) return false;
+      }
+    }
+
     for (const userId of userIds) {
       this.applyGrantInfo(userId, normalized);
       await this.logUserEvent(userId, 'grant_info_recorded', { userId, grant: normalized });
     }
+    return true;
   }
 
   async recordGrantCapability(capability: GrantCapability): Promise<void> {
@@ -2087,7 +2115,7 @@ export class Database {
     }
     
     const user = await this.getUserById(userId);
-    if (user && apiKey.provider != 'stripe') {
+    if (user) {
       // Create new user object with updated apiKeys
       const updatedUser = {
         ...user,
