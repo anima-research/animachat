@@ -126,8 +126,18 @@ export class BillingService {
       throw new Error(`unknown user: ${userId}`);
     }
 
-    // metadata is the contract with the webhook: it tells us who to credit and how much.
-    const metadata = { userId, credits: String(credits), currency: PURCHASE_CURRENCY };
+    // metadata is the contract with the webhook: it tells us who to credit and how
+    // much. We stamp the per-credit price charged here (`unitAmount`) so the webhook
+    // reconciles against what the user actually paid — `centsPerCredit()` reads
+    // CREDIT_MARKUP from env, so recomputing it at webhook time would reject paid
+    // sessions whenever the markup changed between checkout and webhook delivery.
+    const unitAmount = centsPerCredit();
+    const metadata = {
+      userId,
+      credits: String(credits),
+      currency: PURCHASE_CURRENCY,
+      unitAmount: String(unitAmount),
+    };
 
     const session = await this.stripeClient.checkout.sessions.create({
       mode: 'payment',
@@ -141,7 +151,7 @@ export class BillingService {
           quantity: credits,
           price_data: {
             currency: 'usd',
-            unit_amount: centsPerCredit(),
+            unit_amount: unitAmount,
             product_data: {
               name: 'Credits',
               description: `${credits} credit${credits === 1 ? '' : 's'}`,
@@ -212,10 +222,16 @@ export class BillingService {
     }
 
     // Reconcile the credits we're about to mint against what was actually paid.
-    // metadata.credits is what we stamped at session creation; amount_total is
-    // what Stripe charged. They must match credits × the per-credit price, or
-    // pricing/metadata has drifted and we should not mint a wrong amount.
-    const expectedTotal = credits * centsPerCredit();
+    // metadata.credits and metadata.unitAmount are what we stamped at session
+    // creation; amount_total is what Stripe charged. Validate against the stamped
+    // unit price — NOT a fresh centsPerCredit(), which reads CREDIT_MARKUP from env
+    // and would spuriously reject every in-flight session if the markup changed
+    // between checkout and webhook delivery (charging the user but minting nothing).
+    // Fall back to the live price only for legacy sessions created before unitAmount
+    // was stamped.
+    const stampedUnit = Number(session.metadata?.unitAmount);
+    const unitAmount = Number.isFinite(stampedUnit) && stampedUnit > 0 ? stampedUnit : centsPerCredit();
+    const expectedTotal = credits * unitAmount;
     if (typeof session.amount_total === 'number' && session.amount_total !== expectedTotal) {
       throw new UnprocessableWebhookError(
         `checkout session ${session.id} amount_total ${session.amount_total} != expected ${expectedTotal} for ${credits} credits`,
