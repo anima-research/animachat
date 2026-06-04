@@ -27,6 +27,7 @@ import {
   ForkHistoryBranchRequest
 } from '@deprecated-claude/shared';
 import { encryption } from '../utils/encryption.js';
+import { SqliteSync } from './sqlite-sync.js';
 
 // Metrics interface for tracking token usage.
 //
@@ -144,6 +145,7 @@ export class Database {
   private sharesStore: SharesStore;
   private collaborationStore: CollaborationStore;
   private personaStore: PersonaStore;
+  private sqlSync: SqliteSync;
   private uiStateStore: ConversationUIStateStore;
   private initialized: boolean = false;
 
@@ -155,40 +157,127 @@ export class Database {
     this.sharesStore = new SharesStore();
     this.collaborationStore = new CollaborationStore();
     this.personaStore = new PersonaStore();
+    this.sqlSync = new SqliteSync('./data');
     this.uiStateStore = new ConversationUIStateStore();
   }
   
   async init(): Promise<void> {
     if (this.initialized) return;
 
-
     await this.eventStore.init();
     await this.conversationEventStore.init();
     await this.userEventStore.init();
     await this.uiStateStore.init();
 
-    // if needed
+    // Initialize SQLite schema first so we can check for existing data
+    this.sqlSync.init();
+
+    // if needed — migrate legacy events.jsonl to the split stores
     await this.migrateDatabase();
-    
-    // Load all events and rebuild state
-    var allEvents = await this.eventStore.loadEvents();
 
-    // Replay events
-    console.log(`Loading ${allEvents.length} events from disk...`);
+    // Check if SQLite has persisted data for fast startup
+    if (this.sqlSync.hasData()) {
+      console.log('[Database] Fast startup: hydrating from SQLite...');
 
-    for (const event of allEvents) {
-      await this.replayEvent(event);
-    }
+      // Populate Maps from SQLite
+      this.sqlSync.loadMapsFromSqlite({
+        users: this.users,
+        usersByEmail: this.usersByEmail,
+        conversations: this.conversations,
+        passwordHashes: this.passwordHashes,
+        messages: this.messages,
+        conversationMessages: this.conversationMessages,
+        apiKeys: this.apiKeys,
+        participants: this.participants,
+        conversationParticipants: this.conversationParticipants,
+        userModels: this.userModels,
+        userModelsByUser: this.userModelsByUser,
+        bookmarks: this.bookmarks,
+        invites: this.invites,
+        conversationMetrics: this.conversationMetrics,
+        userGrantInfos: this.userGrantInfos,
+        userGrantCapabilities: this.userGrantCapabilities,
+        userGrantTotals: this.userGrantTotals,
+        userConversations: this.userConversations,
+        branchBookmarks: this.branchBookmarks,
+      });
 
-    // Replay user events (TODO: make these load as needed. For now, it's so little data that this is fine)
-    for await (const {id, events} of this.userEventStore.loadAllEvents()) {
-      for (const event of events) {
+      // Replay only events that happened after the last SQLite sync
+      const lastMainTs = this.sqlSync.getLastMainSyncTimestamp();
+      const lastConvTs = this.sqlSync.getSyncMeta('last_conversation_event_timestamp') || '';
+      const lastUserTs = this.sqlSync.getSyncMeta('last_user_event_timestamp') || '';
+
+      let incrementalCount = 0;
+
+      if (lastMainTs) {
+        const allEvents = await this.eventStore.loadEvents();
+        const newEvents = allEvents.filter(e => e.timestamp.toISOString() > lastMainTs);
+        console.log('[Database] Main events: ' + allEvents.length + ' total, ' + newEvents.length + ' new');
+        for (const event of newEvents) {
+          await this.replayEvent(event);
+          this.sqlSync.syncEvent(event);
+          incrementalCount++;
+        }
+      } else {
+        // No prior sync — replay all main events
+        const allEvents = await this.eventStore.loadEvents();
+        console.log('[Database] No prior sync timestamp, replaying ' + allEvents.length + ' main events');
+        for (const event of allEvents) {
+          await this.replayEvent(event);
+          this.sqlSync.syncEvent(event);
+          incrementalCount++;
+        }
+      }
+
+      // Replay incremental user events
+      for await (const { id, events } of this.userEventStore.loadAllEvents()) {
+        const newEvents = lastUserTs
+          ? events.filter(e => e.timestamp.toISOString() > lastUserTs)
+          : events;
+        for (const event of newEvents) {
+          await this.replayEvent(event);
+          this.sqlSync.syncEvent(event);
+          incrementalCount++;
+        }
+        this.userLastAccessedTimes.set(id, new Date());
+      }
+
+      console.log('[Database] Fast startup complete, ' + incrementalCount + ' incremental events replayed');
+    } else {
+      console.log('[Database] No SQLite data, performing full JSONL replay...');
+
+      // Full JSONL replay (original path)
+      var allEvents = await this.eventStore.loadEvents();
+      console.log('Loading ' + allEvents.length + ' events from disk...');
+      for (const event of allEvents) {
         await this.replayEvent(event);
       }
-      // add that user to list of loaded users
-      this.userLastAccessedTimes.set(id, new Date());
+
+      for await (const { id, events } of this.userEventStore.loadAllEvents()) {
+        for (const event of events) {
+          await this.replayEvent(event);
+        }
+        this.userLastAccessedTimes.set(id, new Date());
+      }
+
+      // Hydrate SQLite from the now-populated Maps (initial sync)
+      await this.sqlSync.hydrateFromMaps({
+        users: this.users,
+        conversations: this.conversations,
+        passwordHashes: this.passwordHashes,
+        messages: this.messages,
+        apiKeys: this.apiKeys,
+        participants: this.participants,
+        userModels: this.userModels,
+        bookmarks: this.bookmarks,
+        invites: this.invites,
+        conversationMetrics: this.conversationMetrics,
+        userGrants: this.userGrantInfos,
+        userGrantCaps: this.userGrantCapabilities,
+        userGrantTotals: this.userGrantTotals,
+      });
     }
-    
+
     // Create test users only in development
     if (process.env.NODE_ENV !== 'production') {
       if (this.users.size === 0) {
@@ -196,15 +285,10 @@ export class Database {
         console.log('🧪 Creating additional test users...');
         await this.createAdditionalTestUsers();
       } else {
-        // If test user exists but has no custom models, create test models
         const testUserId = 'test-user-id-12345';
-        console.log(`Checking for test user ${testUserId}... exists: ${this.users.has(testUserId)}`);
         if (this.users.has(testUserId)) {
-          // Ensure user is marked as loaded (in case they were created via old mainEvents)
           this.userLastAccessedTimes.set(testUserId, new Date());
-
           const testUserModels = this.userModelsByUser.get(testUserId);
-          console.log(`Test user models: ${testUserModels ? testUserModels.size : 0}`);
           if (!testUserModels || testUserModels.size === 0) {
             console.log('🧪 Test user exists but has no custom models, creating them...');
             await this.createTestModels(testUserId);
@@ -212,15 +296,17 @@ export class Database {
             console.log('✅ Test user already has custom models');
           }
         }
-        // Also ensure additional test users exist
         console.log('🧪 Ensuring additional test users exist...');
         await this.createAdditionalTestUsers();
       }
     }
 
+    // Record sync timestamps so next startup can be incremental
+    const _now = new Date().toISOString();
+    this.sqlSync.recordSyncTimestamps(_now, _now, _now);
+
     this.initialized = true;
   }
-
   private async migrateDatabase(): Promise<void> {
     const oldDatabasePath = path.join('./data', 'events.jsonl');
     if (fs.existsSync(oldDatabasePath)) {
@@ -494,6 +580,7 @@ export class Database {
     };
     
     await this.eventStore.appendEvent(event);
+    this.sqlSync.syncEvent(event);
   }
 
   private async logConversationEvent(conversationId: string, type: string, data: any, actionUserId?: string): Promise<void> {
@@ -510,6 +597,7 @@ export class Database {
     };
     
     await this.conversationEventStore.appendEvent(conversationId, event);
+    this.sqlSync.syncEvent(event);
   }
 
   private async logUserEvent(userId: string, type: string, data: any): Promise<void> {
@@ -520,6 +608,7 @@ export class Database {
     };
 
     await this.userEventStore.appendEvent(userId, event);
+    this.sqlSync.syncEvent(event);
   }
 
   private ensureGrantContainers(userId: string): void {
@@ -4584,6 +4673,7 @@ export class Database {
       data: share
     };
     await this.eventStore.appendEvent(event);
+    this.sqlSync.syncEvent(event);
     
     return share;
   }
@@ -4607,6 +4697,7 @@ export class Database {
         data: { id }
       };
       await this.eventStore.appendEvent(event);
+    this.sqlSync.syncEvent(event);
     }
     
     return deleted;
@@ -5975,5 +6066,6 @@ export class Database {
     await this.eventStore.close();
     await this.userEventStore.close();
     await this.conversationEventStore.close();
+    this.sqlSync.close();
   }
 }
