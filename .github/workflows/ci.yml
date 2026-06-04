@@ -22,6 +22,8 @@ jobs:
           cache-dependency-path: deprecated-claude-app/package-lock.json
       - run: npm ci
         working-directory: deprecated-claude-app
+      - run: npm run build -w shared
+        working-directory: deprecated-claude-app
       - run: npm run typecheck
         working-directory: deprecated-claude-app
 
