@@ -196,3 +196,103 @@ CREATE TABLE IF NOT EXISTS access_tracking (
   PRIMARY KEY (entity_type, entity_id)
 );
 
+-- Persona system
+CREATE TABLE IF NOT EXISTS persona_personas (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  context_strategy_json TEXT NOT NULL DEFAULT '{}',
+  backscroll_tokens INTEGER DEFAULT 30000,
+  allow_interleaved INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  archived_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_persona_owner ON persona_personas(owner_id);
+
+CREATE TABLE IF NOT EXISTS persona_history_branches (
+  id TEXT PRIMARY KEY,
+  persona_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  parent_branch_id TEXT,
+  fork_point_participation_id TEXT,
+  is_head INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_persona_branches ON persona_history_branches(persona_id);
+
+CREATE TABLE IF NOT EXISTS persona_participations (
+  id TEXT PRIMARY KEY,
+  persona_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  participant_id TEXT NOT NULL,
+  history_branch_id TEXT NOT NULL,
+  joined_at TEXT NOT NULL,
+  left_at TEXT,
+  logical_start INTEGER NOT NULL DEFAULT 0,
+  logical_end INTEGER NOT NULL DEFAULT 0,
+  canonical_branch_id TEXT NOT NULL,
+  canonical_history_json TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_persona_parts_persona ON persona_participations(persona_id);
+CREATE INDEX IF NOT EXISTS idx_persona_parts_branch ON persona_participations(history_branch_id);
+CREATE INDEX IF NOT EXISTS idx_persona_parts_conv ON persona_participations(conversation_id);
+
+CREATE TABLE IF NOT EXISTS persona_shares (
+  id TEXT PRIMARY KEY,
+  persona_id TEXT NOT NULL,
+  shared_with_user_id TEXT NOT NULL,
+  shared_by_user_id TEXT NOT NULL,
+  permission TEXT NOT NULL DEFAULT 'viewer',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_persona_shares_persona ON persona_shares(persona_id);
+CREATE INDEX IF NOT EXISTS idx_persona_shares_user ON persona_shares(shared_with_user_id);
+
+-- Shared conversations (public links)
+CREATE TABLE IF NOT EXISTS shared_conversations (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  share_token TEXT NOT NULL UNIQUE,
+  share_type TEXT NOT NULL DEFAULT 'tree',
+  branch_id TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  view_count INTEGER DEFAULT 0,
+  settings_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_shared_conv_token ON shared_conversations(share_token);
+CREATE INDEX IF NOT EXISTS idx_shared_conv_user ON shared_conversations(user_id);
+
+-- Collaboration shares (user-to-user)
+CREATE TABLE IF NOT EXISTS collaboration_shares (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  shared_with_user_id TEXT NOT NULL,
+  shared_with_email TEXT,
+  shared_by_user_id TEXT NOT NULL,
+  permission TEXT NOT NULL DEFAULT 'viewer',
+  created_at TEXT NOT NULL,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_collab_conv ON collaboration_shares(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_collab_user ON collaboration_shares(shared_with_user_id);
+
+-- Collaboration invites
+CREATE TABLE IF NOT EXISTS collaboration_invites (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  created_by_user_id TEXT NOT NULL,
+  invite_token TEXT NOT NULL UNIQUE,
+  permission TEXT NOT NULL DEFAULT 'viewer',
+  label TEXT,
+  expires_at TEXT,
+  max_uses INTEGER,
+  use_count INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_collab_inv_conv ON collaboration_invites(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_collab_inv_token ON collaboration_invites(invite_token);
+

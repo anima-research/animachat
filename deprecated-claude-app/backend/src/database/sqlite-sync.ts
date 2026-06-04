@@ -276,6 +276,139 @@ export class SqliteSync {
       case 'conversation_updated':{const d=event.data;const id=d.conversationId||d.id;const fs:string[]=[];const vs:any[]=[];if(d.title!==undefined){fs.push('title=?');vs.push(d.title);}if(d.model!==undefined){fs.push('model=?');vs.push(d.model);}if(d.systemPrompt!==undefined){fs.push('system_prompt=?');vs.push(d.systemPrompt);}if(d.settings!==undefined){fs.push('settings=?');vs.push(JSON.stringify(d.settings));}if(d.contextManagement!==undefined){fs.push('context_management=?');vs.push(JSON.stringify(d.contextManagement));}if(d.totalBranchCount!==undefined){fs.push('total_branch_count=?');vs.push(d.totalBranchCount);}if(fs.length){fs.push('updated_at=?');vs.push(toISO(new Date()));vs.push(id);this.sql.exec(`UPDATE conversations SET ${fs.join(',')} WHERE id=?`,...vs);}break;}
       case 'conversation_deleted':{const id=event.data.id||event.data.conversationId;this.sql.exec('DELETE FROM messages WHERE conversation_id=?',id);this.sql.exec('DELETE FROM participants WHERE conversation_id=?',id);this.sql.exec('DELETE FROM conversation_metrics WHERE conversation_id=?',id);this.sql.exec('DELETE FROM bookmarks WHERE conversation_id=?',id);this.sql.exec('DELETE FROM conversations WHERE id=?',id);break;}
       case 'archived_conversation':case'unarchived_conversation':{const id=event.data.conversationId||event.data.id;const a=event.type==='archived_conversation'?1:0;this.sql.exec('UPDATE conversations SET archived=?,updated_at=? WHERE id=?',a,toISO(new Date()),id);break;}
+      // ═══ Persona events ════════════════════════════════════════════
+      case 'persona_created': {
+        const { persona: p, initialBranch: b } = event.data;
+        this.sql.exec(
+          'INSERT OR REPLACE INTO persona_personas (id,name,model_id,owner_id,context_strategy_json,backscroll_tokens,allow_interleaved,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+          p.id,p.name,p.modelId,p.ownerId,JSON.stringify(p.contextStrategy||{}),p.backscrollTokens??30000,bv(p.allowInterleavedParticipation),toISO(p.createdAt),toISO(p.updatedAt));
+        this.sql.exec(
+          'INSERT OR REPLACE INTO persona_history_branches (id,persona_id,name,parent_branch_id,is_head,created_at) VALUES (?,?,?,?,?,?)',
+          b.id,b.personaId,b.name,b.parentBranchId||null,bv(b.isHead??false),toISO(b.createdAt));
+        break;
+      }
+      case 'persona_updated': {
+        const d = event.data;
+        const fs: string[] = []; const vs: any[] = [];
+        if (d.changes) {
+          if (d.changes.name !== undefined) { fs.push('name=?'); vs.push(d.changes.name); }
+          if (d.changes.contextStrategy !== undefined) { fs.push('context_strategy_json=?'); vs.push(JSON.stringify(d.changes.contextStrategy)); }
+          if (d.changes.backscrollTokens !== undefined) { fs.push('backscroll_tokens=?'); vs.push(d.changes.backscrollTokens); }
+          if (d.changes.allowInterleavedParticipation !== undefined) { fs.push('allow_interleaved=?'); vs.push(bv(d.changes.allowInterleavedParticipation)); }
+        }
+        if (fs.length) { fs.push('updated_at=?'); vs.push(toISO(new Date())); vs.push(d.personaId); this.sql.exec(`UPDATE persona_personas SET ${fs.join(',')} WHERE id=?`,...vs); }
+        break;
+      }
+      case 'persona_archived': {
+        this.sql.exec('UPDATE persona_personas SET archived_at=?,updated_at=? WHERE id=?', toISO(event.data.at),toISO(new Date()),event.data.personaId);
+        break;
+      }
+      case 'persona_deleted': {
+        const pid = event.data.personaId;
+        this.sql.exec('DELETE FROM persona_shares WHERE persona_id=?', pid);
+        this.sql.exec('DELETE FROM persona_participations WHERE persona_id=?', pid);
+        this.sql.exec('DELETE FROM persona_history_branches WHERE persona_id=?', pid);
+        this.sql.exec('DELETE FROM persona_personas WHERE id=?', pid);
+        break;
+      }
+      case 'persona_history_branch_created': {
+        const b = event.data.branch;
+        this.sql.exec('INSERT OR REPLACE INTO persona_history_branches (id,persona_id,name,parent_branch_id,fork_point_participation_id,is_head,created_at) VALUES (?,?,?,?,?,?,?)',
+          b.id,b.personaId,b.name,b.parentBranchId||null,b.forkPointParticipationId||null,bv(b.isHead??false),toISO(b.createdAt));
+        break;
+      }
+      case 'persona_history_branch_head_changed': {
+        const d = event.data;
+        if (d.previousHeadBranchId) this.sql.exec('UPDATE persona_history_branches SET is_head=0 WHERE id=?', d.previousHeadBranchId);
+        this.sql.exec('UPDATE persona_history_branches SET is_head=1 WHERE id=?', d.newHeadBranchId);
+        break;
+      }
+      case 'persona_participation_created': {
+        const p = event.data.participation;
+        this.sql.exec(
+          'INSERT OR REPLACE INTO persona_participations (id,persona_id,conversation_id,participant_id,history_branch_id,joined_at,left_at,logical_start,logical_end,canonical_branch_id,canonical_history_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+          p.id,p.personaId,p.conversationId,p.participantId,p.historyBranchId,toISO(p.joinedAt),p.leftAt?toISO(p.leftAt):null,p.logicalStart??0,p.logicalEnd??0,p.canonicalBranchId,JSON.stringify(p.canonicalHistory||[]));
+        break;
+      }
+      case 'persona_participation_ended': {
+        this.sql.exec('UPDATE persona_participations SET left_at=? WHERE id=?', toISO(event.data.at),event.data.participationId);
+        break;
+      }
+      case 'persona_participation_canonical_set': {
+        // Read existing canonical_history, append new entry
+        const row = this.sql.get<{ ch: string }>('SELECT canonical_history_json as ch FROM persona_participations WHERE id=?', event.data.participationId);
+        if (row) {
+          const history = JSON.parse(row.ch || '[]');
+          history.push({ branchId: event.data.branchId, setAt: toISO(new Date()), previousBranchId: event.data.previousBranchId });
+          this.sql.exec('UPDATE persona_participations SET canonical_branch_id=?,canonical_history_json=? WHERE id=?', event.data.branchId, JSON.stringify(history), event.data.participationId);
+        }
+        break;
+      }
+      case 'persona_participation_logical_time_updated': {
+        const d = event.data;
+        this.sql.exec('UPDATE persona_participations SET logical_start=?,logical_end=? WHERE id=?', d.logicalStart,d.logicalEnd,d.participationId);
+        break;
+      }
+      case 'persona_share_created': {
+        const s = event.data.share;
+        this.sql.exec('INSERT OR REPLACE INTO persona_shares (id,persona_id,shared_with_user_id,shared_by_user_id,permission,created_at) VALUES (?,?,?,?,?,?)',
+          s.id,s.personaId,s.sharedWithUserId,s.sharedByUserId,s.permission,toISO(s.createdAt));
+        break;
+      }
+      case 'persona_share_updated': {
+        this.sql.exec('UPDATE persona_shares SET permission=? WHERE id=?', event.data.permission,event.data.shareId);
+        break;
+      }
+      case 'persona_share_revoked': {
+        this.sql.exec('DELETE FROM persona_shares WHERE id=?', event.data.shareId);
+        break;
+      }
+      // ═══ Shared conversations (public links) ════════════════════════
+      case 'share_created': {
+        const s = event.data;
+        this.sql.exec(
+          'INSERT OR REPLACE INTO shared_conversations (id,conversation_id,user_id,share_token,share_type,branch_id,created_at,expires_at,view_count,settings_json) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          s.id,s.conversationId,s.userId,s.shareToken,s.shareType||'tree',s.branchId||null,toISO(s.createdAt),s.expiresAt?toISO(s.expiresAt):null,s.viewCount??0,JSON.stringify(s.settings||{}));
+        break;
+      }
+      case 'share_deleted': {
+        this.sql.exec('DELETE FROM shared_conversations WHERE id=?', event.data.id);
+        break;
+      }
+      case 'share_viewed': {
+        this.sql.exec('UPDATE shared_conversations SET view_count=? WHERE id=?', event.data.viewCount,event.data.id);
+        break;
+      }
+      // ═══ Collaboration ══════════════════════════════════════════════
+      case 'collaboration_share_created': {
+        const s = event.data;
+        this.sql.exec('INSERT OR REPLACE INTO collaboration_shares (id,conversation_id,shared_with_user_id,shared_with_email,shared_by_user_id,permission,created_at) VALUES (?,?,?,?,?,?,?)',
+          s.id,s.conversationId,s.sharedWithUserId,s.sharedWithEmail||null,s.sharedByUserId,s.permission,s.createdAt||toISO(new Date()));
+        break;
+      }
+      case 'collaboration_share_updated': {
+        this.sql.exec('UPDATE collaboration_shares SET permission=?,updated_at=? WHERE id=?', event.data.permission,event.data.time||toISO(new Date()),event.data.shareId);
+        break;
+      }
+      case 'collaboration_share_revoked': {
+        this.sql.exec('DELETE FROM collaboration_shares WHERE id=?', event.data.shareId);
+        break;
+      }
+      case 'collaboration_invite_created': {
+        const i = event.data;
+        this.sql.exec('INSERT OR REPLACE INTO collaboration_invites (id,conversation_id,created_by_user_id,invite_token,permission,label,expires_at,max_uses,use_count,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          i.id,i.conversationId,i.createdByUserId,i.inviteToken,i.permission,i.label||null,i.expiresAt||null,i.maxUses||null,i.useCount??0,i.createdAt||toISO(new Date()));
+        break;
+      }
+      case 'collaboration_invite_used': {
+        this.sql.exec('UPDATE collaboration_invites SET use_count=? WHERE id=?', event.data.useCount,event.data.inviteId);
+        break;
+      }
+      case 'collaboration_invite_deleted': {
+        this.sql.exec('DELETE FROM collaboration_invites WHERE id=?', event.data.inviteId);
+        break;
+      }
+
     }
   }
 
@@ -508,6 +641,122 @@ export class SqliteSync {
     }
 
     console.log('[SqliteSync] Maps loaded from SQLite');
+  }
+
+
+  // ═══ Sub-store hydration ═══════════════════════════════════════════
+
+  /**
+   * Sync persona, share, and collaboration data from sub-store instances
+   * to SQLite. Called during initial hydration.
+   */
+  syncPersonaStore(personaStore: any): void {
+    for (const [id, p] of personaStore['personas'] || []) {
+      this.sql.exec(
+        'INSERT OR REPLACE INTO persona_personas (id,name,model_id,owner_id,context_strategy_json,backscroll_tokens,allow_interleaved,created_at,updated_at,archived_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        p.id,p.name,p.modelId,p.ownerId,JSON.stringify(p.contextStrategy||{}),p.backscrollTokens??30000,bv(p.allowInterleavedParticipation),toISO(p.createdAt),toISO(p.updatedAt),p.archivedAt?toISO(p.archivedAt):null);
+    }
+    for (const [id, b] of personaStore['historyBranches'] || []) {
+      this.sql.exec('INSERT OR REPLACE INTO persona_history_branches (id,persona_id,name,parent_branch_id,fork_point_participation_id,is_head,created_at) VALUES (?,?,?,?,?,?,?)',
+        b.id,b.personaId,b.name,b.parentBranchId||null,b.forkPointParticipationId||null,bv(b.isHead??false),toISO(b.createdAt));
+    }
+    for (const [id, p] of personaStore['participations'] || []) {
+      this.sql.exec('INSERT OR REPLACE INTO persona_participations (id,persona_id,conversation_id,participant_id,history_branch_id,joined_at,left_at,logical_start,logical_end,canonical_branch_id,canonical_history_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        p.id,p.personaId,p.conversationId,p.participantId,p.historyBranchId,toISO(p.joinedAt),p.leftAt?toISO(p.leftAt):null,p.logicalStart??0,p.logicalEnd??0,p.canonicalBranchId,JSON.stringify(p.canonicalHistory||[]));
+    }
+    for (const [id, s] of personaStore['shares'] || []) {
+      this.sql.exec('INSERT OR REPLACE INTO persona_shares (id,persona_id,shared_with_user_id,shared_by_user_id,permission,created_at) VALUES (?,?,?,?,?,?)',
+        s.id,s.personaId,s.sharedWithUserId,s.sharedByUserId,s.permission,toISO(s.createdAt));
+    }
+  }
+
+  syncSharesStore(sharesStore: any): void {
+    for (const [id, s] of sharesStore['shares'] || []) {
+      this.sql.exec('INSERT OR REPLACE INTO shared_conversations (id,conversation_id,user_id,share_token,share_type,branch_id,created_at,expires_at,view_count,settings_json) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        s.id,s.conversationId,s.userId,s.shareToken,s.shareType||'tree',s.branchId||null,toISO(s.createdAt),s.expiresAt?toISO(s.expiresAt):null,s.viewCount??0,JSON.stringify(s.settings||{}));
+    }
+  }
+
+  syncCollaborationStore(collabStore: any): void {
+    for (const [id, s] of collabStore['shares'] || []) {
+      this.sql.exec('INSERT OR REPLACE INTO collaboration_shares (id,conversation_id,shared_with_user_id,shared_with_email,shared_by_user_id,permission,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)',
+        s.id,s.conversationId,s.sharedWithUserId,s.sharedWithEmail||null,s.sharedByUserId,s.permission,s.createdAt||toISO(new Date()),s.updatedAt||null);
+    }
+    for (const [id, i] of collabStore['invites'] || []) {
+      this.sql.exec('INSERT OR REPLACE INTO collaboration_invites (id,conversation_id,created_by_user_id,invite_token,permission,label,expires_at,max_uses,use_count,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        i.id,i.conversationId,i.createdByUserId,i.inviteToken,i.permission,i.label||null,i.expiresAt||null,i.maxUses||null,i.useCount??0,i.createdAt||toISO(new Date()));
+    }
+  }
+
+  /** Load sub-store data from SQLite and replay into sub-store instances. */
+  loadPersonaStore(personaStore: any): void {
+    for (const row of this.sql.all('SELECT * FROM persona_personas') as any[]) {
+      personaStore.replayEvent({ type: 'persona_created', data: {
+        persona: {
+          id: row.id, name: row.name, modelId: row.model_id, ownerId: row.owner_id,
+          contextStrategy: JSON.parse(row.context_strategy_json || '{}'),
+          backscrollTokens: row.backscroll_tokens, allowInterleavedParticipation: row.allow_interleaved === 1,
+          createdAt: new Date(row.created_at), updatedAt: new Date(row.updated_at),
+          archivedAt: row.archived_at ? new Date(row.archived_at) : undefined,
+        },
+        initialBranch: {
+          id: row.id + '-branch', personaId: row.id, name: 'main', isHead: true, createdAt: new Date(row.created_at),
+        },
+      }});
+    }
+    // Reload branches (the above creates defaults, replay proper branches next)
+    for (const row of this.sql.all('SELECT * FROM persona_history_branches ORDER BY created_at') as any[]) {
+      // Skip the auto-created ones from persona_created
+      if (row.id.endsWith('-branch')) continue;
+      personaStore.replayEvent({ type: 'persona_history_branch_created', data: {
+        branch: { id: row.id, personaId: row.persona_id, name: row.name, parentBranchId: row.parent_branch_id, forkPointParticipationId: row.fork_point_participation_id, isHead: row.is_head === 1, createdAt: new Date(row.created_at) },
+      }});
+    }
+    for (const row of this.sql.all('SELECT * FROM persona_participations ORDER BY joined_at') as any[]) {
+      personaStore.replayEvent({ type: 'persona_participation_created', data: {
+        participation: {
+          id: row.id, personaId: row.persona_id, conversationId: row.conversation_id, participantId: row.participant_id,
+          historyBranchId: row.history_branch_id, joinedAt: new Date(row.joined_at),
+          leftAt: row.left_at ? new Date(row.left_at) : undefined,
+          logicalStart: row.logical_start, logicalEnd: row.logical_end,
+          canonicalBranchId: row.canonical_branch_id,
+          canonicalHistory: JSON.parse(row.canonical_history_json || '[]'),
+        },
+      }});
+    }
+    for (const row of this.sql.all('SELECT * FROM persona_shares ORDER BY created_at') as any[]) {
+      personaStore.replayEvent({ type: 'persona_share_created', data: {
+        share: { id: row.id, personaId: row.persona_id, sharedWithUserId: row.shared_with_user_id, sharedByUserId: row.shared_by_user_id, permission: row.permission, createdAt: new Date(row.created_at) },
+      }});
+    }
+  }
+
+  loadSharesStore(sharesStore: any): void {
+    for (const row of this.sql.all('SELECT * FROM shared_conversations') as any[]) {
+      sharesStore.replayEvent({ type: 'share_created', data: {
+        id: row.id, conversationId: row.conversation_id, userId: row.user_id,
+        shareToken: row.share_token, shareType: row.share_type, branchId: row.branch_id,
+        createdAt: row.created_at, expiresAt: row.expires_at, viewCount: row.view_count,
+        settings: JSON.parse(row.settings_json || '{}'),
+      }});
+    }
+  }
+
+  loadCollaborationStore(collabStore: any): void {
+    for (const row of this.sql.all('SELECT * FROM collaboration_shares') as any[]) {
+      collabStore.replayEvent({ type: 'collaboration_share_created', data: {
+        id: row.id, conversationId: row.conversation_id, sharedWithUserId: row.shared_with_user_id,
+        sharedWithEmail: row.shared_with_email, sharedByUserId: row.shared_by_user_id,
+        permission: row.permission, createdAt: row.created_at, updatedAt: row.updated_at,
+      }});
+    }
+    for (const row of this.sql.all('SELECT * FROM collaboration_invites') as any[]) {
+      collabStore.replayEvent({ type: 'collaboration_invite_created', data: {
+        id: row.id, conversationId: row.conversation_id, createdByUserId: row.created_by_user_id,
+        inviteToken: row.invite_token, permission: row.permission, label: row.label,
+        expiresAt: row.expires_at, maxUses: row.max_uses, useCount: row.use_count, createdAt: row.created_at,
+      }});
+    }
   }
 
   close(): void { this.sql.close(); }

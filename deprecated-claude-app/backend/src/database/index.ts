@@ -202,6 +202,11 @@ export class Database {
         branchBookmarks: this.branchBookmarks,
       });
 
+      // Load sub-store data from SQLite
+      this.sqlSync.loadPersonaStore(this.personaStore);
+      this.sqlSync.loadSharesStore(this.sharesStore);
+      this.sqlSync.loadCollaborationStore(this.collaborationStore);
+
       // Replay only events that happened after the last SQLite sync
       const lastMainTs = this.sqlSync.getLastMainSyncTimestamp();
       const lastConvTs = this.sqlSync.getSyncMeta('last_conversation_event_timestamp') || '';
@@ -276,6 +281,11 @@ export class Database {
         userGrantCaps: this.userGrantCapabilities,
         userGrantTotals: this.userGrantTotals,
       });
+
+      // Sync sub-stores to SQLite
+      this.sqlSync.syncPersonaStore(this.personaStore);
+      this.sqlSync.syncSharesStore(this.sharesStore);
+      this.sqlSync.syncCollaborationStore(this.collaborationStore);
     }
 
     // Create test users only in development
