@@ -109,9 +109,14 @@ async function loadConfig() {
     if (!credits.value && presets.value.length) {
       credits.value = presets.value[0];
     }
-  } catch {
-    // Billing not configured / endpoint absent — stay hidden, no error shown.
+  } catch (err: any) {
+    // The "billing not configured" case is NOT an error — /config returns 200 with
+    // { enabled: false }, and the section stays hidden via the `enabled` gate. So
+    // anything reaching here is a real failure (401 expired token, 5xx, network).
+    // We still can't render pricing we don't have, so the section stays hidden, but
+    // we surface a warning rather than vanishing silently with no trace.
     config.value = null;
+    console.warn('[billing] failed to load billing config; Buy Credits hidden:', err?.response?.status ?? err?.message ?? err);
   }
 }
 
