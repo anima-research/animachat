@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deprecated-claude-app/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deprecated-claude-app/**'
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: 'npm'
+          cache-dependency-path: deprecated-claude-app/package-lock.json
+      - run: npm ci
+        working-directory: deprecated-claude-app
+      - run: npm run typecheck
+        working-directory: deprecated-claude-app
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: 'npm'
+          cache-dependency-path: deprecated-claude-app/package-lock.json
+      - run: npm ci
+        working-directory: deprecated-claude-app
+      - run: npm test
+        working-directory: deprecated-claude-app

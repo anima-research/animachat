@@ -55,5 +55,13 @@ export class SqliteStore {
   close(): void {
     this.db.close();
   }
+
+  /** Create an in-memory store for testing. */
+  static memory(): SqliteStore {
+    const store = new SqliteStore('');
+    store.db = new DatabaseSync(':memory:');
+    store.dbPath = ':memory:';
+    return store;
+  }
 }
 
