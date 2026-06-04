@@ -244,3 +244,58 @@ describe('SqliteSync hydration and fast startup', () => {
     expect(s.getSyncMeta('nonexistent')).toBeNull();
   });
 });
+
+describe('SqliteStore', () => {
+  it('lazy-open: init() creates the database, not the constructor', () => {
+    const store = SqliteStore.memory();
+    store.init();
+    store.exec('CREATE TABLE IF NOT EXISTS _test (x INTEGER)');
+    store.exec('INSERT INTO _test VALUES (1)');
+    expect(store.get('SELECT x FROM _test') as any).toEqual({ x: 1 });
+    store.close();
+  });
+
+  it('transaction rolls back on error', () => {
+    const store = SqliteStore.memory();
+    store.init();
+    store.exec('CREATE TABLE IF NOT EXISTS _test (x INTEGER UNIQUE)');
+    store.exec('INSERT INTO _test VALUES (1)');
+    try {
+      store.transaction(() => {
+        store.exec('INSERT INTO _test VALUES (2)');
+        store.exec('INSERT INTO _test VALUES (1)'); // duplicate, should fail
+      });
+    } catch {}
+    // Only the first row should exist (rollback undid the INSERT of 2)
+    const rows = store.all('SELECT x FROM _test ORDER BY x') as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].x).toBe(1);
+    store.close();
+  });
+
+  it('checkpoint does not throw on in-memory DB', () => {
+    const store = SqliteStore.memory();
+    store.init();
+    expect(() => store.checkpoint()).not.toThrow();
+    store.close();
+  });
+});
+
+describe('SqliteSync batch performance', () => {
+  let s: SqliteSync;
+  beforeEach(() => {
+    s = new SqliteSync('./data');
+    (s as any).sql = SqliteStore.memory();
+    s.init();
+    s.syncEvent({ timestamp: new Date(), type: 'user_created', data: { user: { id: 'u1', email: 'a@b.com', name: 'A', createdAt: new Date(), apiKeys: [] } } });
+  });
+
+  it('syncs many messages without error', () => {
+    s.syncEvent({ timestamp: new Date(), type: 'conversation_created', data: { id: 'c1', userId: 'u1', title: 'T', model: 'x', format: 'standard', createdAt: new Date(), updatedAt: new Date(), archived: false, settings: {}, combineConsecutiveMessages: true, totalBranchCount: 0 } });
+    for (let i = 0; i < 50; i++) {
+      s.syncEvent({ timestamp: new Date(), type: 'message_created', data: { id: `m${i}`, conversationId: 'c1', activeBranchId: `b${i}`, branches: [{ id: `b${i}`, content: `msg ${i}`, role: i % 2 === 0 ? 'user' : 'assistant', parentBranchId: i === 0 ? 'root' : `b${i-1}`, isActive: true, createdAt: new Date() }], order: i } });
+    }
+    const count = (s['sql'].get('SELECT COUNT(*) as cnt FROM messages WHERE conversation_id=?', 'c1') as any).cnt;
+    expect(count).toBe(50);
+  });
+});

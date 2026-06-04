@@ -57,6 +57,8 @@ export class SqliteSync {
   }): Promise<void> {
     console.log('[SqliteSync] Hydrating SQLite from Maps...');
 
+    this.sql.exec('BEGIN');
+    try {
     const { users, conversations, passwordHashes, messages, apiKeys,
       participants, userModels, bookmarks, invites,
       conversationMetrics, userGrants, userGrantCaps, userGrantTotals } = opts;
@@ -190,6 +192,11 @@ export class SqliteSync {
     }
 
     console.log('[SqliteSync] Hydration complete');
+    this.sql.exec('COMMIT');
+    } catch (e) {
+      this.sql.exec('ROLLBACK');
+      throw e;
+    }
   }
 
   // ═══ Event sync (call after each logEvent) ═════════════════════════

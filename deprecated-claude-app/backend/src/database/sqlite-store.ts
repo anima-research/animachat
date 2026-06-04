@@ -3,19 +3,34 @@ import fs from 'fs';
 import path from 'path';
 
 export class SqliteStore {
-  private db: DatabaseSync;
+  private db!: DatabaseSync;
   private dbPath: string;
+  private walTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(dataDir: string = './data') {
     this.dbPath = path.join(dataDir, 'animachat.db');
-    this.db = new DatabaseSync(this.dbPath);
   }
 
+  /** Open the database and apply the schema. Must be called before any operations. */
   init(): void {
     fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
+    this.db = new DatabaseSync(this.dbPath);
+
     const schemaPath = path.join(path.dirname(new URL(import.meta.url).pathname), 'schema.sql');
     const schema = fs.readFileSync(schemaPath, 'utf-8');
     this.db.exec(schema);
+
+    // Periodic WAL checkpoint — keeps the WAL file from growing unbounded.
+    // CHECKPOINT PASSIVE is non-blocking; TRUNCATE runs every 5th tick to
+    // actually shrink the file.
+    let ticks = 0;
+    this.walTimer = setInterval(() => {
+      try {
+        ticks++;
+        this.db.exec(ticks % 5 === 0 ? 'PRAGMA wal_checkpoint(TRUNCATE)' : 'PRAGMA wal_checkpoint(PASSIVE)');
+      } catch { /* DB may be closed */ }
+    }, 60_000);
+    if (this.walTimer.unref) this.walTimer.unref();
   }
 
   // Raw access
@@ -40,6 +55,7 @@ export class SqliteStore {
     return { changes: result.changes as number };
   }
 
+  /** Execute fn inside a single SQLite transaction. */
   transaction<T>(fn: () => T): T {
     this.exec('BEGIN');
     try {
@@ -52,16 +68,22 @@ export class SqliteStore {
     }
   }
 
+  /** Force an immediate WAL checkpoint (useful before close). */
+  checkpoint(): void {
+    try { this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
+  }
+
   close(): void {
+    if (this.walTimer) { clearInterval(this.walTimer); this.walTimer = null; }
+    try { this.checkpoint(); } catch {}
     this.db.close();
   }
 
   /** Create an in-memory store for testing. */
   static memory(): SqliteStore {
-    const store = new SqliteStore('');
-    store.db = new DatabaseSync(':memory:');
+    const store = Object.create(SqliteStore.prototype) as SqliteStore;
     store.dbPath = ':memory:';
+    store.walTimer = null;
     return store;
   }
 }
-
