@@ -470,6 +470,8 @@ describe('Sub-store hydration roundtrip', () => {
           this.historyBranches.set(e.data.initialBranch.id, e.data.initialBranch);
         } else if (e.type === 'persona_share_created') {
           this.shares.set(e.data.share.id, e.data.share);
+        } else if (e.type === 'persona_history_branch_created') {
+          this.historyBranches.set(e.data.branch.id, e.data.branch);
         }
       },
     };
@@ -490,6 +492,9 @@ describe('Sub-store hydration roundtrip', () => {
 
     expect(ps.personas.size).toBe(1);
     expect(ps.personas.get('p1').name).toBe('Test');
+    expect(ps.historyBranches.size).toBe(1);
+    expect(ps.historyBranches.has('b1')).toBe(true);
+    expect(ps.historyBranches.has('p1-branch')).toBe(false);
     expect(ps.shares.size).toBe(1);
   });
 

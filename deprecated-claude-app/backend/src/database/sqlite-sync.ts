@@ -219,6 +219,36 @@ export class SqliteSync {
         if (passwordHash) this.sql.exec('INSERT OR REPLACE INTO password_hashes (email,hash) VALUES (?,?)', u.email, passwordHash);
         break;
       }
+      case 'email_verified':
+      case 'email_verified_manually': {
+        this.sql.exec('UPDATE users SET email_verified=1, email_verified_at=? WHERE id=?',
+          toISO(event.data.verifiedAt || new Date().toISOString()), event.data.userId);
+        break;
+      }
+      case 'user_age_verified': {
+        this.sql.exec('UPDATE users SET age_verified=1, age_verified_at=? WHERE id=?',
+          toISO(event.data.ageVerifiedAt), event.data.userId);
+        break;
+      }
+      case 'user_tos_accepted': {
+        this.sql.exec('UPDATE users SET tos_accepted=1, tos_accepted_at=? WHERE id=?',
+          toISO(event.data.tosAcceptedAt), event.data.userId);
+        break;
+      }
+      case 'email_verification_token_created': {
+        this.sql.exec('INSERT OR REPLACE INTO email_verification_tokens (token,user_id,expires_at) VALUES (?,?,?)',
+          event.data.token, event.data.userId, toISO(event.data.expiresAt));
+        break;
+      }
+      case 'password_reset_token_created': {
+        this.sql.exec('INSERT OR REPLACE INTO password_reset_tokens (token,user_id,expires_at) VALUES (?,?,?)',
+          event.data.token, event.data.userId, toISO(event.data.expiresAt));
+        break;
+      }
+      case 'password_reset': {
+        this.sql.exec('DELETE FROM password_reset_tokens WHERE user_id=?', event.data.userId);
+        break;
+      }
       case 'conversation_created': {
         const c = event.data;
         this.sql.exec(
@@ -274,7 +304,17 @@ export class SqliteSync {
       case 'invite_created':{const i=event.data;this.sql.exec(`INSERT OR REPLACE INTO invites (code,created_by,created_at,amount,currency,expires_at,max_uses,use_count,claimed_by,claimed_at,claimed_by_users_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,i.code,i.createdBy,i.createdAt||toISO(new Date()),i.amount,i.currency||'credit',i.expiresAt||null,i.maxUses||null,i.useCount||0,i.claimedBy||null,i.claimedAt||null,JSON.stringify(i.claimedByUsers||[]));break;}
       case 'invite_claimed':{const d=event.data;this.sql.exec('UPDATE invites SET use_count=?,claimed_by=?,claimed_at=?,claimed_by_users_json=? WHERE code=?',d.useCount,d.claimedBy||null,d.claimedAt||null,JSON.stringify(d.claimedByUsers||[]),d.code);break;}
       case 'conversation_updated':{const d=event.data;const id=d.conversationId||d.id;const fs:string[]=[];const vs:any[]=[];if(d.title!==undefined){fs.push('title=?');vs.push(d.title);}if(d.model!==undefined){fs.push('model=?');vs.push(d.model);}if(d.systemPrompt!==undefined){fs.push('system_prompt=?');vs.push(d.systemPrompt);}if(d.settings!==undefined){fs.push('settings=?');vs.push(JSON.stringify(d.settings));}if(d.contextManagement!==undefined){fs.push('context_management=?');vs.push(JSON.stringify(d.contextManagement));}if(d.totalBranchCount!==undefined){fs.push('total_branch_count=?');vs.push(d.totalBranchCount);}if(fs.length){fs.push('updated_at=?');vs.push(toISO(new Date()));vs.push(id);this.sql.exec(`UPDATE conversations SET ${fs.join(',')} WHERE id=?`,...vs);}break;}
-      case 'conversation_deleted':{const id=event.data.id||event.data.conversationId;this.sql.exec('DELETE FROM messages WHERE conversation_id=?',id);this.sql.exec('DELETE FROM participants WHERE conversation_id=?',id);this.sql.exec('DELETE FROM conversation_metrics WHERE conversation_id=?',id);this.sql.exec('DELETE FROM bookmarks WHERE conversation_id=?',id);this.sql.exec('DELETE FROM conversations WHERE id=?',id);break;}
+      case 'conversation_deleted': {
+        const id = event.data.id || event.data.conversationId;
+        this.sql.transaction(() => {
+          this.sql.exec('DELETE FROM messages WHERE conversation_id=?', id);
+          this.sql.exec('DELETE FROM participants WHERE conversation_id=?', id);
+          this.sql.exec('DELETE FROM conversation_metrics WHERE conversation_id=?', id);
+          this.sql.exec('DELETE FROM bookmarks WHERE conversation_id=?', id);
+          this.sql.exec('DELETE FROM conversations WHERE id=?', id);
+        });
+        break;
+      }
       case 'archived_conversation':case'unarchived_conversation':{const id=event.data.conversationId||event.data.id;const a=event.type==='archived_conversation'?1:0;this.sql.exec('UPDATE conversations SET archived=?,updated_at=? WHERE id=?',a,toISO(new Date()),id);break;}
       // ═══ Persona events ════════════════════════════════════════════
       case 'persona_created': {
@@ -690,7 +730,16 @@ export class SqliteSync {
 
   /** Load sub-store data from SQLite and replay into sub-store instances. */
   loadPersonaStore(personaStore: any): void {
+    // Load branches first, grouped by persona_id, so each persona can be
+    // created with its real first branch — no synthetic phantom branches.
+    const branchesByPersona = new Map<string, any[]>();
+    for (const row of this.sql.all('SELECT * FROM persona_history_branches ORDER BY created_at') as any[]) {
+      const list = branchesByPersona.get(row.persona_id);
+      if (list) list.push(row); else branchesByPersona.set(row.persona_id, [row]);
+    }
     for (const row of this.sql.all('SELECT * FROM persona_personas') as any[]) {
+      const branches = branchesByPersona.get(row.id) || [];
+      const firstBranch = branches[0];
       personaStore.replayEvent({ type: 'persona_created', data: {
         persona: {
           id: row.id, name: row.name, modelId: row.model_id, ownerId: row.owner_id,
@@ -699,15 +748,16 @@ export class SqliteSync {
           createdAt: new Date(row.created_at), updatedAt: new Date(row.updated_at),
           archivedAt: row.archived_at ? new Date(row.archived_at) : undefined,
         },
-        initialBranch: {
-          id: row.id + '-branch', personaId: row.id, name: 'main', isHead: true, createdAt: new Date(row.created_at),
-        },
+        initialBranch: firstBranch ? {
+          id: firstBranch.id, personaId: firstBranch.persona_id, name: firstBranch.name,
+          parentBranchId: firstBranch.parent_branch_id,
+          forkPointParticipationId: firstBranch.fork_point_participation_id,
+          isHead: firstBranch.is_head === 1, createdAt: new Date(firstBranch.created_at),
+        } : undefined,
       }});
     }
-    // Reload branches (the above creates defaults, replay proper branches next)
+    // Replay every branch from the table (no fragile suffix skipping needed).
     for (const row of this.sql.all('SELECT * FROM persona_history_branches ORDER BY created_at') as any[]) {
-      // Skip the auto-created ones from persona_created
-      if (row.id.endsWith('-branch')) continue;
       personaStore.replayEvent({ type: 'persona_history_branch_created', data: {
         branch: { id: row.id, personaId: row.persona_id, name: row.name, parentBranchId: row.parent_branch_id, forkPointParticipationId: row.fork_point_participation_id, isHead: row.is_head === 1, createdAt: new Date(row.created_at) },
       }});
