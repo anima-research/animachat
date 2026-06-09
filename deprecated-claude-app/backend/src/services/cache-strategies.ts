@@ -5,6 +5,21 @@
 
 import { Message } from '@deprecated-claude/shared';
 
+/**
+ * Models that use Anthropic's premium cache tier (longer TTL, lower token
+ * threshold for caching to be worthwhile). Currently the Opus family and the
+ * Fable family — historically detected by an inline `modelId.includes('opus')`
+ * check at every call site; this helper centralises it so new families don't
+ * silently fall back to the generic short-TTL/high-threshold defaults.
+ *
+ * FIXME: long-term this should come off the model's own config entry
+ * (e.g. a `cacheProfile` field) rather than a hardcoded family allowlist.
+ */
+function isPremiumCacheModel(modelId: string): boolean {
+  const m = modelId.toLowerCase();
+  return m.includes('opus') || m.includes('fable');
+}
+
 export enum CacheEvent {
   MISS = 'miss',           // No cache available
   HIT = 'hit',             // Full cache hit
@@ -76,7 +91,7 @@ export interface CacheStrategy {
  */
 export class DefaultCacheStrategy implements CacheStrategy {
   onCacheExpired(messages: Message[], lastCacheTime: Date, modelId: string): CacheDecision {
-    const isOpus = modelId.toLowerCase().includes('opus');
+    const isOpus = isPremiumCacheModel(modelId);
     const minutesSinceLast = (Date.now() - lastCacheTime.getTime()) / 1000 / 60;
     
     // For Opus, consider refresh if just barely expired
@@ -120,7 +135,7 @@ export class DefaultCacheStrategy implements CacheStrategy {
       reason: 'Creating initial cache',
       metadata: {
         tokensToCache: totalTokens,
-        expectedTTL: modelId.toLowerCase().includes('opus') ? 60 : 5
+        expectedTTL: isPremiumCacheModel(modelId) ? 60 : 5
       }
     };
   }
@@ -130,7 +145,7 @@ export class DefaultCacheStrategy implements CacheStrategy {
       action: CacheAction.REBUILD,
       reason: `Context rotated, dropped ${droppedCount} messages`,
       metadata: {
-        expectedTTL: modelId.toLowerCase().includes('opus') ? 60 : 5
+        expectedTTL: isPremiumCacheModel(modelId) ? 60 : 5
       }
     };
   }
@@ -176,7 +191,7 @@ export class AggressiveCacheStrategy extends DefaultCacheStrategy {
       reason: 'Attempting cache refresh to maintain continuity',
       metadata: {
         refreshTokens: 50, // Minimal tokens to refresh
-        expectedTTL: modelId.toLowerCase().includes('opus') ? 60 : 5
+        expectedTTL: isPremiumCacheModel(modelId) ? 60 : 5
       }
     };
   }
@@ -193,7 +208,7 @@ export class CostOptimizedCacheStrategy extends DefaultCacheStrategy {
     }, 0);
     
     // Only cache larger conversations where savings are significant
-    const threshold = modelId.toLowerCase().includes('opus') ? 2000 : 5000;
+    const threshold = isPremiumCacheModel(modelId) ? 2000 : 5000;
     
     if (totalTokens < threshold) {
       return {

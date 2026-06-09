@@ -111,7 +111,18 @@ export class AnthropicService {
       }
       
       // Determine if this model uses adaptive thinking (Opus 4.7+) vs legacy enabled thinking
-      const useAdaptiveThinking = modelId.includes('opus-4-7') || modelId.includes('opus-4-8') || modelId.includes('opus-4-9') || modelId.includes('opus-5');
+      // Models that require adaptive thinking (`type: 'adaptive'` + `output_config.effort`)
+      // rather than legacy `type: 'enabled' + budget_tokens`. Anthropic 400s with
+      // "thinking.type.enabled is not supported for this model" if this is wrong.
+      // FIXME: this is a brittle substring allowlist — long-term the model entry
+      // should declare its thinking-API shape (cf. issue #121's note on hardcoded
+      // model registries; same pattern as the pricing-table fix in #120).
+      const useAdaptiveThinking =
+        modelId.includes('opus-4-7') ||
+        modelId.includes('opus-4-8') ||
+        modelId.includes('opus-4-9') ||
+        modelId.includes('opus-5') ||
+        modelId.includes('fable-5');
 
       // Ensure max_tokens > budget_tokens when legacy thinking is enabled
       let effectiveMaxTokens = settings.maxTokens;
