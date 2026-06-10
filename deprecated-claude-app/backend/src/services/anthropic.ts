@@ -41,7 +41,11 @@ export class AnthropicService {
     systemPrompt: string | undefined,
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
-    stopSequences?: string[]
+    stopSequences?: string[],
+    // Model.reasoningDisplay — set on always-on-reasoning models (e.g. Fable 5).
+    // Presence forces the adaptive-thinking request shape on and adds
+    // `display: <value>` to the `thinking` config. See shared/types.ts.
+    reasoningDisplay?: string
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -110,14 +114,23 @@ export class AnthropicService {
         }
       }
       
-      // Determine if this model uses adaptive thinking (Opus 4.7+) vs legacy enabled thinking
-      // Models that require adaptive thinking (`type: 'adaptive'` + `output_config.effort`)
-      // rather than legacy `type: 'enabled' + budget_tokens`. Anthropic 400s with
-      // "thinking.type.enabled is not supported for this model" if this is wrong.
-      // FIXME: this is a brittle substring allowlist — long-term the model entry
-      // should declare its thinking-API shape (cf. issue #121's note on hardcoded
-      // model registries; same pattern as the pricing-table fix in #120).
+      // Always-on reasoning models (declared via Model.reasoningDisplay on the
+      // model entry) cannot have reasoning disabled: the thinking config must be
+      // sent on every request, and uses the adaptive shape. The presence of
+      // reasoningDisplay alone is enough; we also OR in the substring allowlist
+      // below for models that haven't yet been migrated to the config-driven flag.
+      const alwaysOnReasoning = !!reasoningDisplay;
+      // Determine if this model uses adaptive thinking (`type: 'adaptive'` +
+      // `output_config.effort`) vs legacy `type: 'enabled' + budget_tokens`.
+      // Anthropic 400s with "thinking.type.enabled is not supported for this
+      // model" if this is wrong.
+      // FIXME: this remains a brittle substring allowlist for the opus models
+      // that pre-date Model.reasoningDisplay — long-term they should all declare
+      // their thinking-API shape on the model entry too (cf. issue #121's note
+      // on hardcoded model registries; same pattern as the pricing-table fix
+      // in #120).
       const useAdaptiveThinking =
+        alwaysOnReasoning ||
         modelId.includes('opus-4-7') ||
         modelId.includes('opus-4-8') ||
         modelId.includes('opus-4-9') ||
@@ -140,19 +153,30 @@ export class AnthropicService {
       // If temperature is set, don't send top_p/top_k
       const useTemperature = settings.temperature !== undefined;
 
-      // Build thinking config based on model capabilities
+      // Build thinking config based on model capabilities.
+      // `alwaysOnReasoning` models (those with Model.reasoningDisplay set) must
+      // send the thinking config every request regardless of the user's
+      // `settings.thinking.enabled` — they can't actually be turned off.
       let thinkingConfig: any = undefined;
       let outputConfig: any = undefined;
-      if (settings.thinking?.enabled) {
+      if (alwaysOnReasoning || settings.thinking?.enabled) {
         if (useAdaptiveThinking) {
-          // Opus 4.7+: adaptive thinking with effort control
+          // Adaptive thinking with effort control (Opus 4.7+, Fable 5, …)
           thinkingConfig = { type: 'adaptive' };
+          // Always-on models accept a `display` preference controlling how much
+          // of the reasoning is returned. e.g. Fable 5 → display: 'summarized'.
+          if (reasoningDisplay) {
+            thinkingConfig.display = reasoningDisplay;
+          }
           const effort = settings.modelSpecific?.thinkingEffort;
           outputConfig = { effort: typeof effort === 'string' ? effort : 'medium' };
-          console.log(`[Anthropic API] Using adaptive thinking with effort: ${outputConfig.effort}`);
+          console.log(`[Anthropic API] Using adaptive thinking with effort: ${outputConfig.effort}${reasoningDisplay ? `, display: ${reasoningDisplay}` : ''}`);
         } else {
-          // Legacy models: enabled thinking with budget_tokens
-          thinkingConfig = { type: 'enabled', budget_tokens: settings.thinking.budgetTokens };
+          // Legacy models: enabled thinking with budget_tokens.
+          // (Unreachable when alwaysOnReasoning=true because that forces
+          // useAdaptiveThinking=true above; so settings.thinking must be
+          // defined here via the outer settings.thinking?.enabled branch.)
+          thinkingConfig = { type: 'enabled', budget_tokens: settings.thinking!.budgetTokens };
         }
       }
 

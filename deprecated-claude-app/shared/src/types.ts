@@ -174,6 +174,14 @@ export const ModelSchema = z.object({
   outputTokenLimit: z.number(),
   supportsThinking: z.boolean().optional(), // Whether the model supports extended thinking
   thinkingDefaultEnabled: z.boolean().optional(), // Whether thinking should be enabled by default for this model
+  // For models with always-on reasoning (e.g. Fable 5), the Anthropic API requires
+  // the thinking config be sent on every request and accepts a display preference
+  // controlling how much of the reasoning is returned. Presence of this field:
+  //   1) forces the adaptive-thinking request shape on regardless of user settings
+  //      (the user can't actually disable reasoning on these models),
+  //   2) adds `display: <value>` to the `thinking` config in the request.
+  // Currently used with "summarized" for Fable 5; left as string to extend.
+  reasoningDisplay: z.string().optional(),
   supportsPrefill: z.boolean().optional(), // Whether model supports prefill/completion mode (defaults based on provider)
   capabilities: ModelCapabilitiesSchema.optional(), // Multimodal capabilities
   currencies: z.record(z.boolean()).optional(),

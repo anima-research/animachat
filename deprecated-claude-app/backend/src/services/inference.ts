@@ -602,7 +602,8 @@ export class InferenceService {
         effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
-        stopSequences
+        stopSequences,
+        model.reasoningDisplay
       );
     } else if (model.provider === 'bedrock') {
       if (!selectedKey) {
