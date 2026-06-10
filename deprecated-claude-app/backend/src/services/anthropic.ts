@@ -384,32 +384,61 @@ export class AnthropicService {
           // If no API thinking blocks but response contains <think> tags (prefill mode),
           // parse them into contentBlocks for proper UI display
           let finalContentBlocks = contentBlocks;
+          const fullResponseText = chunks.join('');
           if (contentBlocks.length === 0) {
-            const fullResponse = chunks.join('');
-            const parsedBlocks = this.parseThinkingTags(fullResponse);
+            const parsedBlocks = this.parseThinkingTags(fullResponseText);
             if (parsedBlocks.length > 0) {
               finalContentBlocks = parsedBlocks;
               console.log(`[Anthropic API] Parsed ${parsedBlocks.length} thinking blocks from prefill response`);
             }
           }
-          
+
+          // Surface non-text stop reasons (refusal / max_tokens / pause_turn) when
+          // the response would otherwise render as an empty assistant turn —
+          // e.g. an Anthropic safety refusal returns stop_reason='refusal' with
+          // the reasoning preserved as a signed (or redacted) thinking block and
+          // NO text. Without this, the user sees nothing rendered and only the
+          // cryptographic signature in the debug view; we'd rather tell them.
+          const TERMINATED_NORMALLY = new Set(['end_turn', 'stop_sequence', 'tool_use']);
+          const hasVisibleText = fullResponseText.length > 0;
+          if (!hasVisibleText && stopReason && !TERMINATED_NORMALLY.has(stopReason)) {
+            let notice: string | null = null;
+            if (stopReason === 'refusal') {
+              notice = '⚠️ Response withheld by the model\'s safety filter (`stop_reason: refusal`). The model reasoned but its answer was not surfaced. Try rephrasing or retrying.';
+            } else if (stopReason === 'max_tokens') {
+              notice = '⚠️ Output truncated at the `max_tokens` limit before any visible text was produced — reasoning consumed the entire output budget. Raise max_tokens, or lower the thinking budget/effort.';
+            } else if (stopReason === 'pause_turn') {
+              notice = '⚠️ Model paused mid-turn (`stop_reason: pause_turn`). Continue to resume.';
+            } else {
+              notice = `⚠️ No visible output (\`stop_reason: ${stopReason}\`).`;
+            }
+            if (notice) {
+              // Stream so the streaming UI renders it, then append as a text
+              // block so it persists on the branch alongside the signed thinking.
+              await onChunk(notice, false);
+              finalContentBlocks = [...finalContentBlocks, { type: 'text', text: notice }];
+              console.log(`[Anthropic API] Injected stop_reason notice (${stopReason}) for empty response`);
+            }
+          }
+
           await onChunk('', true, finalContentBlocks, actualUsage);
           
-          // Log complete response summary
-          const fullResponse = chunks.join('');
+          // Log complete response summary (reusing fullResponseText computed above)
           console.log(`[Anthropic API] Response complete:`, {
             model: requestParams.model,
-            totalLength: fullResponse.length,
+            totalLength: fullResponseText.length,
             contentBlocks: contentBlocks.length,
             stopReason,
             usage,
             truncated: stopReason === 'max_tokens',
-            lastChars: fullResponse.slice(-100)
+            lastChars: fullResponseText.slice(-100)
           });
-          
-          // DIAGNOSTIC: Detect when thinking happened but no text content followed
+
+          // DIAGNOSTIC: Detect when thinking happened but no text content followed.
+          // (We now also surface this case to the user via the notice injected
+          // above when stop_reason is non-normal — but keep the log for visibility.)
           const hasThinkingBlocks = contentBlocks.some((b: any) => b.type === 'thinking' || b.type === 'redacted_thinking');
-          if (hasThinkingBlocks && fullResponse.length === 0) {
+          if (hasThinkingBlocks && fullResponseText.length === 0) {
             console.warn(`[Anthropic API] ⚠️ DIAGNOSTIC: Thinking blocks present but NO text content generated!`);
             console.warn(`[Anthropic API] ⚠️ Stop reason: ${stopReason}, Usage: input=${usage.input_tokens}, output=${usage.output_tokens}`);
             console.warn(`[Anthropic API] ⚠️ This may be a token budget issue - thinking may have consumed all output tokens.`);
