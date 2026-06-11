@@ -41,7 +41,11 @@ export class AnthropicService {
     systemPrompt: string | undefined,
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
-    stopSequences?: string[]
+    stopSequences?: string[],
+    // Model.reasoningDisplay — set on always-on-reasoning models (e.g. Fable 5).
+    // Presence forces the adaptive-thinking request shape on and adds
+    // `display: <value>` to the `thinking` config. See shared/types.ts.
+    reasoningDisplay?: string
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -110,8 +114,28 @@ export class AnthropicService {
         }
       }
       
-      // Determine if this model uses adaptive thinking (Opus 4.7+) vs legacy enabled thinking
-      const useAdaptiveThinking = modelId.includes('opus-4-7') || modelId.includes('opus-4-8') || modelId.includes('opus-4-9') || modelId.includes('opus-5');
+      // Always-on reasoning models (declared via Model.reasoningDisplay on the
+      // model entry) cannot have reasoning disabled: the thinking config must be
+      // sent on every request, and uses the adaptive shape. The presence of
+      // reasoningDisplay alone is enough; we also OR in the substring allowlist
+      // below for models that haven't yet been migrated to the config-driven flag.
+      const alwaysOnReasoning = !!reasoningDisplay;
+      // Determine if this model uses adaptive thinking (`type: 'adaptive'` +
+      // `output_config.effort`) vs legacy `type: 'enabled' + budget_tokens`.
+      // Anthropic 400s with "thinking.type.enabled is not supported for this
+      // model" if this is wrong.
+      // FIXME: this remains a brittle substring allowlist for the opus models
+      // that pre-date Model.reasoningDisplay — long-term they should all declare
+      // their thinking-API shape on the model entry too (cf. issue #121's note
+      // on hardcoded model registries; same pattern as the pricing-table fix
+      // in #120).
+      const useAdaptiveThinking =
+        alwaysOnReasoning ||
+        modelId.includes('opus-4-7') ||
+        modelId.includes('opus-4-8') ||
+        modelId.includes('opus-4-9') ||
+        modelId.includes('opus-5') ||
+        modelId.includes('fable-5');
 
       // Ensure max_tokens > budget_tokens when legacy thinking is enabled
       let effectiveMaxTokens = settings.maxTokens;
@@ -129,19 +153,30 @@ export class AnthropicService {
       // If temperature is set, don't send top_p/top_k
       const useTemperature = settings.temperature !== undefined;
 
-      // Build thinking config based on model capabilities
+      // Build thinking config based on model capabilities.
+      // `alwaysOnReasoning` models (those with Model.reasoningDisplay set) must
+      // send the thinking config every request regardless of the user's
+      // `settings.thinking.enabled` — they can't actually be turned off.
       let thinkingConfig: any = undefined;
       let outputConfig: any = undefined;
-      if (settings.thinking?.enabled) {
+      if (alwaysOnReasoning || settings.thinking?.enabled) {
         if (useAdaptiveThinking) {
-          // Opus 4.7+: adaptive thinking with effort control
+          // Adaptive thinking with effort control (Opus 4.7+, Fable 5, …)
           thinkingConfig = { type: 'adaptive' };
+          // Always-on models accept a `display` preference controlling how much
+          // of the reasoning is returned. e.g. Fable 5 → display: 'summarized'.
+          if (reasoningDisplay) {
+            thinkingConfig.display = reasoningDisplay;
+          }
           const effort = settings.modelSpecific?.thinkingEffort;
           outputConfig = { effort: typeof effort === 'string' ? effort : 'medium' };
-          console.log(`[Anthropic API] Using adaptive thinking with effort: ${outputConfig.effort}`);
+          console.log(`[Anthropic API] Using adaptive thinking with effort: ${outputConfig.effort}${reasoningDisplay ? `, display: ${reasoningDisplay}` : ''}`);
         } else {
-          // Legacy models: enabled thinking with budget_tokens
-          thinkingConfig = { type: 'enabled', budget_tokens: settings.thinking.budgetTokens };
+          // Legacy models: enabled thinking with budget_tokens.
+          // (Unreachable when alwaysOnReasoning=true because that forces
+          // useAdaptiveThinking=true above; so settings.thinking must be
+          // defined here via the outer settings.thinking?.enabled branch.)
+          thinkingConfig = { type: 'enabled', budget_tokens: settings.thinking!.budgetTokens };
         }
       }
 
@@ -349,32 +384,61 @@ export class AnthropicService {
           // If no API thinking blocks but response contains <think> tags (prefill mode),
           // parse them into contentBlocks for proper UI display
           let finalContentBlocks = contentBlocks;
+          const fullResponseText = chunks.join('');
           if (contentBlocks.length === 0) {
-            const fullResponse = chunks.join('');
-            const parsedBlocks = this.parseThinkingTags(fullResponse);
+            const parsedBlocks = this.parseThinkingTags(fullResponseText);
             if (parsedBlocks.length > 0) {
               finalContentBlocks = parsedBlocks;
               console.log(`[Anthropic API] Parsed ${parsedBlocks.length} thinking blocks from prefill response`);
             }
           }
-          
+
+          // Surface non-text stop reasons (refusal / max_tokens / pause_turn) when
+          // the response would otherwise render as an empty assistant turn —
+          // e.g. an Anthropic safety refusal returns stop_reason='refusal' with
+          // the reasoning preserved as a signed (or redacted) thinking block and
+          // NO text. Without this, the user sees nothing rendered and only the
+          // cryptographic signature in the debug view; we'd rather tell them.
+          const TERMINATED_NORMALLY = new Set(['end_turn', 'stop_sequence', 'tool_use']);
+          const hasVisibleText = fullResponseText.length > 0;
+          if (!hasVisibleText && stopReason && !TERMINATED_NORMALLY.has(stopReason)) {
+            let notice: string | null = null;
+            if (stopReason === 'refusal') {
+              notice = '⚠️ Response withheld by the model\'s safety filter (`stop_reason: refusal`). The model reasoned but its answer was not surfaced. Try rephrasing or retrying.';
+            } else if (stopReason === 'max_tokens') {
+              notice = '⚠️ Output truncated at the `max_tokens` limit before any visible text was produced — reasoning consumed the entire output budget. Raise max_tokens, or lower the thinking budget/effort.';
+            } else if (stopReason === 'pause_turn') {
+              notice = '⚠️ Model paused mid-turn (`stop_reason: pause_turn`). Continue to resume.';
+            } else {
+              notice = `⚠️ No visible output (\`stop_reason: ${stopReason}\`).`;
+            }
+            if (notice) {
+              // Stream so the streaming UI renders it, then append as a text
+              // block so it persists on the branch alongside the signed thinking.
+              await onChunk(notice, false);
+              finalContentBlocks = [...finalContentBlocks, { type: 'text', text: notice }];
+              console.log(`[Anthropic API] Injected stop_reason notice (${stopReason}) for empty response`);
+            }
+          }
+
           await onChunk('', true, finalContentBlocks, actualUsage);
           
-          // Log complete response summary
-          const fullResponse = chunks.join('');
+          // Log complete response summary (reusing fullResponseText computed above)
           console.log(`[Anthropic API] Response complete:`, {
             model: requestParams.model,
-            totalLength: fullResponse.length,
+            totalLength: fullResponseText.length,
             contentBlocks: contentBlocks.length,
             stopReason,
             usage,
             truncated: stopReason === 'max_tokens',
-            lastChars: fullResponse.slice(-100)
+            lastChars: fullResponseText.slice(-100)
           });
-          
-          // DIAGNOSTIC: Detect when thinking happened but no text content followed
+
+          // DIAGNOSTIC: Detect when thinking happened but no text content followed.
+          // (We now also surface this case to the user via the notice injected
+          // above when stop_reason is non-normal — but keep the log for visibility.)
           const hasThinkingBlocks = contentBlocks.some((b: any) => b.type === 'thinking' || b.type === 'redacted_thinking');
-          if (hasThinkingBlocks && fullResponse.length === 0) {
+          if (hasThinkingBlocks && fullResponseText.length === 0) {
             console.warn(`[Anthropic API] ⚠️ DIAGNOSTIC: Thinking blocks present but NO text content generated!`);
             console.warn(`[Anthropic API] ⚠️ Stop reason: ${stopReason}, Usage: input=${usage.input_tokens}, output=${usage.output_tokens}`);
             console.warn(`[Anthropic API] ⚠️ This may be a token budget issue - thinking may have consumed all output tokens.`);
