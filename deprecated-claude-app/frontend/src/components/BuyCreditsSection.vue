@@ -72,25 +72,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { api } from '@/services/api';
 import type { BillingConfig } from '@deprecated-claude/shared';
 
+// config is owned by the parent (GrantsTab) and passed in, so the billing-enabled
+// state drives both this section and the parent's intro copy from a single fetch.
+const props = defineProps<{ config: BillingConfig | null }>();
 const emit = defineEmits<{ refresh: [] }>();
 
-const config = ref<BillingConfig | null>(null);
 const credits = ref<number | null>(null);
 const submitting = ref(false);
 const error = ref<string | null>(null);
 const returnMessage = ref<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
 
-const enabled = computed(() => config.value?.enabled === true);
-const usdPerCredit = computed(() => config.value?.usdPerCredit ?? 1);
-const markup = computed(() => config.value?.creditMarkup ?? 1);
+const enabled = computed(() => props.config?.enabled === true);
+const usdPerCredit = computed(() => props.config?.usdPerCredit ?? 1);
+const markup = computed(() => props.config?.creditMarkup ?? 1);
 const pricePerCredit = computed(() => usdPerCredit.value * markup.value);
-const minCredits = computed(() => config.value?.minCredits ?? 1);
-const maxCredits = computed(() => config.value?.maxCredits ?? 100000);
-const presets = computed(() => config.value?.presetsCredits ?? []);
+const minCredits = computed(() => props.config?.minCredits ?? 1);
+const maxCredits = computed(() => props.config?.maxCredits ?? 100000);
+const presets = computed(() => props.config?.presetsCredits ?? []);
 
 const isValid = computed(() => {
   const c = Number(credits.value);
@@ -102,23 +104,13 @@ const totalCost = computed(() => {
   return (Number(credits.value) * pricePerCredit.value).toFixed(2);
 });
 
-async function loadConfig() {
-  try {
-    const response = await api.get('/billing/config');
-    config.value = response.data;
-    if (!credits.value && presets.value.length) {
-      credits.value = presets.value[0];
-    }
-  } catch (err: any) {
-    // The "billing not configured" case is NOT an error — /config returns 200 with
-    // { enabled: false }, and the section stays hidden via the `enabled` gate. So
-    // anything reaching here is a real failure (401 expired token, 5xx, network).
-    // We still can't render pricing we don't have, so the section stays hidden, but
-    // we surface a warning rather than vanishing silently with no trace.
-    config.value = null;
-    console.warn('[billing] failed to load billing config; Buy Credits hidden:', err?.response?.status ?? err?.message ?? err);
+// Default the input to the first preset once config arrives (and only if the user
+// hasn't already typed a value). immediate covers config already present at mount.
+watch(presets, (list) => {
+  if (!credits.value && list.length) {
+    credits.value = list[0];
   }
-}
+}, { immediate: true });
 
 async function purchase() {
   if (!isValid.value || submitting.value) return;
@@ -161,7 +153,6 @@ function handleReturn() {
 }
 
 onMounted(() => {
-  loadConfig();
   handleReturn();
 });
 </script>
