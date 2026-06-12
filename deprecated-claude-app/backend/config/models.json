@@ -70,6 +70,145 @@
       }
     },
     {
+      "id": "claude-opus-4.8",
+      "providerModelId": "claude-opus-4-8",
+      "canonicalId": "claude-opus-4.8",
+      "displayName": "Claude Opus 4.8",
+      "shortName": "Opus 4.8",
+      "provider": "anthropic",
+      "hidden": false,
+      "contextWindow": 1000000,
+      "outputTokenLimit": 128000,
+      "supportsThinking": true,
+      "thinkingDefaultEnabled": true,
+      "supportsPrefill": false,
+      "currencies": {
+        "models-2025": true,
+        "credit": true
+      },
+      "configurableSettings": [
+        {
+          "type": "select",
+          "key": "thinkingEffort",
+          "label": "Thinking Effort",
+          "description": "Controls how much internal reasoning Opus 4.8 performs when extended thinking is enabled.",
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Light reasoning, faster responses"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balanced depth and speed"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Deep, thorough reasoning"
+            }
+          ],
+          "default": "medium"
+        }
+      ],
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 128000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      }
+    },
+    {
+      "id": "claude-fable-5",
+      "providerModelId": "claude-fable-5",
+      "canonicalId": "claude-fable-5",
+      "displayName": "Claude Fable 5",
+      "shortName": "Fable 5",
+      "provider": "anthropic",
+      "hidden": false,
+      "contextWindow": 1000000,
+      "outputTokenLimit": 128000,
+      "supportsThinking": true,
+      "thinkingDefaultEnabled": true,
+      "supportsPrefill": false,
+      "currencies": {
+        "models-2025": true,
+        "credit": true
+      },
+      "configurableSettings": [
+        {
+          "type": "select",
+          "key": "thinkingEffort",
+          "label": "Thinking Effort",
+          "description": "Controls how much internal reasoning Fable 5 performs when extended thinking is enabled.",
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Light reasoning, faster responses"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balanced depth and speed"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Deep, thorough reasoning"
+            }
+          ],
+          "default": "medium"
+        }
+      ],
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 128000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      },
+      "reasoningDisplay": "summarized"
+    },
+    {
       "id": "claude-sonnet-4.6",
       "providerModelId": "claude-sonnet-4-6",
       "canonicalId": "claude-sonnet-4.6",
