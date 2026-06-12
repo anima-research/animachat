@@ -311,8 +311,13 @@ export class AnthropicService {
             currentBlock.thinking = '';
             console.log('[Anthropic API] Thinking block started');
           } else if (chunk.content_block.type === 'redacted_thinking') {
-            currentBlock.data = '';
-            console.log('[Anthropic API] Redacted thinking block started');
+            // redacted_thinking arrives COMPLETE in content_block_start — there is
+            // no delta type for its data (RawContentBlockDelta has no redacted
+            // variant). The spread above already captured `data`; do NOT reset it,
+            // or the encrypted payload is lost and the round-trip block becomes
+            // invalid (API 400s on the next turn).
+            currentBlock.data = chunk.content_block.data ?? '';
+            console.log(`[Anthropic API] Redacted thinking block started (data: ${currentBlock.data.length} chars)`);
           } else if (chunk.content_block.type === 'text') {
             currentBlock.text = '';
           }
