@@ -1989,6 +1989,41 @@
         }
       },
       "canonicalId": "gemini-3-pro"
+    },
+    {
+      "id": "claude-opus-4-vercel",
+      "providerModelId": "anthropic/claude-opus-4",
+      "canonicalId": "claude-opus-4",
+      "displayName": "Claude Opus 4 (Vercel)",
+      "shortName": "Opus 4",
+      "provider": "openai-compatible",
+      "hidden": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 32000,
+      "supportsPrefill": false,
+      "currencies": {
+        "models-2025": true,
+        "credit": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 32000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        }
+      }
     }
   ]
 }
