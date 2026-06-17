@@ -3609,6 +3609,18 @@ async function exportConversationMarkdown(id: string) {
         'Authorization': `Bearer ${localStorage.getItem('token')}`
       }
     });
+    if (!response.ok) {
+      let detail = '';
+      try {
+        detail = (await response.json())?.error || '';
+      } catch {
+        // response body was not JSON; leave detail empty
+      }
+      errorSnackbarMessage.value = 'Markdown export failed';
+      errorSnackbarDetails.value = detail || `Server returned ${response.status}`;
+      errorSnackbar.value = true;
+      return;
+    }
     const data = await response.json();
 
     const visibleMessages = computeVisibleMessages(data.messages || []);
@@ -3632,6 +3644,9 @@ async function exportConversationMarkdown(id: string) {
     URL.revokeObjectURL(url);
   } catch (error) {
     console.error('Markdown export failed:', error);
+    errorSnackbarMessage.value = 'Markdown export failed';
+    errorSnackbarDetails.value = error instanceof Error ? error.message : String(error);
+    errorSnackbar.value = true;
   }
 }
 
