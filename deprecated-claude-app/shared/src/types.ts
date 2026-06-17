@@ -185,7 +185,16 @@ export const ModelSchema = z.object({
   supportsPrefill: z.boolean().optional(), // Whether model supports prefill/completion mode (defaults based on provider)
   capabilities: ModelCapabilitiesSchema.optional(), // Multimodal capabilities
   currencies: z.record(z.boolean()).optional(),
-  
+
+  // Custom endpoint settings, present when this Model was derived from a
+  // user-defined openai-compatible model with an embedded baseUrl. Spread on
+  // in ModelLoader.getAllModels; declared here so consumers (credit gating,
+  // inference routing) can read it type-safely.
+  customEndpoint: z.object({
+    baseUrl: z.string().url(),
+    apiKey: z.string().optional()
+  }).optional(),
+
   // Model-specific configurable settings (rendered as dynamic UI)
   configurableSettings: z.array(ConfigurableSettingSchema).optional(),
   

@@ -282,6 +282,18 @@ async function userHasSufficientCredits(db: Database, userId: string, modelId?: 
     const modelLoader = ModelLoader.getInstance();
     const model = await modelLoader.getModelById(modelId, userId);
     if (model) {
+      // Self-hosted custom endpoints (openai-compatible models with an embedded
+      // baseUrl) have no platform cost basis — pricing resolves to $0 and the
+      // inference path already bypasses the API-key manager for them
+      // (see InferenceService: `isCustomModelWithEndpoint`). Charging credits
+      // here would lock the user out of a model that costs the platform nothing,
+      // so skip the credit check entirely, mirroring the "user brought their own
+      // API key" exemption below.
+      if (model.customEndpoint) {
+        console.log(`[Credits] User ${userId} using custom-endpoint model ${model.id}, skipping credit check`);
+        return true;
+      }
+
       // Check if user has their own API key for this provider
       const userApiKeys = await db.getUserApiKeys(userId);
       const hasProviderKey = userApiKeys.some(key => key.provider === model.provider);
