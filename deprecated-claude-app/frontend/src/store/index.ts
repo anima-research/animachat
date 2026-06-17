@@ -218,6 +218,131 @@ function sortMessagesByTreeOrder(messages: Message[]): Message[] {
   return sorted;
 }
 
+/**
+ * Compute the visible message path (the active branch path) for a set of
+ * messages, following each message's activeBranchId from the canonical root.
+ *
+ * This is the pure, store-independent core of the store's getVisibleMessages()
+ * method. It is shared so that features which operate on a conversation that is
+ * not the currently-loaded one (e.g. exporting an arbitrary conversation to
+ * markdown) can reuse the exact same path-resolution logic instead of
+ * reimplementing it.
+ *
+ * Handles multi-root conversations (from looming/branching) by selecting the
+ * canonical root as the one whose subtree has the most recent activity.
+ */
+export function computeVisibleMessages(messages: Message[]): Message[] {
+  // Sort messages by tree order to ensure parents come before children
+  // This handles cases where order numbers don't reflect tree structure
+  const sortedMessages = sortMessagesByTreeOrder(messages);
+
+  // For multi-root conversations (from looming/branching), find the canonical root
+  // Canonical root is the one whose subtree has the most recent activity
+  const rootMessages = sortedMessages.filter(msg => {
+    const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
+    return activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root');
+  });
+
+  let canonicalRootId: string | null = null;
+  if (rootMessages.length > 1) {
+    // Multiple roots - pick the one with most recent activity in its subtree
+    // Build parent->children map
+    const parentToChildren = new Map<string, Message[]>();
+    for (const msg of sortedMessages) {
+      for (const branch of msg.branches) {
+        const parentId = branch.parentBranchId || 'root';
+        if (!parentToChildren.has(parentId)) {
+          parentToChildren.set(parentId, []);
+        }
+        parentToChildren.get(parentId)!.push(msg);
+      }
+    }
+
+    // Find latest timestamp in each root's subtree
+    let latestTime = 0;
+    for (const root of rootMessages) {
+      const rootTime = findLatestInSubtree(root, parentToChildren);
+      if (rootTime > latestTime) {
+        latestTime = rootTime;
+        canonicalRootId = root.id;
+      }
+    }
+    console.log(`[computeVisibleMessages] Multiple roots (${rootMessages.length}), canonical root: ${canonicalRootId?.slice(0, 8)}`);
+  } else if (rootMessages.length === 1) {
+    canonicalRootId = rootMessages[0].id;
+  }
+
+  // Helper function to find latest timestamp in a subtree
+  function findLatestInSubtree(root: Message, parentToChildren: Map<string, Message[]>): number {
+    let latest = 0;
+    const visited = new Set<string>();
+
+    function visit(msg: Message) {
+      if (visited.has(msg.id)) return;
+      visited.add(msg.id);
+
+      for (const branch of msg.branches) {
+        if (branch.createdAt) {
+          const time = new Date(branch.createdAt).getTime();
+          if (time > latest) latest = time;
+        }
+        // Visit children of this branch
+        const children = parentToChildren.get(branch.id) || [];
+        for (const child of children) visit(child);
+      }
+    }
+
+    visit(root);
+    return latest;
+  }
+
+  const visibleMessages: Message[] = [];
+  const branchPath: string[] = []; // Track the current conversation path (branch IDs)
+
+  for (let i = 0; i < sortedMessages.length; i++) {
+    const message = sortedMessages[i];
+    const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+
+    // Case 1: Active branch exists and is a root message
+    // Only accept the canonical root - skip others (handles multi-root conversations from looming)
+    if (activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root')) {
+      // Only accept if this is the canonical root (or if no canonical was determined)
+      if (branchPath.length === 0 && (!canonicalRootId || message.id === canonicalRootId)) {
+        visibleMessages.push(message);
+        branchPath.push(activeBranch.id);
+      }
+      // Skip other roots - they're from different conversation branches
+      continue;
+    }
+
+    // Case 2: Active branch exists and continues from our current path
+    if (activeBranch && branchPath.includes(activeBranch.parentBranchId!)) {
+      // This message is a valid continuation
+      visibleMessages.push(message);
+
+      // Find where in the path this branches from
+      const parentIndex = branchPath.indexOf(activeBranch.parentBranchId!);
+
+      // Truncate the path after the parent and add this branch
+      branchPath.length = parentIndex + 1;
+      branchPath.push(activeBranch.id);
+
+      continue;
+    }
+
+    // Case 3: Active branch doesn't exist or doesn't connect to our path
+    // Be strict: skip this message. Don't try to recover via other branches,
+    // as that can accidentally include orphaned/deleted branches from other roots.
+    // (This mirrors the import preview logic which is strict about following activeBranchId only)
+    if (!activeBranch) {
+      console.log('Skipping message with deleted active branch:', message.id);
+    }
+    // Message is from a different conversation path - skip it
+  }
+
+  return visibleMessages;
+}
+
 export function createStore(): {
   install(app: App): void;
 } {
@@ -1013,120 +1138,11 @@ export function createStore(): {
         return visibleMessagesCache.result;
       }
       
-      // Sort messages by tree order to ensure parents come before children
-      // This handles cases where order numbers don't reflect tree structure
-      const sortedMessages = sortMessagesByTreeOrder(state.allMessages);
-      
-      // For multi-root conversations (from looming/branching), find the canonical root
-      // Canonical root is the one whose subtree has the most recent activity
-      const rootMessages = sortedMessages.filter(msg => {
-        const activeBranch = msg.branches.find(b => b.id === msg.activeBranchId);
-        return activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root');
-      });
-      
-      let canonicalRootId: string | null = null;
-      if (rootMessages.length > 1) {
-        // Multiple roots - pick the one with most recent activity in its subtree
-        // Build parent->children map
-        const parentToChildren = new Map<string, Message[]>();
-        for (const msg of sortedMessages) {
-          for (const branch of msg.branches) {
-            const parentId = branch.parentBranchId || 'root';
-            if (!parentToChildren.has(parentId)) {
-              parentToChildren.set(parentId, []);
-            }
-            parentToChildren.get(parentId)!.push(msg);
-          }
-        }
-        
-        // Find latest timestamp in each root's subtree
-        let latestTime = 0;
-        for (const root of rootMessages) {
-          const rootTime = findLatestInSubtree(root, parentToChildren);
-          if (rootTime > latestTime) {
-            latestTime = rootTime;
-            canonicalRootId = root.id;
-          }
-        }
-        console.log(`[getVisibleMessages] Multiple roots (${rootMessages.length}), canonical root: ${canonicalRootId?.slice(0, 8)}`);
-      } else if (rootMessages.length === 1) {
-        canonicalRootId = rootMessages[0].id;
-      }
-      
-      // Helper function to find latest timestamp in a subtree
-      function findLatestInSubtree(root: Message, parentToChildren: Map<string, Message[]>): number {
-        let latest = 0;
-        const visited = new Set<string>();
-        
-        function visit(msg: Message) {
-          if (visited.has(msg.id)) return;
-          visited.add(msg.id);
-          
-          for (const branch of msg.branches) {
-            if (branch.createdAt) {
-              const time = new Date(branch.createdAt).getTime();
-              if (time > latest) latest = time;
-            }
-            // Visit children of this branch
-            const children = parentToChildren.get(branch.id) || [];
-            for (const child of children) visit(child);
-          }
-        }
-        
-        visit(root);
-        return latest;
-      }
-      
-      const visibleMessages: Message[] = [];
-      const branchPath: string[] = []; // Track the current conversation path (branch IDs)
-      
-      for (let i = 0; i < sortedMessages.length; i++) {
-        const message = sortedMessages[i];
-        const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
-        
-        // console.log(`Message ${i}:`, message.id, 'activeBranchId:', message.activeBranchId, 
-        //             'branches:', message.branches.length, 
-        //             'activeBranch parentBranchId:', activeBranch?.parentBranchId);
-        
-        // Case 1: Active branch exists and is a root message
-        // Only accept the canonical root - skip others (handles multi-root conversations from looming)
-        if (activeBranch && (!activeBranch.parentBranchId || activeBranch.parentBranchId === 'root')) {
-          // Only accept if this is the canonical root (or if no canonical was determined)
-          if (branchPath.length === 0 && (!canonicalRootId || message.id === canonicalRootId)) {
-            visibleMessages.push(message);
-            branchPath.push(activeBranch.id);
-            // console.log('Added canonical root message:', message.id);
-          }
-          // Skip other roots - they're from different conversation branches
-          continue;
-        }
+      // Delegate to the shared pure helper so the path-resolution logic has a
+      // single source of truth (also reused by markdown export of arbitrary
+      // conversations). The cache wrapper around it stays here.
+      const visibleMessages = computeVisibleMessages(state.allMessages);
 
-        // Case 2: Active branch exists and continues from our current path
-        if (activeBranch && branchPath.includes(activeBranch.parentBranchId!)) {
-          // This message is a valid continuation
-          visibleMessages.push(message);
-          
-          // Find where in the path this branches from
-          const parentIndex = branchPath.indexOf(activeBranch.parentBranchId!);
-          
-          // Truncate the path after the parent and add this branch
-          branchPath.length = parentIndex + 1;
-          branchPath.push(activeBranch.id);
-          
-          // console.log('Message continues from branch at index', parentIndex, 'added branch:', activeBranch.id, 'branchPath now:', [...branchPath]);
-          continue;
-        }
-
-        // Case 3: Active branch doesn't exist or doesn't connect to our path
-        // Be strict: skip this message. Don't try to recover via other branches,
-        // as that can accidentally include orphaned/deleted branches from other roots.
-        // (This mirrors the import preview logic which is strict about following activeBranchId only)
-        if (!activeBranch) {
-          console.log('Skipping message with deleted active branch:', message.id);
-        }
-        // Message is from a different conversation path - skip it
-      }
-      
       // Update cache before returning
       visibleMessagesCache = {
         sourceVersion: messagesVersion,
