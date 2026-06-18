@@ -189,8 +189,20 @@ export class Database {
       this.userLastAccessedTimes.set(id, new Date());
     }
     
-    // Create test users only in development
-    if (process.env.NODE_ENV !== 'production') {
+    // Create test users only in environments where they're EXPLICITLY allowed.
+    //
+    // The previous gate (`NODE_ENV !== 'production'`) failed open: an unset,
+    // empty, misspelled, or differently-cased NODE_ENV (`prod`, `Production`,
+    // ``) would silently put test users — with known credentials — into a
+    // production deployment. The fix is an allowlist: require an explicit
+    // dev/test NODE_ENV, OR an explicit ENABLE_TEST_USERS opt-in for the
+    // edge cases where neither env var is conventional. Anything else,
+    // including all misconfigurations, gets the safe default of no test users.
+    const allowTestUsers =
+      process.env.NODE_ENV === 'development' ||
+      process.env.NODE_ENV === 'test' ||
+      process.env.ENABLE_TEST_USERS === 'true';
+    if (allowTestUsers) {
       if (this.users.size === 0) {
         await this.createTestUser();
         console.log('🧪 Creating additional test users...');
