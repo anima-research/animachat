@@ -6,6 +6,7 @@ import { AuthRequest } from '../middleware/auth.js';
 import {
   BillingService,
   UnprocessableWebhookError,
+  WebhookSignatureError,
   USD_PER_CREDIT,
   getCreditMarkup,
   isBillingEnabled,
@@ -105,11 +106,18 @@ export function createBillingWebhookHandler(db: Database) {
         console.error('[billing] webhook unprocessable, acking:', error.message);
         return res.status(200).json({ received: true, minted: 0 });
       }
-      // Signature verification failed or a transient processing error — 4xx tells
-      // Stripe to retry later (correct for transient failures, harmless for a
-      // genuinely bad signature it will never resend successfully).
-      console.error('[billing] webhook error:', error);
-      res.status(400).json({ error: 'Webhook verification failed' });
+      if (error instanceof WebhookSignatureError) {
+        // Bad signature: Stripe can never resend a payload that verifies against
+        // our secret, so a retry is pointless. 400 tells it to stop.
+        console.error('[billing] webhook signature verification failed:', error.message);
+        return res.status(400).json({ error: 'Webhook signature verification failed' });
+      }
+      // Transient processing failure (e.g. a DB error while recording the grant
+      // after the user has already paid). Return 5xx so Stripe retries the event;
+      // minting is idempotent on the session id, so the credits mint exactly once
+      // on a later successful delivery rather than being silently dropped.
+      console.error('[billing] webhook processing error, requesting retry:', error);
+      res.status(500).json({ error: 'Webhook processing failed' });
     }
   };
 }

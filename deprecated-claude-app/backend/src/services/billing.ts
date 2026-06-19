@@ -18,6 +18,20 @@ export class UnprocessableWebhookError extends Error {
 }
 
 /**
+ * The webhook payload failed Stripe signature verification. This is a permanent
+ * failure for *this* delivery — Stripe can never resend a payload that verifies
+ * against our secret — so the route should return 400. Distinct from a transient
+ * processing error (DB hiccup mid-fulfillment), which must return 5xx so Stripe
+ * retries and the paid-for credits eventually mint.
+ */
+export class WebhookSignatureError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WebhookSignatureError';
+  }
+}
+
+/**
  * The peg between the generic `credit` currency and US dollars.
  *
  * This is the single source of truth for what a credit is worth. The burn side
@@ -180,7 +194,18 @@ export class BillingService {
       throw new Error('STRIPE_WEBHOOK_SECRET is not configured');
     }
 
-    const event = this.stripeClient.webhooks.constructEvent(rawBody, signature, this.webhookSecret);
+    let event: Stripe.Event;
+    try {
+      event = this.stripeClient.webhooks.constructEvent(rawBody, signature, this.webhookSecret);
+    } catch (error) {
+      // Signature verification failed: wrap in our own error so the route can map
+      // it to a 400 without depending on Stripe's error types, and so it stays
+      // distinct from transient processing failures below (which must trigger retries).
+      if (error instanceof Stripe.errors.StripeSignatureVerificationError) {
+        throw new WebhookSignatureError(error.message);
+      }
+      throw error;
+    }
 
     switch (event.type) {
       // `completed` covers synchronous payment methods (cards). `async_payment_succeeded`
