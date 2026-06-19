@@ -1,3 +1,4 @@
+import 'dotenv/config'; // MUST be first: loads .env before any import (e.g. auth.ts) reads process.env at module top-level
 import express from 'express';
 import compression from 'compression';
 import { clearOpenRouterLog } from './utils/openrouterLogger.js';
@@ -30,6 +31,7 @@ import { personaRouter } from './routes/personas.js';
 import avatarRouter from './routes/avatars.js';
 import blobRouter from './routes/blobs.js';
 import siteConfigRouter from './routes/site-config.js';
+import { createBillingRouter, createBillingWebhookHandler } from './routes/billing.js';
 import { websocketHandler } from './websocket/handler.js';
 import { Database } from './database/index.js';
 import { initBlobStore } from './database/blob-store.js';
@@ -134,11 +136,17 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true
 }));
+// Stripe webhook MUST be registered before express.json(): signature
+// verification runs on the exact raw bytes, so the body must not be pre-parsed.
+// It is unauthenticated (Stripe sends no JWT) and verifies via the signing secret.
+app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), createBillingWebhookHandler(db));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Routes
 app.use('/api/auth', authRouter(db));
+app.use('/api/billing', authenticateToken, createBillingRouter(db));
 app.use('/api/public/models', publicModelRouter());
 app.use('/api/conversations', authenticateToken, conversationRouter(db));
 // Mount custom models BEFORE general models to prevent /:id catching /custom

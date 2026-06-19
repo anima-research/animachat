@@ -672,22 +672,64 @@ export class Database {
     return ordered;
   }
 
-  async recordGrantInfo(grant: GrantInfo): Promise<void> {
+  /**
+   * Record a grant. Returns false (and is a no-op) if this is a `mint` whose
+   * `causeId` has already been minted for the recipient — making mints idempotent
+   * on `causeId`. This is the dedup primitive that protects credit purchases:
+   * Stripe sends both `checkout.session.completed` and `async_payment_succeeded`
+   * for one payment and retries on timeout, so the same session id can arrive
+   * concurrently. All user loading is awaited up front; the duplicate check and
+   * the in-memory push in `applyGrantInfo` then run in one synchronous block with
+   * no `await` between them, so two concurrent webhook requests can't both observe
+   * "not minted" and both write — exactly once is enforced within this process.
+   */
+  async recordGrantInfo(grant: GrantInfo): Promise<boolean> {
     const normalized = this.normaliseGrantInfo(grant);
     const userIds = new Set<string>();
 
-    if (normalized.type === 'send') {
-      if (normalized.fromUserId) userIds.add(normalized.fromUserId);
-      if (normalized.toUserId) userIds.add(normalized.toUserId);
-    } else {
-      if (normalized.fromUserId) userIds.add(normalized.fromUserId);
-      if (normalized.toUserId) userIds.add(normalized.toUserId);
+    if (normalized.fromUserId) userIds.add(normalized.fromUserId);
+    if (normalized.toUserId) userIds.add(normalized.toUserId);
+
+    // Load all involved users up front. Every `await` in this method must happen
+    // here, BEFORE the synchronous check-then-write block below — otherwise a
+    // suspension between the duplicate check and the in-memory push opens a window
+    // where two concurrent webhook deliveries for the same payment both pass the
+    // check and both mint. Stripe sends `completed` and `async_payment_succeeded`
+    // for one payment and retries on timeout, so concurrent duplicates are real.
+    for (const userId of userIds) {
+      await this.loadUser(userId);
+      this.ensureGrantContainers(userId);
+    }
+
+    // --- synchronous from here: no `await` until after applyGrantInfo ---
+
+    // Idempotency guard for mints keyed on causeId. The check and the
+    // `applyGrantInfo` push below run with no intervening await, so two
+    // concurrent callers cannot both observe "not minted" and both write.
+    if (normalized.type === 'mint' && normalized.causeId) {
+      const recipient = normalized.toUserId;
+      if (recipient && userIds.has(recipient)) {
+        const existing = this.userGrantInfos.get(recipient) || [];
+        const alreadyMinted = existing.some(
+          (g) => g.type === 'mint' && g.causeId === normalized.causeId,
+        );
+        if (alreadyMinted) return false;
+      }
     }
 
     for (const userId of userIds) {
       this.applyGrantInfo(userId, normalized);
+    }
+
+    // --- end synchronous block; the mint is now visible to the guard above ---
+
+    // Durably log only after the in-memory state reflects the mint, so a
+    // concurrent duplicate is already deduped by the guard regardless of how
+    // these awaited writes interleave.
+    for (const userId of userIds) {
       await this.logUserEvent(userId, 'grant_info_recorded', { userId, grant: normalized });
     }
+    return true;
   }
 
   async recordGrantCapability(capability: GrantCapability): Promise<void> {
