@@ -8,6 +8,7 @@ import { GeminiService } from './gemini.js';
 import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { Logger } from '../utils/logger.js';
+import { redactSecrets } from '../utils/safe-log.js';
 import { ContextManager } from './context-manager.js';
 import { isImageFile } from './attachment-utils.js';
 
@@ -332,7 +333,7 @@ export class InferenceService {
         }
       }
     } else {
-      console.log(`[InferenceService] Using custom model with embedded endpoint: ${(model as any).customEndpoint.baseUrl}`);
+      console.log(`[InferenceService] Using custom model with embedded endpoint: ${redactSecrets((model as any).customEndpoint.baseUrl)}`);
     }
 
     // Track token usage
@@ -663,7 +664,7 @@ export class InferenceService {
         ? undefined
         : selectedKey?.credentials.modelPrefix;
       
-      console.log(`[InferenceService] OpenAI-compatible model config: isCustomModel=${isCustomModel}, baseUrl=${baseUrl}`);
+      console.log(`[InferenceService] OpenAI-compatible model config: isCustomModel=${isCustomModel}, baseUrl=${redactSecrets(baseUrl)}`);
       
       const openAIService = new OpenAICompatibleService(
         this.db,

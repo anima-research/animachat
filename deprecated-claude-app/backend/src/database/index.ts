@@ -5045,7 +5045,10 @@ export class Database {
     // protection. If a per-user storage budget becomes desirable later,
     // implement it as an explicit per-tier policy rather than a hardcoded
     // ceiling here.
-    await this.getUserModels(userId);
+    // (Greptile #96: a `getUserModels(userId)` call used to live here as
+    // part of the cap-enforcement loop. Removed when the cap went away —
+    // its return value was discarded, and `loadUser` above already
+    // populated the in-memory model set.)
 
     // Resolve settings with validation
     let resolvedSettings = modelData.settings;

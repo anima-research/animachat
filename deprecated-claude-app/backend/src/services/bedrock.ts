@@ -2,6 +2,7 @@ import { BedrockRuntimeClient, InvokeModelWithResponseStreamCommand } from '@aws
 import { Message, getActiveBranch, ModelSettings } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
+import { safeErrorLog } from '../utils/safe-log.js';
 import sharp from 'sharp';
 import { isImageFile } from './attachment-utils.js';
 
@@ -220,7 +221,7 @@ export class BedrockService {
 
       return { rawRequest };
     } catch (error) {
-      console.error('Bedrock streaming error:', error);
+      safeErrorLog('Bedrock streaming error:', error);
       
       // Log the error
       if (requestId) {
