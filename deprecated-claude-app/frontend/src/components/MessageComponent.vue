@@ -514,6 +514,19 @@
         </div>
       </div>
       
+      <!-- Display-only stop-reason notices (refusal / max_tokens / pause_turn).
+           These live in contentBlocks as type 'notice' and are never sent to models. -->
+      <v-alert
+        v-for="(block, index) in noticeBlocks"
+        :key="'notice-' + index"
+        type="warning"
+        variant="tonal"
+        density="compact"
+        class="mt-2 text-caption notice-block"
+      >
+        {{ (block as any).text }}
+      </v-alert>
+
       <!-- Attachments display (for user messages) -->
       <div v-if="currentBranch.role === 'user' && displayedAttachments.length > 0" class="mt-2">
         <template v-for="(attachment, index) in displayedAttachments" :key="attachment.id || `${attachment.fileName}-${index}`">
@@ -1489,6 +1502,13 @@ const thinkingBlocks = computed(() => {
 
   return [...structured, ...inline];
 });
+
+// Display-only notice blocks (abnormal stop reasons: refusal / max_tokens /
+// pause_turn). Injected by the backend as type 'notice'; rendered as a
+// warning banner and never sent back to any model.
+const noticeBlocks = computed(() =>
+  (currentBranch.value?.contentBlocks || []).filter((block: any) => block.type === 'notice')
+);
 
 // Extract generated image blocks from content blocks
 const imageBlocks = computed(() => {

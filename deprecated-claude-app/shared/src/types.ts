@@ -525,12 +525,24 @@ export const AudioContentBlockSchema = z.object({
   transcript: z.string().optional() // Text transcript of the audio
 });
 
+// Display-only notice block: surfaces abnormal stream terminations (e.g.
+// stop_reason: refusal cutting a response mid-generation) to the user.
+// NEVER sent back to any model — every provider formatter forwards only the
+// block types it explicitly knows, so 'notice' blocks are dropped from API
+// requests. They must also never be folded into branch.content.
+export const NoticeContentBlockSchema = z.object({
+  type: z.literal('notice'),
+  noticeType: z.string().optional(), // stop_reason, e.g. 'refusal' | 'max_tokens' | 'pause_turn'
+  text: z.string()
+});
+
 export const ContentBlockSchema = z.discriminatedUnion('type', [
   TextContentBlockSchema,
   ThinkingContentBlockSchema,
   RedactedThinkingContentBlockSchema,
   ImageContentBlockSchema,
-  AudioContentBlockSchema
+  AudioContentBlockSchema,
+  NoticeContentBlockSchema
 ]);
 
 export type ContentBlock = z.infer<typeof ContentBlockSchema>;
@@ -538,6 +550,7 @@ export type TextContentBlock = z.infer<typeof TextContentBlockSchema>;
 export type ThinkingContentBlock = z.infer<typeof ThinkingContentBlockSchema>;
 export type ImageContentBlock = z.infer<typeof ImageContentBlockSchema>;
 export type AudioContentBlock = z.infer<typeof AudioContentBlockSchema>;
+export type NoticeContentBlock = z.infer<typeof NoticeContentBlockSchema>;
 
 // Post-hoc operations - modify how previous messages appear in future contexts
 export const PostHocOperationTypeSchema = z.enum(['hide', 'hide_before', 'edit', 'hide_attachment', 'unhide']);

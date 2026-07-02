@@ -398,32 +398,41 @@ export class AnthropicService {
             }
           }
 
-          // Surface non-text stop reasons (refusal / max_tokens / pause_turn) when
-          // the response would otherwise render as an empty assistant turn —
-          // e.g. an Anthropic safety refusal returns stop_reason='refusal' with
-          // the reasoning preserved as a signed (or redacted) thinking block and
-          // NO text. Without this, the user sees nothing rendered and only the
-          // cryptographic signature in the debug view; we'd rather tell them.
+          // Surface abnormal stop reasons (refusal / max_tokens / pause_turn) to
+          // the user. e.g. an Anthropic safety refusal returns
+          // stop_reason='refusal' and terminates the stream — with partial text
+          // this renders as a silent mid-sentence cutoff that users mistake for
+          // a max_tokens truncation; with no text at all the turn renders empty
+          // (only the signed/redacted thinking block remains).
+          //
+          // IMPORTANT: the notice is injected as a DISPLAY-ONLY `notice` content
+          // block. It must never reach the model on later turns, so:
+          //  - it is NOT streamed as a text chunk (chunks accumulate into
+          //    branch.content, which round-trips through every provider), and
+          //  - it is NOT a `text` block (formatMessagesForAnthropic forwards
+          //    those). Provider formatters only forward block types they
+          //    explicitly know, so `notice` blocks are dropped from requests.
           const TERMINATED_NORMALLY = new Set(['end_turn', 'stop_sequence', 'tool_use']);
           const hasVisibleText = fullResponseText.length > 0;
-          if (!hasVisibleText && stopReason && !TERMINATED_NORMALLY.has(stopReason)) {
-            let notice: string | null = null;
+          if (stopReason && !TERMINATED_NORMALLY.has(stopReason)) {
+            let notice: string;
             if (stopReason === 'refusal') {
-              notice = '⚠️ Response withheld by the model\'s safety filter (`stop_reason: refusal`). The model reasoned but its answer was not surfaced. Try rephrasing or retrying.';
+              notice = hasVisibleText
+                ? '⚠️ Response cut off by the model\'s safety filter (`stop_reason: refusal`) — an API-side stop, not a max_tokens truncation. Retrying or rephrasing may get past it.'
+                : '⚠️ Response withheld by the model\'s safety filter (`stop_reason: refusal`). The model reasoned but its answer was not surfaced. Try rephrasing or retrying.';
             } else if (stopReason === 'max_tokens') {
-              notice = '⚠️ Output truncated at the `max_tokens` limit before any visible text was produced — reasoning consumed the entire output budget. Raise max_tokens, or lower the thinking budget/effort.';
+              notice = hasVisibleText
+                ? '⚠️ Output truncated at the `max_tokens` limit. Raise max_tokens, or lower the thinking budget/effort.'
+                : '⚠️ Output truncated at the `max_tokens` limit before any visible text was produced — reasoning consumed the entire output budget. Raise max_tokens, or lower the thinking budget/effort.';
             } else if (stopReason === 'pause_turn') {
               notice = '⚠️ Model paused mid-turn (`stop_reason: pause_turn`). Continue to resume.';
             } else {
-              notice = `⚠️ No visible output (\`stop_reason: ${stopReason}\`).`;
+              notice = hasVisibleText
+                ? `⚠️ Response ended abnormally (\`stop_reason: ${stopReason}\`).`
+                : `⚠️ No visible output (\`stop_reason: ${stopReason}\`).`;
             }
-            if (notice) {
-              // Stream so the streaming UI renders it, then append as a text
-              // block so it persists on the branch alongside the signed thinking.
-              await onChunk(notice, false);
-              finalContentBlocks = [...finalContentBlocks, { type: 'text', text: notice }];
-              console.log(`[Anthropic API] Injected stop_reason notice (${stopReason}) for empty response`);
-            }
+            finalContentBlocks = [...finalContentBlocks, { type: 'notice', noticeType: stopReason, text: notice }];
+            console.log(`[Anthropic API] Injected display-only stop_reason notice (${stopReason}), hasVisibleText=${hasVisibleText}`);
           }
 
           await onChunk('', true, finalContentBlocks, actualUsage);
