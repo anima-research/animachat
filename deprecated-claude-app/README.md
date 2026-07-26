@@ -43,6 +43,11 @@ cp .env.example .env
 # Edit .env with your configuration
 ```
 
+To enter the four optional provider fallback credentials interactively, run
+`backend/config/setup-config.sh` from the `deprecated-claude-app` directory.
+The helper writes only to the ignored `backend/.env` file, preserves unrelated
+settings, and restricts the resulting file to the current user.
+
 Required environment variables:
 - `JWT_SECRET`: Secret key for authentication
 - `AWS_REGION`: AWS region with Bedrock access (default: us-east-1)
