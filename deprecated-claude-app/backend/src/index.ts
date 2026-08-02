@@ -1,3 +1,10 @@
+// Load .env before any other import executes. Several modules (e.g.
+// middleware/auth.ts reading JWT_SECRET) validate environment variables at
+// module scope, which runs during import resolution — before the
+// dotenv.config() call further down in this file. Without this first-line
+// side-effect import, a JWT_SECRET that lives only in .env is invisible at
+// that point and startup fails.
+import 'dotenv/config';
 import express from 'express';
 import compression from 'compression';
 import { clearOpenRouterLog } from './utils/openrouterLogger.js';
