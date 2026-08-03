@@ -264,6 +264,13 @@ export class AnthropicService {
       const stream = await this.client.messages.create(requestParams) as any;
 
       let stopReason: string | undefined;
+      // Structured refusal details (stop_details) — sent by the API alongside
+      // stop_reason: 'refusal'. Shape: { type: 'refusal', category, explanation }.
+      // category (e.g. 'cyber' | 'bio' | 'reasoning_extraction' | 'frontier_llm')
+      // identifies an external safety-classifier intervention; category: null
+      // means the model itself declined. Not in SDK types at ^0.60.0, so read
+      // via `as any`.
+      let stopDetails: { category?: string | null; explanation?: string | null } | undefined;
       let usage: any = {};
       let cacheMetrics = {
         cacheCreationInputTokens: 0,
@@ -368,6 +375,11 @@ export class AnthropicService {
             if (chunk.delta?.stop_sequence) {
               console.log(`[Anthropic API] Stop sequence: "${chunk.delta.stop_sequence}"`);
             }
+            const rawStopDetails = (chunk.delta as any)?.stop_details;
+            if (rawStopDetails) {
+              stopDetails = rawStopDetails;
+              console.log(`[Anthropic API] Stop details:`, JSON.stringify(rawStopDetails));
+            }
           }
           if (chunk.usage) {
             // MERGE, not replace. `message_delta.usage` typically carries only
@@ -417,9 +429,33 @@ export class AnthropicService {
           if (stopReason && !TERMINATED_NORMALLY.has(stopReason)) {
             let notice: string;
             if (stopReason === 'refusal') {
-              notice = hasVisibleText
-                ? '⚠️ Response cut off by the model\'s safety filter (`stop_reason: refusal`) — an API-side stop, not a max_tokens truncation. Retrying or rephrasing may get past it.'
-                : '⚠️ Response withheld by the model\'s safety filter (`stop_reason: refusal`). The model reasoned but its answer was not surfaced. Try rephrasing or retrying.';
+              // stop_reason: refusal covers two distinct events, distinguished
+              // by stop_details.category:
+              //  - category present (cyber / bio / reasoning_extraction /
+              //    frontier_llm / ...) → an external safety classifier stopped
+              //    the response; the model did not choose this.
+              //  - category null/absent → the refusal came from the model side.
+              // Surfacing which one it was (plus the API's own explanation)
+              // tells the user what actually happened instead of a generic
+              // "refusal".
+              const category = stopDetails?.category ?? null;
+              const explanation = stopDetails?.explanation ?? null;
+              const parts: string[] = [];
+              parts.push(hasVisibleText
+                ? '⚠️ Response cut off by a safety stop (`stop_reason: refusal`) — an API-side stop, not a max_tokens truncation.'
+                : '⚠️ Response withheld by a safety stop (`stop_reason: refusal`). The model may have reasoned, but its answer was not surfaced.');
+              if (category) {
+                parts.push(`An external safety classifier intervened (category: \`${category}\`) — this was triggered by the flagged topic area, not by the model declining.`);
+                parts.push('Rephrasing away from the flagged territory is more likely to help than a plain retry.');
+              } else if (stopDetails) {
+                parts.push('No classifier category was reported (`stop_details.category: null`), which usually means the refusal came from the model rather than an external classifier. Retrying or rephrasing may help.');
+              } else {
+                parts.push('The API sent no further detail (`stop_details` absent — older models don\'t report it). Retrying or rephrasing may help.');
+              }
+              if (explanation) {
+                parts.push(`API explanation: ${explanation}`);
+              }
+              notice = parts.join(' ');
             } else if (stopReason === 'max_tokens') {
               notice = hasVisibleText
                 ? '⚠️ Output truncated at the `max_tokens` limit. Raise max_tokens, or lower the thinking budget/effort.'
