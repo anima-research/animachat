@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, Conversation, Model, PostHocOperation, MessageBranch, ContentBlock } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, Conversation, Model, PostHocOperation, MessageBranch, ContentBlock, Attachment } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
@@ -1580,47 +1580,18 @@ export class InferenceService {
   private consolidateConsecutiveMessages(messages: Message[]): Message[] {
     const consolidated: Message[] = [];
     let currentUserContent: string[] = [];
+    // Image attachments from accumulated user messages must be carried onto
+    // the consolidated branch — otherwise images silently disappear for any
+    // responder in messages mode (providers read attachments off the branch).
+    // Only images: text/PDF attachments are already inlined into the message
+    // content by the messages-mode formatter, so carrying them through would
+    // duplicate them when the provider formatter inlines them again.
+    let currentUserAttachments: Attachment[] = [];
     let lastRole: string | null = null;
-    
-    for (const message of messages) {
-      const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
-      if (!activeBranch) continue;
-      
-      if (activeBranch.role === 'user') {
-        // Accumulate user messages
-        currentUserContent.push(activeBranch.content);
-        lastRole = 'user';
-      } else {
-        // If we have accumulated user messages, add them as a single message
-        if (currentUserContent.length > 0) {
-          const branchId = `consolidated-branch-${Date.now()}-${Math.random()}`;
-          const consolidatedMessage: Message = {
-            id: `consolidated-${Date.now()}-${Math.random()}`,
-            conversationId: messages[0].conversationId,
-            branches: [{
-              id: branchId,
-              content: currentUserContent.join('\n\n'),
-              role: 'user',
-              createdAt: new Date(),
-              isActive: true,
-              parentBranchId: messages[0].branches[0].parentBranchId,
-              participantId: undefined
-            }],
-            activeBranchId: branchId,
-            order: consolidated.length
-          };
-          consolidated.push(consolidatedMessage);
-          currentUserContent = [];
-        }
-        
-        // Add the assistant message
-        consolidated.push(message);
-        lastRole = 'assistant';
-      }
-    }
-    
-    // Don't forget any remaining user messages
-    if (currentUserContent.length > 0) {
+
+    // Flush accumulated user messages as a single consolidated user message
+    const flushUserMessages = () => {
+      if (currentUserContent.length === 0) return;
       const branchId = `consolidated-branch-${Date.now()}-${Math.random()}`;
       const consolidatedMessage: Message = {
         id: `consolidated-${Date.now()}-${Math.random()}`,
@@ -1632,14 +1603,43 @@ export class InferenceService {
           createdAt: new Date(),
           isActive: true,
           parentBranchId: messages[0].branches[0].parentBranchId,
-          participantId: undefined
+          participantId: undefined,
+          ...(currentUserAttachments.length > 0 ? { attachments: currentUserAttachments } : {})
         }],
         activeBranchId: branchId,
         order: consolidated.length
       };
       consolidated.push(consolidatedMessage);
+      currentUserContent = [];
+      currentUserAttachments = [];
+    };
+
+    for (const message of messages) {
+      const activeBranch = message.branches.find(b => b.id === message.activeBranchId);
+      if (!activeBranch) continue;
+
+      if (activeBranch.role === 'user') {
+        // Accumulate user messages
+        currentUserContent.push(activeBranch.content);
+        if (activeBranch.attachments && activeBranch.attachments.length > 0) {
+          currentUserAttachments.push(...activeBranch.attachments.filter(
+            att => isImageFile(att.fileName) && !!att.content
+          ));
+        }
+        lastRole = 'user';
+      } else {
+        // If we have accumulated user messages, add them as a single message
+        flushUserMessages();
+
+        // Add the assistant message
+        consolidated.push(message);
+        lastRole = 'assistant';
+      }
     }
-    
+
+    // Don't forget any remaining user messages
+    flushUserMessages();
+
     console.log(`[Messages Mode] Consolidated ${messages.length} messages into ${consolidated.length} messages for Bedrock compatibility`);
     return consolidated;
   }
