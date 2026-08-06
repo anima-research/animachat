@@ -499,10 +499,10 @@
     },
     {
       "id": "claude-opus-4.1",
-      "providerModelId": "claude-opus-4-1-20250805",
+      "providerModelId": "us.anthropic.claude-opus-4-1-20250805-v1:0",
       "displayName": "Claude Opus 4.1",
       "shortName": "Opus 4.1",
-      "provider": "anthropic",
+      "provider": "bedrock",
       "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 32000,

@@ -212,8 +212,10 @@ export class InferenceService {
     const processedMessages = this.applyPostHocOperations(contextMessages);
     
     // Format messages based on conversation format
-    // For prefill format with Anthropic direct, pass cache marker indices to insert breakpoints
-    const shouldInsertCacheBreakpoints = actualFormat === 'prefill' && model.provider === 'anthropic';
+    // For prefill format with Anthropic direct or Bedrock, pass cache marker
+    // indices to insert breakpoints (both formatters split at the markers)
+    const shouldInsertCacheBreakpoints = actualFormat === 'prefill' &&
+      (model.provider === 'anthropic' || model.provider === 'bedrock');
     // Trigger thinking via <think> tag in prefill mode if thinking was enabled AND model supports it
     // NOTE: In prefill mode, native thinking APIs don't work well (model is continuing a pre-filled response)
     // So we use <think> tags to trigger pseudo-reasoning for all providers that support prefill
@@ -1587,6 +1589,10 @@ export class InferenceService {
     // content by the messages-mode formatter, so carrying them through would
     // duplicate them when the provider formatter inlines them again.
     let currentUserAttachments: Attachment[] = [];
+    // Cache breakpoints land on user branches (OpenRouter workaround in the
+    // marker-placement code), so they must survive consolidation too — a
+    // marker anywhere in the merged group moves to the consolidated branch.
+    let currentUserCacheControl: any = undefined;
     let lastRole: string | null = null;
 
     // Flush accumulated user messages as a single consolidated user message
@@ -1604,14 +1610,16 @@ export class InferenceService {
           isActive: true,
           parentBranchId: messages[0].branches[0].parentBranchId,
           participantId: undefined,
-          ...(currentUserAttachments.length > 0 ? { attachments: currentUserAttachments } : {})
-        }],
+          ...(currentUserAttachments.length > 0 ? { attachments: currentUserAttachments } : {}),
+          ...(currentUserCacheControl ? { _cacheControl: currentUserCacheControl } : {})
+        } as any],
         activeBranchId: branchId,
         order: consolidated.length
       };
       consolidated.push(consolidatedMessage);
       currentUserContent = [];
       currentUserAttachments = [];
+      currentUserCacheControl = undefined;
     };
 
     for (const message of messages) {
@@ -1625,6 +1633,9 @@ export class InferenceService {
           currentUserAttachments.push(...activeBranch.attachments.filter(
             att => isImageFile(att.fileName) && !!att.content
           ));
+        }
+        if ((activeBranch as any)._cacheControl) {
+          currentUserCacheControl = (activeBranch as any)._cacheControl;
         }
         lastRole = 'user';
       } else {

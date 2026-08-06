@@ -58,6 +58,14 @@ export class BedrockService {
     return modelId.startsWith('apac.') ? this.apacClient : this.client;
   }
 
+  // Claude 2 / Claude Instant are the only Bedrock Claude models still on the
+  // legacy text-completions shape (prompt / max_tokens_to_sample). Claude 3.x,
+  // 4.x and later — including regional inference profiles (us./eu./apac.
+  // prefixes) — all use the Messages API shape.
+  private usesMessagesApi(modelId: string): boolean {
+    return !/claude-(v2|instant)/.test(modelId);
+  }
+
   async streamCompletion(
     modelId: string,
     messages: Message[],
@@ -142,6 +150,13 @@ export class BedrockService {
         cacheReadInputTokens: 0,
       };
 
+      // Content-block tracking (Messages API models). Mirrors anthropic.ts so
+      // extended-thinking blocks stream and persist the same way on both legs.
+      const useMessages = this.usesMessagesApi(bedrockModelId);
+      const contentBlocks: any[] = [];
+      let currentBlockIndex = -1;
+      let currentBlock: any = null;
+
       for await (const chunk of response.body) {
         if (chunk.chunk?.bytes) {
           const chunkData = JSON.parse(new TextDecoder().decode(chunk.chunk.bytes));
@@ -176,12 +191,51 @@ export class BedrockService {
           }
 
           // Handle different response formats based on model
-          const content = this.extractContentFromChunk(modelId, chunkData);
+          if (useMessages) {
+            // Messages API: track content blocks (text / thinking /
+            // redacted_thinking) the same way anthropic.ts does.
+            if (chunkData.type === 'content_block_start') {
+              currentBlockIndex = chunkData.index;
+              currentBlock = { ...chunkData.content_block };
+              if (currentBlock.type === 'thinking') {
+                currentBlock.thinking = currentBlock.thinking || '';
+              } else if (currentBlock.type === 'redacted_thinking') {
+                // redacted_thinking arrives complete in content_block_start —
+                // keep `data` intact or the round-trip block becomes invalid.
+                currentBlock.data = chunkData.content_block.data ?? '';
+              } else if (currentBlock.type === 'text') {
+                currentBlock.text = currentBlock.text || '';
+              }
+              contentBlocks[currentBlockIndex] = currentBlock;
+            } else if (chunkData.type === 'content_block_delta') {
+              const delta = chunkData.delta;
+              if (delta?.type === 'thinking_delta' && currentBlock?.type === 'thinking') {
+                currentBlock.thinking += delta.thinking;
+                contentBlocks[currentBlockIndex] = currentBlock;
+                await onChunk('', false, contentBlocks);
+              } else if (delta?.type === 'signature_delta' && currentBlock?.type === 'thinking') {
+                currentBlock.signature = (currentBlock.signature || '') + delta.signature;
+                contentBlocks[currentBlockIndex] = currentBlock;
+              } else if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+                if (currentBlock?.type === 'text') {
+                  currentBlock.text += delta.text;
+                  contentBlocks[currentBlockIndex] = currentBlock;
+                }
+                fullContent += delta.text;
+                chunks.push(delta.text);
+                await onChunk(delta.text, false, contentBlocks.length > 0 ? contentBlocks : undefined);
+              }
+            } else if (chunkData.type === 'content_block_stop') {
+              currentBlock = null;
+            }
+          } else {
+            const content = this.extractContentFromChunk(modelId, chunkData);
 
-          if (content) {
-            fullContent += content;
-            chunks.push(content);
-            await onChunk(content, false);
+            if (content) {
+              fullContent += content;
+              chunks.push(content);
+              await onChunk(content, false);
+            }
           }
 
           // Check if stream is complete
@@ -197,11 +251,13 @@ export class BedrockService {
                   outputTokens: usage.output_tokens || 0,
                   cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
                   cacheReadInputTokens: cacheMetrics.cacheReadInputTokens,
-                  cacheCreationTtl: '1h' as const,
+                  // Bedrock InvokeModel only offers the 5m cache tier (the ttl
+                  // field is rejected outright), so bill writes at 1.25×.
+                  cacheCreationTtl: '5m' as const,
                 }
               : undefined;
 
-            await onChunk('', true, undefined, actualUsage);
+            await onChunk('', true, contentBlocks.length > 0 ? contentBlocks : undefined, actualUsage);
 
             // Log the response
             const duration = Date.now() - startTime;
@@ -292,6 +348,25 @@ export class BedrockService {
           content = contentParts;
         }
         
+        // Apply prompt-cache breakpoints set upstream (enhanced-inference).
+        // Bedrock InvokeModel rejects the `ttl` field (5m tier only, verified
+        // live 2026-08-06), so send bare ephemeral cache_control regardless of
+        // the marker's requested ttl.
+        if ((activeBranch as any)._hasCacheBreakpoints && typeof content === 'string' && content.includes('<|cache_breakpoint|>')) {
+          // Prefill mode: split at Chapter II markers into cached text blocks
+          content = this.splitAtCacheBreakpoints(content);
+        } else if ((activeBranch as any)._cacheControl) {
+          const cacheControl = { type: 'ephemeral' };
+          if (typeof content === 'string') {
+            if (content.length > 0) {
+              content = [{ type: 'text', text: content, cache_control: cacheControl }];
+            }
+          } else if (Array.isArray(content) && content.length > 0) {
+            const last = content[content.length - 1];
+            content[content.length - 1] = { ...last, cache_control: cacheControl };
+          }
+        }
+
         // Claude expects 'user' and 'assistant' roles only
         formattedMessages.push({
           role: activeBranch.role,
@@ -301,6 +376,41 @@ export class BedrockService {
     }
 
     return formattedMessages;
+  }
+
+  /**
+   * Split content at <|cache_breakpoint|> markers and convert to text blocks.
+   * Each section BEFORE a marker gets cache_control, the last section does not.
+   * Same as anthropic.ts's splitAtCacheBreakpoints, minus the ttl field —
+   * Bedrock InvokeModel rejects it (5m tier only).
+   */
+  private splitAtCacheBreakpoints(content: string): Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> {
+    const CACHE_BREAKPOINT = '<|cache_breakpoint|>';
+    const sections = content.split(CACHE_BREAKPOINT);
+
+    console.log(`[Bedrock] 📦 Splitting prefill content at ${sections.length - 1} cache breakpoints`);
+
+    const contentBlocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> = [];
+
+    for (let i = 0; i < sections.length; i++) {
+      const section = sections[i].trim();
+      if (!section) continue; // Skip empty sections
+
+      const isLastSection = i === sections.length - 1;
+
+      if (isLastSection) {
+        // Last section (after final marker) - NO cache control
+        contentBlocks.push({ type: 'text', text: section });
+      } else {
+        contentBlocks.push({
+          type: 'text',
+          text: section,
+          cache_control: { type: 'ephemeral' }
+        });
+      }
+    }
+
+    return contentBlocks;
   }
 
   private isImageAttachment(fileName: string): boolean {
@@ -388,20 +498,35 @@ export class BedrockService {
     settings: ModelSettings,
     stopSequences?: string[]
   ): any {
-    // Claude 3 models use Messages API format with content blocks
-    // Check if it's a Claude 3 model by looking for the pattern in the Bedrock model ID
-    if (modelId.includes('claude-3')) {
+    // Claude 3+ models (including 4.x and regional inference profiles) use the
+    // Messages API format with content blocks
+    if (this.usesMessagesApi(modelId)) {
+      // Extended thinking: Bedrock InvokeModel only supports the legacy
+      // enabled/budget_tokens shape (adaptive-thinking models aren't served on
+      // this leg). Mirrors anthropic.ts: max_tokens must exceed budget_tokens.
+      let effectiveMaxTokens = settings.maxTokens;
+      let thinkingConfig: any = undefined;
+      if (settings.thinking?.enabled && settings.thinking.budgetTokens) {
+        const minMaxTokens = settings.thinking.budgetTokens + 4096;
+        if (effectiveMaxTokens < minMaxTokens) {
+          console.log(`[Bedrock] Adjusting max_tokens from ${effectiveMaxTokens} to ${minMaxTokens} (budget_tokens: ${settings.thinking.budgetTokens})`);
+          effectiveMaxTokens = minMaxTokens;
+        }
+        thinkingConfig = { type: 'enabled', budget_tokens: settings.thinking.budgetTokens };
+      }
+
       // Anthropic API doesn't allow both temperature AND top_p/top_k together
       const useTemperature = settings.temperature !== undefined;
       return {
         anthropic_version: 'bedrock-2023-05-31',
         messages,
         ...(systemPrompt && { system: systemPrompt }),
-        max_tokens: settings.maxTokens,
+        max_tokens: effectiveMaxTokens,
         temperature: settings.temperature,
         ...(!useTemperature && settings.topP !== undefined && { top_p: settings.topP }),
         ...(!useTemperature && settings.topK !== undefined && { top_k: settings.topK }),
-        ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences })
+        ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences }),
+        ...(thinkingConfig && { thinking: thinkingConfig })
       };
     }
     
@@ -457,8 +582,7 @@ export class BedrockService {
 
 
   private extractContentFromChunk(modelId: string, chunkData: any): string | null {
-    // Claude 3 models - check if the Bedrock model ID contains 'claude-3'
-    if (modelId.includes('claude-3')) {
+    if (this.usesMessagesApi(modelId)) {
       if (chunkData.type === 'content_block_delta' && chunkData.delta?.text) {
         return chunkData.delta.text;
       }
@@ -468,13 +592,12 @@ export class BedrockService {
         return chunkData.completion;
       }
     }
-    
+
     return null;
   }
 
   private isStreamComplete(modelId: string, chunkData: any): boolean {
-    // Claude 3 models - check if the Bedrock model ID contains 'claude-3'
-    if (modelId.includes('claude-3')) {
+    if (this.usesMessagesApi(modelId)) {
       return chunkData.type === 'message_stop';
     } else {
       // Claude 2 and Instant
