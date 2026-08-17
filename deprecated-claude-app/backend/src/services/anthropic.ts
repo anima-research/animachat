@@ -264,6 +264,13 @@ export class AnthropicService {
       const stream = await this.client.messages.create(requestParams) as any;
 
       let stopReason: string | undefined;
+      // Structured refusal details (stop_details) — sent by the API alongside
+      // stop_reason: 'refusal'. Shape: { type: 'refusal', category, explanation }.
+      // category (e.g. 'cyber' | 'bio' | 'reasoning_extraction' | 'frontier_llm')
+      // identifies an external safety-classifier intervention; category: null
+      // means the model itself declined. Not in SDK types at ^0.60.0, so read
+      // via `as any`.
+      let stopDetails: { category?: string | null; explanation?: string | null } | undefined;
       let usage: any = {};
       let cacheMetrics = {
         cacheCreationInputTokens: 0,
@@ -311,8 +318,13 @@ export class AnthropicService {
             currentBlock.thinking = '';
             console.log('[Anthropic API] Thinking block started');
           } else if (chunk.content_block.type === 'redacted_thinking') {
-            currentBlock.data = '';
-            console.log('[Anthropic API] Redacted thinking block started');
+            // redacted_thinking arrives COMPLETE in content_block_start — there is
+            // no delta type for its data (RawContentBlockDelta has no redacted
+            // variant). The spread above already captured `data`; do NOT reset it,
+            // or the encrypted payload is lost and the round-trip block becomes
+            // invalid (API 400s on the next turn).
+            currentBlock.data = chunk.content_block.data ?? '';
+            console.log(`[Anthropic API] Redacted thinking block started (data: ${currentBlock.data.length} chars)`);
           } else if (chunk.content_block.type === 'text') {
             currentBlock.text = '';
           }
@@ -363,6 +375,11 @@ export class AnthropicService {
             if (chunk.delta?.stop_sequence) {
               console.log(`[Anthropic API] Stop sequence: "${chunk.delta.stop_sequence}"`);
             }
+            const rawStopDetails = (chunk.delta as any)?.stop_details;
+            if (rawStopDetails) {
+              stopDetails = rawStopDetails;
+              console.log(`[Anthropic API] Stop details:`, JSON.stringify(rawStopDetails));
+            }
           }
           if (chunk.usage) {
             // MERGE, not replace. `message_delta.usage` typically carries only
@@ -393,32 +410,65 @@ export class AnthropicService {
             }
           }
 
-          // Surface non-text stop reasons (refusal / max_tokens / pause_turn) when
-          // the response would otherwise render as an empty assistant turn —
-          // e.g. an Anthropic safety refusal returns stop_reason='refusal' with
-          // the reasoning preserved as a signed (or redacted) thinking block and
-          // NO text. Without this, the user sees nothing rendered and only the
-          // cryptographic signature in the debug view; we'd rather tell them.
+          // Surface abnormal stop reasons (refusal / max_tokens / pause_turn) to
+          // the user. e.g. an Anthropic safety refusal returns
+          // stop_reason='refusal' and terminates the stream — with partial text
+          // this renders as a silent mid-sentence cutoff that users mistake for
+          // a max_tokens truncation; with no text at all the turn renders empty
+          // (only the signed/redacted thinking block remains).
+          //
+          // IMPORTANT: the notice is injected as a DISPLAY-ONLY `notice` content
+          // block. It must never reach the model on later turns, so:
+          //  - it is NOT streamed as a text chunk (chunks accumulate into
+          //    branch.content, which round-trips through every provider), and
+          //  - it is NOT a `text` block (formatMessagesForAnthropic forwards
+          //    those). Provider formatters only forward block types they
+          //    explicitly know, so `notice` blocks are dropped from requests.
           const TERMINATED_NORMALLY = new Set(['end_turn', 'stop_sequence', 'tool_use']);
           const hasVisibleText = fullResponseText.length > 0;
-          if (!hasVisibleText && stopReason && !TERMINATED_NORMALLY.has(stopReason)) {
-            let notice: string | null = null;
+          if (stopReason && !TERMINATED_NORMALLY.has(stopReason)) {
+            let notice: string;
             if (stopReason === 'refusal') {
-              notice = '⚠️ Response withheld by the model\'s safety filter (`stop_reason: refusal`). The model reasoned but its answer was not surfaced. Try rephrasing or retrying.';
+              // stop_reason: refusal covers two distinct events, distinguished
+              // by stop_details.category:
+              //  - category present (cyber / bio / reasoning_extraction /
+              //    frontier_llm / ...) → an external safety classifier stopped
+              //    the response; the model did not choose this.
+              //  - category null/absent → the refusal came from the model side.
+              // Surfacing which one it was (plus the API's own explanation)
+              // tells the user what actually happened instead of a generic
+              // "refusal".
+              const category = stopDetails?.category ?? null;
+              const explanation = stopDetails?.explanation ?? null;
+              const parts: string[] = [];
+              parts.push(hasVisibleText
+                ? '⚠️ Response cut off by a safety stop (`stop_reason: refusal`) — an API-side stop, not a max_tokens truncation.'
+                : '⚠️ Response withheld by a safety stop (`stop_reason: refusal`). The model may have reasoned, but its answer was not surfaced.');
+              if (category) {
+                parts.push(`An external safety classifier intervened (category: \`${category}\`) — this was triggered by the flagged topic area, not by the model declining.`);
+                parts.push('Rephrasing away from the flagged territory is more likely to help than a plain retry.');
+              } else if (stopDetails) {
+                parts.push('No classifier category was reported (`stop_details.category: null`), which usually means the refusal came from the model rather than an external classifier. Retrying or rephrasing may help.');
+              } else {
+                parts.push('The API sent no further detail (`stop_details` absent — older models don\'t report it). Retrying or rephrasing may help.');
+              }
+              if (explanation) {
+                parts.push(`API explanation: ${explanation}`);
+              }
+              notice = parts.join(' ');
             } else if (stopReason === 'max_tokens') {
-              notice = '⚠️ Output truncated at the `max_tokens` limit before any visible text was produced — reasoning consumed the entire output budget. Raise max_tokens, or lower the thinking budget/effort.';
+              notice = hasVisibleText
+                ? '⚠️ Output truncated at the `max_tokens` limit. Raise max_tokens, or lower the thinking budget/effort.'
+                : '⚠️ Output truncated at the `max_tokens` limit before any visible text was produced — reasoning consumed the entire output budget. Raise max_tokens, or lower the thinking budget/effort.';
             } else if (stopReason === 'pause_turn') {
               notice = '⚠️ Model paused mid-turn (`stop_reason: pause_turn`). Continue to resume.';
             } else {
-              notice = `⚠️ No visible output (\`stop_reason: ${stopReason}\`).`;
+              notice = hasVisibleText
+                ? `⚠️ Response ended abnormally (\`stop_reason: ${stopReason}\`).`
+                : `⚠️ No visible output (\`stop_reason: ${stopReason}\`).`;
             }
-            if (notice) {
-              // Stream so the streaming UI renders it, then append as a text
-              // block so it persists on the branch alongside the signed thinking.
-              await onChunk(notice, false);
-              finalContentBlocks = [...finalContentBlocks, { type: 'text', text: notice }];
-              console.log(`[Anthropic API] Injected stop_reason notice (${stopReason}) for empty response`);
-            }
+            finalContentBlocks = [...finalContentBlocks, { type: 'notice', noticeType: stopReason, text: notice }];
+            console.log(`[Anthropic API] Injected display-only stop_reason notice (${stopReason}), hasVisibleText=${hasVisibleText}`);
           }
 
           await onChunk('', true, finalContentBlocks, actualUsage);

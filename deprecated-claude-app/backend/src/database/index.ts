@@ -136,6 +136,11 @@ export class Database {
   private userGrantTotals: Map<string, Map<string, number>> = new Map();
   private invites: Map<string, Invite> = new Map(); // code -> Invite
 
+  // Messages removed by message_deleted replay, kept so a later
+  // message_branch_restored replay can resurrect the container with its
+  // original order (mirrors the runtime restoreBranch event-history lookup).
+  private replayDeletedMessages: Map<string, Message> = new Map();
+
   private eventStore: EventStore;
   // per user, contains conversation metadata events and participant events
   private userEventStore: BulkEventStore;
@@ -1126,6 +1131,14 @@ export class Database {
           }
         }
 
+        // Stash the deleted message so a later message_branch_restored replay
+        // can resurrect the container with its original order (mirrors the
+        // runtime restoreBranch path, which looks the original message up in
+        // the event history).
+        if (message) {
+          this.replayDeletedMessages.set(messageId, message);
+        }
+
         this.messages.delete(messageId);
         const convMessages = this.conversationMessages.get(conversationId);
         if (convMessages) {
@@ -1136,7 +1149,94 @@ export class Database {
         }
         break;
       }
-      
+
+      case 'message_restored': {
+        // Undo of message_deleted (see restoreMessage). Without this replay
+        // handler, restored messages existed only in the running process's
+        // memory and silently vanished on the next backend restart — leaving
+        // child branches pointing at branches of a missing message, which
+        // scrambled visible-path linearization, tree-map clicks, and exports.
+        const restored = event.data.message;
+        if (!restored?.id) break;
+
+        const message = {
+          ...restored,
+          createdAt: new Date(restored.createdAt || event.timestamp),
+          branches: (restored.branches || []).map((branch: any) => ({
+            ...branch,
+            createdAt: new Date(branch.createdAt || event.timestamp)
+          }))
+        };
+        this.messages.set(message.id, message);
+
+        // Re-insert into the conversation's message list at the position its
+        // order dictates (mirrors restoreMessage) — a plain push would put it
+        // after messages created later than the restore.
+        const restoredConvMessages = this.conversationMessages.get(message.conversationId) || [];
+        if (!restoredConvMessages.includes(message.id)) {
+          const insertIndex = restoredConvMessages.findIndex((id: string) => {
+            const m = this.messages.get(id);
+            return m && m.order > message.order;
+          });
+          if (insertIndex === -1) {
+            restoredConvMessages.push(message.id);
+          } else {
+            restoredConvMessages.splice(insertIndex, 0, message.id);
+          }
+        }
+        this.conversationMessages.set(message.conversationId, restoredConvMessages);
+        break;
+      }
+
+      case 'message_branch_restored': {
+        // Undo of message_branch_deleted (see restoreBranch). Same replay hole
+        // as message_restored above.
+        const { messageId: restoredBranchMsgId, conversationId: restoredBranchConvId, branch: restoredBranchData } = event.data;
+        if (!restoredBranchMsgId || !restoredBranchData?.id) break;
+
+        const restoredBranch = {
+          ...restoredBranchData,
+          createdAt: new Date(restoredBranchData.createdAt || event.timestamp)
+        };
+
+        const existingMsg = this.messages.get(restoredBranchMsgId);
+        if (existingMsg) {
+          if (!existingMsg.branches.some(b => b.id === restoredBranch.id)) {
+            this.messages.set(restoredBranchMsgId, {
+              ...existingMsg,
+              branches: [...existingMsg.branches, restoredBranch]
+            });
+          }
+        } else {
+          // The container message was deleted (deleting the only branch
+          // deletes the message). Resurrect it from the stash captured during
+          // message_deleted replay, with only the restored branch (mirrors
+          // the runtime restoreBranch missing-message path).
+          const stashed = this.replayDeletedMessages.get(restoredBranchMsgId);
+          if (!stashed) break; // nothing to resurrect from — skip, as before
+          const resurrected = {
+            ...stashed,
+            branches: [restoredBranch]
+          };
+          this.messages.set(restoredBranchMsgId, resurrected);
+
+          const branchConvMessages = this.conversationMessages.get(restoredBranchConvId) || [];
+          if (!branchConvMessages.includes(restoredBranchMsgId)) {
+            const insertIndex = branchConvMessages.findIndex((id: string) => {
+              const m = this.messages.get(id);
+              return m && m.order > resurrected.order;
+            });
+            if (insertIndex === -1) {
+              branchConvMessages.push(restoredBranchMsgId);
+            } else {
+              branchConvMessages.splice(insertIndex, 0, restoredBranchMsgId);
+            }
+          }
+          this.conversationMessages.set(restoredBranchConvId, branchConvMessages);
+        }
+        break;
+      }
+
       case 'message_order_changed': {
         const { messageId, newOrder } = event.data;
         const message = this.messages.get(messageId);

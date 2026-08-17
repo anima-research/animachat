@@ -203,7 +203,14 @@
                     <v-list-item
                       prepend-icon="mdi-download"
                       title="Export"
+                      subtitle="Full conversation as JSON"
                       @click="exportConversation(conversation.id)"
+                    />
+                    <v-list-item
+                      prepend-icon="mdi-language-markdown-outline"
+                      title="Export as Markdown"
+                      subtitle="Readable transcript (.md)"
+                      @click="exportConversationMarkdown(conversation.id)"
                     />
                     <v-list-item
                       prepend-icon="mdi-content-copy"
@@ -1268,7 +1275,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
-import { useStore } from '@/store';
+import { useStore, computeVisibleMessages } from '@/store';
 import { api } from '@/services/api';
 import type { Conversation, Message, Participant, Model, Bookmark, Persona, WsAttachment } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema, getValidatedModelDefaults } from '@deprecated-claude/shared';
@@ -1288,6 +1295,7 @@ import MetricsDisplay from '@/components/MetricsDisplay.vue';
 import ModelPillBar from '@/components/ModelPillBar.vue';
 import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
 import { getModelColor } from '@/utils/modelColors';
+import { serializeConversationToMarkdown } from '@/utils/conversationMarkdown';
 import { computeAuthenticity, type AuthenticityStatus } from '@/utils/authenticity';
 
 const route = useRoute();
@@ -3587,6 +3595,58 @@ async function exportConversation(id: string) {
     URL.revokeObjectURL(url);
   } catch (error) {
     console.error('Export failed:', error);
+  }
+}
+
+async function exportConversationMarkdown(id: string) {
+  try {
+    // Reuse the existing export endpoint (messages already tree-ordered by the
+    // backend), then resolve the visible active-branch path with the shared
+    // store helper and serialize to markdown. No conversation needs to be
+    // loaded in the store for this to work.
+    const response = await fetch(`/api/conversations/${id}/export`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      }
+    });
+    if (!response.ok) {
+      let detail = '';
+      try {
+        detail = (await response.json())?.error || '';
+      } catch {
+        // response body was not JSON; leave detail empty
+      }
+      errorSnackbarMessage.value = 'Markdown export failed';
+      errorSnackbarDetails.value = detail || `Server returned ${response.status}`;
+      errorSnackbar.value = true;
+      return;
+    }
+    const data = await response.json();
+
+    const visibleMessages = computeVisibleMessages(data.messages || []);
+    const markdown = serializeConversationToMarkdown({
+      conversation: data.conversation,
+      participants: data.participants || [],
+      messages: visibleMessages,
+    });
+
+    const safeTitle = (data.conversation?.title || `conversation-${id}`)
+      .replace(/[^\w\-. ]+/g, '_')
+      .trim()
+      .slice(0, 80) || `conversation-${id}`;
+
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeTitle}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Markdown export failed:', error);
+    errorSnackbarMessage.value = 'Markdown export failed';
+    errorSnackbarDetails.value = error instanceof Error ? error.message : String(error);
+    errorSnackbar.value = true;
   }
 }
 
