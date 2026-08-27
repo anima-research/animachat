@@ -111,7 +111,10 @@ export class OpenRouterService {
         usage: { include: true },
         provider: {
           order: ['Anthropic'],
-          allow_fallbacks: false
+          // Fallbacks must stay allowed: deprecated Anthropic models (e.g. Opus 4)
+          // have no Anthropic leg on OpenRouter anymore and are served via
+          // Google/Bedrock. allow_fallbacks: false made every such call 404.
+          allow_fallbacks: true
         },
         transforms: ['prompt-caching']
       };
@@ -273,10 +276,13 @@ export class OpenRouterService {
       if (provider === 'anthropic') {
         requestBody.provider = {
           order: ['Anthropic'],
-          allow_fallbacks: false
+          // Prefer the native Anthropic leg (prompt caching), but keep fallbacks:
+          // deprecated models (Opus 4, 4.1, ...) exist only on Google/Bedrock legs,
+          // and allow_fallbacks: false turned them into a guaranteed 404.
+          allow_fallbacks: true
         };
         requestBody.transforms = ['prompt-caching'];
-        Logger.cache(`[OpenRouter] 🔒 Forcing native Anthropic with prompt-caching enabled`);
+        Logger.cache(`[OpenRouter] 🔒 Preferring native Anthropic (fallbacks allowed) with prompt-caching enabled`);
       }
       
       // Log reasoning configuration

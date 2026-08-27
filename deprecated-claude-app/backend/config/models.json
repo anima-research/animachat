@@ -540,10 +540,10 @@
     },
     {
       "id": "claude-opus-4",
-      "providerModelId": "claude-opus-4-20250514",
+      "providerModelId": "anthropic/claude-opus-4",
       "displayName": "Claude Opus 4",
       "shortName": "Opus 4",
-      "provider": "anthropic",
+      "provider": "openrouter",
       "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 32000,
@@ -555,7 +555,7 @@
       "settings": {
         "temperature": {
           "min": 0,
-          "max": 1,
+          "max": 2,
           "default": 1,
           "step": 0.1
         },
@@ -1195,6 +1195,76 @@
       "canonicalId": "claude-opus-4.7"
     },
     {
+      "id": "claude-opus-4-openrouter",
+      "providerModelId": "anthropic/claude-opus-4",
+      "displayName": "Claude Opus 4 (OpenRouter)",
+      "shortName": "Opus 4",
+      "provider": "openrouter",
+      "hidden": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 32000,
+      "supportsThinking": true,
+      "currencies": {
+        "models-2025": true,
+        "credit": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 32000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        }
+      },
+      "canonicalId": "claude-opus-4"
+    },
+    {
+      "id": "claude-opus-4.1-openrouter",
+      "providerModelId": "anthropic/claude-opus-4.1",
+      "displayName": "Claude Opus 4.1 (OpenRouter)",
+      "shortName": "Opus 4.1",
+      "provider": "openrouter",
+      "hidden": false,
+      "contextWindow": 200000,
+      "outputTokenLimit": 32000,
+      "supportsThinking": true,
+      "currencies": {
+        "models-2025": true,
+        "credit": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 2,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 32000,
+          "default": 8096
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 0.9,
+          "step": 0.01
+        }
+      },
+      "canonicalId": "claude-opus-4.1"
+    },
+    {
       "id": "gpt-4-turbo-openrouter",
       "providerModelId": "openai/gpt-4-turbo-preview",
       "displayName": "GPT-4 Turbo (OpenRouter)",
@@ -1254,7 +1324,7 @@
             {
               "value": "minimal",
               "label": "Minimal",
-              "description": "Almost no internal reasoning \u2014 fastest, most direct responses"
+              "description": "Almost no internal reasoning — fastest, most direct responses"
             },
             {
               "value": "low",
@@ -1429,7 +1499,7 @@
       "id": "gemini-2.5-flash-multimodal",
       "providerModelId": "gemini-2.5-flash-image",
       "displayName": "Gemini 2.5 Flash (Multimodal) [Legacy]",
-      "shortName": "Flash 2.5 \ud83c\udfa8",
+      "shortName": "Flash 2.5 🎨",
       "provider": "google",
       "hidden": true,
       "contextWindow": 32768,
@@ -1544,7 +1614,7 @@
       "id": "gemini-2.5-flash-imagegen",
       "providerModelId": "gemini-2.5-flash-image",
       "displayName": "Gemini 2.5 Flash (Image Gen)",
-      "shortName": "Flash 2.5 \ud83d\udcf7",
+      "shortName": "Flash 2.5 📷",
       "provider": "google",
       "hidden": false,
       "contextWindow": 32768,
@@ -1935,7 +2005,7 @@
       "id": "gemini-3-pro-imagegen",
       "providerModelId": "gemini-3-pro-image-preview",
       "displayName": "Gemini 3 Pro (Image Gen 4K)",
-      "shortName": "Pro 3 \ud83d\udcf7",
+      "shortName": "Pro 3 📷",
       "provider": "google",
       "hidden": false,
       "contextWindow": 32768,
