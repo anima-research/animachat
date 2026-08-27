@@ -540,10 +540,10 @@
     },
     {
       "id": "claude-opus-4",
-      "providerModelId": "claude-opus-4-20250514",
+      "providerModelId": "anthropic/claude-opus-4",
       "displayName": "Claude Opus 4",
       "shortName": "Opus 4",
-      "provider": "anthropic",
+      "provider": "openrouter",
       "hidden": false,
       "contextWindow": 200000,
       "outputTokenLimit": 32000,
@@ -555,7 +555,7 @@
       "settings": {
         "temperature": {
           "min": 0,
-          "max": 1,
+          "max": 2,
           "default": 1,
           "step": 0.1
         },
