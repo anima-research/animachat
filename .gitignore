@@ -8,6 +8,7 @@
 .env.*.local
 **/.env
 **/.env.local
+**/.env.tmp-*
 deprecated-claude-app/frontend/node_modules/**
 deprecated-claude-app/shared/dist/**
 .idea/**
