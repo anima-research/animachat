@@ -24,3 +24,6 @@ deprecated-claude-app/backend/logs/llm/**
 # Test files
 prompt_caching/***.json
 production-*.json
+
+# SQLite database files
+*.db
