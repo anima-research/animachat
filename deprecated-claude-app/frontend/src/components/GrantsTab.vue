@@ -1,6 +1,6 @@
 <template>
   <v-card-text style="max-height: 600px; overflow-y: auto; padding: 24px;">
-    <p class="text-body-2 mb-4">Arc does not accept payments or resell inference. The starting balance is sponsored for access to deprecated models. You can use your API keys or you can obtain research grants from Anima Labs by contacting us on Discord.<br><br>Here you can review your grant balances and capabilities. Grants track credits you've received, spent, or shared with others.</p>
+    <p class="text-body-2 mb-4"><template v-if="!billingEnabled">Arc does not accept payments or resell inference. </template>The starting balance is sponsored for access to deprecated models. You can use your API keys<template v-if="billingEnabled">, buy credits below,</template> or you can obtain research grants from Anima Labs by contacting us on Discord.<br><br>Here you can review your grant balances and capabilities. Grants track credits you've received, spent, or shared with others.</p>
     <div v-if="loading" class="d-flex align-center justify-center py-6">
       <v-progress-circular indeterminate color="primary" />
     </div>
@@ -23,6 +23,8 @@
         </v-list>
         <p v-else class="text-grey text-body-2 mb-0">No grants recorded yet.</p>
       </section>
+
+      <BuyCreditsSection :config="billingConfig" @refresh="emit('refresh')" />
 
       <section>
         <h4 class="text-h6 mb-3">Capabilities</h4>
@@ -78,13 +80,34 @@
   </v-card-text>
 </template>
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { GrantCapability, UserGrantSummary } from '@deprecated-claude/shared';
+import { computed, onMounted, ref } from 'vue';
+import { GrantCapability, UserGrantSummary, BillingConfig } from '@deprecated-claude/shared';
 import GrantActions from './GrantActions.vue';
+import BuyCreditsSection from './BuyCreditsSection.vue';
 import { api } from '@/services/api.js';
 
 const props = defineProps<{ summary: UserGrantSummary | null; loading: boolean; error: string | null }>();
 const emit = defineEmits<{ refresh: [] }>();
+
+// Billing config is fetched here and shared with BuyCreditsSection so a single
+// /billing/config call drives both the intro copy and the purchase UI. When
+// billing is enabled, the "Arc does not accept payments" line would contradict
+// the Buy Credits section, so the intro is conditional on this flag.
+const billingConfig = ref<BillingConfig | null>(null);
+const billingEnabled = computed(() => billingConfig.value?.enabled === true);
+
+async function loadBillingConfig() {
+  try {
+    billingConfig.value = (await api.get('/billing/config')).data;
+  } catch (err: any) {
+    // "Not configured" is NOT an error — /config returns 200 with { enabled: false }.
+    // Anything here is a real failure (401/5xx/network); keep billing hidden but log.
+    billingConfig.value = null;
+    console.warn('[billing] failed to load billing config; Buy Credits hidden:', err?.response?.status ?? err?.message ?? err);
+  }
+}
+
+onMounted(loadBillingConfig);
 
 // Redeem invite state
 const redeemCode = ref('');
