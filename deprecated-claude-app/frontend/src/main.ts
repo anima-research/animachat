@@ -46,12 +46,40 @@ const coarsePointer =
     : false;
 const touchDefaults = coarsePointer
   ? {
-      VSelect: { menuProps: { attach: true } },
-      VAutocomplete: { menuProps: { attach: true } },
-      VCombobox: { menuProps: { attach: true } },
+      VSelect: { menuProps: { attach: true, scrollStrategy: 'none' } },
+      VAutocomplete: { menuProps: { attach: true, scrollStrategy: 'none' } },
+      VCombobox: { menuProps: { attach: true, scrollStrategy: 'none' } },
       VDialog: { scrollStrategy: 'none' },
     }
   : {};
+
+// While an attached menu is open, lift its input above later siblings (the
+// field's `contain: layout` otherwise traps the menu below them). Kept in JS
+// because WebKit did not re-evaluate `.v-input:has(.v-overlay--active)` when
+// the active class toggled.
+if (coarsePointer && typeof MutationObserver !== 'undefined') {
+  const OPEN_CLASS = 'v-input--menu-open';
+  let scheduled = false;
+  const syncOpenMenus = () => {
+    scheduled = false;
+    document.querySelectorAll(`.${OPEN_CLASS}`).forEach((el) => {
+      if (!el.querySelector('.v-overlay--absolute.v-overlay--active')) el.classList.remove(OPEN_CLASS);
+    });
+    document.querySelectorAll('.v-overlay--absolute.v-overlay--active').forEach((el) => {
+      el.closest('.v-input')?.classList.add(OPEN_CLASS);
+    });
+  };
+  new MutationObserver(() => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(syncOpenMenus);
+  }).observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class'],
+  });
+}
 
 const vuetify = createVuetify({
   components,

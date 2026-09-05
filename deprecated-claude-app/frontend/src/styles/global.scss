@@ -205,23 +205,23 @@ body {
 }
 
 // Touch devices attach select/autocomplete menus to their field (see main.ts).
-// Vuetify's .v-field has `contain: layout`, which both makes the field the
-// containing block for the menu (so the menu scrolls with the form) and
-// confines the menu's z-index to the field's own stacking context. Lift the
-// whole input above its later siblings while its menu is open, otherwise the
-// hint text and the next field paint over the list.
-@media (pointer: coarse) {
-  .v-input:has(.v-overlay--active) {
+// Vuetify's .v-field has `contain: layout`, which confines the menu's z-index
+// to the field's own stacking context, so later form controls would paint
+// over the open list. main.ts marks the owning input with this class while
+// its attached menu is open (a MutationObserver rather than :has(), which
+// WebKit did not re-evaluate when Vuetify toggled the active class).
+.v-input--menu-open {
+  position: relative;
+  z-index: 20;
+
+  // ...and the control above the input's own hint/message row.
+  .v-input__control {
     position: relative;
-    z-index: 20;
-
-    // ...and the control above the input's own hint/message row.
-    .v-input__control {
-      position: relative;
-      z-index: 1;
-    }
+    z-index: 1;
   }
+}
 
+@media (pointer: coarse) {
   // Vuetify still gives an attached menu `position: fixed` when the field
   // sits inside a fixed dialog, and then chases the field with a
   // requestAnimationFrame reposition on every scroll event, so the list
