@@ -83,10 +83,38 @@ const attachedBelowField = (
       transformOrigin: 'top left',
     });
   };
-  place();
-  // The lazily rendered list mounts a tick after the strategy is created.
-  setTimeout(place, 0);
-  setTimeout(place, 50);
+  // On open, scroll the enclosing form just enough that the list is visible
+  // below its field (it is ordinary content of the scroller now, so a field
+  // near the bottom of the visible area would otherwise show a clipped
+  // sliver of the list until the user scrolls). The field itself stays in
+  // view: scrolling is capped at the distance from the field to the top.
+  const reveal = () => {
+    const content = data.contentEl?.value;
+    if (!(content instanceof HTMLElement)) return;
+    const field = content.closest('.v-field');
+    let scroller: HTMLElement | null = content.parentElement;
+    while (scroller && !(/(auto|scroll)/.test(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight)) {
+      scroller = scroller.parentElement;
+    }
+    const cr = content.getBoundingClientRect();
+    if (!field || !scroller || cr.height === 0) return;
+    const fr = field.getBoundingClientRect();
+    const sr = scroller.getBoundingClientRect();
+    const overflow = cr.bottom - (sr.bottom - 8);
+    const slack = fr.top - (sr.top + 8);
+    const delta = Math.min(Math.max(overflow, 0), Math.max(slack, 0));
+    if (delta > 0) scroller.scrollTop += delta;
+  };
+  const settle = () => {
+    place();
+    reveal();
+  };
+  settle();
+  // The lazily rendered list mounts a tick after the strategy is created,
+  // and autocomplete items can arrive a little later still.
+  setTimeout(settle, 0);
+  setTimeout(settle, 50);
+  setTimeout(settle, 300);
   return { updateLocation: place };
 };
 const touchMenuProps = { attach: true, scrollStrategy: 'none', locationStrategy: attachedBelowField };
