@@ -221,4 +221,14 @@ body {
       z-index: 1;
     }
   }
+
+  // Vuetify still gives an attached menu `position: fixed` when the field
+  // sits inside a fixed dialog, and then chases the field with a
+  // requestAnimationFrame reposition on every scroll event, so the list
+  // visibly trails the form while it scrolls. Its offsets are deltas from
+  // the content's natural position, so absolute positioning yields the same
+  // placement while the menu scrolls natively with the field.
+  .v-overlay--absolute.v-menu > .v-overlay__content {
+    position: absolute !important;
+  }
 }
