@@ -752,7 +752,7 @@
             :placeholder="messageInputPlaceholder"
             rows="1"
             auto-grow
-            max-rows="15"
+            :max-rows="isMobile ? 6 : 15"
             variant="outlined"
             hide-details
             @keydown.enter="handleMessageEnterKey"
@@ -928,11 +928,22 @@
     <!-- Right sidebar with conversation tree -->
     <v-navigation-drawer
       v-if="treeDrawer && (!isMobile || mobilePanel === 'conversation')"
+      v-model="treeDrawer"
       location="right"
-      :width="400"
-      permanent
+      :width="isMobile ? undefined : 400"
+      :permanent="!isMobile"
+      :temporary="isMobile"
+      :scrim="isMobile"
       class="tree-drawer"
+      :class="{ 'tree-drawer--mobile': isMobile }"
     >
+      <!-- Phones: the drawer covers the whole screen (a permanent 400px drawer
+           used to push the message list down to a few pixels), so it carries
+           its own close control. -->
+      <div v-if="isMobile" class="tree-drawer-mobile-header">
+        <span class="text-subtitle-2">Conversation tree</span>
+        <v-btn icon="mdi-close" variant="text" size="small" title="Close tree" @click="treeDrawer = false" />
+      </div>
 
       <ConversationTree
         v-if="allMessages.length > 0"
@@ -5466,6 +5477,58 @@ function formatDate(date: Date | string): string {
   max-width: 100% !important;
   /* Force no transform when visible on mobile - fixes Chrome layout bug */
   transform: translateX(0) !important;
+}
+
+/* Conversation tree on phones: full-width temporary drawer with a header row */
+.tree-drawer--mobile {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.tree-drawer--mobile :deep(.v-navigation-drawer__content) {
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-drawer-mobile-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 4px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tree-drawer--mobile :deep(.conversation-tree-container) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Phones and small tablets: the app bar must keep its right-hand buttons on
+   screen. The breadcrumb used to demand 200px minimum and the title refused
+   to shrink, which pushed the tree toggle half off-screen and the event
+   history button entirely off-screen at 375px. */
+@media (max-width: 1024px) {
+  .breadcrumb-container {
+    min-width: 0;
+    max-width: none;
+    flex: 1 1 auto;
+  }
+
+  .conversation-title {
+    flex-shrink: 1;
+    min-width: 48px;
+    max-width: 100%;
+  }
+
+  .breadcrumb-spacer {
+    flex: 0 0 0 !important;
+  }
+
+  .bookmarks-scroll-container {
+    margin-left: 4px;
+    padding: 2px 4px;
+  }
 }
 
 /* Mobile controls styles */
