@@ -7,6 +7,9 @@ import { getOpenRouterModelsCache } from '../services/pricing-cache.js';
 // Effort levels OpenRouter's unified `reasoning.effort` accepts. Used for
 // models whose entry does not declare its own levels.
 const OPENROUTER_EFFORT_LEVELS = ['low', 'medium', 'high'];
+// OpenRouter ids of model families whose reasoning cannot be disabled
+// (OpenAI's o-series and GPT-5 line). The catalogue does not expose this.
+const REASONING_ONLY_MODEL = /^openai\/(o[0-9]|gpt-5)/;
 
 export class ModelLoader {
   private static instance: ModelLoader;
@@ -65,7 +68,17 @@ export class ModelLoader {
    * in the UI). Hand-maintained values in models.json are only replaced when
    * the catalogue reports something different, and each change is logged once.
    */
-  private enrichFromOpenRouter(model: Model): Model {
+  /**
+   * Fill a model entry from the OpenRouter catalogue.
+   *
+   * `authoritative` (system entries from models.json): the catalogue wins for
+   * context window, output limit and reasoning support, since those drift as
+   * providers update models.
+   * `fill` (user-defined models): only blanks are filled and the owner's own
+   * limits and "supports thinking" choice are kept, so a catalogue refresh
+   * never silently changes a custom model.
+   */
+  private enrichFromOpenRouter(model: Model, mode: 'authoritative' | 'fill' = 'authoritative'): Model {
     if (model.provider !== 'openrouter') return model;
     const cache = getOpenRouterModelsCache();
     if (!cache.models.length) return model;
@@ -75,13 +88,14 @@ export class ModelLoader {
     const enriched: Model = { ...model, settings: { ...model.settings, maxTokens: { ...model.settings.maxTokens } } };
     const changes: string[] = [];
 
+    const fillOnly = mode === 'fill';
     const contextLength = Number(entry.context_length);
-    if (Number.isFinite(contextLength) && contextLength > 0 && contextLength !== model.contextWindow) {
+    if (Number.isFinite(contextLength) && contextLength > 0 && contextLength !== model.contextWindow && !(fillOnly && model.contextWindow)) {
       enriched.contextWindow = contextLength;
       changes.push(`contextWindow ${model.contextWindow} → ${contextLength}`);
     }
     const outputLimit = Number(entry.top_provider?.max_completion_tokens);
-    if (Number.isFinite(outputLimit) && outputLimit > 0 && outputLimit !== model.outputTokenLimit) {
+    if (Number.isFinite(outputLimit) && outputLimit > 0 && outputLimit !== model.outputTokenLimit && !(fillOnly && model.outputTokenLimit)) {
       enriched.outputTokenLimit = outputLimit;
       enriched.settings.maxTokens.max = outputLimit;
       // Max tokens defaults to the output limit (see getValidatedModelDefaults).
@@ -90,13 +104,22 @@ export class ModelLoader {
     }
     const supported: unknown = entry.supported_parameters;
     if (Array.isArray(supported)) {
-      const reasoning = supported.includes('reasoning');
+      const catalogueReasoning = supported.includes('reasoning');
+      // A user-defined model keeps the owner's explicit choice.
+      const reasoning = fillOnly && typeof model.supportsThinking === 'boolean'
+        ? model.supportsThinking
+        : catalogueReasoning;
       if (reasoning !== !!model.supportsThinking) {
         enriched.supportsThinking = reasoning;
         changes.push(`supportsThinking ${!!model.supportsThinking} → ${reasoning}`);
       }
       if (reasoning) {
-        if (!enriched.thinkingApi) enriched.thinkingApi = 'adaptive';
+        if (!enriched.thinkingApi) {
+          // Reasoning-only families cannot switch thinking off; mark them
+          // always-on so it defaults to enabled and the toggle is hidden.
+          enriched.thinkingApi = REASONING_ONLY_MODEL.test(model.providerModelId) ? 'always-on' : 'adaptive';
+          changes.push(`thinkingApi ${enriched.thinkingApi}`);
+        }
         if (!enriched.effortLevels?.length) {
           enriched.effortLevels = OPENROUTER_EFFORT_LEVELS;
           enriched.effortDefault = enriched.effortDefault ?? 'medium';
@@ -171,7 +194,7 @@ export class ModelLoader {
       },
       // Preserve customEndpoint for OpenAI-compatible models
       ...(um.customEndpoint ? { customEndpoint: um.customEndpoint } : {})
-    } as Model)).map(m => this.enrichFromOpenRouter(m));
+    } as Model)).map(m => this.enrichFromOpenRouter(m, 'fill'));
 
     return [...systemModels, ...userModelsAsModels];
   }
