@@ -384,7 +384,7 @@ export class Database {
       settings: {
         temperature: 1.0,
         maxTokens: 2048,
-        topP: 0.9
+        topP: 1
       }
     };
 
