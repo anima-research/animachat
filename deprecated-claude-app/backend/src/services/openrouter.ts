@@ -211,7 +211,7 @@ export class OpenRouterService {
     stopSequences?: string[],
     onTokenUsage?: (usage: TokenUsage) => Promise<void>,
     // Model.thinkingApi / effortLevels from the model entry (see shared/types.ts)
-    modelHints?: { thinkingApi?: string; effortLevels?: string[] }
+    modelHints?: { thinkingApi?: string; effortLevels?: string[]; supportsThinking?: boolean }
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -261,7 +261,13 @@ export class OpenRouterService {
 
       // Build OpenRouter's unified `reasoning` object.
       const reasoningConfig: { max_tokens?: number; effort?: string; enabled?: boolean } = {};
-      const thinkingExplicitlyOff = settings.thinking !== undefined && !settings.thinking.enabled;
+      // For models with a thinking toggle, a missing or disabled thinking
+      // block means the user turned reasoning off: no effort is sent either,
+      // since OpenRouter treats `reasoning.effort` alone as enabling it.
+      // Models without a toggle (supportsThinking unset) still take effort.
+      const thinkingOff = settings.thinking
+        ? !settings.thinking.enabled
+        : !!modelHints?.supportsThinking;
       if (settings.thinking?.enabled) {
         if (budgetStyle && settings.thinking.budgetTokens) {
           reasoningConfig.max_tokens = settings.thinking.budgetTokens;
@@ -271,19 +277,23 @@ export class OpenRouterService {
         } else if (!budgetStyle) {
           reasoningConfig.enabled = true;
         }
-      } else if (effort && !thinkingExplicitlyOff) {
-        // Models without a thinking toggle (e.g. GPT-5 series) still take effort.
+      } else if (effort && !thinkingOff) {
         reasoningConfig.effort = effort;
       }
+
+      // Anthropic rejects temperature together with top_p/top_k on current
+      // models; mirror the direct Anthropic path for Anthropic-backed routes.
+      const anthropicBacked = modelId.startsWith('anthropic/');
+      const sendTopPK = !(anthropicBacked && settings.temperature !== undefined);
 
       requestBody = {
         model: modelId,
         messages: openRouterMessages,
         stream: true,
-        temperature: settings.temperature,
+        ...(settings.temperature !== undefined && { temperature: settings.temperature }),
         max_tokens: effectiveMaxTokens,
-        ...(settings.topP !== undefined && { top_p: settings.topP }),
-        ...(settings.topK !== undefined && { top_k: settings.topK }),
+        ...(sendTopPK && settings.topP !== undefined && { top_p: settings.topP }),
+        ...(sendTopPK && settings.topK !== undefined && { top_k: settings.topK }),
         ...(stopSequences && stopSequences.length > 0 && { stop: stopSequences }),
 
         // Required for cache metrics in response
