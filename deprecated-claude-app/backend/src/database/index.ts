@@ -194,8 +194,10 @@ export class Database {
       this.userLastAccessedTimes.set(id, new Date());
     }
     
-    // Create test users only in development
-    if (process.env.NODE_ENV !== 'production') {
+    // Create the well-known test users only when explicitly requested. This
+    // used to key off NODE_ENV !== 'production', which silently created a
+    // known-credential account on any deployment that forgot to set NODE_ENV.
+    if (process.env.CREATE_TEST_USERS === 'true') {
       if (this.users.size === 0) {
         await this.createTestUser();
         console.log('🧪 Creating additional test users...');
