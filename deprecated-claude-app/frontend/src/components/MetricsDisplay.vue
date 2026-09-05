@@ -1,7 +1,8 @@
 <template>
   <div class="metrics-display" 
        @mouseenter="handleMouseEnter" 
-       @mouseleave="handleMouseLeave">
+       @mouseleave="handleMouseLeave"
+       @click="toggleDetailsOnTouch">
     <div class="metrics-bar">
       <!-- Compact metrics in top bar -->
       <div class="metric-item hoverable">
@@ -123,9 +124,20 @@ const selectedModel = ref<string>(ALL_MODELS_METRICS);
 // Track processed metrics to prevent double-counting
 const processedMetricsTimestamps = new Set<string>();
 
+// Touch screens have no hover: a tap emits a synthetic mouseenter followed
+// by a click, so hover is ignored there and the click toggles the panel.
+const isTouchOnly = () => typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches;
+
 const handleMouseEnter = () => {
+  if (isTouchOnly()) return;
   if (hoverTimer) clearTimeout(hoverTimer);
   showDetails.value = true;
+};
+
+const toggleDetailsOnTouch = () => {
+  if (!isTouchOnly()) return;
+  if (hoverTimer) clearTimeout(hoverTimer);
+  showDetails.value = !showDetails.value;
 };
 
 const handleMouseLeave = () => {
@@ -302,6 +314,7 @@ const formatCost = (cost: number): string => {
   gap: 0.5rem;
   font-size: 0.875rem;
   padding: 0.5rem 0.75rem;
+  white-space: nowrap;
   border-radius: 6px;
   transition: background-color 0.2s;
 }
@@ -331,7 +344,8 @@ const formatCost = (cost: number): string => {
   border-radius: 12px;
   padding: 1.5rem;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  min-width: 400px;
+  min-width: min(400px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
   z-index: 9999;
   max-height: 80vh;
   overflow-y: auto;
@@ -437,5 +451,21 @@ const formatCost = (cost: number): string => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Phones: tighter chip, and a native select that stays at 16px so iOS Safari
+   does not zoom the page when it is focused. */
+@media (max-width: 600px) {
+  .metric-item {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.8rem;
+    gap: 0.35rem;
+  }
+}
+
+@media (pointer: coarse) {
+  .model-select {
+    font-size: 16px;
+  }
 }
 </style>
