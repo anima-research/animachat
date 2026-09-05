@@ -312,19 +312,8 @@ export function getValidatedModelDefaults(model: Model): ModelSettings {
     maxTokens: getDefaultMaxTokens(model),
   };
   
-  // Anthropic API doesn't allow both temperature AND topP/topK together
-  // Only include topP/topK for non-Anthropic providers
-  const isAnthropic = model.provider === 'anthropic' || model.provider === 'bedrock';
-  
-  if (!isAnthropic && model.supportsSampling !== false) {
-    if (model.settings.topP) {
-      settings.topP = model.settings.topP.default;
-    }
-    
-    if (model.settings.topK) {
-      settings.topK = model.settings.topK.default;
-    }
-  }
+  // top-p / top-k are opt-in overrides in the editor, never defaults: Anthropic
+  // rejects them alongside temperature, and other providers default to 1 anyway.
   
   // Include thinking settings for models that support it. Always-on models
   // cannot have it disabled. `budgetTokens` only matters for budget-style
