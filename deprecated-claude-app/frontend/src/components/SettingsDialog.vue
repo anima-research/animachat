@@ -3,13 +3,14 @@
     :model-value="modelValue"
     @update:model-value="$emit('update:modelValue', $event)"
     max-width="600"
+    :fullscreen="isPhone"
   >
     <v-card>
       <v-card-title>
         Settings
       </v-card-title>
 
-      <v-tabs v-model="tab" density="compact">
+      <v-tabs v-model="tab" density="compact" show-arrows>
         <v-tab value="api-keys">API Keys</v-tab>
         <v-tab value="grants">Grants</v-tab>
         <v-tab value="custom-models">Models</v-tab>
@@ -300,7 +301,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
-import { useTheme } from 'vuetify';
+import { useDisplay, useTheme } from 'vuetify';
 import { useStore } from '@/store';
 import { api } from '@/services/api';
 import { UserGrantSummary } from '@deprecated-claude/shared';
@@ -324,6 +325,9 @@ function openManageShares() {
 
 const store = useStore();
 const theme = useTheme();
+// Phones get a fullscreen dialog: a 600px card inset on a 375px screen left
+// ~290px for tabs and forms.
+const { xs: isPhone } = useDisplay();
 
 const tab = ref('api-keys');
 const apiKeys = ref<any[]>([]);

@@ -31,9 +31,32 @@ import ArchiveView from './views/ArchiveView.vue';
 import TermsView from './views/TermsView.vue';
 import PrivacyView from './views/PrivacyView.vue';
 
+// Touch devices: keep field menus attached to their field instead of
+// teleporting them to a fixed full-screen overlay. iOS Safari shifts and pans
+// the viewport for the on-screen keyboard while `position: fixed` content is
+// positioned against the unshifted layout viewport, so floating dropdowns
+// drifted away from (or against) the finger while scrolling. An attached menu
+// is ordinary flow content and scrolls with the dialog it lives in. Dialogs
+// also skip Vuetify's scroll blocking, which pins <html> with position: fixed
+// (another well-known source of iOS keyboard jank); the app shell scrolls
+// inside its own containers, so blocking the document buys nothing here.
+const coarsePointer =
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(pointer: coarse)').matches
+    : false;
+const touchDefaults = coarsePointer
+  ? {
+      VSelect: { menuProps: { attach: true } },
+      VAutocomplete: { menuProps: { attach: true } },
+      VCombobox: { menuProps: { attach: true } },
+      VDialog: { scrollStrategy: 'none' },
+    }
+  : {};
+
 const vuetify = createVuetify({
   components,
   directives,
+  defaults: touchDefaults,
   theme: {
     defaultTheme: 'dark',
     themes: {
