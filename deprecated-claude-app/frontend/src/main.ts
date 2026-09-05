@@ -90,13 +90,36 @@ if (coarsePointer && typeof MutationObserver !== 'undefined') {
 if (coarsePointer && typeof window !== 'undefined' && window.visualViewport) {
   const vv = window.visualViewport;
   const root = document.documentElement;
+  let settle = 0;
   const syncViewport = () => {
+    // Only the fixed-height surfaces need this: the chat shell and fullscreen
+    // dialogs. Ordinary scrolling pages (login, about) are left alone.
+    const fixedSurface = document.querySelector('.v-overlay--active.v-dialog--fullscreen, .messages-container');
     // Pinch-zoom also shrinks the visual viewport; only react at 1:1 scale.
-    const keyboardOpen = vv.scale <= 1.01 && vv.height < window.innerHeight - 40;
+    const keyboardOpen = !!fixedSurface && vv.scale <= 1.01 && vv.height < window.innerHeight - 40;
     if (keyboardOpen) {
       root.style.setProperty('--vv-height', `${Math.round(vv.height)}px`);
-      root.style.setProperty('--vv-top', `${Math.round(vv.offsetTop)}px`);
       root.classList.add('keyboard-open');
+      // By the time this fires the browser has usually already panned the
+      // page to reveal the focused field. Now that the surface fits the
+      // visible area, bring the field back into view inside its own
+      // scroller and undo that pan, so the visible area is the top of the
+      // page again and nothing needs to follow the visual viewport around.
+      cancelAnimationFrame(settle);
+      settle = requestAnimationFrame(() => {
+        const active = document.activeElement as HTMLElement | null;
+        if (active && active !== document.body && fixedSurface.contains(active)) {
+          active.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }
+        if (window.scrollY) window.scrollTo(0, 0);
+        // If the browser keeps part of that pan as a pure visual-viewport
+        // offset that scrollTo cannot undo, place the surface there once.
+        // (Continuously following the offset on every scroll event made the
+        // dialog lag and lock in place while the page panned underneath.)
+        root.style.setProperty('--vv-top', `${Math.round(vv.offsetTop)}px`);
+        // Let open Vuetify menus re-measure against the resized surface.
+        window.dispatchEvent(new Event('resize'));
+      });
     } else {
       root.style.removeProperty('--vv-height');
       root.style.removeProperty('--vv-top');
@@ -104,7 +127,6 @@ if (coarsePointer && typeof window !== 'undefined' && window.visualViewport) {
     }
   };
   vv.addEventListener('resize', syncViewport);
-  vv.addEventListener('scroll', syncViewport);
   syncViewport();
 }
 
