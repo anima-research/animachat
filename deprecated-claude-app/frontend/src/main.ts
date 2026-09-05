@@ -149,8 +149,19 @@ if (coarsePointer && typeof MutationObserver !== 'undefined') {
       if (input && !input.classList.contains(OPEN_CLASS)) input.classList.add(OPEN_CLASS);
     });
   };
-  new MutationObserver(() => {
+  const involvesOverlay = (node: Node) =>
+    node instanceof Element &&
+    (node.classList.contains('v-overlay--absolute') || node.querySelector('.v-overlay--absolute') !== null);
+  new MutationObserver((records) => {
     if (scheduled) return;
+    // Streaming text and Vuetify transitions mutate classes constantly; only
+    // react when an attached overlay itself changed or was added/removed.
+    const relevant = records.some((r) =>
+      r.type === 'attributes'
+        ? r.target instanceof Element && r.target.classList.contains('v-overlay--absolute')
+        : [...r.addedNodes, ...r.removedNodes].some(involvesOverlay),
+    );
+    if (!relevant) return;
     scheduled = true;
     queueMicrotask(syncOpenMenus);
   }).observe(document.documentElement, {

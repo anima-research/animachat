@@ -1,11 +1,12 @@
 <template>
   <div class="metrics-display" 
        @mouseenter="handleMouseEnter" 
-       @mouseleave="handleMouseLeave"
-       @click="toggleDetailsOnTouch">
+       @mouseleave="handleMouseLeave">
     <div class="metrics-bar">
-      <!-- Compact metrics in top bar -->
-      <div class="metric-item hoverable">
+      <!-- Compact metrics in top bar. The tap toggle lives on the chip, not
+           the root, so taps inside the flyout (e.g. its model select) do not
+           bubble up and close it. -->
+      <div class="metric-item hoverable" @click="toggleDetailsOnTouch">
         <Icon icon="mdi:text-box-outline" />
         <span class="metric-value">{{ formatTokens(lastCompletionTokens) || '0 tokens' }}</span>
       </div>
