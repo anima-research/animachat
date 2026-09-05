@@ -5046,43 +5046,25 @@ async function importRawMessages() {
     
     console.log(`Importing ${messages.length} messages to conversation ${conversationId}`);
     
-    const token = localStorage.getItem('token');
-    if (!token) {
-      alert('Not authenticated');
-      return;
-    }
-    
-    const response = await fetch(`http://localhost:3010/api/import/messages-raw`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        conversationId,
-        messages
-      })
-    });
-    
-    const result = await response.json();
-    
-    if (response.ok) {
-      console.log('Messages imported:', result);
-      alert(`Successfully imported ${result.importedMessages} messages!`);
-      
-      // Clear the input and close dialog
-      rawImportData.value = '';
-      showRawImportDialog.value = false;
-      
-      // Reload the conversation to see the imported messages
-      await store.loadConversation(conversationId);
-    } else {
-      console.error('Failed to import messages:', result);
-      alert(`Failed to import messages: ${result.error || 'Unknown error'}`);
-    }
-  } catch (error) {
+    // Same-origin API client. The previous hard-coded http://localhost:3010
+    // URL only worked on a dev machine and bypassed the shared auth handling.
+    const response = await api.post('/import/messages-raw', { conversationId, messages });
+    const result = response.data;
+    console.log('Messages imported:', result);
+    alert(`Successfully imported ${result.importedMessages} messages!`);
+
+    // Clear the input and close dialog
+    rawImportData.value = '';
+    showRawImportDialog.value = false;
+
+    // Reload the conversation to see the imported messages
+    await store.loadConversation(conversationId);
+  } catch (error: any) {
     if (error instanceof SyntaxError) {
       alert('Invalid JSON format. Please check your input.');
+    } else if (error?.response) {
+      console.error('Failed to import messages:', error.response.data);
+      alert(`Failed to import messages: ${error.response.data?.error || 'Unknown error'}`);
     } else {
       console.error('Error importing messages:', error);
       alert('Error importing messages. Check console for details.');
