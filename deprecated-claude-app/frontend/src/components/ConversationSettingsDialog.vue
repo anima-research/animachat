@@ -3,9 +3,15 @@
     :model-value="modelValue"
     @update:model-value="$emit('update:modelValue', $event)"
     max-width="600"
-    max-height="90vh"
+    :max-height="isPhone ? undefined : '90vh'"
+    :fullscreen="isPhone"
   >
-    <v-card v-if="conversation" style="display: flex; flex-direction: column; max-height: 90vh;">
+    <v-card
+      v-if="conversation"
+      :style="isPhone
+        ? 'display: flex; flex-direction: column; height: 100%;'
+        : 'display: flex; flex-direction: column; max-height: 90vh;'"
+    >
       <v-card-title>
         Conversation Settings
       </v-card-title>
@@ -595,6 +601,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { useDisplay } from 'vuetify';
 import type { Conversation, Model, Participant, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
 import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
@@ -606,6 +613,9 @@ import { useStore } from '@/store';
 const router = useRouter();
 
 const store = useStore();
+
+// Phones get a fullscreen dialog instead of a 600px card inset on a 375px screen.
+const { xs: isPhone } = useDisplay();
 
 // Get user's first name for default participant name
 const userFirstName = computed(() => {

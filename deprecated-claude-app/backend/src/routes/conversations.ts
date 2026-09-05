@@ -561,7 +561,11 @@ export function conversationRouter(db: Database): Router {
               conversation.userId,
               branch.content,
               msg.role,
-              message.branches[0].id,
+              // Siblings share the first branch's parent. Passing the first
+              // branch's own id here chained each extra branch *under* the
+              // message's first branch, which detached every later message
+              // from the visible path once the new branch became active.
+              message.branches[0].parentBranchId,
               msg.role === 'assistant' ? data.model : undefined,
               undefined, // participantId
               undefined, // attachments

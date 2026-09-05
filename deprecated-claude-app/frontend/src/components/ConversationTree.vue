@@ -401,6 +401,14 @@ function initializeTree() {
     });
   
   svg.call(zoom);
+
+  // Touch screens: a tap raises mouseenter on a node but never mouseleave, so
+  // the tooltip would stick until another node is tapped. Clear it when the
+  // user touches anything that is not a node.
+  svg.on('touchstart.tooltip', (event: TouchEvent) => {
+    const target = event.target as Element | null;
+    if (!target?.closest?.('g.node')) hoveredNode.value = null;
+  });
   
   renderTree();
 }
@@ -620,9 +628,10 @@ function renderTree() {
       const tooltipMaxWidth = 300;
       const tooltipEstimatedHeight = 80; // Approximate height for 2-3 lines of text
       
-      // Calculate position with bounds checking
-      let left = x + 10;
-      let top = y - 10;
+      // Calculate position with bounds checking. Offset below and to the right
+      // of the pointer so the tooltip does not cover the hovered node itself.
+      let left = x + 14;
+      let top = y + 14;
       
       // Check right boundary
       if (left + tooltipMaxWidth > containerWidth) {
@@ -696,14 +705,14 @@ function renderTree() {
         .attr('cx', -5 * iconScale)
         .attr('cy', -3 * iconScale)
         .attr('r', 2 * iconScale)
-        .style('fill', 'var(--v-theme-background)')
+        .style('fill', 'rgb(var(--v-theme-background))')
         .style('pointer-events', 'none');
       
       g.append('circle')
         .attr('cx', 5 * iconScale)
         .attr('cy', -3 * iconScale)
         .attr('r', 2 * iconScale)
-        .style('fill', 'var(--v-theme-background)')
+        .style('fill', 'rgb(var(--v-theme-background))')
         .style('pointer-events', 'none');
     }
 
@@ -748,7 +757,7 @@ function renderTree() {
           .attr('cx', plusOffset)
           .attr('cy', plusOffset)
           .attr('r', plusSize * 0.9)
-          .style('fill', 'var(--v-theme-surface)')
+          .style('fill', 'rgb(var(--v-theme-surface))')
           .style('stroke', '#888')
           .style('stroke-width', 1)
           .style('pointer-events', 'none');
@@ -778,7 +787,7 @@ function renderTree() {
         .attr('cy', -dotOffset)
         .attr('r', dotSize)
         .style('fill', '#ff9800') // Orange/amber color
-        .style('stroke', 'var(--v-theme-background)')
+        .style('stroke', 'rgb(var(--v-theme-background))')
         .style('stroke-width', 1.5)
         .style('pointer-events', 'none');
     }
@@ -1032,7 +1041,7 @@ defineExpose({
   position: relative;
   width: 100%;
   height: 100%;
-  background: var(--v-theme-background);
+  background: rgb(var(--v-theme-background));
   overflow: hidden; /* Prevent tooltip from causing overflow */
 }
 
@@ -1054,13 +1063,16 @@ defineExpose({
 
 .node-tooltip {
   position: absolute;
-  background: var(--v-theme-surface);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  /* Theme variables are RGB triplets; the bare var() was an invalid colour,
+     which left the tooltip transparent with the tree showing through it. */
+  background: rgb(var(--v-theme-surface));
+  color: rgb(var(--v-theme-on-surface));
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.15);
   padding: 8px;
   border-radius: 4px;
   pointer-events: none;
   z-index: 20;
   max-width: 300px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 </style>

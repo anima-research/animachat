@@ -86,6 +86,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useDisplay } from 'vuetify';
 import type { Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 
@@ -119,9 +120,11 @@ const emit = defineEmits<{
   'toggle-no-response': [];
 }>();
 
-const isMobile = computed(() => {
-  return window.innerWidth < 768;
-});
+// Reactive viewport width (a plain computed over window.innerWidth has no
+// reactive dependency, so it froze at its first value and never tracked
+// rotation or resize).
+const { width: viewportWidth } = useDisplay();
+const isMobile = computed(() => viewportWidth.value < 768);
 
 function selectResponder(participant: Participant) {
   if (!props.disabled) {
