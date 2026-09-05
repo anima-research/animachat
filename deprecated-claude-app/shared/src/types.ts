@@ -183,6 +183,19 @@ export const ModelSchema = z.object({
   // Currently used with "summarized" for Fable 5; left as string to extend.
   reasoningDisplay: z.string().optional(),
   supportsPrefill: z.boolean().optional(), // Whether model supports prefill/completion mode (defaults based on provider)
+  // How the model takes its reasoning configuration:
+  //   'budget'    — thinking: {type:'enabled', budget_tokens} (Haiku 4.5, Sonnet 4.5, 3.7, ...)
+  //   'adaptive'  — thinking: {type:'adaptive'} + output_config.effort; can be turned off
+  //   'always-on' — adaptive and cannot be turned off (Fable 5 family)
+  // Unset means "unknown": the backend falls back to its legacy model-id heuristics.
+  thinkingApi: z.enum(['budget', 'adaptive', 'always-on']).optional(),
+  // Reasoning effort levels the provider accepts for this model (rendered as a
+  // select and sent as output_config.effort / OpenRouter reasoning.effort).
+  effortLevels: z.array(z.string()).optional(),
+  effortDefault: z.string().optional(),
+  // Whether temperature / top_p / top_k are accepted. Current Anthropic models
+  // (Opus 4.7+, Sonnet 5, Fable) reject sampling parameters; default true.
+  supportsSampling: z.boolean().optional(),
   capabilities: ModelCapabilitiesSchema.optional(), // Multimodal capabilities
   currencies: z.record(z.boolean()).optional(),
 
@@ -246,18 +259,40 @@ export const ModelSettingsSchema = z.object({
 export type ModelSettings = z.infer<typeof ModelSettingsSchema>;
 
 /**
+ * Reasoning effort stored on a settings object. `reasoningEffort` is the
+ * unified key; `thinkingEffort` is the older Anthropic-only key still present
+ * in persisted conversations and participants (the event log replays settings
+ * verbatim), so it is read as an alias.
+ */
+export function getReasoningEffort(settings?: Pick<ModelSettings, 'modelSpecific'> | null): string | undefined {
+  const ms = settings?.modelSpecific;
+  const value = ms?.reasoningEffort ?? ms?.thinkingEffort;
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** Default max output tokens for a model: the model's output limit. */
+export function getDefaultMaxTokens(model: Model): number {
+  return Math.min(model.settings.maxTokens.max, model.outputTokenLimit);
+}
+
+/** Default reasoning effort for a model that exposes effort levels. */
+export function getDefaultEffort(model: Model): string | undefined {
+  const levels = model.effortLevels;
+  if (!levels || levels.length === 0) return undefined;
+  if (model.effortDefault && levels.includes(model.effortDefault)) return model.effortDefault;
+  return levels.includes('high') ? 'high' : levels.includes('medium') ? 'medium' : levels[0];
+}
+
+/**
  * Get validated default settings for a model.
  * This ensures defaults are within valid ranges and includes all necessary settings.
  * Use this everywhere participant settings are initialized.
+ *
+ * Max tokens defaults to the model's output limit: there is rarely a reason to
+ * truncate output, and the backend clamps the request to the remaining context
+ * at inference time.
  */
 export function getValidatedModelDefaults(model: Model): ModelSettings {
-  // Ensure maxTokens default is within valid range
-  const maxTokensDefault = Math.min(
-    model.settings.maxTokens.default,
-    model.settings.maxTokens.max,
-    model.outputTokenLimit
-  );
-  
   // Build modelSpecific defaults from configurableSettings
   const modelSpecific: Record<string, unknown> = {};
   if (model.configurableSettings) {
@@ -267,17 +302,21 @@ export function getValidatedModelDefaults(model: Model): ModelSettings {
       }
     }
   }
+  const effort = getDefaultEffort(model);
+  if (effort) {
+    modelSpecific.reasoningEffort = effort;
+  }
   
   const settings: ModelSettings = {
     temperature: model.settings.temperature.default,
-    maxTokens: maxTokensDefault,
+    maxTokens: getDefaultMaxTokens(model),
   };
   
   // Anthropic API doesn't allow both temperature AND topP/topK together
   // Only include topP/topK for non-Anthropic providers
   const isAnthropic = model.provider === 'anthropic' || model.provider === 'bedrock';
   
-  if (!isAnthropic) {
+  if (!isAnthropic && model.supportsSampling !== false) {
     if (model.settings.topP) {
       settings.topP = model.settings.topP.default;
     }
@@ -287,11 +326,13 @@ export function getValidatedModelDefaults(model: Model): ModelSettings {
     }
   }
   
-  // Include thinking settings for models that support it
+  // Include thinking settings for models that support it. Always-on models
+  // cannot have it disabled. `budgetTokens` only matters for budget-style
+  // models but is kept on the object so the settings schema stays satisfied.
   if (model.supportsThinking) {
     settings.thinking = {
-      enabled: model.thinkingDefaultEnabled ?? false,
-      budgetTokens: 8000 // Default thinking budget
+      enabled: model.thinkingApi === 'always-on' ? true : (model.thinkingDefaultEnabled ?? false),
+      budgetTokens: 8000 // Default thinking budget (budget-style models only)
     };
   }
   
