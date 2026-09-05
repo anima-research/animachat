@@ -44,11 +44,57 @@ const coarsePointer =
   typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia('(pointer: coarse)').matches
     : false;
+// Placement for attached menus: the list sits directly under its field as
+// ordinary content of the form. Vuetify's default "connected" strategy keeps
+// re-measuring the list against the scroll container's visible box (on
+// resize, on visual-viewport events, on content resize) and shifts or flips
+// it to stay inside that box, which on iOS showed up as lists that lagged,
+// locked under the dialog title, or opened above their field. Below-the-field
+// placement needs no measuring at all: the form scrolls and the list comes
+// along, clipped like any other content.
+const attachedBelowField = (
+  data: { contentEl?: { value?: unknown }; target?: { value?: unknown } },
+  _props: unknown,
+  contentStyles: { value: Record<string, string> },
+) => {
+  const place = () => {
+    // The attached overlay root covers only the field's input slot; widen the
+    // list to the whole field (prepend/append icons included).
+    const anchor = [data.contentEl?.value, data.target?.value].find((el) => el instanceof Element) as
+      | Element
+      | undefined;
+    const slot = anchor?.closest('.v-field__input') ?? null;
+    const field = slot?.closest('.v-field') ?? null;
+    let left = '0';
+    let width = '100%';
+    if (slot && field) {
+      const s = slot.getBoundingClientRect();
+      const f = field.getBoundingClientRect();
+      left = `${Math.round(f.left - s.left)}px`;
+      width = `${Math.round(f.width)}px`;
+    }
+    Object.assign(contentStyles.value, {
+      position: 'absolute',
+      top: '100%',
+      left,
+      width,
+      minWidth: '0',
+      marginTop: '6px',
+      transformOrigin: 'top left',
+    });
+  };
+  place();
+  // The lazily rendered list mounts a tick after the strategy is created.
+  setTimeout(place, 0);
+  setTimeout(place, 50);
+  return { updateLocation: place };
+};
+const touchMenuProps = { attach: true, scrollStrategy: 'none', locationStrategy: attachedBelowField };
 const touchDefaults = coarsePointer
   ? {
-      VSelect: { menuProps: { attach: true, scrollStrategy: 'none' } },
-      VAutocomplete: { menuProps: { attach: true, scrollStrategy: 'none' } },
-      VCombobox: { menuProps: { attach: true, scrollStrategy: 'none' } },
+      VSelect: { menuProps: touchMenuProps },
+      VAutocomplete: { menuProps: touchMenuProps },
+      VCombobox: { menuProps: touchMenuProps },
       VDialog: { scrollStrategy: 'none' },
     }
   : {};
@@ -60,74 +106,31 @@ const touchDefaults = coarsePointer
 if (coarsePointer && typeof MutationObserver !== 'undefined') {
   const OPEN_CLASS = 'v-input--menu-open';
   let scheduled = false;
+  // Runs as a microtask right after each mutation batch (not rAF, which is
+  // paused in background tabs and would leave the class stale). It must only
+  // touch the class when it actually changes: setting an attribute to its
+  // current value still produces a mutation record, which would re-trigger
+  // this observer in an endless microtask loop.
   const syncOpenMenus = () => {
     scheduled = false;
     document.querySelectorAll(`.${OPEN_CLASS}`).forEach((el) => {
       if (!el.querySelector('.v-overlay--absolute.v-overlay--active')) el.classList.remove(OPEN_CLASS);
     });
     document.querySelectorAll('.v-overlay--absolute.v-overlay--active').forEach((el) => {
-      el.closest('.v-input')?.classList.add(OPEN_CLASS);
+      const input = el.closest('.v-input');
+      if (input && !input.classList.contains(OPEN_CLASS)) input.classList.add(OPEN_CLASS);
     });
   };
   new MutationObserver(() => {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(syncOpenMenus);
+    queueMicrotask(syncOpenMenus);
   }).observe(document.documentElement, {
     subtree: true,
     childList: true,
     attributes: true,
     attributeFilter: ['class'],
   });
-}
-
-// Keyboard-aware sizing. The on-screen keyboard shrinks only the visual
-// viewport (iOS Safari, and Android Chrome by default since 108), so a
-// 100dvh app shell and fullscreen dialogs stay as tall as the whole screen
-// and the browser pans that tall page around to reveal the focused field.
-// While the visual viewport is noticeably shorter than the layout viewport,
-// publish its geometry so the shell and dialogs can size themselves to it.
-if (coarsePointer && typeof window !== 'undefined' && window.visualViewport) {
-  const vv = window.visualViewport;
-  const root = document.documentElement;
-  let settle = 0;
-  const syncViewport = () => {
-    // Only the fixed-height surfaces need this: the chat shell and fullscreen
-    // dialogs. Ordinary scrolling pages (login, about) are left alone.
-    const fixedSurface = document.querySelector('.v-overlay--active.v-dialog--fullscreen, .messages-container');
-    // Pinch-zoom also shrinks the visual viewport; only react at 1:1 scale.
-    const keyboardOpen = !!fixedSurface && vv.scale <= 1.01 && vv.height < window.innerHeight - 40;
-    if (keyboardOpen) {
-      root.style.setProperty('--vv-height', `${Math.round(vv.height)}px`);
-      root.classList.add('keyboard-open');
-      // By the time this fires the browser has usually already panned the
-      // page to reveal the focused field. Now that the surface fits the
-      // visible area, bring the field back into view inside its own
-      // scroller and undo that pan, so the visible area is the top of the
-      // page again and nothing needs to follow the visual viewport around.
-      cancelAnimationFrame(settle);
-      settle = requestAnimationFrame(() => {
-        const active = document.activeElement as HTMLElement | null;
-        if (active && active !== document.body && fixedSurface.contains(active)) {
-          active.scrollIntoView({ block: 'center', inline: 'nearest' });
-        }
-        if (window.scrollY) window.scrollTo(0, 0);
-        // If the browser keeps part of that pan as a pure visual-viewport
-        // offset that scrollTo cannot undo, place the surface there once.
-        // (Continuously following the offset on every scroll event made the
-        // dialog lag and lock in place while the page panned underneath.)
-        root.style.setProperty('--vv-top', `${Math.round(vv.offsetTop)}px`);
-        // Let open Vuetify menus re-measure against the resized surface.
-        window.dispatchEvent(new Event('resize'));
-      });
-    } else {
-      root.style.removeProperty('--vv-height');
-      root.style.removeProperty('--vv-top');
-      root.classList.remove('keyboard-open');
-    }
-  };
-  vv.addEventListener('resize', syncViewport);
-  syncViewport();
 }
 
 const vuetify = createVuetify({

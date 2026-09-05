@@ -301,11 +301,10 @@
 
 <style scoped>
 /* Phones (fullscreen dialog): each tab body is capped at 600px inline, which
-   left a large empty card below the Close button on tall screens and wasted
-   the space when the keyboard shrank the viewport. Let it use the height
-   that is actually there (title + tabs + actions take roughly 172px). */
+   left a large empty card below the Close button on tall screens. Let it use
+   the height that is actually there (title + tabs + actions take ~172px). */
 .settings-card--fullscreen :deep(.v-window .v-card-text) {
-  max-height: calc(var(--vv-height, 100dvh) - 172px) !important;
+  max-height: calc(100dvh - 172px) !important;
 }
 </style>
 
