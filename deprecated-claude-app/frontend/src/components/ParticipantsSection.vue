@@ -276,95 +276,10 @@
             </div>
           </div>
 
-          <v-slider
-            :model-value="getParticipantSettingsField('temperature', 1.0)"
-            @update:model-value="(val) => setParticipantSettingsField('temperature', val)"
-            :min="0"
-            :max="2"
-            :step="0.1"
-            thumb-label
-            label="Temperature"
-            hide-details
-            class="mb-4"
-            color="primary"
-          >
-            <template v-slot:append>
-              <v-text-field
-                :model-value="getParticipantSettingsField('temperature', 1.0)"
-                @update:model-value="(val) => setParticipantSettingsField('temperature', parseFloat(val))"
-                type="number"
-                density="compact"
-                style="width: 70px"
-                variant="outlined"
-                hide-details
-                single-line
-                :min="0"
-                :max="2"
-                :step="0.1"
-              />
-            </template>
-          </v-slider>
-          
-          <v-slider
-            :model-value="getParticipantSettingsField('maxTokens', selectedParticipantModel?.settings?.maxTokens?.default || 4096)"
-            @update:model-value="(val) => setParticipantSettingsField('maxTokens', val)"
-            :min="1"
-            :max="selectedParticipantModel?.outputTokenLimit || 200000"
-            :step="1"
-            thumb-label
-            label="Max Tokens"
-            hide-details
-            class="mb-4"
-            color="primary"
-          >
-            <template v-slot:append>
-              <v-text-field
-                :model-value="getParticipantSettingsField('maxTokens', selectedParticipantModel?.settings?.maxTokens?.default || 4096)"
-                @update:model-value="(val) => setParticipantSettingsField('maxTokens', Number(val))"
-                type="number"
-                density="compact"
-                style="width: 100px"
-                variant="outlined"
-                hide-details
-                single-line
-                :min="1"
-                :max="selectedParticipantModel?.outputTokenLimit || 200000"
-              />
-            </template>
-          </v-slider>
-          
-          <!-- Thinking Settings (for models that support it) -->
-          <div v-if="selectedParticipantModel?.supportsThinking" class="mb-4">
-            <v-checkbox
-              :model-value="getParticipantSettingsField('thinking.enabled', false)"
-              @update:model-value="(val) => setParticipantSettingsField('thinking', val ? { enabled: true, budgetTokens: getParticipantSettingsField('thinking.budgetTokens', 8000) } : undefined)"
-              label="Extended Thinking"
-              density="compact"
-              hide-details
-            />
-            <v-slider
-              v-if="getParticipantSettingsField('thinking.enabled', false)"
-              :model-value="getParticipantSettingsField('thinking.budgetTokens', 8000)"
-              @update:model-value="(val) => setParticipantSettingsField('thinking', { enabled: true, budgetTokens: val })"
-              :min="1024"
-              :max="32000"
-              :step="1024"
-              thumb-label
-              label="Thinking Budget"
-              hide-details
-              color="primary"
-              class="mt-2"
-            />
-          </div>
-          
-          <!-- Model-Specific Settings -->
-          <ModelSpecificSettings
-            v-if="selectedParticipantConfigurableSettings.length > 0"
-            v-model="selectedParticipantModelSpecific"
-            :settings="selectedParticipantConfigurableSettings"
-            :show-divider="true"
-            :show-header="true"
-            header-text="Model-Specific Settings"
+          <ModelParameterSettings
+            :model="selectedParticipantModel"
+            :model-value="getParticipantField('settings', {})"
+            @update:model-value="(val) => setParticipantField('settings', val)"
           />
           
           <v-divider class="my-4" />
@@ -537,12 +452,12 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, PropType } from 'vue';
-import type { Participant, Model, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
+import type { Participant, Model, Persona } from '@deprecated-claude/shared';
 import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
 import { get as _get, set as _set, cloneDeep, isEqual } from 'lodash-es';
 import ModelSelector from './ModelSelector.vue';
-import ModelSpecificSettings from './ModelSpecificSettings.vue';
+import ModelParameterSettings from './ModelParameterSettings.vue';
 
 const props = defineProps({
   modelValue: {
@@ -731,20 +646,6 @@ function getParticipantSettingsField(settingsFieldName: string, defaultValue: an
   return getParticipantField("settings." + settingsFieldName, defaultValue);
 }
 
-function setParticipantSettingsField(settingsFieldName: string, value: any) {
-  // Do not modify existing copy (that may be overwritten/may be a proxy)
-  // instead we need to send changes back up by using these methods
-  var currentSettings = cloneDeep(getParticipantField("settings", {
-    // default settings if unspecified
-    temperature: 1.0,
-    maxTokens: 4096 // Safe default for all models (some like Opus 3 cap at 4096)
-  }));
-  
-  _set(currentSettings, settingsFieldName, value);
-  
-  setParticipantField('settings', currentSettings);
-}
-
 function getParticipantContextOverrideField(contextOverrideFieldName: string, defaultValue: any) {
   return getParticipantField('contextManagement.' + contextOverrideFieldName, defaultValue);
 }
@@ -771,17 +672,6 @@ const selectedParticipantModel = computed(() => {
   const participant = participants.value.find(p => p.id === selectedParticipantId.value);
   if (!participant || participant.type !== 'assistant') return null;
   return props.models.find(m => m.id === participant.model) || null;
-});
-
-const selectedParticipantConfigurableSettings = computed<ConfigurableSetting[]>(() => {
-  return (selectedParticipantModel.value?.configurableSettings as ConfigurableSetting[]) || [];
-});
-
-const selectedParticipantModelSpecific = computed({
-  get: () => getParticipantSettingsField('modelSpecific', {}) as Record<string, unknown>,
-  set: (value: Record<string, unknown>) => {
-    setParticipantSettingsField('modelSpecific', value);
-  },
 });
 
 // Conversation mode for the selected participant
