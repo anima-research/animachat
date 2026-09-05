@@ -2582,8 +2582,12 @@ watch(() => currentBranch.value.id, async () => {
   box-shadow: 0 2px 4px -1px rgba(0,0,0,.2), 0 4px 5px 0 rgba(0,0,0,.14), 0 1px 10px 0 rgba(0,0,0,.12);
 }
 
-.message-container:hover {
-  filter: brightness(1.05);
+/* Hover-only: on touch screens :hover sticks to the last tapped message, and
+   `filter` on a large element is a repaint/compositing cost on WebKit. */
+@media (hover: hover) {
+  .message-container:hover {
+    filter: brightness(1.05);
+  }
 }
 
 /* When action bar is visible, lift the message above siblings */
@@ -2649,9 +2653,11 @@ watch(() => currentBranch.value.id, async () => {
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-.message-avatar.clickable-avatar:hover {
-  transform: scale(1.1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+@media (hover: hover) {
+  .message-avatar.clickable-avatar:hover {
+    transform: scale(1.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
 }
 
 /* Name matches message font size */
@@ -2725,6 +2731,9 @@ watch(() => currentBranch.value.id, async () => {
   right: 0;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: calc(100% - 4px);
   gap: 2px;
   padding: 2px 6px;
   background: rgba(0, 0, 0, 0.5);
@@ -2762,9 +2771,11 @@ watch(() => currentBranch.value.id, async () => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
-.hover-tooltip:hover::after {
-  opacity: 1;
-  visibility: visible;
+@media (hover: hover) {
+  .hover-tooltip:hover::after {
+    opacity: 1;
+    visibility: visible;
+  }
 }
 
 /* Compact more menu */

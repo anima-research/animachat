@@ -37,9 +37,10 @@ body {
   word-wrap: break-word;
   line-height: 1.5;
   
-  // Prevent layout jumping during streaming
+  // Prevent layout jumping during streaming. (`will-change: contents` used to
+  // sit here too; it promoted every message to its own compositor layer on
+  // WebKit for no layout benefit, so it was removed.)
   contain: layout style;
-  will-change: contents;
   
   ul, ol {
     padding-left: 24px;
@@ -83,6 +84,34 @@ body {
     padding-left: 16px;
     margin-left: 0;
     font-style: italic;
+  }
+
+  // Wide content scrolls inside its own box instead of being clipped by the
+  // message body's overflow-x: hidden (display math and tables on phones).
+  .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 2px 0;
+  }
+
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+
+    th, td {
+      padding: 4px 8px;
+      border: 1px solid rgba(128, 128, 128, 0.3);
+    }
+
+    // Narrow screens: scroll wide tables sideways instead of wrapping every
+    // cell into a one-word-per-line column.
+    @media (max-width: 768px) {
+      th, td {
+        white-space: nowrap;
+      }
+    }
   }
   
   
@@ -154,5 +183,42 @@ body {
 .settings-panel {
   .v-slider {
     margin-top: 8px;
+  }
+}
+
+// Touch devices
+@media (pointer: coarse) {
+  // iOS Safari zooms the page when a focused form control is smaller than
+  // 16px and never zooms back out. Vuetify fields are already 16px; this
+  // covers native controls (e.g. the metrics model <select>).
+  input, textarea, select {
+    font-size: max(16px, 1em);
+  }
+}
+
+// A drag inside a menu list that reaches its end must not chain to the page
+// (on iOS that pans the viewport and drags floating menus out of place).
+.v-overlay__content .v-list,
+.v-select__content,
+.v-menu > .v-overlay__content {
+  overscroll-behavior: contain;
+}
+
+// Touch devices attach select/autocomplete menus to their field (see main.ts).
+// Vuetify's .v-field has `contain: layout`, which both makes the field the
+// containing block for the menu (so the menu scrolls with the form) and
+// confines the menu's z-index to the field's own stacking context. Lift the
+// whole input above its later siblings while its menu is open, otherwise the
+// hint text and the next field paint over the list.
+@media (pointer: coarse) {
+  .v-input:has(.v-overlay--active) {
+    position: relative;
+    z-index: 20;
+
+    // ...and the control above the input's own hint/message row.
+    .v-input__control {
+      position: relative;
+      z-index: 1;
+    }
   }
 }
