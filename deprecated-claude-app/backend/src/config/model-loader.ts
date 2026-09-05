@@ -2,12 +2,22 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { Model, UserDefinedModel } from '@deprecated-claude/shared';
 import type { Database } from '../database/index.js';
+import { getOpenRouterModelsCache } from '../services/pricing-cache.js';
+
+// Effort levels OpenRouter's unified `reasoning.effort` accepts. Used for
+// models whose entry does not declare its own levels.
+const OPENROUTER_EFFORT_LEVELS = ['low', 'medium', 'high'];
 
 export class ModelLoader {
   private static instance: ModelLoader;
   private models: Model[] | null = null;
   private modelConfigPath: string;
   private db: Database | null = null;
+  // System models enriched from the OpenRouter catalogue, keyed by the
+  // catalogue snapshot they were derived from.
+  private enrichedSystemModels: Model[] | null = null;
+  private enrichedFromCacheTime = -1;
+  private enrichmentLogged = new Set<string>();
 
   private constructor() {
     // Look for models config in these locations (in order):
@@ -49,10 +59,70 @@ export class ModelLoader {
   }
 
   /**
+   * Fill in what the OpenRouter catalogue knows about an OpenRouter-routed
+   * model: context window, output limit, and whether the provider accepts the
+   * `reasoning` parameter (which drives the thinking toggle and effort levels
+   * in the UI). Hand-maintained values in models.json are only replaced when
+   * the catalogue reports something different, and each change is logged once.
+   */
+  private enrichFromOpenRouter(model: Model): Model {
+    if (model.provider !== 'openrouter') return model;
+    const cache = getOpenRouterModelsCache();
+    if (!cache.models.length) return model;
+    const entry = cache.models.find((m: any) => m?.id === model.providerModelId);
+    if (!entry) return model;
+
+    const enriched: Model = { ...model, settings: { ...model.settings, maxTokens: { ...model.settings.maxTokens } } };
+    const changes: string[] = [];
+
+    const contextLength = Number(entry.context_length);
+    if (Number.isFinite(contextLength) && contextLength > 0 && contextLength !== model.contextWindow) {
+      enriched.contextWindow = contextLength;
+      changes.push(`contextWindow ${model.contextWindow} → ${contextLength}`);
+    }
+    const outputLimit = Number(entry.top_provider?.max_completion_tokens);
+    if (Number.isFinite(outputLimit) && outputLimit > 0 && outputLimit !== model.outputTokenLimit) {
+      enriched.outputTokenLimit = outputLimit;
+      enriched.settings.maxTokens.max = outputLimit;
+      // Max tokens defaults to the output limit (see getValidatedModelDefaults).
+      enriched.settings.maxTokens.default = outputLimit;
+      changes.push(`outputTokenLimit ${model.outputTokenLimit} → ${outputLimit}`);
+    }
+    const supported: unknown = entry.supported_parameters;
+    if (Array.isArray(supported)) {
+      const reasoning = supported.includes('reasoning');
+      if (reasoning !== !!model.supportsThinking) {
+        enriched.supportsThinking = reasoning;
+        changes.push(`supportsThinking ${!!model.supportsThinking} → ${reasoning}`);
+      }
+      if (reasoning) {
+        if (!enriched.thinkingApi) enriched.thinkingApi = 'adaptive';
+        if (!enriched.effortLevels?.length) {
+          enriched.effortLevels = OPENROUTER_EFFORT_LEVELS;
+          enriched.effortDefault = enriched.effortDefault ?? 'medium';
+          changes.push('effortLevels from catalogue');
+        }
+      }
+    }
+
+    if (changes.length && !this.enrichmentLogged.has(model.id)) {
+      this.enrichmentLogged.add(model.id);
+      console.log(`[ModelLoader] OpenRouter catalogue updated ${model.id}: ${changes.join(', ')}`);
+    }
+    return changes.length ? enriched : model;
+  }
+
+  /**
    * Get all available models, including user-defined models if userId provided
    */
   async getAllModels(userId?: string): Promise<Model[]> {
-    const systemModels = await this.loadModels();
+    const rawSystemModels = await this.loadModels();
+    const cache = getOpenRouterModelsCache();
+    if (!this.enrichedSystemModels || this.enrichedFromCacheTime !== cache.cacheTime) {
+      this.enrichedSystemModels = rawSystemModels.map(m => this.enrichFromOpenRouter(m));
+      this.enrichedFromCacheTime = cache.cacheTime;
+    }
+    const systemModels = this.enrichedSystemModels;
     
     if (!userId || !this.db) {
       return systemModels;
@@ -101,7 +171,7 @@ export class ModelLoader {
       },
       // Preserve customEndpoint for OpenAI-compatible models
       ...(um.customEndpoint ? { customEndpoint: um.customEndpoint } : {})
-    } as Model));
+    } as Model)).map(m => this.enrichFromOpenRouter(m));
 
     return [...systemModels, ...userModelsAsModels];
   }
@@ -135,6 +205,7 @@ export class ModelLoader {
    */
   async reloadModels(): Promise<void> {
     this.models = null;
+    this.enrichedSystemModels = null;
     await this.loadModels();
   }
 }
