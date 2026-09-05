@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, Conversation, Model, PostHocOperation, MessageBranch, ContentBlock, Attachment } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, Conversation, Model, PostHocOperation, MessageBranch, ContentBlock, Attachment, getActiveBranch } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
@@ -390,6 +390,23 @@ export class InferenceService {
       console.log(`[InferenceService] Capping maxTokens from ${effectiveSettings.maxTokens} to ${model.outputTokenLimit} for model ${model.id}`);
       effectiveSettings.maxTokens = model.outputTokenLimit;
     }
+
+    // Clamp maxTokens to what is left of the context window. Max tokens now
+    // defaults to the model's output limit, and providers reject requests
+    // whose input plus max_tokens exceed the window. The estimate is the
+    // usual ~4 characters per token over message text and the system prompt.
+    if (model.contextWindow) {
+      const approxInputTokens = formattedMessages.reduce((total, message) => {
+        const branch = getActiveBranch(message);
+        return total + Math.ceil((branch?.content?.length || 0) / 4) + 8;
+      }, Math.ceil((effectiveSystemPrompt?.length || 0) / 4));
+      const remaining = model.contextWindow - approxInputTokens - 1024;
+      if (remaining > 0 && effectiveSettings.maxTokens > remaining) {
+        const clamped = Math.max(1024, remaining);
+        console.log(`[InferenceService] Clamping maxTokens from ${effectiveSettings.maxTokens} to ${clamped} (~${approxInputTokens} input tokens of ${model.contextWindow})`);
+        effectiveSettings.maxTokens = clamped;
+      }
+    }
     
     // For prefill thinking mode, handle thinking tags during streaming:
     // - Buffer thinking content until </think> is seen (don't add to content)
@@ -605,7 +622,8 @@ export class InferenceService {
         effectiveSettings,
         finalOnChunk,
         stopSequences,
-        model.reasoningDisplay
+        model.reasoningDisplay,
+        { thinkingApi: model.thinkingApi, effortLevels: model.effortLevels, supportsSampling: model.supportsSampling }
       );
     } else if (model.provider === 'bedrock') {
       if (!selectedKey) {
@@ -649,7 +667,9 @@ export class InferenceService {
         effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
-        stopSequences
+        stopSequences,
+        undefined,
+        { thinkingApi: model.thinkingApi, effortLevels: model.effortLevels }
       );
       }
     } else if (model.provider === 'openai-compatible') {

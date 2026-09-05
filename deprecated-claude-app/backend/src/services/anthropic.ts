@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { Message, getActiveBranch, ModelSettings } from '@deprecated-claude/shared';
+import { Message, getActiveBranch, ModelSettings, getReasoningEffort } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import sharp from 'sharp';
@@ -42,10 +42,12 @@ export class AnthropicService {
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     stopSequences?: string[],
-    // Model.reasoningDisplay — set on always-on-reasoning models (e.g. Fable 5).
-    // Presence forces the adaptive-thinking request shape on and adds
-    // `display: <value>` to the `thinking` config. See shared/types.ts.
-    reasoningDisplay?: string
+    // Model.reasoningDisplay — display preference for adaptive thinking
+    // (e.g. Fable 5 → 'summarized'). See shared/types.ts.
+    reasoningDisplay?: string,
+    // Model.thinkingApi / effortLevels / supportsSampling from the model entry.
+    // When thinkingApi is unset the legacy model-id heuristics below apply.
+    modelHints?: { thinkingApi?: string; effortLevels?: string[]; supportsSampling?: boolean }
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -114,28 +116,29 @@ export class AnthropicService {
         }
       }
       
-      // Always-on reasoning models (declared via Model.reasoningDisplay on the
-      // model entry) cannot have reasoning disabled: the thinking config must be
-      // sent on every request, and uses the adaptive shape. The presence of
-      // reasoningDisplay alone is enough; we also OR in the substring allowlist
-      // below for models that haven't yet been migrated to the config-driven flag.
-      const alwaysOnReasoning = !!reasoningDisplay;
-      // Determine if this model uses adaptive thinking (`type: 'adaptive'` +
-      // `output_config.effort`) vs legacy `type: 'enabled' + budget_tokens`.
+      // Thinking API shape comes from the model entry (Model.thinkingApi):
+      //   always-on → adaptive shape, sent on every request, cannot be disabled
+      //   adaptive  → adaptive shape when enabled
+      //   budget    → legacy `type: 'enabled'` + budget_tokens
+      // Entries without the field (older configs, user-defined models) fall
+      // back to the previous heuristics: reasoningDisplay presence means
+      // always-on, and a model-id allowlist selects the adaptive shape.
       // Anthropic 400s with "thinking.type.enabled is not supported for this
       // model" if this is wrong.
-      // FIXME: this remains a brittle substring allowlist for the opus models
-      // that pre-date Model.reasoningDisplay — long-term they should all declare
-      // their thinking-API shape on the model entry too (cf. issue #121's note
-      // on hardcoded model registries; same pattern as the pricing-table fix
-      // in #120).
-      const useAdaptiveThinking =
-        alwaysOnReasoning ||
-        modelId.includes('opus-4-7') ||
-        modelId.includes('opus-4-8') ||
-        modelId.includes('opus-4-9') ||
-        modelId.includes('opus-5') ||
-        modelId.includes('fable-5');
+      const thinkingApi = modelHints?.thinkingApi;
+      const alwaysOnReasoning = thinkingApi
+        ? thinkingApi === 'always-on'
+        : !!reasoningDisplay;
+      const useAdaptiveThinking = thinkingApi
+        ? thinkingApi !== 'budget'
+        : (alwaysOnReasoning ||
+           modelId.includes('opus-4-7') ||
+           modelId.includes('opus-4-8') ||
+           modelId.includes('opus-4-9') ||
+           modelId.includes('opus-5') ||
+           modelId.includes('fable-5'));
+      // Current Anthropic models reject temperature/top_p/top_k outright.
+      const sendSampling = modelHints?.supportsSampling !== false;
 
       // Ensure max_tokens > budget_tokens when legacy thinking is enabled
       let effectiveMaxTokens = settings.maxTokens;
@@ -151,7 +154,17 @@ export class AnthropicService {
 
       // Anthropic API doesn't allow both temperature AND top_p/top_k together
       // If temperature is set, don't send top_p/top_k
-      const useTemperature = settings.temperature !== undefined;
+      const useTemperature = sendSampling && settings.temperature !== undefined;
+
+      // Reasoning effort: unified `reasoningEffort` key with the older
+      // `thinkingEffort` alias. Validated against the model's declared levels;
+      // an unknown value falls back to the highest standard level offered.
+      let effort = getReasoningEffort(settings);
+      const effortLevels = modelHints?.effortLevels;
+      if (effort && effortLevels && !effortLevels.includes(effort)) {
+        console.log(`[Anthropic API] Effort "${effort}" not supported by ${modelId}; using ${effortLevels.includes('high') ? 'high' : effortLevels[effortLevels.length - 1]}`);
+        effort = effortLevels.includes('high') ? 'high' : effortLevels[effortLevels.length - 1];
+      }
 
       // Build thinking config based on model capabilities.
       // `alwaysOnReasoning` models (those with Model.reasoningDisplay set) must
@@ -161,31 +174,40 @@ export class AnthropicService {
       let outputConfig: any = undefined;
       if (alwaysOnReasoning || settings.thinking?.enabled) {
         if (useAdaptiveThinking) {
-          // Adaptive thinking with effort control (Opus 4.7+, Fable 5, …)
+          // Adaptive thinking with effort control (Opus 4.6+, Fable 5, …)
           thinkingConfig = { type: 'adaptive' };
-          // Always-on models accept a `display` preference controlling how much
+          // Adaptive models accept a `display` preference controlling how much
           // of the reasoning is returned. e.g. Fable 5 → display: 'summarized'.
           if (reasoningDisplay) {
             thinkingConfig.display = reasoningDisplay;
           }
-          const effort = settings.modelSpecific?.thinkingEffort;
-          outputConfig = { effort: typeof effort === 'string' ? effort : 'medium' };
+          // Conversations that pre-date the effort setting keep the app's
+          // previous default of medium rather than the API default of high.
+          outputConfig = { effort: effort ?? 'medium' };
           console.log(`[Anthropic API] Using adaptive thinking with effort: ${outputConfig.effort}${reasoningDisplay ? `, display: ${reasoningDisplay}` : ''}`);
         } else {
-          // Legacy models: enabled thinking with budget_tokens.
+          // Budget-style models: enabled thinking with budget_tokens.
           // (Unreachable when alwaysOnReasoning=true because that forces
           // useAdaptiveThinking=true above; so settings.thinking must be
           // defined here via the outer settings.thinking?.enabled branch.)
           thinkingConfig = { type: 'enabled', budget_tokens: settings.thinking!.budgetTokens };
+          // Some budget-style models (Opus 4.5) also take an effort level.
+          if (effort && effortLevels?.length) {
+            outputConfig = { effort };
+          }
         }
+      } else if (effort && useAdaptiveThinking && (effort === 'xhigh' || effort === 'max')) {
+        // Thinking off is only accepted at effort high or below (Opus 5).
+        console.log(`[Anthropic API] Thinking disabled; lowering effort ${effort} → high`);
+        outputConfig = { effort: 'high' };
       }
 
       requestParams = {
         model: modelId,
         max_tokens: effectiveMaxTokens,
-        temperature: settings.temperature,
-        ...(!useTemperature && settings.topP !== undefined && { top_p: settings.topP }),
-        ...(!useTemperature && settings.topK !== undefined && { top_k: settings.topK }),
+        ...(sendSampling && settings.temperature !== undefined && { temperature: settings.temperature }),
+        ...(sendSampling && !useTemperature && settings.topP !== undefined && { top_p: settings.topP }),
+        ...(sendSampling && !useTemperature && settings.topK !== undefined && { top_k: settings.topK }),
         ...(systemContent && { system: systemContent }),
         ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences }),
         ...(thinkingConfig && { thinking: thinkingConfig }),

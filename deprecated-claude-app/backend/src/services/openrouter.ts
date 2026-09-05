@@ -1,4 +1,4 @@
-import { Message, getActiveBranch, ModelSettings, TokenUsage } from '@deprecated-claude/shared';
+import { Message, getActiveBranch, ModelSettings, TokenUsage, getReasoningEffort } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { getBlobStore } from '../database/blob-store.js';
 import { llmLogger } from '../utils/llmLogger.js';
@@ -209,7 +209,9 @@ export class OpenRouterService {
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     stopSequences?: string[],
-    onTokenUsage?: (usage: TokenUsage) => Promise<void>
+    onTokenUsage?: (usage: TokenUsage) => Promise<void>,
+    // Model.thinkingApi / effortLevels from the model entry (see shared/types.ts)
+    modelHints?: { thinkingApi?: string; effortLevels?: string[] }
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -231,9 +233,23 @@ export class OpenRouterService {
       // Convert messages to OpenRouter format with cache support
       const openRouterMessages = this.formatMessagesForOpenRouter(messages, systemPrompt, provider);
       
-      // Ensure max_tokens > reasoning budget when thinking is enabled
+      // Reasoning effort (unified key + legacy alias), validated against the
+      // model's declared levels.
+      let effort = getReasoningEffort(settings);
+      const effortLevels = modelHints?.effortLevels;
+      if (effort && effortLevels && !effortLevels.includes(effort)) {
+        effort = effortLevels.includes('high') ? 'high' : effortLevels[effortLevels.length - 1];
+      }
+      // Budget-style models take reasoning.max_tokens; adaptive ones take
+      // reasoning.effort. Entries without a declared thinkingApi keep the old
+      // behaviour (budget when thinking is enabled, effort if set).
+      const budgetStyle = modelHints?.thinkingApi
+        ? modelHints.thinkingApi === 'budget'
+        : true;
+
+      // Ensure max_tokens > reasoning budget when a budget is sent
       let effectiveMaxTokens = settings.maxTokens;
-      if (settings.thinking?.enabled && settings.thinking.budgetTokens) {
+      if (budgetStyle && settings.thinking?.enabled && settings.thinking.budgetTokens) {
         // max_tokens must be greater than reasoning budget
         // Add reasonable room for the actual response (at least 4096 tokens)
         const minMaxTokens = settings.thinking.budgetTokens + 4096;
@@ -243,16 +259,21 @@ export class OpenRouterService {
         }
       }
 
-      // Build reasoning config: merges thinking budget (Anthropic/Gemini) and
-      // reasoning effort (OpenAI GPT-5 series) into OpenRouter's unified
-      // `reasoning` object. Both fields can coexist in theory.
-      const reasoningConfig: { max_tokens?: number; effort?: string } = {};
-      if (settings.thinking?.enabled && settings.thinking.budgetTokens) {
-        reasoningConfig.max_tokens = settings.thinking.budgetTokens;
-      }
-      const reasoningEffort = settings.modelSpecific?.reasoningEffort;
-      if (typeof reasoningEffort === 'string') {
-        reasoningConfig.effort = reasoningEffort;
+      // Build OpenRouter's unified `reasoning` object.
+      const reasoningConfig: { max_tokens?: number; effort?: string; enabled?: boolean } = {};
+      const thinkingExplicitlyOff = settings.thinking !== undefined && !settings.thinking.enabled;
+      if (settings.thinking?.enabled) {
+        if (budgetStyle && settings.thinking.budgetTokens) {
+          reasoningConfig.max_tokens = settings.thinking.budgetTokens;
+        }
+        if (effort) {
+          reasoningConfig.effort = effort;
+        } else if (!budgetStyle) {
+          reasoningConfig.enabled = true;
+        }
+      } else if (effort && !thinkingExplicitlyOff) {
+        // Models without a thinking toggle (e.g. GPT-5 series) still take effort.
+        reasoningConfig.effort = effort;
       }
 
       requestBody = {
