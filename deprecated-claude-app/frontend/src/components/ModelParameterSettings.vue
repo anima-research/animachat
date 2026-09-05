@@ -147,7 +147,7 @@
         @update:model-value="setBudget(Math.round($event))"
         :min="1024"
         :max="budgetMax"
-        :step="1024"
+        :step="64"
         thumb-label
         color="primary"
         class="mt-2"
@@ -287,13 +287,13 @@ function toggleOptional(key: 'topP' | 'topK', enabled: boolean | null, defaultVa
 }
 
 function setThinkingEnabled(enabled: boolean) {
-  const next: Settings = { ...props.modelValue };
-  if (enabled) {
-    next.thinking = { enabled: true, budgetTokens: budgetTokens.value };
-  } else {
-    delete next.thinking;
-  }
-  emit('update:modelValue', next);
+  // Always store an explicit block: the backend reads a missing block as
+  // "off" for models with a toggle, but an explicit value is the clearer
+  // record in the event log and survives the save path unchanged.
+  emit('update:modelValue', {
+    ...props.modelValue,
+    thinking: { enabled, budgetTokens: budgetTokens.value },
+  });
 }
 
 function setBudget(value: number) {

@@ -510,6 +510,7 @@ async function loadParticipants() {
 // Watch for conversation changes
 watch(() => props.conversation, async (conversation) => {
   if (conversation) {
+    storedSettings.value = { ...conversation.settings };
     settings.value = {
       title: conversation.title,
       model: conversation.model,
@@ -656,8 +657,17 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
 // ('' → saved model) and when it is re-loaded after a save; those must keep
 // the stored settings, otherwise every open of the dialog reset the
 // parameters to defaults (the old "max tokens starts out low" symptom).
+// Snapshot of the conversation's saved settings, restored when the picker
+// comes back to the saved model after visiting another one (otherwise the
+// other model's defaults would be saved under the original model).
+const storedSettings = ref<Record<string, unknown> | null>(null);
+
 watch(() => settings.value.model, (modelId, previousModelId) => {
-  if (!previousModelId || modelId === props.conversation?.model) return;
+  if (!previousModelId) return;
+  if (modelId === props.conversation?.model) {
+    if (storedSettings.value) settings.value.settings = { ...storedSettings.value };
+    return;
+  }
   const model = props.models.find(m => m.id === modelId);
   if (model) {
     settings.value.settings = getValidatedModelDefaults(model);
@@ -694,7 +704,7 @@ function save() {
     maxTokens: current.maxTokens,
     ...(current.topP !== undefined && { topP: current.topP }),
     ...(current.topK !== undefined && { topK: current.topK }),
-    ...(current.thinking?.enabled && { thinking: { enabled: true, budgetTokens: current.thinking.budgetTokens || 8000 } }),
+    ...(current.thinking && { thinking: { enabled: !!current.thinking.enabled, budgetTokens: current.thinking.budgetTokens || 8000 } }),
     ...(hasModelSpecific && { modelSpecific })
   };
   
