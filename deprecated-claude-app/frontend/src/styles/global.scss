@@ -221,6 +221,26 @@ body {
   }
 }
 
+// While the on-screen keyboard is open (see main.ts), size the app shell and
+// fullscreen dialogs to the visual viewport instead of the full screen, and
+// pin the dialog to wherever the browser has panned the visual viewport.
+html.keyboard-open {
+  .v-main {
+    height: var(--vv-height) !important;
+  }
+
+  .v-dialog--fullscreen > .v-overlay__content {
+    position: absolute !important;
+    top: var(--vv-top) !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: auto !important;
+    height: var(--vv-height) !important;
+    max-height: var(--vv-height) !important;
+    margin: 0 !important;
+  }
+}
+
 @media (pointer: coarse) {
   // Vuetify still gives an attached menu `position: fixed` when the field
   // sits inside a fixed dialog, and then chases the field with a

@@ -81,6 +81,33 @@ if (coarsePointer && typeof MutationObserver !== 'undefined') {
   });
 }
 
+// Keyboard-aware sizing. The on-screen keyboard shrinks only the visual
+// viewport (iOS Safari, and Android Chrome by default since 108), so a
+// 100dvh app shell and fullscreen dialogs stay as tall as the whole screen
+// and the browser pans that tall page around to reveal the focused field.
+// While the visual viewport is noticeably shorter than the layout viewport,
+// publish its geometry so the shell and dialogs can size themselves to it.
+if (coarsePointer && typeof window !== 'undefined' && window.visualViewport) {
+  const vv = window.visualViewport;
+  const root = document.documentElement;
+  const syncViewport = () => {
+    // Pinch-zoom also shrinks the visual viewport; only react at 1:1 scale.
+    const keyboardOpen = vv.scale <= 1.01 && vv.height < window.innerHeight - 40;
+    if (keyboardOpen) {
+      root.style.setProperty('--vv-height', `${Math.round(vv.height)}px`);
+      root.style.setProperty('--vv-top', `${Math.round(vv.offsetTop)}px`);
+      root.classList.add('keyboard-open');
+    } else {
+      root.style.removeProperty('--vv-height');
+      root.style.removeProperty('--vv-top');
+      root.classList.remove('keyboard-open');
+    }
+  };
+  vv.addEventListener('resize', syncViewport);
+  vv.addEventListener('scroll', syncViewport);
+  syncViewport();
+}
+
 const vuetify = createVuetify({
   components,
   directives,
