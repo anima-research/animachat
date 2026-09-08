@@ -29,10 +29,18 @@ api.interceptors.response.use(
   (error) => {
     // Only logout on 401 (unauthorized/token expired)
     // 403 means "forbidden" - user is authenticated but doesn't have permission for this resource
-    if (error.response?.status === 401) {
+    //
+    // A 401 from the login/register endpoints themselves just means bad
+    // credentials, and reloading to /login there wiped the form's error
+    // message before it could render (the "nothing happens on a wrong
+    // password" report). Those responses are left to the form to handle.
+    const isAuthAttempt = /\/auth\/(login|register)\b/.test(error.config?.url || '');
+    if (error.response?.status === 401 && !isAuthAttempt) {
       // Token expired or invalid
       localStorage.removeItem('token');
-      window.location.href = '/login';
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

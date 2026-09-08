@@ -425,6 +425,12 @@ function onOpenRouterModelSelected(model: OpenRouterModel) {
   formData.value.providerModelId = model.id;
   formData.value.contextWindow = model.context_length || 100000;
   formData.value.outputTokenLimit = model.top_provider?.max_completion_tokens || 4096;
+  // OpenRouter lists `reasoning` among supported_parameters for models that
+  // accept a thinking / effort configuration.
+  const supportedParams = (model as any).supported_parameters;
+  if (Array.isArray(supportedParams)) {
+    formData.value.supportsThinking = supportedParams.includes('reasoning');
+  }
   // Auto-derive canonicalId for avatar lookup
   formData.value.canonicalId = deriveCanonicalId(model.id, model.name);
   

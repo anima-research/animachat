@@ -192,245 +192,7 @@
         </div>
         
         <div v-if="selectedModel && settings.format === 'standard'">
-          <!-- Temperature -->
-          <v-slider
-            v-model="settings.settings.temperature"
-            :min="selectedModel.settings.temperature.min"
-            :max="selectedModel.settings.temperature.max"
-            :step="selectedModel.settings.temperature.step"
-            thumb-label
-            color="primary"
-          >
-            <template v-slot:label>
-              Temperature
-              <v-tooltip location="top" open-on-click open-on-focus>
-                <template v-slot:activator="{ props }">
-                  <v-icon
-                    v-bind="props"
-                    size="small"
-                    class="ml-1 tooltip-icon"
-                    role="button"
-                    tabindex="0"
-                    aria-label="Temperature help"
-                  >
-                    mdi-help-circle-outline
-                  </v-icon>
-                </template>
-                Controls randomness. Lower values make output more focused and deterministic.
-              </v-tooltip>
-            </template>
-          </v-slider>
-          
-          <!-- Max Tokens -->
-          <v-slider
-            v-model="settings.settings.maxTokens"
-            :min="selectedModel.settings.maxTokens.min"
-            :max="selectedModel.settings.maxTokens.max"
-            :step="100"
-            thumb-label
-            color="primary"
-            class="mt-2"
-          >
-            <template v-slot:label>
-              Max Tokens
-              <v-tooltip location="top" open-on-click open-on-focus>
-                <template v-slot:activator="{ props }">
-                  <v-icon
-                    v-bind="props"
-                    size="small"
-                    class="ml-1 tooltip-icon"
-                    role="button"
-                    tabindex="0"
-                    aria-label="Max tokens help"
-                  >
-                    mdi-help-circle-outline
-                  </v-icon>
-                </template>
-                Maximum number of tokens to generate in the response.
-              </v-tooltip>
-            </template>
-          </v-slider>
-          
-          <!-- Top P (if supported) -->
-          <div v-if="selectedModel.settings.topP" class="mt-2">
-            <v-checkbox
-              v-model="topPEnabled"
-              label="Enable Top P"
-              density="compact"
-              hide-details
-            />
-            <v-slider
-              v-if="topPEnabled"
-              v-model="settings.settings.topP"
-              :min="selectedModel.settings.topP.min"
-              :max="selectedModel.settings.topP.max"
-              :step="selectedModel.settings.topP.step"
-              thumb-label
-              color="primary"
-            >
-              <template v-slot:label>
-                Top P
-                <v-tooltip location="top" open-on-click open-on-focus>
-                  <template v-slot:activator="{ props }">
-                    <v-icon
-                      v-bind="props"
-                      size="small"
-                      class="ml-1 tooltip-icon"
-                      role="button"
-                      tabindex="0"
-                      aria-label="Top P help"
-                    >
-                      mdi-help-circle-outline
-                    </v-icon>
-                  </template>
-                  Nucleus sampling. Consider tokens with top_p probability mass.
-                </v-tooltip>
-              </template>
-            </v-slider>
-          </div>
-          
-          <!-- Top K (if supported) -->
-          <div v-if="selectedModel.settings.topK" class="mt-2">
-            <v-checkbox
-              v-model="topKEnabled"
-              label="Enable Top K"
-              density="compact"
-              hide-details
-            />
-            <v-slider
-              v-if="topKEnabled"
-              v-model="settings.settings.topK"
-              :min="selectedModel.settings.topK.min"
-              :max="selectedModel.settings.topK.max"
-              :step="selectedModel.settings.topK.step"
-              thumb-label
-              color="primary"
-            >
-              <template v-slot:label>
-                Top K
-                <v-tooltip location="top" open-on-click open-on-focus>
-                  <template v-slot:activator="{ props }">
-                    <v-icon
-                      v-bind="props"
-                      size="small"
-                      class="ml-1 tooltip-icon"
-                      role="button"
-                      tabindex="0"
-                      aria-label="Top K help"
-                    >
-                      mdi-help-circle-outline
-                    </v-icon>
-                  </template>
-                  Consider only the top K most likely tokens.
-                </v-tooltip>
-              </template>
-            </v-slider>
-          </div>
-          
-          <!-- Extended Thinking (if supported) -->
-          <div v-if="selectedModel?.supportsThinking" class="mt-2">
-            <div class="thinking-toggle-row">
-              <v-checkbox
-                v-model="thinkingEnabled"
-                label="Enable Extended Thinking"
-                density="compact"
-                hide-details
-              />
-              <v-tooltip location="top" open-on-click open-on-focus :close-on-content-click="false">
-                <template v-slot:activator="{ props }">
-                  <button
-                    class="tooltip-icon-button"
-                    type="button"
-                    v-bind="props"
-                    aria-label="Extended thinking help"
-                    @click.stop="props.onClick && props.onClick($event)"
-                    @mousedown.stop
-                    @keydown.stop.prevent="props.onKeydown && props.onKeydown($event)"
-                  >
-                    <v-icon size="small" class="tooltip-icon">
-                      mdi-help-circle-outline
-                    </v-icon>
-                  </button>
-                </template>
-                Extended thinking allows Claude to show its step-by-step reasoning process before delivering the final answer.
-              </v-tooltip>
-            </div>
-            
-            <v-slider
-              v-if="thinkingEnabled"
-              v-model="thinkingBudgetTokens"
-              :min="1024"
-              :max="32000"
-              :step="1024"
-              thumb-label
-              color="primary"
-              class="mt-2"
-            >
-              <template v-slot:label>
-                Thinking Budget (tokens)
-                <v-tooltip location="top" open-on-click open-on-focus>
-                  <template v-slot:activator="{ props }">
-                    <v-icon
-                      v-bind="props"
-                      size="small"
-                      class="ml-1 tooltip-icon"
-                      role="button"
-                      tabindex="0"
-                      aria-label="Thinking budget help"
-                    >
-                      mdi-help-circle-outline
-                    </v-icon>
-                  </template>
-                  Maximum tokens Claude can use for internal reasoning. Higher values enable more thorough analysis for complex problems. Minimum: 1024
-                </v-tooltip>
-              </template>
-            </v-slider>
-          </div>
-          
-          <!-- Sampling Branches -->
-          <div class="mt-4">
-            <div class="d-flex align-center">
-              <v-slider
-                v-model="samplingBranches"
-                :min="1"
-                :max="8"
-                :step="1"
-                thumb-label
-                color="primary"
-                show-ticks="always"
-                tick-size="4"
-              >
-                <template v-slot:label>
-                  Response Samples
-                  <v-tooltip location="top" open-on-click open-on-focus>
-                    <template v-slot:activator="{ props }">
-                      <v-icon
-                        v-bind="props"
-                        size="small"
-                        class="ml-1 tooltip-icon"
-                        role="button"
-                        tabindex="0"
-                        aria-label="Sampling branches help"
-                      >
-                        mdi-help-circle-outline
-                      </v-icon>
-                    </template>
-                    Generate multiple response branches simultaneously for sampling. Each response will be created as a separate branch you can navigate between.
-                  </v-tooltip>
-                </template>
-              </v-slider>
-            </div>
-          </div>
-          
-          <!-- Model-Specific Settings (for models with configurableSettings) -->
-          <ModelSpecificSettings
-            v-if="modelConfigurableSettings.length > 0"
-            v-model="modelSpecificValues"
-            :settings="modelConfigurableSettings"
-            :show-divider="true"
-            :show-header="true"
-            header-text="Advanced Model Settings"
-          />
+          <ModelParameterSettings :model="selectedModel" v-model="settings.settings" />
         </div>
         
         <v-divider class="my-4" />
@@ -602,11 +364,11 @@
 import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDisplay } from 'vuetify';
-import type { Conversation, Model, Participant, ConfigurableSetting, Persona } from '@deprecated-claude/shared';
+import type { Conversation, Model, Participant, Persona } from '@deprecated-claude/shared';
 import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import ParticipantsSection from './ParticipantsSection.vue';
 import ModelSelector from './ModelSelector.vue';
-import ModelSpecificSettings from './ModelSpecificSettings.vue';
+import ModelParameterSettings from './ModelParameterSettings.vue';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
 
@@ -640,12 +402,6 @@ const emit = defineEmits<{
   update: [updates: Partial<Conversation>];
   'update-participants': [participants: Participant[]];
 }>();
-
-const topPEnabled = ref(false);
-const topKEnabled = ref(false);
-const thinkingEnabled = ref(false);
-const thinkingBudgetTokens = ref(10000);
-const samplingBranches = ref(1);
 
 const contextStrategy = ref('append');
 const rollingMaxTokens = ref(50000);
@@ -712,21 +468,6 @@ const settings = ref<any>({
   }
 });
 
-// Model-specific settings computed properties
-const modelConfigurableSettings = computed<ConfigurableSetting[]>(() => {
-  return (selectedModel.value?.configurableSettings as ConfigurableSetting[]) || [];
-});
-
-const modelSpecificValues = computed({
-  get: () => settings.value.settings?.modelSpecific || {},
-  set: (value: Record<string, unknown>) => {
-    settings.value.settings = {
-      ...settings.value.settings,
-      modelSpecific: value,
-    };
-  },
-});
-
 const localParticipants = ref<Participant[]>([]);
 
 const activeModels = computed(() => {
@@ -769,6 +510,7 @@ async function loadParticipants() {
 // Watch for conversation changes
 watch(() => props.conversation, async (conversation) => {
   if (conversation) {
+    storedSettings.value = { ...conversation.settings };
     settings.value = {
       title: conversation.title,
       model: conversation.model,
@@ -776,13 +518,6 @@ watch(() => props.conversation, async (conversation) => {
       systemPrompt: conversation.systemPrompt || '',
       settings: { ...conversation.settings }
     };
-    
-    // Set checkbox states based on whether values are defined
-    topPEnabled.value = conversation.settings?.topP !== undefined;
-    topKEnabled.value = conversation.settings?.topK !== undefined;
-    thinkingEnabled.value = conversation.settings?.thinking?.enabled || false;
-    thinkingBudgetTokens.value = conversation.settings?.thinking?.budgetTokens || 8000;
-    samplingBranches.value = conversation.settings?.samplingBranches || 1;
     
     // Load context management settings
     if (conversation.contextManagement) {
@@ -917,80 +652,31 @@ watch(() => settings.value.format, async (newFormat, oldFormat) => {
   }
 });
 
-// Update settings when model changes
-watch(() => settings.value.model, (modelId) => {
+// Apply the new model's defaults when the user picks a different model.
+// The watcher also fires when a conversation is loaded into the form
+// ('' → saved model) and when it is re-loaded after a save; those must keep
+// the stored settings, otherwise every open of the dialog reset the
+// parameters to defaults (the old "max tokens starts out low" symptom).
+// Snapshot of the conversation's saved settings, restored when the picker
+// comes back to the saved model after visiting another one (otherwise the
+// other model's defaults would be saved under the original model).
+const storedSettings = ref<Record<string, unknown> | null>(null);
+
+watch(() => settings.value.model, (modelId, previousModelId) => {
+  if (!previousModelId) return;
+  if (modelId === props.conversation?.model) {
+    if (storedSettings.value) settings.value.settings = { ...storedSettings.value };
+    return;
+  }
   const model = props.models.find(m => m.id === modelId);
   if (model) {
-    // Build default modelSpecific settings from configurableSettings
-    const modelSpecificDefaults: Record<string, unknown> = {};
-    if (model.configurableSettings) {
-      for (const setting of model.configurableSettings as ConfigurableSetting[]) {
-        modelSpecificDefaults[setting.key] = setting.default;
-      }
-    }
-    
-    // Ensure maxTokens is within valid range
-    const validatedMaxTokens = Math.min(
-      model.settings.maxTokens.default,
-      model.settings.maxTokens.max,
-      model.outputTokenLimit
-    );
-    
-    settings.value.settings = {
-      temperature: model.settings.temperature.default,
-      maxTokens: validatedMaxTokens,
-      topP: undefined,
-      topK: undefined,
-      modelSpecific: modelSpecificDefaults,
-    };
-    
-    // Disable topP and topK by default when changing models
-    topPEnabled.value = false;
-    topKEnabled.value = false;
-    
-    // Auto-enable thinking for models that have it enabled by default
-    if ((model as any).thinkingDefaultEnabled) {
-      thinkingEnabled.value = true;
-    } else if (!model.supportsThinking) {
-      // Disable thinking if the new model doesn't support it
-      thinkingEnabled.value = false;
-    }
-  }
-});
-
-// Watch topP enabled state
-watch(topPEnabled, (enabled) => {
-  if (enabled && selectedModel.value?.settings.topP) {
-    settings.value.settings.topP = selectedModel.value.settings.topP.default;
-  } else {
-    settings.value.settings.topP = undefined;
-  }
-});
-
-// Watch topK enabled state
-watch(topKEnabled, (enabled) => {
-  if (enabled && selectedModel.value?.settings.topK) {
-    settings.value.settings.topK = selectedModel.value.settings.topK.default;
-  } else {
-    settings.value.settings.topK = undefined;
+    settings.value.settings = getValidatedModelDefaults(model);
   }
 });
 
 function resetToDefaults() {
   if (selectedModel.value) {
-    settings.value.settings = {
-      temperature: selectedModel.value.settings.temperature.default,
-      maxTokens: selectedModel.value.settings.maxTokens.default,
-      topP: undefined,
-      topK: undefined
-    };
-    
-    // Disable topP, topK, and thinking by default
-    topPEnabled.value = false;
-    topKEnabled.value = false;
-    thinkingEnabled.value = false;
-    thinkingBudgetTokens.value = 10000;
-    samplingBranches.value = 1;
+    settings.value.settings = getValidatedModelDefaults(selectedModel.value);
   }
 }
 
@@ -1006,26 +692,23 @@ function openArchive() {
 }
 
 function save() {
-  // Include modelSpecific settings if they exist and have values
-  const modelSpecific = settings.value.settings?.modelSpecific;
+  // The parameter editor keeps a plain ModelSettings object; drop the
+  // optional keys that are unset so the stored shape stays minimal. (The
+  // "response samples" count no longer lives here: the composer owns it.)
+  const current = settings.value.settings || {};
+  const modelSpecific = current.modelSpecific;
   const hasModelSpecific = modelSpecific && Object.keys(modelSpecific).length > 0;
   
   const finalSettings = {
-    temperature: settings.value.settings.temperature,
-    maxTokens: settings.value.settings.maxTokens,
-    ...(topPEnabled.value && settings.value.settings.topP !== undefined && { topP: settings.value.settings.topP }),
-    ...(topKEnabled.value && settings.value.settings.topK !== undefined && { topK: settings.value.settings.topK }),
-    ...(thinkingEnabled.value && { thinking: { enabled: true, budgetTokens: thinkingBudgetTokens.value } }),
-    ...(samplingBranches.value > 1 && { samplingBranches: samplingBranches.value }),
+    temperature: current.temperature,
+    maxTokens: current.maxTokens,
+    ...(current.topP !== undefined && { topP: current.topP }),
+    ...(current.topK !== undefined && { topK: current.topK }),
+    ...(current.thinking && { thinking: { enabled: !!current.thinking.enabled, budgetTokens: current.thinking.budgetTokens || 8000 } }),
     ...(hasModelSpecific && { modelSpecific })
   };
   
-  // Debug log
-  console.log('[Settings Dialog] Saving settings:', {
-    thinkingEnabled: thinkingEnabled.value,
-    thinkingBudgetTokens: thinkingBudgetTokens.value,
-    finalSettings
-  });
+  console.log('[Settings Dialog] Saving settings:', finalSettings);
   
   // Build context management settings
   let contextManagement: any = undefined;

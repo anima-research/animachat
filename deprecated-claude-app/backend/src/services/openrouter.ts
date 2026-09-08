@@ -1,4 +1,4 @@
-import { Message, getActiveBranch, ModelSettings, TokenUsage } from '@deprecated-claude/shared';
+import { Message, getActiveBranch, ModelSettings, TokenUsage, getReasoningEffort } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { getBlobStore } from '../database/blob-store.js';
 import { llmLogger } from '../utils/llmLogger.js';
@@ -209,7 +209,9 @@ export class OpenRouterService {
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     stopSequences?: string[],
-    onTokenUsage?: (usage: TokenUsage) => Promise<void>
+    onTokenUsage?: (usage: TokenUsage) => Promise<void>,
+    // Model.thinkingApi / effortLevels from the model entry (see shared/types.ts)
+    modelHints?: { thinkingApi?: string; effortLevels?: string[]; supportsThinking?: boolean }
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -231,9 +233,23 @@ export class OpenRouterService {
       // Convert messages to OpenRouter format with cache support
       const openRouterMessages = this.formatMessagesForOpenRouter(messages, systemPrompt, provider);
       
-      // Ensure max_tokens > reasoning budget when thinking is enabled
+      // Reasoning effort (unified key + legacy alias), validated against the
+      // model's declared levels.
+      let effort = getReasoningEffort(settings);
+      const effortLevels = modelHints?.effortLevels;
+      if (effort && effortLevels && !effortLevels.includes(effort)) {
+        effort = effortLevels.includes('high') ? 'high' : effortLevels[effortLevels.length - 1];
+      }
+      // Budget-style models take reasoning.max_tokens; adaptive ones take
+      // reasoning.effort. Entries without a declared thinkingApi keep the old
+      // behaviour (budget when thinking is enabled, effort if set).
+      const budgetStyle = modelHints?.thinkingApi
+        ? modelHints.thinkingApi === 'budget'
+        : true;
+
+      // Ensure max_tokens > reasoning budget when a budget is sent
       let effectiveMaxTokens = settings.maxTokens;
-      if (settings.thinking?.enabled && settings.thinking.budgetTokens) {
+      if (budgetStyle && settings.thinking?.enabled && settings.thinking.budgetTokens) {
         // max_tokens must be greater than reasoning budget
         // Add reasonable room for the actual response (at least 4096 tokens)
         const minMaxTokens = settings.thinking.budgetTokens + 4096;
@@ -243,26 +259,47 @@ export class OpenRouterService {
         }
       }
 
-      // Build reasoning config: merges thinking budget (Anthropic/Gemini) and
-      // reasoning effort (OpenAI GPT-5 series) into OpenRouter's unified
-      // `reasoning` object. Both fields can coexist in theory.
-      const reasoningConfig: { max_tokens?: number; effort?: string } = {};
-      if (settings.thinking?.enabled && settings.thinking.budgetTokens) {
-        reasoningConfig.max_tokens = settings.thinking.budgetTokens;
+      // Build OpenRouter's unified `reasoning` object.
+      const reasoningConfig: { max_tokens?: number; effort?: string; enabled?: boolean } = {};
+      // Always-on models (thinkingApi 'always-on': GPT-5 / o-series routes)
+      // reason on every request whatever the stored block says, and older
+      // conversations created before the entry declared thinking carry an
+      // effort but no thinking block at all, so they must not read as "off".
+      // For models with a thinking toggle, a missing or disabled thinking
+      // block means the user turned reasoning off: no effort is sent either,
+      // since OpenRouter treats `reasoning.effort` alone as enabling it.
+      // Models without a toggle (supportsThinking unset) still take effort.
+      const alwaysOn = modelHints?.thinkingApi === 'always-on';
+      const thinkingEnabled = alwaysOn || !!settings.thinking?.enabled;
+      const thinkingOff = !alwaysOn && (settings.thinking
+        ? !settings.thinking.enabled
+        : !!modelHints?.supportsThinking);
+      if (thinkingEnabled) {
+        if (budgetStyle && settings.thinking?.budgetTokens) {
+          reasoningConfig.max_tokens = settings.thinking.budgetTokens;
+        }
+        if (effort) {
+          reasoningConfig.effort = effort;
+        } else if (!budgetStyle) {
+          reasoningConfig.enabled = true;
+        }
+      } else if (effort && !thinkingOff) {
+        reasoningConfig.effort = effort;
       }
-      const reasoningEffort = settings.modelSpecific?.reasoningEffort;
-      if (typeof reasoningEffort === 'string') {
-        reasoningConfig.effort = reasoningEffort;
-      }
+
+      // Anthropic rejects temperature together with top_p/top_k on current
+      // models; mirror the direct Anthropic path for Anthropic-backed routes.
+      const anthropicBacked = modelId.startsWith('anthropic/');
+      const sendTopPK = !(anthropicBacked && settings.temperature !== undefined);
 
       requestBody = {
         model: modelId,
         messages: openRouterMessages,
         stream: true,
-        temperature: settings.temperature,
+        ...(settings.temperature !== undefined && { temperature: settings.temperature }),
         max_tokens: effectiveMaxTokens,
-        ...(settings.topP !== undefined && { top_p: settings.topP }),
-        ...(settings.topK !== undefined && { top_k: settings.topK }),
+        ...(sendTopPK && settings.topP !== undefined && { top_p: settings.topP }),
+        ...(sendTopPK && settings.topK !== undefined && { top_k: settings.topK }),
         ...(stopSequences && stopSequences.length > 0 && { stop: stopSequences }),
 
         // Required for cache metrics in response

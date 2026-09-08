@@ -17,32 +17,6 @@
         "models-2025": true,
         "credit": true
       },
-      "configurableSettings": [
-        {
-          "type": "select",
-          "key": "thinkingEffort",
-          "label": "Thinking Effort",
-          "description": "Controls how much internal reasoning Opus 4.7 performs when extended thinking is enabled.",
-          "options": [
-            {
-              "value": "low",
-              "label": "Low",
-              "description": "Light reasoning, faster responses"
-            },
-            {
-              "value": "medium",
-              "label": "Medium",
-              "description": "Balanced depth and speed"
-            },
-            {
-              "value": "high",
-              "label": "High",
-              "description": "Deep, thorough reasoning"
-            }
-          ],
-          "default": "medium"
-        }
-      ],
       "settings": {
         "temperature": {
           "min": 0,
@@ -53,12 +27,12 @@
         "maxTokens": {
           "min": 1,
           "max": 128000,
-          "default": 8096
+          "default": 128000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -67,7 +41,17 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "thinkingApi": "adaptive",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effortDefault": "high",
+      "supportsSampling": false
     },
     {
       "id": "claude-opus-4.8",
@@ -86,32 +70,6 @@
         "models-2025": true,
         "credit": true
       },
-      "configurableSettings": [
-        {
-          "type": "select",
-          "key": "thinkingEffort",
-          "label": "Thinking Effort",
-          "description": "Controls how much internal reasoning Opus 4.8 performs when extended thinking is enabled.",
-          "options": [
-            {
-              "value": "low",
-              "label": "Low",
-              "description": "Light reasoning, faster responses"
-            },
-            {
-              "value": "medium",
-              "label": "Medium",
-              "description": "Balanced depth and speed"
-            },
-            {
-              "value": "high",
-              "label": "High",
-              "description": "Deep, thorough reasoning"
-            }
-          ],
-          "default": "medium"
-        }
-      ],
       "settings": {
         "temperature": {
           "min": 0,
@@ -122,12 +80,12 @@
         "maxTokens": {
           "min": 1,
           "max": 128000,
-          "default": 8096
+          "default": 128000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -136,7 +94,17 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "thinkingApi": "adaptive",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effortDefault": "high",
+      "supportsSampling": false
     },
     {
       "id": "claude-opus-5",
@@ -155,42 +123,6 @@
         "models-2025": true,
         "credit": true
       },
-      "configurableSettings": [
-        {
-          "type": "select",
-          "key": "thinkingEffort",
-          "label": "Thinking Effort",
-          "description": "Controls how much internal reasoning Opus 5 performs. Thinking is always on for this model; effort sets its depth.",
-          "options": [
-            {
-              "value": "low",
-              "label": "Low",
-              "description": "Light reasoning, faster responses"
-            },
-            {
-              "value": "medium",
-              "label": "Medium",
-              "description": "Balanced depth and speed"
-            },
-            {
-              "value": "high",
-              "label": "High",
-              "description": "Deep, thorough reasoning"
-            },
-            {
-              "value": "xhigh",
-              "label": "Extra High",
-              "description": "Very deep reasoning for hard agentic/coding work"
-            },
-            {
-              "value": "max",
-              "label": "Max",
-              "description": "Maximum reasoning depth, cost-insensitive"
-            }
-          ],
-          "default": "medium"
-        }
-      ],
       "settings": {
         "temperature": {
           "min": 0,
@@ -201,12 +133,12 @@
         "maxTokens": {
           "min": 1,
           "max": 128000,
-          "default": 8096
+          "default": 128000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -216,7 +148,17 @@
           "step": 1
         }
       },
-      "reasoningDisplay": "summarized"
+      "reasoningDisplay": "summarized",
+      "thinkingApi": "adaptive",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effortDefault": "high",
+      "supportsSampling": false
     },
     {
       "id": "claude-fable-5",
@@ -235,32 +177,6 @@
         "models-2025": true,
         "credit": true
       },
-      "configurableSettings": [
-        {
-          "type": "select",
-          "key": "thinkingEffort",
-          "label": "Thinking Effort",
-          "description": "Controls how much internal reasoning Fable 5 performs when extended thinking is enabled.",
-          "options": [
-            {
-              "value": "low",
-              "label": "Low",
-              "description": "Light reasoning, faster responses"
-            },
-            {
-              "value": "medium",
-              "label": "Medium",
-              "description": "Balanced depth and speed"
-            },
-            {
-              "value": "high",
-              "label": "High",
-              "description": "Deep, thorough reasoning"
-            }
-          ],
-          "default": "medium"
-        }
-      ],
       "settings": {
         "temperature": {
           "min": 0,
@@ -271,12 +187,12 @@
         "maxTokens": {
           "min": 1,
           "max": 128000,
-          "default": 8096
+          "default": 128000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -286,7 +202,17 @@
           "step": 1
         }
       },
-      "reasoningDisplay": "summarized"
+      "reasoningDisplay": "summarized",
+      "thinkingApi": "always-on",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effortDefault": "high",
+      "supportsSampling": false
     },
     {
       "id": "claude-fable-5-1",
@@ -305,42 +231,6 @@
         "models-2025": true,
         "credit": true
       },
-      "configurableSettings": [
-        {
-          "type": "select",
-          "key": "thinkingEffort",
-          "label": "Thinking Effort",
-          "description": "Controls how much internal reasoning Fable 5.1 performs. Thinking is always on for this model; effort sets its depth.",
-          "options": [
-            {
-              "value": "low",
-              "label": "Low",
-              "description": "Light reasoning, faster responses"
-            },
-            {
-              "value": "medium",
-              "label": "Medium",
-              "description": "Balanced depth and speed"
-            },
-            {
-              "value": "high",
-              "label": "High",
-              "description": "Deep, thorough reasoning"
-            },
-            {
-              "value": "xhigh",
-              "label": "Extra High",
-              "description": "Very deep reasoning for hard agentic/coding work"
-            },
-            {
-              "value": "max",
-              "label": "Max",
-              "description": "Maximum reasoning depth, cost-insensitive"
-            }
-          ],
-          "default": "medium"
-        }
-      ],
       "settings": {
         "temperature": {
           "min": 0,
@@ -351,12 +241,12 @@
         "maxTokens": {
           "min": 1,
           "max": 128000,
-          "default": 8096
+          "default": 128000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -366,7 +256,17 @@
           "step": 1
         }
       },
-      "reasoningDisplay": "summarized"
+      "reasoningDisplay": "summarized",
+      "thinkingApi": "always-on",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effortDefault": "high",
+      "supportsSampling": false
     },
     {
       "id": "claude-sonnet-4.6",
@@ -394,12 +294,12 @@
         "maxTokens": {
           "min": 1,
           "max": 64000,
-          "default": 8096
+          "default": 64000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -408,7 +308,15 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "thinkingApi": "adaptive",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "effortDefault": "high"
     },
     {
       "id": "claude-opus-4.6",
@@ -436,12 +344,12 @@
         "maxTokens": {
           "min": 1,
           "max": 128000,
-          "default": 8096
+          "default": 128000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -450,7 +358,15 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "thinkingApi": "adaptive",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "effortDefault": "high"
     },
     {
       "id": "claude-opus-4.5",
@@ -477,12 +393,12 @@
         "maxTokens": {
           "min": 1,
           "max": 32000,
-          "default": 8096
+          "default": 32000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -491,7 +407,14 @@
           "default": 40,
           "step": 1
         }
-      }
+      },
+      "thinkingApi": "budget",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortDefault": "high"
     },
     {
       "id": "claude-haiku-4.5",
@@ -518,12 +441,12 @@
         "maxTokens": {
           "min": 1,
           "max": 64000,
-          "default": 8096
+          "default": 64000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -533,7 +456,8 @@
           "step": 1
         }
       },
-      "canonicalId": "claude-haiku-4.5"
+      "canonicalId": "claude-haiku-4.5",
+      "thinkingApi": "budget"
     },
     {
       "id": "claude-sonnet-4.5",
@@ -560,12 +484,12 @@
         "maxTokens": {
           "min": 1,
           "max": 64000,
-          "default": 8096
+          "default": 64000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -575,7 +499,8 @@
           "step": 1
         }
       },
-      "canonicalId": "claude-sonnet-4.5"
+      "canonicalId": "claude-sonnet-4.5",
+      "thinkingApi": "budget"
     },
     {
       "id": "claude-opus-4.1",
@@ -601,12 +526,12 @@
         "maxTokens": {
           "min": 1,
           "max": 32000,
-          "default": 8096
+          "default": 32000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -616,7 +541,8 @@
           "step": 1
         }
       },
-      "canonicalId": "claude-opus-4.1"
+      "canonicalId": "claude-opus-4.1",
+      "thinkingApi": "budget"
     },
     {
       "id": "claude-opus-4",
@@ -642,12 +568,12 @@
         "maxTokens": {
           "min": 1,
           "max": 32000,
-          "default": 8096
+          "default": 32000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -657,7 +583,14 @@
           "step": 1
         }
       },
-      "canonicalId": "claude-opus-4"
+      "canonicalId": "claude-opus-4",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortDefault": "medium",
+      "thinkingApi": "adaptive"
     },
     {
       "id": "claude-sonnet-4",
@@ -684,12 +617,12 @@
         "maxTokens": {
           "min": 1,
           "max": 64000,
-          "default": 8096
+          "default": 64000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -699,7 +632,8 @@
           "step": 1
         }
       },
-      "canonicalId": "claude-sonnet-4"
+      "canonicalId": "claude-sonnet-4",
+      "thinkingApi": "budget"
     },
     {
       "id": "claude-3.7-sonnet",
@@ -726,12 +660,12 @@
         "maxTokens": {
           "min": 1,
           "max": 64000,
-          "default": 8096
+          "default": 64000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -741,7 +675,8 @@
           "step": 1
         }
       },
-      "canonicalId": "claude-3.7-sonnet"
+      "canonicalId": "claude-3.7-sonnet",
+      "thinkingApi": "budget"
     },
     {
       "id": "claude-3.5-haiku",
@@ -771,7 +706,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -811,7 +746,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -851,7 +786,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -891,7 +826,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -931,7 +866,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -971,7 +906,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -1011,7 +946,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -1051,7 +986,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -1091,7 +1026,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
@@ -1125,7 +1060,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
@@ -1155,16 +1090,23 @@
         "maxTokens": {
           "min": 1,
           "max": 32000,
-          "default": 8096
+          "default": 32000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
-      "canonicalId": "claude-opus-4.5"
+      "canonicalId": "claude-opus-4.5",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortDefault": "medium",
+      "thinkingApi": "adaptive"
     },
     {
       "id": "claude-sonnet-4.6-openrouter",
@@ -1191,16 +1133,23 @@
         "maxTokens": {
           "min": 1,
           "max": 64000,
-          "default": 8096
+          "default": 64000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
-      "canonicalId": "claude-sonnet-4.6"
+      "canonicalId": "claude-sonnet-4.6",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortDefault": "medium",
+      "thinkingApi": "adaptive"
     },
     {
       "id": "claude-opus-4.6-openrouter",
@@ -1227,16 +1176,23 @@
         "maxTokens": {
           "min": 1,
           "max": 128000,
-          "default": 8096
+          "default": 128000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
-      "canonicalId": "claude-opus-4.6"
+      "canonicalId": "claude-opus-4.6",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortDefault": "medium",
+      "thinkingApi": "adaptive"
     },
     {
       "id": "claude-opus-4.7-openrouter",
@@ -1263,16 +1219,23 @@
         "maxTokens": {
           "min": 1,
           "max": 128000,
-          "default": 8096
+          "default": 128000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
-      "canonicalId": "claude-opus-4.7"
+      "canonicalId": "claude-opus-4.7",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortDefault": "medium",
+      "thinkingApi": "adaptive"
     },
     {
       "id": "claude-opus-4-openrouter",
@@ -1298,16 +1261,23 @@
         "maxTokens": {
           "min": 1,
           "max": 32000,
-          "default": 8096
+          "default": 32000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
-      "canonicalId": "claude-opus-4"
+      "canonicalId": "claude-opus-4",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortDefault": "medium",
+      "thinkingApi": "adaptive"
     },
     {
       "id": "claude-opus-4.1-openrouter",
@@ -1333,16 +1303,23 @@
         "maxTokens": {
           "min": 1,
           "max": 32000,
-          "default": 8096
+          "default": 32000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
-      "canonicalId": "claude-opus-4.1"
+      "canonicalId": "claude-opus-4.1",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortDefault": "medium",
+      "thinkingApi": "adaptive"
     },
     {
       "id": "gpt-4-turbo-openrouter",
@@ -1373,7 +1350,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
@@ -1394,37 +1371,6 @@
         "models-2025": true,
         "credit": true
       },
-      "configurableSettings": [
-        {
-          "type": "select",
-          "key": "reasoningEffort",
-          "label": "Reasoning Effort",
-          "description": "Controls how much internal reasoning the model performs. Higher effort produces more thorough answers but uses more tokens.",
-          "options": [
-            {
-              "value": "minimal",
-              "label": "Minimal",
-              "description": "Almost no internal reasoning \u2014 fastest, most direct responses"
-            },
-            {
-              "value": "low",
-              "label": "Low",
-              "description": "Fast, light reasoning"
-            },
-            {
-              "value": "medium",
-              "label": "Medium",
-              "description": "Balanced speed and depth"
-            },
-            {
-              "value": "high",
-              "label": "High",
-              "description": "Thorough, deep reasoning"
-            }
-          ],
-          "default": "medium"
-        }
-      ],
       "settings": {
         "temperature": {
           "min": 0,
@@ -1435,16 +1381,25 @@
         "maxTokens": {
           "min": 1,
           "max": 32768,
-          "default": 16384
+          "default": 32768
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       },
-      "canonicalId": "gpt-5.4"
+      "canonicalId": "gpt-5.4",
+      "supportsThinking": true,
+      "thinkingApi": "always-on",
+      "effortLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortDefault": "medium"
     },
     {
       "id": "gemini-2.5-flash-text",
@@ -1498,7 +1453,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.95,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -1563,7 +1518,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.95,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -1678,7 +1633,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.95,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -1793,7 +1748,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.95,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -1931,7 +1886,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.95,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -2069,7 +2024,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.95,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -2208,7 +2163,7 @@
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.95,
+          "default": 1,
           "step": 0.01
         },
         "topK": {
@@ -2245,12 +2200,12 @@
         "maxTokens": {
           "min": 1,
           "max": 32000,
-          "default": 8096
+          "default": 32000
         },
         "topP": {
           "min": 0,
           "max": 1,
-          "default": 0.9,
+          "default": 1,
           "step": 0.01
         }
       }
