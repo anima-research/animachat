@@ -108,7 +108,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { Icon } from '@iconify/vue';
-import { ConversationMetrics, ContextManagement, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
+import type { ConversationMetrics, ContextManagement, LastCompletionMetrics, TotalsMetrics } from '@deprecated-claude/shared';
 import { useStore } from '@/store';
 
 const props = defineProps<{
@@ -195,7 +195,7 @@ watch(() => store.lastMetricsUpdate, async (update) => {
     // Limit the set size to prevent memory leaks (keep last 100)
     if (processedMetricsTimestamps.size > 100) {
       const firstKey = processedMetricsTimestamps.values().next().value;
-      processedMetricsTimestamps.delete(firstKey);
+      if (firstKey !== undefined) processedMetricsTimestamps.delete(firstKey);
     }
     
     // Update last completion metrics
@@ -232,8 +232,15 @@ watch(() => store.lastMetricsUpdate, async (update) => {
   }
 });
 
-// Model picker
-const curModelMetrics = computed<ModelConversationMetrics | null>(() => {
+// Model picker. Shows either one model's metrics or the conversation-wide
+// summary; this is the shape both share that the template reads.
+type MetricsView = {
+  lastCompletion?: LastCompletionMetrics;
+  totals: TotalsMetrics;
+  contextManagement?: ContextManagement;
+  messageCount?: number;
+};
+const curModelMetrics = computed<MetricsView | null>(() => {
   if (!metrics.value) return null;
   if (selectedModel.value == ALL_MODELS_METRICS) return metrics.value; // simply grab the high level summary metrics
   return metrics.value.perModelMetrics[selectedModel.value] ?? null;
@@ -241,7 +248,7 @@ const curModelMetrics = computed<ModelConversationMetrics | null>(() => {
 
 const curContextManagment = computed<ContextManagement | null>(() => {
   if (!metrics.value) return null;
-  if (!curModelMetrics.value || !curModelMetrics.value.contextManagement) return metrics.value.contextManagement; // simply grab the high level context management
+  if (!curModelMetrics.value || !curModelMetrics.value.contextManagement) return metrics.value.contextManagement ?? null; // simply grab the high level context management
   // customized context management
   return curModelMetrics.value.contextManagement;
 });

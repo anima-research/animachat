@@ -87,15 +87,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useDisplay } from 'vuetify';
-import type { Participant } from '@deprecated-claude/shared';
+import type { Model, Participant } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
-
-interface Model {
-  id: string;
-  displayName: string;
-  shortName?: string;
-  provider: string;
-}
 
 const props = defineProps<{
   participants: Participant[];

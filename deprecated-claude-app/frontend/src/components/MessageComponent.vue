@@ -107,7 +107,6 @@
       </span>
       <span class="hover-tooltip" data-tooltip="Bookmark">
         <v-btn
-          ref="bookmarkButtonRef"
           :icon="hasBookmark ? 'mdi-bookmark' : 'mdi-bookmark-outline'"
           :color="hasBookmark ? participantColor : undefined"
           size="x-small"
@@ -750,7 +749,7 @@
                 </tr>
                 <tr>
                   <td class="font-weight-medium">Created At</td>
-                  <td>{{ new Date(message.createdAt).toLocaleString() }}</td>
+                  <td>{{ message.createdAt ? new Date(message.createdAt).toLocaleString() : '—' }}</td>
                 </tr>
               </tbody>
             </v-table>
@@ -917,7 +916,7 @@
         </v-card-title>
         <v-card-text class="text-center pa-6">
           <v-img 
-            :src="avatarUrl" 
+            :src="avatarUrl ?? undefined" 
             max-height="300"
             contain
             class="mx-auto rounded-lg"
@@ -997,8 +996,6 @@ const isMonospace = ref(false); // Toggle monospace display for entire message
 const moreMenuOpen = ref(false); // Track more menu state for debugging
 const isTouchDevice = ref(false); // Detect touch devices to disable hover bar
 const touchActionsOpen = ref(false); // Toggle for action bar on touch devices
-const isSplitting = ref(false); // True when in split mode (deprecated - using context menu now)
-const splitPosition = ref(0); // Position to split at (character index)
 const showSplitContextMenu = ref(false); // Context menu visibility
 const splitMenuPosition = ref({ x: 0, y: 0 }); // Position for context menu
 const contextSplitPosition = ref(0); // Position determined from context menu click
@@ -1052,8 +1049,6 @@ watch(touchActionsOpen, (isOpen) => {
 const bookmarkDialog = ref(false);
 const bookmarkInput = ref('');
 const bookmarkLabel = ref<string | null>(null);
-const showBookmarkTooltip = ref(false);
-const bookmarkButtonRef = ref<HTMLElement>();
 const imagePreviewDialog = ref(false);
 const previewImageSrc = ref('');
 const previewImageAlt = ref('');
@@ -1229,18 +1224,6 @@ function checkMessageHeight() {
   }
 }
 
-function scrollToTopOfMessage() {
-  if (messageCard.value) {
-    const element = (messageCard.value as any).$el || messageCard.value;
-    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    
-    // Stop auto-scrolling if streaming
-    if (props.isStreaming) {
-      // Emit event to parent to stop auto-scrolling
-      emit('stop-auto-scroll');
-    }
-  }
-}
 
 // Get participant display name (shown in UI)
 const participantDisplayName = computed(() => {
@@ -1902,24 +1885,8 @@ function saveEditOnly() {
   cancelEdit();
 }
 
-function startSplit() {
-  const content = currentBranch.value?.content || '';
-  // Default to middle of message
-  splitPosition.value = Math.floor(content.length / 2);
-  isSplitting.value = true;
-}
 
-function cancelSplit() {
-  isSplitting.value = false;
-  splitPosition.value = 0;
-}
 
-function confirmSplit() {
-  if (splitPosition.value > 0 && splitPosition.value < (currentBranch.value?.content?.length || 0)) {
-    emit('split', props.message.id, currentBranch.value.id, splitPosition.value);
-  }
-  cancelSplit();
-}
 
 function handleContentContextMenu(event: MouseEvent) {
   // Only show for assistant messages

@@ -81,8 +81,8 @@
           <td>
             <ModelSelector
               v-if="participant.type === 'assistant'"
-              :model-value="participant.model"
-              @update:model-value="(value) => updateParticipantModel(participant, value)"
+              :model-value="participant.model ?? null"
+              @update:model-value="(value) => value && updateParticipantModel(participant, value)"
               :models="activeModels"
               :availability="props.availability"
               density="compact"
@@ -684,7 +684,7 @@ function updateParticipantConversationMode(mode: string) {
   const participant = participants.value.find(p => p.id === selectedParticipantId.value);
   if (participant) {
     participant.conversationMode = mode as 'auto' | 'prefill' | 'messages' | 'pseudo-prefill' | 'completion';
-    emit('update:participants', [...participants.value]);
+    participants.value = [...participants.value];
   }
 }
 
@@ -861,8 +861,7 @@ function updateParticipantModel(participant: any, newModelId: string) {
   const oldModel = props.models.find(m => m.id === participant.model);
   const oldModelNames = [
     oldModel?.shortName,
-    oldModel?.displayName,
-    oldModel?.name
+    oldModel?.displayName
   ].filter(Boolean);
   
   const shouldAutoFillName = 
