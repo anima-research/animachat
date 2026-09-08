@@ -261,15 +261,21 @@ export class OpenRouterService {
 
       // Build OpenRouter's unified `reasoning` object.
       const reasoningConfig: { max_tokens?: number; effort?: string; enabled?: boolean } = {};
+      // Always-on models (thinkingApi 'always-on': GPT-5 / o-series routes)
+      // reason on every request whatever the stored block says, and older
+      // conversations created before the entry declared thinking carry an
+      // effort but no thinking block at all, so they must not read as "off".
       // For models with a thinking toggle, a missing or disabled thinking
       // block means the user turned reasoning off: no effort is sent either,
       // since OpenRouter treats `reasoning.effort` alone as enabling it.
       // Models without a toggle (supportsThinking unset) still take effort.
-      const thinkingOff = settings.thinking
+      const alwaysOn = modelHints?.thinkingApi === 'always-on';
+      const thinkingEnabled = alwaysOn || !!settings.thinking?.enabled;
+      const thinkingOff = !alwaysOn && (settings.thinking
         ? !settings.thinking.enabled
-        : !!modelHints?.supportsThinking;
-      if (settings.thinking?.enabled) {
-        if (budgetStyle && settings.thinking.budgetTokens) {
+        : !!modelHints?.supportsThinking);
+      if (thinkingEnabled) {
+        if (budgetStyle && settings.thinking?.budgetTokens) {
           reasoningConfig.max_tokens = settings.thinking.budgetTokens;
         }
         if (effort) {
