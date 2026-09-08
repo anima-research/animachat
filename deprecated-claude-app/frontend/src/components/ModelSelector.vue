@@ -288,11 +288,6 @@ function hasAdminKey(model: Model): boolean {
   return props.availability.adminProviders.includes(model.provider);
 }
 
-// Check if the model is available (either user key, admin key, or can overspend)
-function isModelAvailable(model: Model): boolean {
-  if (!props.availability) return true; // Default to available if no info
-  return hasUserKey(model) || hasAdminKey(model) || props.availability.canOverspend;
-}
 
 // Get availability status for display
 function getAvailabilityStatus(model: Model): 'user-key' | 'subsidized' | 'unavailable' | null {

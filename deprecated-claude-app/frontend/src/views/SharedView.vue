@@ -168,10 +168,10 @@
           </div>
           
           <!-- Messages container -->
-          <div v-else class="flex-grow-1 overflow-auto pa-4" ref="messagesContainer">
+          <div v-else class="flex-grow-1 overflow-auto pa-4">
             <div class="mx-auto" style="max-width: 900px;">
               <div
-                v-for="(message, index) in displayMessages"
+                v-for="message in displayMessages"
                 :key="message.id"
                 :id="`message-${message.id}`"
                 class="mb-4"
@@ -229,7 +229,6 @@ const route = useRoute();
 const shareData = ref<any>(null);
 const isLoading = ref(true);
 const error = ref('');
-const messagesContainer = ref<HTMLElement>();
 const showTreeView = ref(false);
 const focusNodeId = ref<string | null>(null);
 const expandedNodes = ref<Set<string>>(new Set());
