@@ -1,6 +1,7 @@
 import { Message, getActiveBranch, ModelSettings, ContentBlock } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { getBlobStore } from '../database/blob-store.js';
+import { redactSecrets, safeErrorLog } from '../utils/safe-log.js';
 
 /**
  * Gemini API Service
@@ -100,6 +101,10 @@ interface GeminiStreamChunk {
   };
 }
 
+// Google AI Studio's Gemini API root. Overridable via GEMINI_BASE_URL for
+// tests, proxies, and (eventually) Vertex AI compatibility shims.
+const GEMINI_DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+
 export class GeminiService {
   private apiKey: string;
   private baseUrl: string;
@@ -108,7 +113,7 @@ export class GeminiService {
   constructor(db: Database, apiKey?: string) {
     this.db = db;
     this.apiKey = apiKey || process.env.GEMINI_API_KEY || '';
-    this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+    this.baseUrl = process.env.GEMINI_BASE_URL || GEMINI_DEFAULT_BASE_URL;
     
     if (!this.apiKey) {
       console.error('⚠️ API KEY ERROR: No Gemini API key provided. Set GEMINI_API_KEY environment variable or configure user API keys. Gemini API calls will fail.');
@@ -228,8 +233,8 @@ export class GeminiService {
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`[Gemini API] Error ${response.status}:`, errorText);
-        throw new Error(`Gemini API error: ${response.status} ${errorText}`);
+        console.error(`[Gemini API] Error ${response.status}:`, redactSecrets(errorText));
+        throw new Error(`Gemini API error: ${response.status} ${redactSecrets(errorText)}`);
       }
       
       if (!response.body) {
@@ -448,7 +453,7 @@ export class GeminiService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const duration = Date.now() - startTime;
-      console.error(`[Gemini API] Request ${requestId} failed after ${duration}ms:`, errorMessage);
+      safeErrorLog(`[Gemini API] Request ${requestId} failed after ${duration}ms:`, error);
       
       // Estimate input tokens from request for cost tracking on failures
       // Google still charges for failed requests that were processed
