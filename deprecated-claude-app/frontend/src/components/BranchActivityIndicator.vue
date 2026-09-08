@@ -67,6 +67,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useStore } from '@/store';
+import type { Conversation, Participant } from '@deprecated-claude/shared';
 
 const emit = defineEmits<{
   navigate: [messageId: string, branchId: string]
@@ -81,9 +82,11 @@ const notifications = computed(() => {
 
 function getParticipantName(notif: { participantId: string | null; role: string; model: string | null }): string {
   // Try to find in current conversation participants
-  const conversation = store.state.currentConversation;
+  // Participants are not part of the shared Conversation type; when they are
+  // attached to the current conversation at runtime, use them.
+  const conversation = store.state.currentConversation as (Conversation & { participants?: Participant[] }) | null;
   if (notif.participantId && conversation?.participants) {
-    const participant = conversation.participants.find(p => p.id === notif.participantId);
+    const participant = conversation.participants.find((p: Participant) => p.id === notif.participantId);
     if (participant) return participant.name;
   }
 

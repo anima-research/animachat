@@ -122,6 +122,7 @@ import MessageComponent from './MessageComponent.vue';
 import AuthenticityIcon from './AuthenticityIcon.vue';
 import type { Message, Participant, WsAttachment } from '@deprecated-claude/shared';
 import { getAvatarUrl, getParticipantColor } from '@/utils/avatars';
+import { useStore } from '@/store';
 import { type AuthenticityStatus, getAuthenticityLevel } from '@/utils/authenticity';
 
 const props = defineProps<{
@@ -137,6 +138,8 @@ const props = defineProps<{
   showStuckButton?: boolean;
   authenticityMap?: Map<string, AuthenticityStatus>;
 }>();
+
+const store = useStore();
 
 const emit = defineEmits<{
   regenerate: [msgId: string, branchId: string];
@@ -182,7 +185,8 @@ const participantName = computed(() => {
 const participantColor = computed(() => {
   const branch = firstMessage.value?.branches?.find(b => b.id === firstMessage.value.activeBranchId);
   if (branch?.participantId) {
-    return getParticipantColor(branch.participantId, props.participants);
+    const participant = props.participants.find(p => p.id === branch.participantId);
+    return getParticipantColor(participant, store.state.models) ?? undefined;
   }
   return undefined;
 });

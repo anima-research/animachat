@@ -100,10 +100,6 @@ const emit = defineEmits<{
 const arcColor = computed(() => getAuthenticityColor(props.level));
 const tooltipText = computed(() => getAuthenticityTooltip(props.level));
 
-const strokeWidth = computed(() => {
-  // Smaller stroke for smaller sizes
-  return props.size < 24 ? 2 : 3;
-});
 
 // Show all 4 arcs for hard_mode
 const showAllArcs = computed(() => 
