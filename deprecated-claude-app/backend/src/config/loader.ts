@@ -52,6 +52,7 @@ export class ConfigLoader {
       providers: {},
       features: {
         allowUserApiKeys: true,
+        enableClaudeCodeTokens: false,
         enforceRateLimits: false,
         trackUsage: false,
         billUsers: false

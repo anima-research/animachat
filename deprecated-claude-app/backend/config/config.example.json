@@ -29,6 +29,7 @@
   "defaultModel": "claude-sonnet-4.5",
   "features": {
     "allowUserApiKeys": true,
+    "enableClaudeCodeTokens": false,
     "enforceRateLimits": false,
     "trackUsage": true,
     "billUsers": false

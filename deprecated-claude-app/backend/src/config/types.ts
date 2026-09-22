@@ -128,6 +128,7 @@ export interface AppConfig {
   // Feature flags
   features?: {
     allowUserApiKeys: boolean;
+    enableClaudeCodeTokens?: boolean;
     enforceRateLimits: boolean;
     trackUsage: boolean;
     billUsers: boolean;

@@ -4,6 +4,8 @@ import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
 import sharp from 'sharp';
 import { isImageFile } from './attachment-utils.js';
+import { anthropicClientOptions, isAnthropicOAuthToken, withClaudeCodePrefix } from './anthropic-auth.js';
+import { ConfigLoader } from '../config/loader.js';
 
 // Anthropic's image size limit is 5MB, we target 4MB to have margin
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -11,17 +13,26 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 export class AnthropicService {
   private client: Anthropic;
   private db: Database;
+  private oauth: boolean;
+  private token: string;
 
   constructor(db: Database, apiKey?: string) {
     this.db = db;
     
     const resolvedKey = apiKey || process.env.ANTHROPIC_API_KEY;
+    this.token = resolvedKey || 'missing-api-key';
+    this.oauth = false;
     if (!resolvedKey) {
       console.error('⚠️ API KEY ERROR: No Anthropic API key provided. Set ANTHROPIC_API_KEY environment variable or configure user API keys. API calls will fail.');
     }
     
-    this.client = new Anthropic({
-      apiKey: resolvedKey || 'missing-api-key',
+    this.client = this.createClient(false);
+  }
+
+  private createClient(allowClaudeCodeTokens: boolean): Anthropic {
+    this.oauth = allowClaudeCodeTokens && isAnthropicOAuthToken(this.token);
+    return new Anthropic({
+      ...anthropicClientOptions(this.token, this.oauth),
       // Opt in to the extended-cache-TTL beta so the `cache_control: { ttl: '1h' }`
       // markers we emit on system prompts and message-history breakpoints actually
       // mean 1 hour. Without this header the API silently falls back to the
@@ -30,7 +41,9 @@ export class AnthropicService {
       // significant cost-savings regression for long-running conversations
       // (which were the whole point of the 1h TTL choice).
       defaultHeaders: {
-        'anthropic-beta': 'extended-cache-ttl-2025-04-11',
+        'anthropic-beta': this.oauth
+          ? 'oauth-2025-04-20,extended-cache-ttl-2025-04-11'
+          : 'extended-cache-ttl-2025-04-11',
       },
     });
   }
@@ -66,6 +79,8 @@ export class AnthropicService {
       stop_sequences?: string[];
     }
   }> {
+    const config = await ConfigLoader.getInstance().loadConfig();
+    this.client = this.createClient(config.features?.enableClaudeCodeTokens === true);
     // Demo mode - simulate streaming response
     if (process.env.DEMO_MODE === 'true') {
       await this.simulateStreamingResponse(messages, onChunk);
@@ -208,7 +223,7 @@ export class AnthropicService {
         ...(sendSampling && settings.temperature !== undefined && { temperature: settings.temperature }),
         ...(sendSampling && !useTemperature && settings.topP !== undefined && { top_p: settings.topP }),
         ...(sendSampling && !useTemperature && settings.topK !== undefined && { top_k: settings.topK }),
-        ...(systemContent && { system: systemContent }),
+        ...(this.oauth ? { system: withClaudeCodePrefix(systemContent) } : systemContent && { system: systemContent }),
         ...(stopSequences && stopSequences.length > 0 && { stop_sequences: stopSequences }),
         ...(thinkingConfig && { thinking: thinkingConfig }),
         ...(outputConfig && { output_config: outputConfig }),
@@ -983,13 +998,19 @@ export class AnthropicService {
   // Method to validate API keys
   async validateApiKey(apiKey: string): Promise<boolean> {
     try {
-      const testClient = new Anthropic({ apiKey });
+      const config = await ConfigLoader.getInstance().loadConfig();
+      const oauth = config.features?.enableClaudeCodeTokens === true && isAnthropicOAuthToken(apiKey);
+      const testClient = new Anthropic({
+        ...anthropicClientOptions(apiKey, oauth),
+        defaultHeaders: oauth ? { 'anthropic-beta': 'oauth-2025-04-20' } : undefined,
+      });
       
       // Make a minimal request to validate the key
       await testClient.messages.create({
         model: 'claude-3-haiku-20240307',
         max_tokens: 1,
-        messages: [{ role: 'user', content: 'Hi' }]
+        messages: [{ role: 'user', content: 'Hi' }],
+        ...(oauth && { system: withClaudeCodePrefix(undefined) as any }),
       });
       
       return true;

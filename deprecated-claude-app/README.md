@@ -50,6 +50,14 @@ Required environment variables:
 - `AWS_SECRET_ACCESS_KEY`: Your AWS secret key (optional if using IAM role)
 - `ANTHROPIC_API_KEY`: Your Anthropic API key for current Claude models (optional)
 
+To enable Claude Code subscription/setup tokens, set
+`features.enableClaudeCodeTokens` to `true` in the backend config. The default
+is `false`, including in production. Once enabled, add a token
+under the Anthropic provider in Settings, a provider profile, or
+`ANTHROPIC_API_KEY`. Tokens beginning with `sk-ant-` (except `sk-ant-api…`)
+or `eyJ` use Bearer authentication with Anthropic's OAuth beta and the required
+Claude Code system identity. Regular API keys continue to use `x-api-key`.
+
 3. **Start development servers:**
 ```bash
 # From root directory
