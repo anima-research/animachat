@@ -915,7 +915,6 @@
         
         <!-- Hidden file input - supports text, images, PDFs, audio, and video -->
         <input
-          ref="fileInput"
           type="file"
           accept=".txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.cpp,.c,.h,.hpp,.jpg,.jpeg,.png,.gif,.webp,.svg,.pdf,application/pdf,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.avi,.mkv,.webm"
           multiple
@@ -1288,7 +1287,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore, computeVisibleMessages } from '@/store';
 import { api } from '@/services/api';
-import type { Conversation, Message, Participant, Model, Bookmark, Persona, WsAttachment } from '@deprecated-claude/shared';
+import type { Conversation, Participant, Model, Bookmark, Persona, WsAttachment } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema, getValidatedModelDefaults } from '@deprecated-claude/shared';
 import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
@@ -1336,12 +1335,10 @@ const collaborationDialog = ref(false);
 const manageSharesDialog = ref(false);
 const duplicateDialog = ref(false);
 const duplicateConversationTarget = ref<Conversation | null>(null);
-const showRawImportDialog = ref(false);
 const welcomeDialog = ref(false);
 const addParticipantDialog = ref(false);
 const contentBlockedDialog = ref(false);
 const contentBlockedData = ref<{ reason?: string; categories?: string[] } | null>(null);
-const rawImportData = ref('');
 const messageInput = ref('');
 const personas = ref<Persona[]>([]);
 const isStreaming = ref(false);
@@ -1450,7 +1447,6 @@ const attachments = ref<Array<{
   isAudio?: boolean;
   isVideo?: boolean;
 }>>([]);
-const fileInput = ref<HTMLInputElement>();
 const messageTextarea = ref<any>();
 const isDraggingOver = ref(false);
 let dragCounter = 0; // Track nested drag events
@@ -1480,7 +1476,6 @@ const selectedParticipant = ref<string>('');
 const selectedResponder = ref<string>('');
 const noResponseMode = ref(false);  // For standard conversations: disable AI response
 const isLoadingUIState = ref(false); // Prevents saving during load
-const showMobileSpeakingAs = ref(false);
 
 // Fork dialog state
 const showForkDialog = ref(false);
@@ -1691,8 +1686,6 @@ const allMessages = computed(() => store.state.allMessages); // Get ALL messages
 // STUBBED: Unread count disabled pending architecture review
 const unreadBranchCount = computed(() => 0);
 
-// Legacy unread count (kept for backwards compatibility)
-const unreadCount = computed(() => store.getUnreadCount());
 
 // Compute authenticity for visible messages
 const authenticityMap = computed((): Map<string, AuthenticityStatus> => {
@@ -2185,20 +2178,12 @@ async function navigateToBookmark(messageId: string, branchId: string) {
   await navigateToTreeBranch(messageId, branchId);
 }
 
-const selectedResponderName = computed(() => {
-  const responder = assistantParticipants.value.find(p => p.id === selectedResponder.value);
-  return responder?.name || 'Assistant';
-});
 
 const selectedParticipantName = computed(() => {
   const participant = allParticipants.value.find(p => p.id === selectedParticipant.value);
   return participant?.name || 'User';
 });
 
-const selectedParticipantModel = computed(() => {
-  const participant = allParticipants.value.find(p => p.id === selectedParticipant.value);
-  return participant?.model || '';
-});
 
 watch(isMobile, (mobile) => {
   if (mobile) {
@@ -2226,43 +2211,8 @@ const allParticipants = computed(() => {
   }));
 });
 
-const assistantParticipants = computed(() => {
-  return participants.value.filter(p => p.type === 'assistant' && p.isActive);
-});
 
-const responderOptions = computed(() => {
-  const options = [{ id: '', name: 'No response', type: 'none' as any, model: '' }];
-  // Include full participant objects to have access to type and model
-  const assistantOptions = assistantParticipants.value.map(p => ({
-    id: p.id,
-    name: p.name === '' 
-      ? (p.model ? `${p.model} (continue)` : '(continue)')
-      : p.name === 'A' 
-      ? `A (${p.model})`
-      : p.name,
-    type: p.type,
-    model: p.model || ''
-  }));
-  return options.concat(assistantOptions);
-});
 
-const continueButtonColor = computed(() => {
-  if (currentConversation.value?.format === 'standard') {
-    // For standard conversations, use the model color
-    return getModelColor(currentConversation.value?.model);
-  }
-  
-  // For multi-participant, find the selected responder and get their color
-  if (selectedResponder.value) {
-    const responder = participants.value.find(p => p.id === selectedResponder.value);
-    if (responder && responder.type === 'assistant') {
-      return getModelColor(responder.model);
-    }
-  }
-  
-  // Default fallback
-  return '#9e9e9e';
-});
 
 // Track participants by last speaking order
 const participantsByLastSpoken = computed(() => {
@@ -2302,24 +2252,6 @@ const participantsByLastSpoken = computed(() => {
 // System configuration
 const systemConfig = ref<{ features?: any; groupChatSuggestedModels?: string[] }>({});
 
-// Get suggested models that aren't already participants
-const suggestedNonParticipantModels = computed(() => {
-  if (!currentConversation.value || currentConversation.value.format === 'standard' || participants.value.length > 3) {
-    return [];
-  }
-  
-  const suggestedModelIds = systemConfig.value.groupChatSuggestedModels || [];
-  
-  const participantModelIds = new Set(participants.value
-    .filter(p => p.type === 'assistant')
-    .map(p => p.model)
-    .filter(Boolean));
-    
-  return suggestedModelIds
-    .filter(modelId => !participantModelIds.has(modelId))
-    .map(modelId => store.state.models.find(m => m.id === modelId))
-    .filter(Boolean);
-});
 
 // Suggested models for the pill bar (works for both standard and group chat)
 const suggestedModelsForPillBar = computed(() => {
@@ -2350,7 +2282,7 @@ const suggestedModelsForPillBar = computed(() => {
     .filter(modelId => !excludeModelIds.has(modelId))
     .slice(0, maxSuggestions)
     .map(modelId => store.state.models.find(m => m.id === modelId))
-    .filter(Boolean);
+    .filter((m): m is Model => !!m);
 });
 
 // Watch for new conversations - no longer pre-loading participants
@@ -3282,12 +3214,13 @@ async function triggerModelResponse(model: Model) {
         throw new Error('Failed to create participant');
       }
       
-      participant = await response.json();
+      const created: Participant = await response.json();
+      participant = created;
       
       // Add to local participants array immediately (don't wait for loadParticipants)
       // This ensures the participant is available when the streaming message arrives
-      participants.value.push(participant);
-      console.log('Added new participant to local array:', participant.name, participant.id);
+      participants.value.push(created);
+      console.log('Added new participant to local array:', created.name, created.id);
     }
     
     // Set the responder to this participant
@@ -3925,7 +3858,7 @@ function handleDragOver(event: DragEvent) {
   }
 }
 
-function handleDragLeave(event: DragEvent) {
+function handleDragLeave(_event: DragEvent) {
   dragCounter--;
   if (dragCounter === 0) {
     isDraggingOver.value = false;
@@ -4158,15 +4091,6 @@ onBeforeRouteLeave((_to, from) => {
   });
 });
 
-async function switchToGroupChat() {
-  if (!currentConversation.value) return;
-  
-  // Update the conversation format to 'prefill' (multi-participant)
-  await updateConversationSettings({ format: 'prefill' });
-  
-  // Open the settings dialog to configure participants
-  conversationSettingsDialog.value = true;
-}
 
 async function deleteMessage(messageId: string, branchId: string) {
   if (confirm('Are you sure you want to delete this message and all its replies?')) {
@@ -4221,7 +4145,7 @@ async function handlePostHocHide(messageId: string, branchId: string) {
 }
 
 // Legacy handler - kept for backwards compatibility but not used with inline editing
-async function handlePostHocEdit(messageId: string, branchId: string) {
+async function handlePostHocEdit(_messageId: string, _branchId: string) {
   // This is now handled by inline editing via handlePostHocEditContent
   console.log('handlePostHocEdit called - should use inline editing instead');
 }
@@ -4455,7 +4379,7 @@ async function handleEventNavigate(messageId: string, branchId?: string) {
     
     // Continue up the chain
     const parentBranch = parentMessage.branches.find(b => b.id === currentParentBranchId);
-    currentParentBranchId = parentBranch?.parentBranchId || null;
+    currentParentBranchId = parentBranch?.parentBranchId ?? undefined;
   }
   
   // Switch branches in batch for faster navigation
@@ -4554,35 +4478,7 @@ function syncBreadcrumbScroll() {
   }
 }
 
-function getProviderIcon(provider: string): string {
-  switch (provider) {
-    case 'anthropic':
-      return 'mdi-asterisk';
-    case 'bedrock':
-      return 'mdi-aws';
-    case 'openrouter':
-      return 'mdi-router';
-    case 'openai':
-    case 'openai-compatible':
-      return 'mdi-camera-iris';
-    default:
-      return 'mdi-robot-outline';
-  }
-}
 
-function getParticipantIcon(participant: Participant): string {
-  if (participant.type === 'user') {
-    return 'mdi-account';
-  }
-  
-  // For assistants, find the model to get the provider
-  const model = store.state.models.find(m => m.id === participant.model);
-  if (model) {
-    return getProviderIcon(model.provider);
-  }
-  
-  return 'mdi-robot-outline';
-}
 
 // ==================== PER-USER UI STATE ====================
 // These persist speakingAs, selectedResponder, and detached mode per-user
@@ -4956,10 +4852,11 @@ async function updateParticipants(updatedParticipants: Participant[]) {
     }
     
     // Invalidate cache for this conversation
-    participantCache.invalidate(currentConversation.value.id);
+    const conversationId = currentConversation.value.id;
+    participantCache.invalidate(conversationId);
     
     // Also update the participantModels in the conversation list
-    const conv = conversations.value.find(c => c.id === currentConversation.value.id);
+    const conv = conversations.value.find(c => c.id === conversationId);
     if (conv && conv.format === 'prefill') {
       // Update the embedded summary
       (conv as any).participantModels = updatedParticipants
@@ -5017,8 +4914,10 @@ class ParticipantCache {
     // LRU eviction if at capacity
     if (this.cache.size >= this.maxSize) {
       const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
-      console.log(`[ParticipantCache] Evicted ${firstKey} (LRU)`);
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+        console.log(`[ParticipantCache] Evicted ${firstKey} (LRU)`);
+      }
     }
     
     this.cache.set(conversationId, {
@@ -5042,46 +4941,6 @@ class ParticipantCache {
 
 const participantCache = new ParticipantCache();
 
-async function importRawMessages() {
-  if (!currentConversation.value || !rawImportData.value.trim()) return;
-  
-  const conversationId = currentConversation.value.id;
-  
-  try {
-    // Parse the JSON to validate it
-    const messages = JSON.parse(rawImportData.value);
-    if (!Array.isArray(messages)) {
-      alert('Invalid format: Expected a JSON array of messages');
-      return;
-    }
-    
-    console.log(`Importing ${messages.length} messages to conversation ${conversationId}`);
-    
-    // Same-origin API client. The previous hard-coded http://localhost:3010
-    // URL only worked on a dev machine and bypassed the shared auth handling.
-    const response = await api.post('/import/messages-raw', { conversationId, messages });
-    const result = response.data;
-    console.log('Messages imported:', result);
-    alert(`Successfully imported ${result.importedMessages} messages!`);
-
-    // Clear the input and close dialog
-    rawImportData.value = '';
-    showRawImportDialog.value = false;
-
-    // Reload the conversation to see the imported messages
-    await store.loadConversation(conversationId);
-  } catch (error: any) {
-    if (error instanceof SyntaxError) {
-      alert('Invalid JSON format. Please check your input.');
-    } else if (error?.response) {
-      console.error('Failed to import messages:', error.response.data);
-      alert(`Failed to import messages: ${error.response.data?.error || 'Unknown error'}`);
-    } else {
-      console.error('Error importing messages:', error);
-      alert('Error importing messages. Check console for details.');
-    }
-  }
-}
 
 // Note: loadConversationParticipants has been removed!
 // The sidebar now uses embedded participant summaries from the backend

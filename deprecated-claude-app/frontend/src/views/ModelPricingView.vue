@@ -204,8 +204,8 @@ watch(
   { immediate: true, deep: true },
 );
 
-function formatTokenPrice(value: number | null): string {
-  if (value === null) {
+function formatTokenPrice(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
     return '—';
   }
   if (value >= 0.01) {
@@ -217,8 +217,8 @@ function formatTokenPrice(value: number | null): string {
   return `$${value.toFixed(8)}`;
 }
 
-function formatPerMillion(value: number | null): string {
-  if (value === null) {
+function formatPerMillion(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
     return '—';
   }
   return `$${value.toFixed(2)}`;

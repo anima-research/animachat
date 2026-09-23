@@ -81,13 +81,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { computed } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { getModelColor } from '@/utils/modelColors';
 import { extractMath, restoreMath, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import '@/utils/dompurify-hooks'; // side-effect: hardens img tags via DOMPurify hook
-import { api } from '@/services/api';
 import 'katex/dist/katex.min.css';
 
 const props = defineProps<{

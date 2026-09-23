@@ -637,6 +637,10 @@ export const MessageBranchSchema = z.object({
   hiddenFromAi: z.boolean().optional(), // If true, this message is visible to humans but excluded from AI context
   debugRequest: z.any().optional(), // Raw LLM request for debugging (researchers/admins only)
   debugResponse: z.any().optional(), // Raw LLM response for debugging (researchers/admins only)
+  // Large debug payloads are moved to the blob store on disk; only the ids
+  // are kept on the branch (see Database.updateBranch / routes/conversations).
+  debugRequestBlobId: z.string().optional(),
+  debugResponseBlobId: z.string().optional(),
   // Post-hoc operation - if present, this message is an operation that affects a previous message
   postHocOperation: PostHocOperationSchema.optional(),
   // How this branch was created - for authenticity verification
@@ -657,7 +661,11 @@ export const MessageSchema = z.object({
   conversationId: z.string().uuid(),
   branches: z.array(MessageBranchSchema),
   activeBranchId: z.string().uuid(),
-  order: z.number()
+  order: z.number(),
+  // Set by the backend when a message is stored (Database.createMessage);
+  // optional because imported/constructed messages may not carry them.
+  createdAt: z.date().optional(),
+  updatedAt: z.date().optional()
 });
 
 export type Message = z.infer<typeof MessageSchema>;
@@ -827,7 +835,9 @@ const LastCompletionMetricsSchema = z.object({
   cachedTokens:  z.number(),
   cost:          z.number(),
   cacheSavings:  z.number(),
-  responseTime:  z.number()
+  responseTime:  z.number(),
+  // Reported by providers that count reasoning separately (Gemini, OpenRouter)
+  thinkingTokens: z.number().optional()
 });
 
 export type LastCompletionMetrics = z.infer<typeof LastCompletionMetricsSchema>;

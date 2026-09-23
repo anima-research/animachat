@@ -282,7 +282,7 @@ const providers = [
 const showDeleteDialog = ref(false);
 const editingModel = ref<UserDefinedModel | null>(null);
 const modelToDelete = ref<UserDefinedModel | null>(null);
-const selectedProvider = ref<'openrouter' | 'openai-compatible'>('openrouter');
+const selectedProvider = ref<UserDefinedModel['provider']>('openrouter');
 const selectedORModel = ref<OpenRouterModel | null>(null);
 const loading = ref(false);
 const error = ref('');
@@ -297,7 +297,7 @@ const testSnackbarSuggestion = ref('');
 const formData = ref({
   displayName: '',
   shortName: '',
-  provider: 'openrouter' as 'openrouter' | 'openai-compatible',
+  provider: 'openrouter' as UserDefinedModel['provider'],
   providerModelId: '',
   contextWindow: 100000,
   outputTokenLimit: 4096,
@@ -310,7 +310,8 @@ const formData = ref({
     audioInput: false,
     videoInput: false,
     imageOutput: false,
-    audioOutput: false
+    audioOutput: false,
+    autoTruncateContext: false
   }
 });
 
@@ -370,7 +371,8 @@ function openEditDialog(model: UserDefinedModel) {
       audioInput: false,
       videoInput: false,
       imageOutput: false,
-      audioOutput: false
+      audioOutput: false,
+      autoTruncateContext: false
     }
   };
   
@@ -407,7 +409,8 @@ function resetForm() {
       audioInput: false,
       videoInput: false,
       imageOutput: false,
-      audioOutput: false
+      audioOutput: false,
+      autoTruncateContext: false
     }
   };
   
@@ -450,7 +453,9 @@ function onOpenRouterModelSelected(model: OpenRouterModel) {
     audioInput: inputModalities.includes('audio') || inputPart.includes('audio'),
     videoInput: inputModalities.includes('video') || inputPart.includes('video'),
     imageOutput: outputModalities.includes('image') || outputPart.includes('image'),
-    audioOutput: outputModalities.includes('audio') || outputPart.includes('audio')
+    audioOutput: outputModalities.includes('audio') || outputPart.includes('audio'),
+    // Not a modality: keep whatever the form already has
+    autoTruncateContext: formData.value.capabilities?.autoTruncateContext ?? false
   };
   
   // Log detected capabilities for debugging

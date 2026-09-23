@@ -74,7 +74,7 @@
             <p class="text-body-2 text-grey mb-4">
               Credits automatically granted to new users on registration.
             </p>
-            <v-row v-for="(amount, currency) in config.initialGrants" :key="currency" class="mb-2">
+            <v-row v-for="currency in Object.keys(config.initialGrants)" :key="currency" class="mb-2">
               <v-col cols="5">
                 <v-text-field
                   :model-value="currency"
@@ -225,7 +225,7 @@
                     <td>
                       <v-checkbox
                         :model-value="!isModelHidden(cost.modelId)"
-                        @update:model-value="toggleModelVisibility(cost.modelId, $event)"
+                        @update:model-value="toggleModelVisibility(cost.modelId, !!$event)"
                         hide-details
                         density="compact"
                       />
