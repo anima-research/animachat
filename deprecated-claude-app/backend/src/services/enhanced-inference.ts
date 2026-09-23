@@ -78,6 +78,7 @@ type CostBreakdown = {
 
 const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   // Claude 5.x models (2026) - by providerModelId
+  'claude-opus-5-5': 4.00,
   'claude-opus-5': 5.00,
   'claude-fable-5': 10.00,
   'claude-fable-5-1': 10.00,
@@ -177,6 +178,7 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
 
 const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   // Claude 5.x models (2026) - by providerModelId
+  'claude-opus-5-5': 20.00,
   'claude-opus-5': 25.00,
   'claude-fable-5': 50.00,
   'claude-fable-5-1': 50.00,

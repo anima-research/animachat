@@ -107,6 +107,60 @@
       "supportsSampling": false
     },
     {
+      "id": "claude-opus-5-5",
+      "providerModelId": "claude-opus-5-5",
+      "canonicalId": "claude-opus-5-5",
+      "displayName": "Claude Opus 5.5",
+      "shortName": "Opus 5.5",
+      "provider": "anthropic",
+      "hidden": false,
+      "contextWindow": 1000000,
+      "outputTokenLimit": 128000,
+      "supportsThinking": true,
+      "thinkingDefaultEnabled": true,
+      "supportsPrefill": false,
+      "currencies": {
+        "models-2025": true,
+        "credit": true
+      },
+      "settings": {
+        "temperature": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.1
+        },
+        "maxTokens": {
+          "min": 1,
+          "max": 128000,
+          "default": 128000
+        },
+        "topP": {
+          "min": 0,
+          "max": 1,
+          "default": 1,
+          "step": 0.01
+        },
+        "topK": {
+          "min": 1,
+          "max": 500,
+          "default": 40,
+          "step": 1
+        }
+      },
+      "reasoningDisplay": "summarized",
+      "thinkingApi": "adaptive",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effortDefault": "high",
+      "supportsSampling": false
+    },
+    {
       "id": "claude-opus-5",
       "providerModelId": "claude-opus-5",
       "canonicalId": "claude-opus-5",
