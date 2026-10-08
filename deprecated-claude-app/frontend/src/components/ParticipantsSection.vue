@@ -316,6 +316,15 @@
                 </v-list-item>
               </template>
             </v-select>
+            <v-checkbox
+              :model-value="getParticipantContextOverrideField('promptCaching', true) !== false"
+              @update:model-value="(val) => setParticipantContextOverrideField('promptCaching', Boolean(val))"
+              label="Prompt caching"
+              density="compact"
+              hint="Off = no cache markers for this participant (needed for Sonnet 3.5/3.6 on Bedrock)."
+              persistent-hint
+              class="mb-3"
+            />
             <div v-if="getParticipantContextOverrideField('strategy', 'append') === 'rolling'">
               <v-text-field
                 :model-value="getParticipantContextOverrideField('maxTokens', 50000)"
@@ -662,9 +671,13 @@ function setParticipantContextOverrideField(contextOverrideFieldName: string, va
 }
 
 function updateContextOverrideStrategy(strategy: string) {
-  setParticipantContextOverrideField("strategy", strategy);
-  // reset to default values for new strategy (this uses the assigned strategy when looking up)
-  setParticipantField("contextManagement", getDefaultContextOverride(strategy));
+  // Reset the strategy-specific limits to their defaults, but keep the
+  // prompt-caching choice — it is independent of the strategy.
+  const promptCaching = getParticipantContextOverrideField('promptCaching', undefined);
+  setParticipantField("contextManagement", {
+    ...getDefaultContextOverride(strategy),
+    ...(promptCaching === undefined ? {} : { promptCaching })
+  });
 }
 
 // Model-specific settings for the selected participant

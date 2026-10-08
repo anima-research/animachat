@@ -517,13 +517,30 @@ export class EnhancedInferenceService {
       cacheKey = undefined;
       Logger.context(`[EnhancedInference] Persona context present — bypassing context manager (${messages.length} pre-truncated messages, ~${totalTokens} tokens)`);
     } else {
+      // Prompt caching can be switched off per conversation / per participant
+      // (contextManagement.promptCaching === false) or declared unsupported by the
+      // model (supportsPromptCaching: false — Sonnet 3.5/3.6 on Bedrock reject any
+      // cache_control block with a ValidationException). The decision is made here
+      // and handed to the context manager, which then builds the window without
+      // markers, cacheable prefix or hit/miss accounting — so every downstream path
+      // (Chapter II text breakpoints, message-level cache_control, cache metrics)
+      // sees a conversation without caching.
+      const effectiveContextManagement = participant?.contextManagement || conversation.contextManagement;
+      const cachingOffReason = effectiveContextManagement?.promptCaching === false ? 'settings'
+        : model.supportsPromptCaching === false ? `model ${model.id}`
+        : undefined;
+      if (cachingOffReason) {
+        Logger.cache(`[EnhancedInference] 🚫 Prompt caching off (${cachingOffReason})`);
+      }
+
       // Normal path: use context manager for rolling window + cache management
       const result = await this.contextManager.prepareContext(
         conversation,
         messages,
         undefined, // newMessage is already included in messages
         participant,
-        model.contextWindow // Pass model's max context for cache arithmetic
+        model.contextWindow, // Pass model's max context for cache arithmetic
+        { promptCaching: !cachingOffReason }
       );
       window = result.window;
       cacheKey = result.cacheKey;

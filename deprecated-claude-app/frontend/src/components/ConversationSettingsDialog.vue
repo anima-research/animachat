@@ -222,6 +222,15 @@
               </v-list-item>
             </template>
           </v-select>
+
+          <v-checkbox
+            v-model="promptCachingEnabled"
+            label="Prompt caching"
+            density="compact"
+            hint="Send cache markers to the provider. Turn off for models that reject them (e.g. Sonnet 3.5/3.6 on Bedrock)."
+            persistent-hint
+            class="mb-3"
+          />
           
           <!-- Rolling Strategy Settings -->
           <div v-if="contextStrategy === 'rolling'">
@@ -407,6 +416,7 @@ const contextStrategy = ref('append');
 const rollingMaxTokens = ref(50000);
 const rollingGraceTokens = ref(10000);
 const appendTokensBeforeCaching = ref(10000);
+const promptCachingEnabled = ref(true);
 
 const prefillUserMessageEnabled = ref(true);
 const prefillUserMessageContent = ref('<cmd>cat untitled.log</cmd>');
@@ -522,6 +532,7 @@ watch(() => props.conversation, async (conversation) => {
     // Load context management settings
     if (conversation.contextManagement) {
       contextStrategy.value = conversation.contextManagement.strategy;
+      promptCachingEnabled.value = conversation.contextManagement.promptCaching !== false;
       if (conversation.contextManagement.strategy === 'rolling') {
         rollingMaxTokens.value = conversation.contextManagement.maxTokens;
         rollingGraceTokens.value = conversation.contextManagement.maxGraceTokens;
@@ -530,6 +541,7 @@ watch(() => props.conversation, async (conversation) => {
       }
     } else {
       contextStrategy.value = 'append';
+      promptCachingEnabled.value = true;
       rollingMaxTokens.value = 50000;
       rollingGraceTokens.value = 10000;
       appendTokensBeforeCaching.value = 10000;
@@ -715,13 +727,15 @@ function save() {
   if (contextStrategy.value === 'append') {
     contextManagement = {
       strategy: 'append',
-      tokensBeforeCaching: appendTokensBeforeCaching.value
+      tokensBeforeCaching: appendTokensBeforeCaching.value,
+      promptCaching: promptCachingEnabled.value
     };
   } else if (contextStrategy.value === 'rolling') {
     contextManagement = {
       strategy: 'rolling',
       maxTokens: rollingMaxTokens.value,
       maxGraceTokens: rollingGraceTokens.value,
+      promptCaching: promptCachingEnabled.value
     };
   }
   
