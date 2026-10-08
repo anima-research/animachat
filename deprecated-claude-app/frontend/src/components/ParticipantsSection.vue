@@ -316,6 +316,15 @@
                 </v-list-item>
               </template>
             </v-select>
+            <v-checkbox
+              :model-value="getParticipantContextOverrideField('promptCaching', true) !== false"
+              @update:model-value="(val) => setParticipantContextOverrideField('promptCaching', Boolean(val))"
+              label="Prompt caching"
+              density="compact"
+              hint="Off = no cache markers for this participant (needed for Sonnet 3.5/3.6 on Bedrock)."
+              persistent-hint
+              class="mb-3"
+            />
             <div v-if="getParticipantContextOverrideField('strategy', 'append') === 'rolling'">
               <v-text-field
                 :model-value="getParticipantContextOverrideField('maxTokens', 50000)"

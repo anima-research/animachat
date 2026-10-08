@@ -528,6 +528,22 @@ export class EnhancedInferenceService {
       window = result.window;
       cacheKey = result.cacheKey;
     }
+
+    // Prompt caching can be switched off per conversation / per participant
+    // (contextManagement.promptCaching === false) or declared unsupported by the
+    // model (supportsPromptCaching: false — Sonnet 3.5/3.6 on Bedrock reject any
+    // cache_control block with a ValidationException). Strip the markers here, in
+    // one place, so every downstream path — Chapter II text breakpoints,
+    // message-level cache_control, cache metrics — sees a conversation without caching.
+    const effectiveContextManagement = participant?.contextManagement || conversation.contextManagement;
+    const cachingOffReason = effectiveContextManagement?.promptCaching === false ? 'settings'
+      : model.supportsPromptCaching === false ? `model ${model.id}`
+      : undefined;
+    const markerCount = window.cacheMarkers?.length ?? (window.cacheMarker ? 1 : 0);
+    if (cachingOffReason && (markerCount > 0 || window.cacheablePrefix.length > 0)) {
+      Logger.cache(`[EnhancedInference] 🚫 Prompt caching off (${cachingOffReason}) — dropping ${markerCount} cache marker(s)`);
+      window = { ...window, cacheablePrefix: [], activeWindow: window.messages, cacheMarker: undefined, cacheMarkers: undefined };
+    }
     
     // Debug logging with visual indicators
     const hasCaching = window.cacheablePrefix.length > 0;

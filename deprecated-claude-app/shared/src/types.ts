@@ -183,6 +183,10 @@ export const ModelSchema = z.object({
   // Currently used with "summarized" for Fable 5; left as string to extend.
   reasoningDisplay: z.string().optional(),
   supportsPrefill: z.boolean().optional(), // Whether model supports prefill/completion mode (defaults based on provider)
+  // false = the provider rejects cache_control for this model (e.g. Sonnet 3.5/3.6 on
+  // Bedrock answer any cache marker with a ValidationException); no markers are sent.
+  // Unset means supported.
+  supportsPromptCaching: z.boolean().optional(),
   // How the model takes its reasoning configuration:
   //   'budget'    — thinking: {type:'enabled', budget_tokens} (Haiku 4.5, Sonnet 4.5, 3.7, ...)
   //   'adaptive'  — thinking: {type:'adaptive'} + output_config.effort; can be turned off
@@ -387,12 +391,14 @@ export type UpdateUserModel = z.infer<typeof UpdateUserModelSchema>;
 export const ContextManagementSchema = z.discriminatedUnion('strategy', [
   z.object({
     strategy: z.literal('append'),
-    tokensBeforeCaching: z.number().default(10000) // Token threshold before first cache (moves with conversation)
+    tokensBeforeCaching: z.number().default(10000), // Token threshold before first cache (moves with conversation)
+    promptCaching: z.boolean().optional() // false = never send cache markers (unset/true = cache as usual)
   }),
   z.object({
     strategy: z.literal('rolling'),
     maxTokens: z.number(),
-    maxGraceTokens: z.number()
+    maxGraceTokens: z.number(),
+    promptCaching: z.boolean().optional() // false = never send cache markers (unset/true = cache as usual)
   })
 ]);
 
