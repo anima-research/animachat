@@ -1,58 +1,55 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Script to help set up config.json with real API keys
-# Run this script and it will prompt for API keys and update config.json
+# Configure optional provider fallback credentials without putting secrets in
+# command arguments. User-scoped keys should normally be added through the UI.
 
-CONFIG_FILE="config.json"
+set -euo pipefail
 
-echo "Setting up API keys in config.json"
-echo "=================================="
-echo ""
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env_file="${1:-"$script_dir/../.env"}"
+anthropic_key=''
+openrouter_key=''
+aws_access_key=''
+aws_secret_key=''
 
-# Anthropic API Key
-echo -n "Enter your Anthropic API key (sk-ant-...): "
-read -s ANTHROPIC_KEY
-echo ""
-
-# OpenRouter API Key
-echo -n "Enter your OpenRouter API key (sk-or-...): "
-read -s OPENROUTER_KEY
-echo ""
-
-# AWS Credentials
-echo -n "Enter your AWS Access Key ID: "
-read AWS_ACCESS_KEY
-echo -n "Enter your AWS Secret Access Key: "
-read -s AWS_SECRET_KEY
-echo ""
-
-# Update config.json with the real keys
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' "s/sk-ant-api03-YOUR-KEY-HERE/$ANTHROPIC_KEY/g" "$CONFIG_FILE"
-    sed -i '' "s/sk-or-v1-YOUR-KEY-HERE/$OPENROUTER_KEY/g" "$CONFIG_FILE"
-    sed -i '' "s/AKIAIOSFODNN7EXAMPLE/$AWS_ACCESS_KEY/g" "$CONFIG_FILE"
-    sed -i '' "s|wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY|$AWS_SECRET_KEY|g" "$CONFIG_FILE"
-else
-    # Linux
-    sed -i "s/sk-ant-api03-YOUR-KEY-HERE/$ANTHROPIC_KEY/g" "$CONFIG_FILE"
-    sed -i "s/sk-or-v1-YOUR-KEY-HERE/$OPENROUTER_KEY/g" "$CONFIG_FILE"
-    sed -i "s/AKIAIOSFODNN7EXAMPLE/$AWS_ACCESS_KEY/g" "$CONFIG_FILE"
-    sed -i "s|wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY|$AWS_SECRET_KEY|g" "$CONFIG_FILE"
+if (( $# > 1 )); then
+    printf 'usage: %s [environment-file]\n' "$0" >&2
+    exit 2
 fi
 
-echo ""
-echo "✅ Config file updated with API keys!"
-echo ""
-echo "Pricing Summary:"
-echo "==============="
-echo ""
-echo "Haiku models: FREE for all users (100% subsidized)"
-echo "Sonnet models: ~83% subsidized ($0.50/$2.50 vs $3/$15)"
-echo "Opus models: 80% subsidized ($3/$15 vs $15/$75)"
-echo "GPT-3.5: FREE for all users"
-echo "GPT-4: 80% subsidized ($2/$6 vs $10/$30)"
-echo "Llama models: FREE for all users"
-echo ""
-echo "Note: This configuration gives users heavily subsidized access to AI models."
-echo "Company absorbs most of the API costs to make AI accessible to everyone."
+read_secret() {
+    local prompt="$1"
+    local destination="$2"
+    local value
+
+    printf '%s' "$prompt" >&2
+    IFS= read -r -s value
+    printf '\n' >&2
+    printf -v "$destination" '%s' "$value"
+}
+
+read_secret 'Enter your Anthropic API key (sk-ant-...): ' anthropic_key
+read_secret 'Enter your OpenRouter API key (sk-or-...): ' openrouter_key
+read_secret 'Enter your AWS Access Key ID: ' aws_access_key
+read_secret 'Enter your AWS Secret Access Key: ' aws_secret_key
+
+printf '%s\n' \
+    "$anthropic_key" \
+    "$openrouter_key" \
+    "$aws_access_key" \
+    "$aws_secret_key" |
+    node "$script_dir/update-provider-env.mjs" "$env_file"
+
+unset anthropic_key openrouter_key aws_access_key aws_secret_key
+
+printf '\nProvider fallback credentials updated in %s.\n' "$env_file"
+printf 'The file is owner-readable only; do not commit or share it.\n\n'
+printf 'Pricing Summary:\n'
+printf '===============\n\n'
+printf 'Haiku models: FREE for all users (100%% subsidized)\n'
+printf '%s\n' "Sonnet models: ~83% subsidized (\$0.50/\$2.50 vs \$3/\$15)"
+printf '%s\n' "Opus models: 80% subsidized (\$3/\$15 vs \$15/\$75)"
+printf 'GPT-3.5: FREE for all users\n'
+printf '%s\n' "GPT-4: 80% subsidized (\$2/\$6 vs \$10/\$30)"
+printf 'Llama models: FREE for all users\n\n'
+printf 'Review providerCost and billedCost in the active config before billing users.\n'
