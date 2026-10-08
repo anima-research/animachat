@@ -63,12 +63,19 @@ export class ContextManager {
     messages: Message[],
     newMessage?: Message,
     participant?: Participant,
-    modelMaxContext?: number
+    modelMaxContext?: number,
+    options: { promptCaching?: boolean } = {}
   ): Promise<{
     formattedMessages: any[]; // Provider-specific format
     cacheKey?: string;
     window: ContextWindow;
   }> {
+    // promptCaching: false = the caller has decided no cache markers go out on this
+    // request (conversation/participant setting, or a model whose provider rejects
+    // cache_control). The strategy still applies its window limits; the markers,
+    // the cacheable prefix, the saved cache marker and the hit/miss statistics are
+    // left out, because nothing is cached.
+    const promptCaching = options.promptCaching !== false;
     // Determine context management settings (participant overrides conversation)
     const contextManagement = participant?.contextManagement || 
                              conversation.contextManagement || 
@@ -112,10 +119,18 @@ export class ContextManager {
     const state = this.getOrCreateState(stateKey, contextManagement.strategy);
 
     // Prepare context window using persona-enhanced messages if available
-    const window = strategy.prepareContext(contextMessages, newMessage, state.cacheMarker, modelMaxContext);
+    let window = strategy.prepareContext(contextMessages, newMessage, state.cacheMarker, modelMaxContext);
+
+    if (!promptCaching) {
+      const dropped = window.cacheMarkers?.length ?? (window.cacheMarker ? 1 : 0);
+      if (dropped > 0 || window.cacheablePrefix.length > 0) {
+        Logger.cache(`[ContextManager] 🚫 Prompt caching off for ${stateKey} — dropping ${dropped} cache marker(s)`);
+      }
+      window = { ...window, cacheablePrefix: [], activeWindow: window.messages, cacheMarker: undefined, cacheMarkers: undefined };
+    }
     
     // Update cache marker if changed
-    if (window.cacheMarker?.messageId !== state.cacheMarker?.messageId) {
+    if (promptCaching && window.cacheMarker?.messageId !== state.cacheMarker?.messageId) {
       state.cacheMarker = window.cacheMarker;
     }
     
@@ -126,10 +141,13 @@ export class ContextManager {
     }
     
     // Generate cache key for the cacheable prefix
-    const cacheKey = this.generateCacheKey(window.cacheablePrefix);
+    const cacheKey = promptCaching ? this.generateCacheKey(window.cacheablePrefix) : undefined;
     
-    // Check if this is a cache hit or expiration
-    if (state.lastWindow?.metadata.cacheKey === cacheKey && cacheKey) {
+    // Check if this is a cache hit or expiration (only when caching is on — a
+    // request without markers is neither a hit nor a miss)
+    if (!promptCaching) {
+      // nothing to account for
+    } else if (state.lastWindow?.metadata.cacheKey === cacheKey && cacheKey) {
       // Check if cache might have expired
       if (state.lastCacheTime) {
         const now = new Date();

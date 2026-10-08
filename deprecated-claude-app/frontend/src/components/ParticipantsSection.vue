@@ -671,9 +671,13 @@ function setParticipantContextOverrideField(contextOverrideFieldName: string, va
 }
 
 function updateContextOverrideStrategy(strategy: string) {
-  setParticipantContextOverrideField("strategy", strategy);
-  // reset to default values for new strategy (this uses the assigned strategy when looking up)
-  setParticipantField("contextManagement", getDefaultContextOverride(strategy));
+  // Reset the strategy-specific limits to their defaults, but keep the
+  // prompt-caching choice — it is independent of the strategy.
+  const promptCaching = getParticipantContextOverrideField('promptCaching', undefined);
+  setParticipantField("contextManagement", {
+    ...getDefaultContextOverride(strategy),
+    ...(promptCaching === undefined ? {} : { promptCaching })
+  });
 }
 
 // Model-specific settings for the selected participant
