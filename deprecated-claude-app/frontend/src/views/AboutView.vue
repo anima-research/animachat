@@ -319,11 +319,9 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router';
 import ArcLogo from '@/components/ArcLogo.vue';
 import { useSiteConfig } from '@/composables/useSiteConfig';
 
-const router = useRouter();
 const { config: siteConfig, features, links } = useSiteConfig();
 </script>
 

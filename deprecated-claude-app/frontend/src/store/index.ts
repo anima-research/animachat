@@ -1,4 +1,5 @@
 import { reactive, inject, InjectionKey, App } from 'vue';
+import type { UnwrapNestedRefs } from 'vue';
 import type { User, Conversation, Message, Model, OpenRouterModel, UserDefinedModel, CreateUserModel, UpdateUserModel, UserGrantSummary, WsAttachment } from '@deprecated-claude/shared';
 import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { api } from '../services/api';
@@ -57,7 +58,7 @@ interface StoreState {
 }
 
 export interface Store {
-  state: StoreState;
+  state: UnwrapNestedRefs<StoreState>;
   
   // Getters
   isAuthenticated: boolean;
@@ -69,18 +70,18 @@ export interface Store {
   // Actions
   loadUser(): Promise<void>;
   login(email: string, password: string): Promise<void>;
-  register(email: string, password: string, name: string, inviteCode?: string): Promise<{ requiresVerification?: boolean } | void>;
+  register(email: string, password: string, name: string, inviteCode?: string, tosAgreed?: boolean, ageVerified?: boolean): Promise<{ requiresVerification?: boolean } | void>;
   logout(): void;
   
   loadConversations(): Promise<void>;
-  loadConversation(id: string): Promise<void>;
+  loadConversation(id: string, retryCount?: number): Promise<void>;
   createConversation(model: string, title?: string, format?: 'standard' | 'prefill'): Promise<Conversation>;
   updateConversation(id: string, updates: Partial<Conversation>): Promise<void>;
   archiveConversation(id: string): Promise<void>;
   duplicateConversation(id: string): Promise<Conversation>;
   compactConversation(id: string): Promise<{ success: boolean; result: any; message: string }>;
   
-  loadMessages(conversationId: string): Promise<void>;
+  loadMessages(conversationId: string, retryCount?: number): Promise<void>;
   sendMessage(content: string, participantId?: string, responderId?: string, attachments?: Array<{ fileName: string; fileType: string; content: string; isImage?: boolean }>, explicitParentBranchId?: string, hiddenFromAi?: boolean, samplingBranches?: number): Promise<void>;
   continueGeneration(responderId?: string, explicitParentBranchId?: string, samplingBranches?: number): Promise<void>;
   regenerateMessage(messageId: string, branchId: string, parentBranchId?: string, samplingBranches?: number): Promise<void>;
@@ -105,7 +106,7 @@ export interface Store {
   createCustomModel(data: CreateUserModel): Promise<UserDefinedModel>;
   updateCustomModel(id: string, data: UpdateUserModel): Promise<UserDefinedModel>;
   deleteCustomModel(id: string): Promise<void>;
-  testCustomModel(id: string): Promise<{ success: boolean; message?: string; error?: string; response?: string }>;
+  testCustomModel(id: string): Promise<{ success: boolean; message?: string; error?: string; suggestion?: string; response?: string }>;
   loadSystemConfig(): Promise<void>;
   
   connectWebSocket(): void;
@@ -487,7 +488,8 @@ export function createStore(): {
       state.user = null;
       state.conversations = [];
       state.currentConversation = null;
-      state.messages = [];
+      state.allMessages = [];
+      state.messagesVersion++;
       this.disconnectWebSocket();
     },
     

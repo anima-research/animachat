@@ -570,8 +570,7 @@ import { api } from '@/services/api';
 import type { 
   ImportFormat, 
   ImportPreview, 
-  ParticipantMapping,
-  Model 
+  ParticipantMapping
 } from '@deprecated-claude/shared';
 
 type ImportFormatOption = ImportFormat | 'claude_archive';
@@ -863,12 +862,13 @@ async function previewImport() {
       content
     });
     
-    preview.value = response.data;
+    const loadedPreview: ImportPreview = response.data;
+    preview.value = loadedPreview;
     
     // Initialize participant mappings and editable list
     participantMappings.value = {};
     editableParticipants.value = [];
-    for (const participant of preview.value.detectedParticipants) {
+    for (const participant of loadedPreview.detectedParticipants) {
       const mapping = {
         sourceName: participant.name,
         targetName: participant.name,
@@ -879,20 +879,20 @@ async function previewImport() {
     }
     
     // Set suggested values
-    conversationTitle.value = preview.value.title || 'Imported Conversation';
-    conversationFormat.value = preview.value.suggestedFormat;
+    conversationTitle.value = loadedPreview.title || 'Imported Conversation';
+    conversationFormat.value = loadedPreview.suggestedFormat;
     
     // For Arc Chat format, get model from participants or conversation
     if (selectedFormat.value === 'arc_chat') {
       // Use conversation format from metadata
-      if (preview.value.metadata?.conversation?.format) {
-        conversationFormat.value = preview.value.metadata.conversation.format;
+      if (loadedPreview.metadata?.conversation?.format) {
+        conversationFormat.value = loadedPreview.metadata.conversation.format;
       }
       
       // Get primary model from participants or conversation
-      const participants = preview.value.metadata?.participants || [];
+      const participants = loadedPreview.metadata?.participants || [];
       const assistantParticipant = participants.find((p: any) => p.type === 'assistant');
-      const importedModel = assistantParticipant?.model || preview.value.metadata?.conversation?.model;
+      const importedModel = assistantParticipant?.model || loadedPreview.metadata?.conversation?.model;
       
       if (importedModel) {
         const matchingModel = models.value.find(m => m.id === importedModel);
@@ -906,7 +906,7 @@ async function previewImport() {
       // On match: pre-select it. On miss: leave selectedModel empty so the
       // user has to pick consciously (Import button is disabled until then).
       // Defensive: backend also returns 400 if no model is sent on a miss.
-      const cxModel = preview.value.metadata?.model;
+      const cxModel = loadedPreview.metadata?.model;
       if (cxModel?.resolved?.matched && cxModel.resolved.id) {
         selectedModel.value = cxModel.resolved.id;
       } else {
@@ -914,7 +914,7 @@ async function previewImport() {
       }
     } else {
       // Try to match the model from the import metadata for other formats
-      const importedModel = preview.value.metadata?.model;
+      const importedModel = loadedPreview.metadata?.model;
       if (importedModel) {
         // Check if we have a direct match by ID
         const matchingModel = models.value.find(m => m.id === importedModel);

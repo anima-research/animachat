@@ -252,7 +252,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
-import type { Persona, PersonaHistoryBranch, PersonaParticipation, Model, CreatePersonaRequest } from '@deprecated-claude/shared';
+import type { Persona, PersonaHistoryBranch, PersonaParticipation, CreatePersonaRequest } from '@deprecated-claude/shared';
 import { api } from '@/services/api';
 import { useStore } from '@/store';
 import CreatePersonaDialog from '@/components/CreatePersonaDialog.vue';

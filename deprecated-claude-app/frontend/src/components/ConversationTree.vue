@@ -338,16 +338,6 @@ function filterToActivePath(originalRoot: d3.HierarchyNode<TreeNode>): d3.Hierar
             .filter(c => c !== null) as TreeNode[]
         : [];
       
-      // Check if this node has descendants that were filtered out
-      const originalDescendantCount = countDescendants(node);
-      const filteredDescendantCount = filteredChildren.reduce((sum, c) => {
-        // Count children of filtered children (since we kept immediate children)
-        const childInOriginal = node.children?.find(
-          oc => oc.data.messageId === c.messageId && oc.data.branchId === c.branchId
-        );
-        return sum + 1 + (childInOriginal ? countDescendants(childInOriginal) : 0);
-      }, 0);
-      
       // If the node originally had children but now has fewer descendants, mark it
       if (node.children && node.children.length > 0) {
         // Check if any child has descendants that are now hidden
@@ -453,7 +443,7 @@ function hasBlueOutline(d: d3.HierarchyPointNode<TreeNode>) {
 }
 
 // STUBBED: Unread check disabled pending architecture review
-function isUnread(d: d3.HierarchyPointNode<TreeNode>): boolean {
+function isUnread(_d: d3.HierarchyPointNode<TreeNode>): boolean {
   return false;
 }
 
@@ -503,7 +493,7 @@ function renderTree() {
   
   // Determine which branches are in the active path
   const activePath = new Set<string>();
-  let currentNode = treeNodes.descendants().find(d => 
+  let currentNode: d3.HierarchyPointNode<TreeNode> | null | undefined = treeNodes.descendants().find(d => 
     d.data.messageId === props.currentMessageId && 
     d.data.branchId === props.currentBranchId
   );
@@ -592,10 +582,10 @@ function renderTree() {
   // Add circles for nodes with outlines
   node.append('circle')
     .attr('r', baseNodeRadius)
-    .style('fill', d => {
+    .style('fill', () => {
       return '#757575'; // Default grey
     })
-    .style('fill-opacity', d => {
+    .style('fill-opacity', () => {
       return 0.5;
     })
     .style('stroke', d => {
@@ -608,12 +598,11 @@ function renderTree() {
       }
       return 'none';
     })
-    .style('stroke-width', d => {
-      
+    .style('stroke-width', () => {
       return Math.max(2, baseNodeRadius / 5); // Normal thickness
     })
     .style('cursor', 'pointer')
-    .on('click', (event, d) => {
+    .on('click', (_event, d) => {
       emit('navigate-to-branch', d.data.messageId, d.data.branchId);
     })
     .on('mouseenter', (event, d) => {

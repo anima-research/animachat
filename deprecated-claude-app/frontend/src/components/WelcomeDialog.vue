@@ -236,7 +236,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, watch } from 'vue';
 import ArcLogo from '@/components/ArcLogo.vue';
 import { api } from '@/services/api.js';
 import type { UserGrantSummary } from '@deprecated-claude/shared';

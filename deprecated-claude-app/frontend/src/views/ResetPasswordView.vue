@@ -86,11 +86,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import { api } from '@/services/api';
 
 const route = useRoute();
-const router = useRouter();
 
 const state = ref<'loading' | 'form' | 'success' | 'error'>('loading');
 const errorMessage = ref('');

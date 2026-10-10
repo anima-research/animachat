@@ -207,10 +207,8 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router';
 import { useSiteConfig } from '@/composables/useSiteConfig';
 
-const router = useRouter();
 const { config: siteConfig, links, operator } = useSiteConfig();
 </script>
 

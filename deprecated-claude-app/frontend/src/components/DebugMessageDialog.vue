@@ -162,7 +162,7 @@ watch(() => props.modelValue, async (isOpen) => {
   }
 }, { immediate: true });
 
-function truncateLongStrings(obj: any, path: string = '', parentKey: string = ''): any {
+function truncateLongStrings(obj: any, path: string = '', _parentKey: string = ''): any {
   if (typeof obj === 'string') {
     // Detect base64 data in attachment tags: <attachment...>base64data</attachment>
     const attachmentMatch = obj.match(/<attachment[^>]*>\n([A-Za-z0-9+/=\n\r]+)\n<\/attachment>/);

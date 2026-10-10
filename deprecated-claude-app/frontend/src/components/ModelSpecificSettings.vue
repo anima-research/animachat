@@ -35,7 +35,7 @@
       <!-- Number slider -->
       <div v-else-if="setting.type === 'number'" class="number-setting">
         <v-slider
-          :model-value="getValue(setting.key, setting.default)"
+          :model-value="getValue(setting.key, setting.default) as number"
           @update:model-value="setValue(setting.key, $event)"
           :min="setting.min"
           :max="setting.max"
@@ -67,7 +67,7 @@
       <!-- Multi-select -->
       <v-select
         v-else-if="setting.type === 'multiselect'"
-        :model-value="getValue(setting.key, setting.default)"
+        :model-value="getValue(setting.key, setting.default) as string[]"
         @update:model-value="setValue(setting.key, $event)"
         :items="setting.options"
         :item-title="'label'"
@@ -81,7 +81,7 @@
         chips
         closable-chips
       >
-        <template v-slot:chip="{ item, index }">
+        <template v-slot:chip="{ item }">
           <v-chip
             :color="item.value === 'IMAGE' ? 'purple' : 'blue'"
             size="small"

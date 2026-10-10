@@ -104,7 +104,6 @@ onMounted(async () => {
       // Store the auth token and user
       localStorage.setItem('token', response.data.token);
       store.state.user = response.data.user;
-      store.state.isAuthenticated = true;
       
       state.value = 'verified';
       

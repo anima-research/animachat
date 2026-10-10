@@ -142,7 +142,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { api } from '@/services/api';
-import type { Conversation, Message } from '@deprecated-claude/shared';
+import type { Conversation } from '@deprecated-claude/shared';
 
 const props = defineProps<{
   modelValue: boolean;
