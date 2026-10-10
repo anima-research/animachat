@@ -1,0 +1,158 @@
+<template>
+  <!-- Renders nothing until billing is confirmed enabled, so this is safe to
+       ship before Stripe is configured. -->
+  <section v-if="enabled" class="mb-4">
+    <h4 class="text-h6 mb-3">Buy Credits</h4>
+
+    <!-- Post-redirect status from Stripe Checkout -->
+    <v-alert
+      v-if="returnMessage"
+      :type="returnMessage.type"
+      variant="tonal"
+      class="mb-3"
+      closable
+      @click:close="returnMessage = null"
+    >
+      {{ returnMessage.text }}
+    </v-alert>
+
+    <p class="text-body-2 text-grey mb-3">
+      1 credit = ${{ usdPerCredit.toFixed(2) }} of model usage.
+      <span v-if="markup > 1">Priced at ${{ pricePerCredit.toFixed(2) }} per credit.</span>
+    </p>
+
+    <!-- Preset amounts (in whole credits) -->
+    <div v-if="presets.length" class="d-flex flex-wrap mb-3" style="gap: 8px;">
+      <v-btn
+        v-for="preset in presets"
+        :key="preset"
+        :variant="credits === preset ? 'flat' : 'outlined'"
+        :color="credits === preset ? 'primary' : undefined"
+        size="small"
+        @click="credits = preset"
+      >
+        {{ preset }}
+      </v-btn>
+    </div>
+
+    <div class="d-flex align-center" style="gap: 8px;">
+      <v-text-field
+        v-model.number="credits"
+        type="number"
+        :min="minCredits"
+        :max="maxCredits"
+        step="1"
+        suffix="credits"
+        density="compact"
+        variant="outlined"
+        hide-details
+        style="max-width: 200px;"
+      />
+      <v-btn
+        color="primary"
+        :disabled="!isValid || submitting"
+        :loading="submitting"
+        @click="purchase"
+      >
+        Purchase
+      </v-btn>
+    </div>
+
+    <p v-if="isValid" class="text-caption text-grey mt-2 mb-0">
+      Total: ${{ totalCost }}
+    </p>
+    <p v-else-if="credits" class="text-caption text-error mt-2 mb-0">
+      Enter a whole number of credits between {{ minCredits }} and {{ maxCredits }}.
+    </p>
+
+    <v-alert v-if="error" type="error" variant="tonal" class="mt-3" closable @click:close="error = null">
+      {{ error }}
+    </v-alert>
+  </section>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from 'vue';
+import { api } from '@/services/api';
+import type { BillingConfig } from '@deprecated-claude/shared';
+
+// config is owned by the parent (GrantsTab) and passed in, so the billing-enabled
+// state drives both this section and the parent's intro copy from a single fetch.
+const props = defineProps<{ config: BillingConfig | null }>();
+const emit = defineEmits<{ refresh: [] }>();
+
+const credits = ref<number | null>(null);
+const submitting = ref(false);
+const error = ref<string | null>(null);
+const returnMessage = ref<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
+
+const enabled = computed(() => props.config?.enabled === true);
+const usdPerCredit = computed(() => props.config?.usdPerCredit ?? 1);
+const markup = computed(() => props.config?.creditMarkup ?? 1);
+const pricePerCredit = computed(() => usdPerCredit.value * markup.value);
+const minCredits = computed(() => props.config?.minCredits ?? 1);
+const maxCredits = computed(() => props.config?.maxCredits ?? 100000);
+const presets = computed(() => props.config?.presetsCredits ?? []);
+
+const isValid = computed(() => {
+  const c = Number(credits.value);
+  return Number.isInteger(c) && c >= minCredits.value && c <= maxCredits.value;
+});
+
+const totalCost = computed(() => {
+  if (!isValid.value) return '0.00';
+  return (Number(credits.value) * pricePerCredit.value).toFixed(2);
+});
+
+// Default the input to the first preset once config arrives (and only if the user
+// hasn't already typed a value). immediate covers config already present at mount.
+watch(presets, (list) => {
+  if (!credits.value && list.length) {
+    credits.value = list[0];
+  }
+}, { immediate: true });
+
+async function purchase() {
+  if (!isValid.value || submitting.value) return;
+  submitting.value = true;
+  error.value = null;
+  try {
+    const response = await api.post('/billing/checkout', { credits: Number(credits.value) });
+    const url = response.data?.url;
+    if (!url) throw new Error('No checkout URL returned');
+    window.location.href = url; // hand off to Stripe Checkout
+  } catch (err: any) {
+    error.value = err?.response?.data?.error || err?.message || 'Failed to start checkout';
+    submitting.value = false;
+  }
+  // On success we navigate away, so no need to reset submitting.
+}
+
+// Handle the redirect back from Stripe Checkout (success_url / cancel_url carry
+// ?purchase=success|cancelled). Show a message, refresh balances, clean the URL.
+function handleReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const purchase = params.get('purchase');
+  if (!purchase) return;
+
+  if (purchase === 'success') {
+    returnMessage.value = {
+      type: 'success',
+      text: 'Payment received — your credits will appear shortly.',
+    };
+    emit('refresh');
+  } else if (purchase === 'cancelled') {
+    returnMessage.value = { type: 'info', text: 'Checkout cancelled — no charge was made.' };
+  }
+
+  // Strip the query param so a refresh doesn't re-trigger the message.
+  params.delete('purchase');
+  const query = params.toString();
+  const newUrl = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
+  window.history.replaceState({}, '', newUrl);
+}
+
+onMounted(() => {
+  handleReturn();
+});
+</script>
