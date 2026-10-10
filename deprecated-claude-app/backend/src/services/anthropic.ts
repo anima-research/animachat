@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Message, getActiveBranch, ModelSettings, getReasoningEffort } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { llmLogger } from '../utils/llmLogger.js';
+import { safeErrorLog } from '../utils/safe-log.js';
 import sharp from 'sharp';
 import { isImageFile } from './attachment-utils.js';
 import { anthropicClientOptions, isAnthropicOAuthToken, withClaudeCodePrefix } from './anthropic-auth.js';
@@ -587,7 +588,7 @@ export class AnthropicService {
         }
       };
     } catch (error) {
-      console.error('Anthropic streaming error:', error);
+      safeErrorLog('Anthropic streaming error:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       
       // Log the error
