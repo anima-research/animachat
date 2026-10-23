@@ -57,6 +57,37 @@ interface OpenRouterResponse {
   };
 }
 
+/**
+ * Build the error message for a non-2xx OpenRouter response. OpenRouter says
+ * why it rejected a request in a JSON body ({"error": {"message", "metadata"}});
+ * without the body a context overflow reached the user as a bare
+ * "400 Bad Request".
+ */
+export async function describeErrorResponse(
+  response: { status: number; statusText: string; text(): Promise<string> }
+): Promise<string> {
+  const body = (await response.text().catch(() => '')).trim();
+  let detail = body;
+  try {
+    const error = JSON.parse(body)?.error;
+    if (typeof error?.message === 'string' && error.message) {
+      detail = error.message;
+      // For upstream failures the message is generic ("Provider returned
+      // error") and the provider's own reply sits in metadata.raw.
+      const raw = error.metadata?.raw;
+      if (raw) {
+        const provider = error.metadata?.provider_name || 'provider';
+        detail += ` (${provider}: ${typeof raw === 'string' ? raw : JSON.stringify(raw)})`;
+      }
+    }
+  } catch {
+    // Not JSON (a gateway error page, say): keep the text as it came.
+  }
+  if (!detail) detail = response.statusText;
+  if (detail.length > 1000) detail = `${detail.slice(0, 1000)}…`;
+  return `OpenRouter API error (${response.status}): ${detail}`;
+}
+
 export class OpenRouterService {
   private db: Database;
   private apiKey: string;
@@ -225,6 +256,7 @@ export class OpenRouterService {
     const startTime = Date.now();
     const chunks: string[] = [];
     let requestBody: any = null;  // Track for error metrics
+    let generationStarted = false;  // Only failures after this are billed
 
     try {
       // Determine the provider from the model ID for cache syntax
@@ -360,8 +392,11 @@ export class OpenRouterService {
       });
 
       if (!response.ok) {
-        throw new Error(`OpenRouter API error: ${response.status} ${response.statusText}`);
+        throw new Error(await describeErrorResponse(response));
       }
+      // OpenRouter accepted the request; from here on a failure may have
+      // consumed input tokens.
+      generationStarted = true;
 
       const reader = response.body?.getReader();
       if (!reader) {
@@ -771,8 +806,15 @@ export class OpenRouterService {
         duration
       });
       
-      // Estimate input tokens from request for cost tracking on failures
-      // OpenRouter still charges for failed requests that were processed
+      // Estimate input tokens from request for cost tracking on failures.
+      // OpenRouter still charges for failed requests that were processed, but
+      // a request it rejected with an error status (a context overflow, a bad
+      // parameter) or that never reached it was not processed, so it costs
+      // nothing and is not charged here either.
+      if (!generationStarted) {
+        console.log('[OpenRouter] Request rejected before generation; not charging for it');
+        throw error;
+      }
       try {
         const requestStr = JSON.stringify(requestBody || {});
         const estimatedInputTokens = Math.ceil(requestStr.length / 4); // Rough estimate
