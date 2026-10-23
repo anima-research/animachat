@@ -9,7 +9,7 @@ import { ApiKeyManager } from './api-key-manager.js';
 import { ModelLoader } from '../config/model-loader.js';
 import { Logger } from '../utils/logger.js';
 import { ContextManager } from './context-manager.js';
-import { isImageFile } from './attachment-utils.js';
+import { estimateAttachmentTokens, isImageFile } from './attachment-utils.js';
 
 // Internal format type that includes 'messages', 'completion', and 'pseudo-prefill' modes
 // - 'standard': Traditional alternating user/assistant (no participant names)
@@ -394,11 +394,15 @@ export class InferenceService {
     // Clamp maxTokens to what is left of the context window. Max tokens now
     // defaults to the model's output limit, and providers reject requests
     // whose input plus max_tokens exceed the window. The estimate is the
-    // usual ~4 characters per token over message text and the system prompt.
+    // usual ~4 characters per token over message text and the system prompt,
+    // plus the attachments: the provider formatters inline text attachments
+    // into the request, so a large file can fill most of the window.
     if (model.contextWindow) {
       const approxInputTokens = formattedMessages.reduce((total, message) => {
         const branch = getActiveBranch(message);
-        return total + Math.ceil((branch?.content?.length || 0) / 4) + 8;
+        const attachmentTokens = (branch?.attachments || []).reduce(
+          (sum, attachment) => sum + estimateAttachmentTokens(attachment), 0);
+        return total + Math.ceil((branch?.content?.length || 0) / 4) + 8 + attachmentTokens;
       }, Math.ceil((effectiveSystemPrompt?.length || 0) / 4));
       const remaining = model.contextWindow - approxInputTokens - 1024;
       // When nothing is left this still sends the smallest useful request so
