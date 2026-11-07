@@ -3353,11 +3353,21 @@ export class Database {
     const updatedBranches = [...message.branches];
     updatedBranches[branchIndex] = updatedBranch;
     
+    // The split branch becomes the message's shared active branch. The new message
+    // hangs off this branch, and the client only shows a message whose active-branch
+    // parent is on the visible path: if the shared selection pointed at a sibling
+    // (detached mode, another client's switch, a switch that never persisted), the
+    // lower half — and everything after it — vanished, and stayed gone after a reload.
     const originalMessage: Message = {
       ...message,
-      branches: updatedBranches
+      branches: updatedBranches,
+      activeBranchId: branchId
     };
     this.messages.set(messageId, originalMessage);
+    if (message.activeBranchId !== branchId) {
+      await this.uiStateStore.setSharedActiveBranch(conversationId, messageId, branchId);
+      console.log(`[splitMessage] Shared active branch of ${messageId} moved to the split branch ${branchId}`);
+    }
     
     // Create a new message with the second part
     const newMessageId = uuidv4();
