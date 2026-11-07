@@ -353,7 +353,7 @@ function formatModelName(modelId: string): string {
   overflow: visible;
   word-wrap: break-word;
   overflow-wrap: break-word;
-  padding: 12px 16px 28px 16px;
+  padding: 12px 12px 28px 12px;
 }
 
 /* Collapsed composite is clickable with blue left bar */
@@ -362,13 +362,15 @@ function formatModelName(modelId: string): string {
   border-left: 3px solid rgba(var(--v-theme-primary), 0.6);
 }
 
-.composite-collapsed:hover {
-  filter: brightness(1.08);
-  border-left-color: rgb(var(--v-theme-primary));
+@media (hover: hover) {
+  .composite-collapsed:hover {
+    filter: brightness(1.05);
+    border-left-color: rgb(var(--v-theme-primary));
+  }
 }
 
 /* Wide screens: limit width */
-@media (min-width: 700px) {
+@media (min-width: 600px) {
   .message-container {
     max-width: 80%;
   }
@@ -406,21 +408,37 @@ function formatModelName(modelId: string): string {
 }
 
 .message-name {
-  font-size: 0.9rem;
+  font-size: 0.875rem;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
 }
 
 .message-avatar {
   flex-shrink: 0;
 }
 
-/* Message content - matches MessageComponent */
+/* Message content - IDENTICAL to MessageComponent (font, leading, paragraph
+   spacing), so a group collapses and expands without the text moving */
 .message-content {
-  font-size: 0.95rem;
-  line-height: 1.6;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  /* no overflow-x:hidden here (MessageComponent has it): with the inline join
+     markers it makes this box a scroll container and paints a scrollbar */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  margin-top: 6px;
 }
 
 .message-content :deep(p) {
+  margin-top: 0;
   margin-bottom: 0.5em;
+}
+
+.message-content :deep(p:first-child) {
+  margin-top: 0;
 }
 
 .message-content :deep(p:last-child) {
@@ -453,6 +471,7 @@ function formatModelName(modelId: string): string {
   font-weight: bold;
   padding: 0 4px;
   font-size: 1.2em;
+  line-height: 0;
   vertical-align: middle;
 }
 
