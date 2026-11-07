@@ -9,63 +9,30 @@
  * whenever the phrase repeats, the context is short, or the rendered text carries
  * `&nbsp;` where the source has spaces. Both made every split after the first cut
  * earlier than the click.
+ *
+ * How it works now: the rendered text before the caret is read from the DOM
+ * (`renderedPrefix`), and `sourceSplitIndex` ALIGNS the whole prefix against the
+ * source as a subsequence — markdown syntax, link targets and HTML tags are the
+ * characters the alignment skips. Because the alignment starts at the beginning of
+ * the message, a repeated phrase, a formatted phrase or a long URL cannot pull the
+ * cut to another occurrence. A tail search remains only as a fallback for text the
+ * alignment cannot follow (e.g. rendered math).
  */
 
-const NBSP = / /g;
-
-/** Rendered text of a container up to a (node, offset) caret, and its total length. */
+/** Rendered text of `container` up to the DOM boundary (node, offset), and all of it. */
 export function renderedPrefix(container: Node, node: Node, offset: number): { prefix: string; total: string } | null {
   if (!container.contains(node)) return null;
   const doc = container.ownerDocument || document;
-  const walker = doc.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  let prefix = '';
-  let total = '';
-  let reached = false;
-  let current: Node | null = walker.nextNode();
-  // Caret on an element node means "before its offset-th child"; resolve to the
-  // first text node at/after that child so the prefix stops in the right place.
-  let caretText: Node | null = null;
-  let caretOffset = offset;
-  if (node.nodeType === Node.TEXT_NODE) {
-    caretText = node;
-  } else {
-    const child = node.childNodes[offset] || null;
-    caretText = child ? firstTextIn(child, doc) : null;
-    caretOffset = 0;
-    if (!caretText) {
-      // caret after the last child of the element: everything inside it is "before"
-      const all = textOf(container);
-      const inside = textOf(node);
-      const idx = all.indexOf(inside);
-      const p = (idx >= 0 ? all.slice(0, idx + inside.length) : all);
-      return { prefix: p.replace(NBSP, ' '), total: all.replace(NBSP, ' ') };
-    }
+  const range = doc.createRange();
+  try {
+    range.setStart(container, 0);
+    range.setEnd(node, offset);
+  } catch {
+    return null;
   }
-  while (current) {
-    const text = current.textContent || '';
-    if (!reached) {
-      if (current === caretText) {
-        prefix += text.slice(0, caretOffset);
-        reached = true;
-      } else {
-        prefix += text;
-      }
-    }
-    total += text;
-    current = walker.nextNode();
-  }
-  if (!reached) return null;
-  return { prefix: prefix.replace(NBSP, ' '), total: total.replace(NBSP, ' ') };
-}
-
-function firstTextIn(node: Node, doc: Document): Node | null {
-  if (node.nodeType === Node.TEXT_NODE) return node;
-  const w = doc.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-  return w.nextNode();
-}
-
-function textOf(node: Node): string {
-  return node.textContent || '';
+  // Range.toString() is exactly the text before the boundary, in document order —
+  // nothing after a <br> or an empty element gets pulled in.
+  return { prefix: range.toString(), total: container.textContent || '' };
 }
 
 /** The caret under a point, in the browser's dialect of the API. */
@@ -82,74 +49,98 @@ export function caretAtPoint(doc: Document, x: number, y: number): { node: Node;
   return null;
 }
 
-function normalize(s: string): string {
-  return s.replace(NBSP, ' ');
+const NBSP = / /g;
+const WS = /\s/;
+
+/**
+ * A copy of the source, same length, with the characters the renderer never shows
+ * replaced by spaces: link/image targets, HTML tags, fence lines, emphasis and
+ * code marks, heading/quote/list prefixes. Positions are preserved, so an index into
+ * the mask is an index into the source.
+ */
+export function maskMarkup(source: string): string {
+  let m = source;
+  const blank = (s: string) => ' '.repeat(s.length);
+  // link and image targets: keep the text in [...], blank "(...)" and the "![" / "](" marks
+  m = m.replace(/\]\([^)\n]*\)/g, blank);
+  m = m.replace(/!\[/g, blank).replace(/[\[\]]/g, ' ');
+  // html tags and entities
+  m = m.replace(/<\/?[a-zA-Z][^>\n]*>/g, blank);
+  m = m.replace(/&(?:nbsp|amp|lt|gt|quot);/g, blank);
+  // fenced code: the fence line itself (```lang) disappears, the code stays
+  m = m.replace(/^[ \t]*(`{3,}|~{3,})[^\n]*$/gm, blank);
+  // emphasis / strike / inline code marks
+  m = m.replace(/\*{1,3}|_{1,3}|~~|`+/g, blank);
+  // block prefixes at line start: headings, quotes, bullets, numbered lists, hr
+  m = m.replace(/^[ \t]*#{1,6}[ \t]+/gm, blank);
+  m = m.replace(/^[ \t]*>[ \t]?/gm, blank);
+  m = m.replace(/^[ \t]*[-*+][ \t]+/gm, blank);
+  m = m.replace(/^[ \t]*\d+[.)][ \t]+/gm, blank);
+  m = m.replace(/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, blank);
+  // backslash escapes: show the escaped char, hide the backslash
+  m = m.replace(/\\(?=[\\`*_{}\[\]()#+\-.!>])/g, ' ');
+  return m;
+}
+
+/**
+ * Align `rendered` (a prefix of the rendered text) against `mask` as a
+ * subsequence, whitespace-insensitive on both sides. Returns the source index just
+ * after the last aligned character, or -1 if the alignment loses the thread
+ * (a rendered character that does not appear within `window` source characters —
+ * e.g. KaTeX output, which has no source letters).
+ */
+export function alignPrefix(mask: string, rendered: string, window = 160): number {
+  let i = 0; // source cursor
+  let last = -1;
+  const n = mask.length;
+  for (let j = 0; j < rendered.length; j++) {
+    const c = rendered[j];
+    if (WS.test(c)) continue;
+    // skip whitespace in the source too
+    while (i < n && WS.test(mask[i])) i++;
+    if (i < n && mask[i] === c) { last = i; i++; continue; }
+    // look a bounded distance ahead (markup the mask did not know about)
+    const k = mask.indexOf(c, i);
+    if (k === -1 || k - i > window) return -1;
+    last = k; i = k + 1;
+  }
+  return last + 1;
 }
 
 function allIndexes(hay: string, needle: string): number[] {
   const out: number[] = [];
   if (!needle) return out;
   let i = hay.indexOf(needle);
-  while (i !== -1) {
-    out.push(i);
-    i = hay.indexOf(needle, i + 1);
-  }
+  while (i !== -1) { out.push(i); i = hay.indexOf(needle, i + 1); }
   return out;
 }
 
 /**
  * Source index to split at, given the rendered text before the click and the
  * whole rendered text. Returns -1 when no honest answer exists.
- *
- * Strategy: the split point is "right after the text the user clicked", so the
- * tail of the rendered prefix is the anchor. Search the source for that tail,
- * growing it until it occurs exactly once; if the markup in the source breaks a
- * long tail, shrink instead. When several occurrences remain, take the one
- * nearest to where the click sits proportionally in the text — never blindly
- * the first.
  */
 export function sourceSplitIndex(source: string, prefix: string, total: string): number {
-  const src = normalize(source);
-  const pre = normalize(prefix);
-  const tot = normalize(total);
+  const src = source.replace(NBSP, ' ');
+  const pre = prefix.replace(NBSP, ' ');
+  const tot = total.replace(NBSP, ' ');
   if (!pre.trim()) return -1;
+
+  // 1. alignment of the whole prefix — the normal path
+  const mask = maskMarkup(src);
+  const aligned = alignPrefix(mask, pre);
+  if (aligned > 0) return Math.min(aligned, src.length);
+
+  // 2. fallback: the alignment lost the thread somewhere before the click (text the
+  //    mask cannot follow). Anchor on the last run of word characters of the prefix,
+  //    choose the occurrence nearest to the click's proportional place.
   const estimate = tot.length > 0 ? Math.round((pre.length / tot.length) * src.length) : 0;
-
-  const nearest = (idxs: number[], len: number) =>
-    idxs.reduce((best, i) => (Math.abs(i + len - estimate) < Math.abs(best + len - estimate) ? i : best), idxs[0]) + len;
-
-  // 1. grow from a modest tail until unique
-  const MIN = 12, MAX = 160;
-  let lastHits: { idxs: number[]; len: number } | null = null;
-  for (let len = Math.min(MIN, pre.length); len <= Math.min(MAX, pre.length); len += 8) {
-    const tail = pre.slice(pre.length - len);
-    const idxs = allIndexes(src, tail);
-    if (idxs.length === 1) return idxs[0] + tail.length;
-    if (idxs.length > 1) { lastHits = { idxs, len: tail.length }; continue; }
-    break; // 0 hits: markup got in the way; stop growing
-  }
-  if (lastHits) return nearest(lastHits.idxs, lastHits.len);
-
-  // 2. shrink: tails shorter than MIN. A longer tail is worth more, but a hit far
-  // from where the click sits is worth less — score both, never take the first
-  // length that happens to match somewhere (that is how a lone far match won).
-  let best: { score: number; pos: number } | null = null;
-  for (let len = Math.min(MIN - 1, pre.length); len >= 4; len--) {
-    const tail = pre.slice(pre.length - len);
-    for (const i of allIndexes(src, tail)) {
-      const pos = i + tail.length;
-      const score = Math.abs(pos - estimate) - 3 * len;
-      if (!best || score < best.score) best = { score, pos };
-    }
-  }
-  if (best) return best.pos;
-
-  // 3. last resort: the trailing run of word characters (text nodes of adjacent
-  // blocks are concatenated without a separator, so "near.The" must yield "The")
-  const m = pre.match(/[\p{L}\p{N}_]+$/u);
-  if (m) {
-    const idxs = allIndexes(src, m[0]);
-    if (idxs.length) return nearest(idxs, m[0].length);
+  const m = pre.match(/[\p{L}\p{N}_]+(?:[ .,;:!?'"-]+[\p{L}\p{N}_]+){0,4}$/u);
+  const candidates = m ? [m[0], ...m[0].split(/\s+/).slice(-1)] : [];
+  for (const needle of candidates) {
+    const idxs = allIndexes(mask, needle);
+    if (!idxs.length) continue;
+    const best = idxs.reduce((b, i) => (Math.abs(i + needle.length - estimate) < Math.abs(b + needle.length - estimate) ? i : b), idxs[0]);
+    return best + needle.length;
   }
   return -1;
 }

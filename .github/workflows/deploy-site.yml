@@ -79,6 +79,9 @@ jobs:
         npm run build -w shared
         npm run build -w backend
         npm run build -w frontend
+    - name: Frontend unit tests
+      working-directory: deprecated-claude-app
+      run: npm run test -w frontend
 
     - name: Prepare deployment artifacts
       working-directory: deprecated-claude-app
