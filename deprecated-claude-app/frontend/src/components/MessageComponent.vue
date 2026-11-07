@@ -929,6 +929,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onUpdated, watch } from 'vue';
+import { caretAtPoint, renderedPrefix, sourceSplitIndex } from '@/utils/splitPosition';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Attachment, Message, Participant } from '@deprecated-claude/shared';
@@ -1891,60 +1892,36 @@ function saveEditOnly() {
 function handleContentContextMenu(event: MouseEvent) {
   // Only show for assistant messages
   if (currentBranch.value?.role !== 'assistant') return;
-  
+
   event.preventDefault();
-  
-  // Get the text selection or caret position
+
+  // Where in the RENDERED text did the user click? A right-click does not move
+  // the caret, so window.getSelection() is stale after the first split (that
+  // was the bug: every later cut used the earlier caret). Use the click point;
+  // a non-empty selection inside this message means "split after the selection".
+  const container = event.currentTarget as HTMLElement | null;
+  if (!container) return;
+  const source = currentBranch.value?.content || '';
+
+  let caret: { node: Node; offset: number } | null = null;
   const selection = window.getSelection();
-  if (!selection) return;
-  
-  // Get selected text or the word around caret
-  let selectedText = selection.toString();
-  let searchPosition = 0;
-  
-  if (selectedText.length === 0) {
-    // No selection - use the focused text node and offset
+  if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
     const range = selection.getRangeAt(0);
-    const node = range.startContainer;
-    
-    if (node.nodeType === Node.TEXT_NODE) {
-      const textContent = node.textContent || '';
-      const offset = range.startOffset;
-      // Get surrounding context (20 chars before)
-      const contextStart = Math.max(0, offset - 20);
-      selectedText = textContent.substring(contextStart, offset);
-    }
+    if (container.contains(range.endContainer)) caret = { node: range.endContainer, offset: range.endOffset };
   }
-  
-  // Find this text in the source content
-  const sourceContent = currentBranch.value?.content || '';
-  
-  if (selectedText.length > 0) {
-    // Find the position in source - search for the selected/context text
-    const index = sourceContent.indexOf(selectedText);
-    if (index !== -1) {
-      // Split after this text
-      searchPosition = index + selectedText.length;
-    } else {
-      // Fallback: estimate position based on selection range
-      // Try to find partial match
-      for (let len = selectedText.length; len >= 5; len--) {
-        const partial = selectedText.substring(selectedText.length - len);
-        const idx = sourceContent.indexOf(partial);
-        if (idx !== -1) {
-          searchPosition = idx + partial.length;
-          break;
-        }
-      }
-    }
-  }
-  
+  if (!caret) caret = caretAtPoint(document, event.clientX, event.clientY);
+  if (!caret) return;
+
+  const rendered = renderedPrefix(container, caret.node, caret.offset);
+  if (!rendered) return;
+  const searchPosition = sourceSplitIndex(source, rendered.prefix, rendered.total);
+
   // Validate position
-  if (searchPosition <= 0 || searchPosition >= sourceContent.length) {
+  if (searchPosition <= 0 || searchPosition >= source.length) {
     // Can't determine valid split position
     return;
   }
-  
+
   contextSplitPosition.value = searchPosition;
   // Use clientX/clientY for fixed positioning (viewport-relative)
   splitMenuPosition.value = { x: event.clientX, y: event.clientY };

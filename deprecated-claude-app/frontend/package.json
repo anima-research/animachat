@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "vue-tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@iconify/vue": "^5.0.0",
