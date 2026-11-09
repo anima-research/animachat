@@ -82,6 +82,7 @@ const INPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-opus-5': 5.00,
   'claude-fable-5': 10.00,
   'claude-fable-5-1': 10.00,
+  'claude-fable-5-2': 8.00,
   // Claude 4.x models (2025) - by providerModelId
   'claude-opus-4-8': 5.00,
   'claude-opus-4-7': 5.00,
@@ -182,6 +183,7 @@ const OUTPUT_PRICING_PER_MILLION: Record<string, number> = {
   'claude-opus-5': 25.00,
   'claude-fable-5': 50.00,
   'claude-fable-5-1': 50.00,
+  'claude-fable-5-2': 40.00,
   // Claude 4.x models (2025) - by providerModelId
   'claude-opus-4-8': 25.00,
   'claude-opus-4-7': 25.00,
