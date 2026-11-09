@@ -41,11 +41,19 @@ export class AnthropicService {
       // significant cost-savings regression for long-running conversations
       // (which were the whole point of the 1h TTL choice).
       defaultHeaders: {
-        'anthropic-beta': this.oauth
-          ? 'oauth-2025-04-20,extended-cache-ttl-2025-04-11'
-          : 'extended-cache-ttl-2025-04-11',
+        'anthropic-beta': this.betaHeader(),
       },
     });
+  }
+
+  // The client-wide anthropic-beta value, plus any per-request extras. A
+  // per-request header replaces the default one rather than merging with it,
+  // so a request that needs an extra beta must resend the defaults too.
+  private betaHeader(extra: string[] = []): string {
+    const betas = this.oauth
+      ? ['oauth-2025-04-20', 'extended-cache-ttl-2025-04-11']
+      : ['extended-cache-ttl-2025-04-11'];
+    return [...betas, ...extra].join(',');
   }
 
   async streamCompletion(
@@ -58,9 +66,15 @@ export class AnthropicService {
     // Model.reasoningDisplay — display preference for adaptive thinking
     // (e.g. Fable 5 → 'summarized'). See shared/types.ts.
     reasoningDisplay?: string,
-    // Model.thinkingApi / effortLevels / supportsSampling from the model entry.
-    // When thinkingApi is unset the legacy model-id heuristics below apply.
-    modelHints?: { thinkingApi?: string; effortLevels?: string[]; supportsSampling?: boolean }
+    // Model.thinkingApi / effortLevels / supportsSampling / thinkingPrefixMismatch
+    // from the model entry. When thinkingApi is unset the legacy model-id
+    // heuristics below apply.
+    modelHints?: {
+      thinkingApi?: string;
+      effortLevels?: string[];
+      supportsSampling?: boolean;
+      thinkingPrefixMismatch?: 'error' | 'drop_block';
+    }
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -196,6 +210,13 @@ export class AnthropicService {
           if (reasoningDisplay) {
             thinkingConfig.display = reasoningDisplay;
           }
+          // Replayed thinking blocks are bound to the conversation prefix that
+          // produced them. Arc edits that prefix (system prompt changes, message
+          // edits, rolling context), so a model that enforces the binding needs
+          // to be told what to do on a mismatch (Model.thinkingPrefixMismatch).
+          if (modelHints?.thinkingPrefixMismatch) {
+            thinkingConfig.block_binding = { prefix_mismatch_behavior: modelHints.thinkingPrefixMismatch };
+          }
           // Conversations that pre-date the effort setting keep the app's
           // previous default of medium rather than the API default of high.
           outputConfig = { effort: effort ?? 'medium' };
@@ -298,7 +319,11 @@ export class AnthropicService {
       let currentBlockIndex = -1;
       let currentBlock: any = null;
       
-      const stream = await this.client.messages.create(requestParams) as any;
+      // block_binding is rejected (400) unless its beta is in the header.
+      const requestOptions = requestParams.thinking?.block_binding
+        ? { headers: { 'anthropic-beta': this.betaHeader(['thinking-binding-controls-2026-08-01']) } }
+        : undefined;
+      const stream = await this.client.messages.create(requestParams, requestOptions) as any;
 
       let stopReason: string | undefined;
       // Structured refusal details (stop_details) — sent by the API alongside
@@ -318,6 +343,13 @@ export class AnthropicService {
         // Only log important events, not every chunk
         if (chunk.type === 'message_start') {
           console.log(`[Anthropic API] Stream started`);
+          // With the thinking-binding beta the API lists every replayed thinking
+          // block it dropped (e.g. reason 'prefix_binding_mismatch' after a
+          // system prompt or message edit). Log them; nothing else to do.
+          const transformations = chunk.message?.input_transformations;
+          if (Array.isArray(transformations) && transformations.length > 0) {
+            console.log(`[Anthropic API] input_transformations:`, JSON.stringify(transformations));
+          }
         } else if (chunk.type === 'message_stop') {
           console.log(`[Anthropic API] Stream completed`);
         } else if (chunk.type === 'error') {

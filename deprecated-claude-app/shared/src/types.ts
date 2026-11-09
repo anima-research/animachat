@@ -193,6 +193,14 @@ export const ModelSchema = z.object({
   //   'always-on' — adaptive and cannot be turned off (Fable 5 family)
   // Unset means "unknown": the backend falls back to its legacy model-id heuristics.
   thinkingApi: z.enum(['budget', 'adaptive', 'always-on']).optional(),
+  // Anthropic only: what the API does with a replayed thinking block whose
+  // conversation prefix changed (system prompt edited, an earlier message
+  // edited, oldest messages dropped by rolling context). Fable 5.2 checks this
+  // on every account and answers 'error' (the default) with a 400 that a retry
+  // can't clear; 'drop_block' drops the stale block (and every later one) and
+  // the request goes on. Sent as thinking.block_binding.prefix_mismatch_behavior
+  // with the thinking-binding-controls beta. Unset means not sent.
+  thinkingPrefixMismatch: z.enum(['error', 'drop_block']).optional(),
   // Reasoning effort levels the provider accepts for this model (rendered as a
   // select and sent as output_config.effort / OpenRouter reasoning.effort).
   effortLevels: z.array(z.string()).optional(),

@@ -635,7 +635,12 @@ export class InferenceService {
         finalOnChunk,
         stopSequences,
         model.reasoningDisplay,
-        { thinkingApi: model.thinkingApi, effortLevels: model.effortLevels, supportsSampling: model.supportsSampling }
+        {
+          thinkingApi: model.thinkingApi,
+          effortLevels: model.effortLevels,
+          supportsSampling: model.supportsSampling,
+          thinkingPrefixMismatch: model.thinkingPrefixMismatch
+        }
       );
     } else if (model.provider === 'bedrock') {
       if (!selectedKey) {
