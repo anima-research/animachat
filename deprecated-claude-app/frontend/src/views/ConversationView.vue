@@ -4176,9 +4176,10 @@ async function handlePostHocEditContent(
 ) {
   if (!currentConversation.value) return;
   if (content === undefined && !attachments) return;
+  const conversationId = currentConversation.value.id;
 
   try {
-    await api.post(`/conversations/${currentConversation.value.id}/post-hoc-operation`, {
+    await api.post(`/conversations/${conversationId}/post-hoc-operation`, {
       type: 'edit',
       targetMessageId: messageId,
       targetBranchId: branchId,
@@ -4196,13 +4197,24 @@ async function handlePostHocEditContent(
       }),
       parentBranchId: getLastVisibleBranchId()
     });
-    await store.loadConversation(currentConversation.value.id);
   } catch (error: any) {
     console.error('Failed to create post-hoc edit operation:', error);
     // The editor has already closed, so a failed save (for example an
     // attachment over the upload limit) must not pass silently.
     errorSnackbarMessage.value = 'The edit in place was not saved';
     errorSnackbarDetails.value = error?.response?.data?.error || error?.message || '';
+    errorSnackbar.value = true;
+    return;
+  }
+
+  // Saved. A failed reload is a different thing from a failed save: saying
+  // "not saved" here would invite a retry that stores the edit a second time.
+  try {
+    await store.loadConversation(conversationId);
+  } catch (error) {
+    console.error('Failed to reload the conversation after a post-hoc edit:', error);
+    errorSnackbarMessage.value = 'The edit in place was saved, but the conversation could not be reloaded';
+    errorSnackbarDetails.value = 'Reload the page to see it.';
     errorSnackbar.value = true;
   }
 }

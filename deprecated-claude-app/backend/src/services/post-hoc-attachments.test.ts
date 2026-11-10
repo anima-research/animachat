@@ -123,6 +123,19 @@ test('a later attachment edit in place replaces the earlier one', async () => {
   assert.ok(!sent.text.includes('REDACTED-COPY-MARKER'));
 });
 
+test('the later edit on the conversation path wins even when its order number is lower', async () => {
+  // message.order is the message count at creation, so after deletions a newer
+  // operation can be numbered below an older one. The path order decides.
+  const older = operationMessage(1, { type: 'edit', attachmentIndices: [0], addedAttachments: [attachment('redacted.md', 'REDACTED-COPY-MARKER')] });
+  const newer = operationMessage(2, { type: 'edit', attachmentIndices: [], addedAttachments: [] });
+  older.order = 6;
+  newer.order = 5;
+
+  const sent = await requestText([userMessage([attachment('archive.md', 'ORIGINAL-ARCHIVE-MARKER')]), older, newer]);
+  assert.ok(sent.text.includes('ORIGINAL-ARCHIVE-MARKER'), 'the newer edit shows the archive again');
+  assert.ok(!sent.text.includes('REDACTED-COPY-MARKER'), 'the older edit no longer applies');
+});
+
 test('an attachment can be added in place to a message that had none', async () => {
   const bare = userMessage([]);
   delete (bare.branches[0] as any).attachments;

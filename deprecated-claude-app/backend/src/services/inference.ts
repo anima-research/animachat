@@ -1783,7 +1783,7 @@ export class InferenceService {
   
   /**
    * Apply post-hoc operations to messages for context building.
-   * Operations are processed in message order - later operations override earlier ones.
+   * Operations are processed in conversation-path order - later operations override earlier ones.
    * 
    * Post-hoc operations allow retroactively modifying how previous messages appear
    * in context without actually changing the original data:
@@ -1831,8 +1831,13 @@ export class InferenceService {
       if (state) attachmentStates.set(op.targetMessageId, state);
     };
 
-    // Process operations in order
-    for (const { order, op } of operations.sort((a, b) => a.order - b.order)) {
+    // Process operations in the order they come on the conversation path, which
+    // is the order of `messages` (history is built by walking parent links) and
+    // the order the frontend applies them in. Not by `message.order`: that is
+    // the conversation's message count at creation, so after deletions a newer
+    // operation can carry a lower number than an older one, and for edits the
+    // later operation has to win.
+    for (const { op } of operations) {
       switch (op.type) {
         case 'hide':
           hiddenMessageIds.add(op.targetMessageId);
