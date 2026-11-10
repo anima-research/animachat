@@ -526,44 +526,59 @@
         {{ (block as any).text }}
       </v-alert>
 
-      <!-- Attachments display (for user messages) -->
+      <!-- Attachments display (for user messages). Besides the message's own
+           attachments this shows what an edit in place did to them: own ones
+           the AI no longer sees, and ones only the AI sees. -->
       <div v-if="currentBranch.role === 'user' && displayedAttachments.length > 0" class="mt-2">
-        <template v-for="(attachment, index) in displayedAttachments" :key="attachment.id || `${attachment.fileName}-${index}`">
+        <template v-for="item in displayedAttachments" :key="item.key">
           <!-- Image attachments -->
-          <div v-if="isImageAttachment(attachment)" class="mb-2">
+          <div v-if="isImageAttachment(item.attachment)" class="mb-2">
             <div class="attachment-image-wrapper">
-              <img 
-                :src="getImageSrc(attachment)"
-                :alt="attachment.fileName"
+              <img
+                :src="getImageSrc(item.attachment)"
+                :alt="item.attachment.fileName"
+                :class="{ 'attachment-hidden-for-ai': item.hiddenForAi }"
                 style="max-width: 300px; max-height: 300px; border-radius: 8px; cursor: pointer;"
-                @click="openImageInNewTab(attachment)"
+                @click="openImageInNewTab(item.attachment)"
               />
               <v-btn
                 v-if="canEditAttachments"
-                icon="mdi-close"
+                :icon="item.hiddenForAi ? 'mdi-eye-outline' : 'mdi-close'"
                 size="x-small"
-                color="error"
+                :color="item.hiddenForAi ? 'info' : 'error'"
                 variant="flat"
                 density="compact"
                 class="attachment-remove-btn"
-                title="Remove attachment"
-                @click.stop="removeEditAttachment(index)"
+                :title="attachmentActionLabel(item)"
+                @click.stop="toggleEditAttachment(item)"
               />
             </div>
-            <div class="text-caption mt-1">{{ attachment.fileName }} ({{ formatFileSize(attachment.fileSize || 0) }})</div>
+            <div class="text-caption mt-1">
+              {{ item.attachment.fileName }} ({{ formatFileSize(item.attachment.fileSize || 0) }})
+              <span v-if="attachmentAiNote(item)" class="attachment-ai-note">· {{ attachmentAiNote(item) }}</span>
+            </div>
           </div>
-          <!-- Text attachments -->
+          <!-- Text attachments. A v-chip hides itself when its close button is
+               clicked; the model is held at true because an own attachment
+               hidden by an edit in place stays listed, marked as hidden. -->
           <v-chip
             v-else
             class="mr-2 mb-1"
             size="small"
-            color="grey-lighten-2"
+            :color="item.addedForAi ? 'info' : 'grey-lighten-2'"
             :closable="canEditAttachments"
-            @click:close="removeEditAttachment(index)"
+            :close-icon="item.hiddenForAi ? 'mdi-eye-outline' : undefined"
+            :close-label="attachmentActionLabel(item)"
+            :model-value="true"
+            @update:model-value="() => {}"
+            @click:close="toggleEditAttachment(item)"
           >
-            <v-icon start size="x-small">mdi-paperclip</v-icon>
-            {{ attachment.fileName }}
-            <span class="ml-1 text-caption">({{ formatFileSize(attachment.fileSize || 0) }})</span>
+            <v-icon start size="x-small">{{ item.hiddenForAi ? 'mdi-paperclip-off' : item.addedForAi ? 'mdi-paperclip-plus' : 'mdi-paperclip' }}</v-icon>
+            <span :class="{ 'attachment-hidden-for-ai': item.hiddenForAi }">
+              {{ item.attachment.fileName }}
+              <span class="ml-1 text-caption">({{ formatFileSize(item.attachment.fileSize || 0) }})</span>
+            </span>
+            <span v-if="attachmentAiNote(item)" class="ml-1 text-caption attachment-ai-note">· {{ attachmentAiNote(item) }}</span>
           </v-chip>
         </template>
       </div>
@@ -957,7 +972,7 @@ const props = defineProps<{
   hasError?: boolean;
   errorMessage?: string;
   errorSuggestion?: string;
-  postHocAffected?: { hidden: boolean; edited: boolean; editedContent?: string; originalContent?: string; hiddenAttachments: number[] };
+  postHocAffected?: { hidden: boolean; edited: boolean; editedContent?: string; originalContent?: string; hiddenAttachments: number[]; addedAttachments: Attachment[] };
   showStuckButton?: boolean;
   authenticityStatus?: AuthStatus;
 }>();
@@ -975,7 +990,9 @@ const emit = defineEmits<{
   'bookmark-changed': [];
   'post-hoc-hide': [messageId: string, branchId: string];
   'post-hoc-edit': [messageId: string, branchId: string];
-  'post-hoc-edit-content': [messageId: string, branchId: string, content: string];
+  // Edit in place. `content` is undefined when the text was not changed, and
+  // `attachments` when the attachments were not: each is sent only if edited.
+  'post-hoc-edit-content': [messageId: string, branchId: string, content: string | undefined, attachments?: { hiddenIndices: number[]; added: EditableAttachment[] }];
   'post-hoc-hide-before': [messageId: string, branchId: string];
   'post-hoc-unhide': [messageId: string, branchId: string];
   'delete-post-hoc-operation': [messageId: string];
@@ -987,8 +1004,12 @@ const isEditing = ref(false);
 const isPostHocEditing = ref(false); // True when editing for post-hoc operation (no regeneration)
 const editContent = ref('');
 type EditableAttachment = Pick<Attachment, 'fileName' | 'fileType' | 'content'> & Partial<Pick<Attachment, 'id' | 'fileSize' | 'mimeType' | 'encoding'>>;
+// Regular edit: the new branch's whole attachment list.
+// Edit in place: only the attachments added for the AI (the message's own stay
+// where they are and are hidden or shown through editHiddenAttachmentIndices).
 const editAttachments = ref<EditableAttachment[]>([]);
 const editAttachmentsDirty = ref(false);
+const editHiddenAttachmentIndices = ref<number[]>([]);
 const editFileInput = ref<HTMLInputElement | null>(null);
 const messageCard = ref<HTMLElement>();
 const showScrollToTop = ref(false);
@@ -1082,13 +1103,81 @@ const currentBranch = computed(() => {
   return branch;
 });
 
-const canEditAttachments = computed(() => currentBranch.value?.role === 'user' && isEditing.value && !isPostHocEditing.value);
-const displayedAttachments = computed(() => {
-  if (canEditAttachments.value) {
-    return editAttachments.value;
+const canEditAttachments = computed(() => currentBranch.value?.role === 'user' && isEditing.value);
+
+interface DisplayedAttachment {
+  attachment: EditableAttachment;
+  key: string;
+  /** Index among the branch's own attachments; unset for ones an edit in place added, and during a regular edit. */
+  ownIndex?: number;
+  /** Index in editAttachments, when the entry can be taken out of the current edit. */
+  editIndex?: number;
+  /** One of the message's own attachments that the AI does not see. */
+  hiddenForAi: boolean;
+  /** Not part of the message; only the AI sees it. */
+  addedForAi: boolean;
+}
+
+const displayedAttachments = computed<DisplayedAttachment[]>(() => {
+  // Regular edit: the list being composed for the new branch.
+  if (canEditAttachments.value && !isPostHocEditing.value) {
+    return editAttachments.value.map((attachment, index) => ({
+      attachment,
+      key: `edit-${attachment.id || `${attachment.fileName}-${index}`}`,
+      editIndex: index,
+      hiddenForAi: false,
+      addedForAi: false
+    }));
   }
-  return currentBranch.value?.attachments || [];
+  // Otherwise the message's own attachments, then the ones added for the AI:
+  // from the edit in place under way, or from the operations already applied.
+  const editingInPlace = canEditAttachments.value;
+  const hidden = new Set(editingInPlace ? editHiddenAttachmentIndices.value : props.postHocAffected?.hiddenAttachments || []);
+  const added: EditableAttachment[] = editingInPlace ? editAttachments.value : props.postHocAffected?.addedAttachments || [];
+  const own: Attachment[] = currentBranch.value?.attachments || [];
+  return [
+    ...own.map((attachment, index) => ({
+      attachment,
+      key: `own-${attachment.id || `${attachment.fileName}-${index}`}`,
+      ownIndex: index,
+      hiddenForAi: hidden.has(index),
+      addedForAi: false
+    })),
+    ...added.map((attachment, index) => ({
+      attachment,
+      key: `added-${attachment.id || `${attachment.fileName}-${index}`}`,
+      editIndex: editingInPlace ? index : undefined,
+      hiddenForAi: false,
+      addedForAi: true
+    }))
+  ];
 });
+
+function attachmentAiNote(item: DisplayedAttachment): string {
+  if (item.hiddenForAi) return 'hidden from AI';
+  if (item.addedForAi) return 'added for AI';
+  return '';
+}
+
+function attachmentActionLabel(item: DisplayedAttachment): string {
+  if (item.hiddenForAi) return 'Show to AI again';
+  if (item.ownIndex !== undefined) return 'Hide from AI';
+  return 'Remove attachment';
+}
+
+// The x on an attachment while editing. A regular edit drops it from the new
+// branch. An edit in place never changes the message: one of its own
+// attachments is hidden from the AI (or shown again), an added one is dropped.
+function toggleEditAttachment(item: DisplayedAttachment) {
+  if (item.ownIndex !== undefined) {
+    const ownIndex = item.ownIndex;
+    editHiddenAttachmentIndices.value = item.hiddenForAi
+      ? editHiddenAttachmentIndices.value.filter(index => index !== ownIndex)
+      : [...editHiddenAttachmentIndices.value, ownIndex];
+  } else if (item.editIndex !== undefined) {
+    removeEditAttachment(item.editIndex);
+  }
+}
 
 // Check if this message is a post-hoc operation
 const isPostHocOperation = computed(() => {
@@ -1849,7 +1938,10 @@ function startPostHocEdit() {
   isEditing.value = true;
   isPostHocEditing.value = true;
   editContent.value = currentBranch.value.content;
-  editAttachments.value = [];
+  // Attachments start from what the AI sees now, so saving states the whole
+  // attachment change again (an earlier in-place edit of them is replaced).
+  editAttachments.value = cloneEditableAttachments(props.postHocAffected?.addedAttachments || []);
+  editHiddenAttachmentIndices.value = [...(props.postHocAffected?.hiddenAttachments || [])];
   editAttachmentsDirty.value = false;
 }
 
@@ -1858,17 +1950,41 @@ function cancelEdit() {
   isPostHocEditing.value = false;
   editContent.value = '';
   editAttachments.value = [];
+  editHiddenAttachmentIndices.value = [];
   editAttachmentsDirty.value = false;
+}
+
+// Edit in place: did the hidden/added attachments move from where the edit started?
+function postHocAttachmentsChanged(): boolean {
+  const sorted = (indices: number[]) => [...new Set(indices)].sort((a, b) => a - b).join(',');
+  if (sorted(editHiddenAttachmentIndices.value) !== sorted(props.postHocAffected?.hiddenAttachments || [])) {
+    return true;
+  }
+  return JSON.stringify(normalizedAttachmentList(editAttachments.value)) !==
+    JSON.stringify(normalizedAttachmentList(cloneEditableAttachments(props.postHocAffected?.addedAttachments || [])));
 }
 
 function saveEdit() {
   const contentChanged = editContent.value !== currentBranch.value.content;
-  const attachmentListChanged = !isPostHocEditing.value && (editAttachmentsDirty.value || attachmentsChanged());
-  if (contentChanged || attachmentListChanged) {
-    if (isPostHocEditing.value) {
-      // Create a post-hoc edit operation (no regeneration)
-      emit('post-hoc-edit-content', props.message.id, currentBranch.value.id, editContent.value);
-    } else {
+  if (isPostHocEditing.value) {
+    // Create a post-hoc edit operation (no new branch, no regeneration). Text
+    // and attachments are each sent only when changed, so an operation that
+    // changes one leaves an earlier in-place edit of the other standing.
+    const attachmentsEdited = canEditAttachments.value && postHocAttachmentsChanged();
+    if (contentChanged || attachmentsEdited) {
+      emit(
+        'post-hoc-edit-content',
+        props.message.id,
+        currentBranch.value.id,
+        contentChanged ? editContent.value : undefined,
+        attachmentsEdited
+          ? { hiddenIndices: [...new Set(editHiddenAttachmentIndices.value)].sort((a, b) => a - b), added: editAttachments.value }
+          : undefined
+      );
+    }
+  } else {
+    const attachmentListChanged = editAttachmentsDirty.value || attachmentsChanged();
+    if (contentChanged || attachmentListChanged) {
       // Regular edit that triggers regeneration
       emit('edit', props.message.id, currentBranch.value.id, editContent.value, attachmentListChanged ? editAttachments.value : undefined);
     }
@@ -2378,6 +2494,21 @@ watch(() => currentBranch.value.id, async () => {
   position: absolute;
   top: 6px;
   right: 6px;
+}
+
+/* An own attachment that an edit in place hides from the AI */
+img.attachment-hidden-for-ai {
+  opacity: 0.35;
+}
+
+span.attachment-hidden-for-ai {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.attachment-ai-note {
+  font-style: italic;
+  opacity: 0.8;
 }
 
 /* Messages affected by post-hoc edit operations */

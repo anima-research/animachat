@@ -5,7 +5,7 @@ import { getBlobStore } from '../database/blob-store.js';
 import { compactConversation, getConversationFilePath, formatCompactionResult } from '../database/compaction.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { roomManager } from '../websocket/room-manager.js';
-import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, ContentBlockSchema, Message } from '@deprecated-claude/shared';
+import { CreateConversationRequestSchema, ImportConversationRequestSchema, ConversationMetrics, DEFAULT_CONTEXT_MANAGEMENT, ContentBlockSchema, WsAttachmentSchema, Attachment, Message } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { ContextManager } from '../services/context-manager.js';
 import { buildConversationHistory, filterHiddenFromAiMessages } from '../websocket/handler.js';
@@ -104,7 +104,9 @@ const CreatePostHocOperationSchema = z.object({
   targetMessageId: z.string().uuid(),
   targetBranchId: z.string().uuid(),
   replacementContent: z.array(ContentBlockSchema).optional(),
-  attachmentIndices: z.array(z.number()).optional(),
+  attachmentIndices: z.array(z.number().int().nonnegative()).optional(),
+  // 'edit' only: attachments the AI sees in addition to the target's own (new uploads)
+  addedAttachments: z.array(WsAttachmentSchema).optional(),
   reason: z.string().optional(),
   parentBranchId: z.string().uuid().optional(), // Parent branch for proper tree integration
 });
@@ -932,6 +934,43 @@ export function conversationRouter(db: Database): Router {
         return res.status(400).json({ error: 'Target branch not found in target message' });
       }
 
+      // Attachment changes: only on user messages (the only ones that carry
+      // attachments), and only for attachments the target branch really has.
+      const editsAttachments = operation.type === 'edit'
+        && (operation.attachmentIndices !== undefined || operation.addedAttachments !== undefined);
+      if (operation.addedAttachments !== undefined && operation.type !== 'edit') {
+        return res.status(400).json({ error: 'Attachments can only be added by an edit operation' });
+      }
+      if (editsAttachments && targetBranch.role !== 'user') {
+        return res.status(400).json({ error: 'Attachments can only be edited on user messages' });
+      }
+      if (operation.type === 'edit' || operation.type === 'hide_attachment') {
+        const ownCount = targetBranch.attachments?.length ?? 0;
+        if (operation.attachmentIndices?.some(index => index >= ownCount)) {
+          return res.status(400).json({ error: 'Attachment index out of range for the target message' });
+        }
+      }
+
+      // New attachments get the same stored shape as attachments on a message
+      // branch (Database.addMessageBranch), including its 'base64' default.
+      const addedAttachments: Attachment[] | undefined = editsAttachments
+        ? (operation.addedAttachments ?? []).map(att => {
+            const encoding = att.encoding ?? 'base64';
+            return {
+              id: uuidv4(),
+              fileName: att.fileName,
+              fileSize: att.fileSize ?? (encoding === 'base64'
+                ? Math.round(att.content.replace(/=+$/, '').length * 3 / 4)
+                : att.content.length),
+              fileType: att.fileType,
+              mimeType: att.mimeType,
+              content: att.content,
+              encoding,
+              createdAt: new Date()
+            };
+          })
+        : undefined;
+
       // Create the operation message
       // The content describes the operation for display purposes
       let operationDescription = '';
@@ -943,7 +982,9 @@ export function conversationRouter(db: Database): Router {
           operationDescription = `🙈 Hidden messages before this point`;
           break;
         case 'edit':
-          operationDescription = `✏️ Edited message`;
+          operationDescription = !editsAttachments ? `✏️ Edited message`
+            : operation.replacementContent ? `✏️ Edited message and attachments`
+            : `📎 Edited attachments`;
           break;
         case 'hide_attachment':
           operationDescription = `🙈 Hidden attachment(s)`;
@@ -957,12 +998,17 @@ export function conversationRouter(db: Database): Router {
         operationDescription += `: ${operation.reason}`;
       }
 
-      // Create message with the post-hoc operation
+      // Create message with the post-hoc operation. An edit that changes
+      // attachments always stores both attachment fields, so it states the
+      // whole change (see applyPostHocAttachmentOp).
+      const { addedAttachments: _uploads, ...operationWithoutUploads } = operation;
       const message = await db.createPostHocOperation(
         req.params.id,
         req.userId,
         operationDescription,
-        operation
+        editsAttachments
+          ? { ...operationWithoutUploads, attachmentIndices: operation.attachmentIndices ?? [], addedAttachments }
+          : operationWithoutUploads
       );
 
       res.json(message);
