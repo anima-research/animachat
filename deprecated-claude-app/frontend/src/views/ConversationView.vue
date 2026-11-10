@@ -1287,8 +1287,8 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore, computeVisibleMessages } from '@/store';
 import { api } from '@/services/api';
-import type { Conversation, Participant, Model, Bookmark, Persona, WsAttachment } from '@deprecated-claude/shared';
-import { UpdateParticipantSchema, getValidatedModelDefaults } from '@deprecated-claude/shared';
+import type { Attachment, Conversation, Participant, Model, Bookmark, Persona, PostHocAttachmentState, WsAttachment } from '@deprecated-claude/shared';
+import { UpdateParticipantSchema, getValidatedModelDefaults, applyPostHocAttachmentOp } from '@deprecated-claude/shared';
 import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
 import ImportDialogV2 from '@/components/ImportDialogV2.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
@@ -1748,8 +1748,26 @@ const isWsConnected = computed(() => store.state.wsConnectionState === 'connecte
 // Compute which messages are affected by post-hoc operations
 // IMPORTANT: Only consider operations that are on the CURRENT visible branch path
 const postHocAffectedMessages = computed(() => {
-  const affected = new Map<string, { hidden: boolean; edited: boolean; editedContent?: string; originalContent?: string; hiddenAttachments: number[] }>();
-  
+  type Affected = { hidden: boolean; edited: boolean; editedContent?: string; originalContent?: string; hiddenAttachments: number[]; addedAttachments: Attachment[] };
+  const affected = new Map<string, Affected>();
+  const unaffected = (): Affected => ({ hidden: false, edited: false, hiddenAttachments: [], addedAttachments: [] });
+  // Attachment changes go through the same reducer the backend uses to build
+  // context, so the marks on a message match what the AI is actually sent.
+  const applyAttachmentOp = (op: any) => {
+    const current = affected.get(op.targetMessageId);
+    const before: PostHocAttachmentState | undefined = current
+      ? { hiddenIndices: current.hiddenAttachments, added: current.addedAttachments }
+      : undefined;
+    const after = applyPostHocAttachmentOp(before, op);
+    if (after && after !== before) {
+      affected.set(op.targetMessageId, {
+        ...(current || unaffected()),
+        hiddenAttachments: after.hiddenIndices,
+        addedAttachments: after.added
+      });
+    }
+  };
+
   // Only look at VISIBLE messages - operations on other branches shouldn't affect us
   const visibleMsgs = messages.value;
   
@@ -1785,9 +1803,9 @@ const postHocAffectedMessages = computed(() => {
     
     switch (op.type) {
       case 'hide':
-        affected.set(op.targetMessageId, { 
-          ...affected.get(op.targetMessageId) || { hidden: false, edited: false, hiddenAttachments: [] },
-          hidden: true 
+        affected.set(op.targetMessageId, {
+          ...affected.get(op.targetMessageId) || unaffected(),
+          hidden: true
         });
         break;
         
@@ -1796,9 +1814,9 @@ const postHocAffectedMessages = computed(() => {
         if (targetOrder !== undefined) {
           for (const msg of visibleMsgs) {
             if (msg.order < targetOrder) {
-              affected.set(msg.id, { 
-                ...affected.get(msg.id) || { hidden: false, edited: false, hiddenAttachments: [] },
-                hidden: true 
+              affected.set(msg.id, {
+                ...affected.get(msg.id) || unaffected(),
+                hidden: true
               });
             }
           }
@@ -1807,37 +1825,34 @@ const postHocAffectedMessages = computed(() => {
       }
         
       case 'edit': {
-        // Extract text content from replacement content blocks
-        let editedText = '';
+        // An edit changes the text, the attachments, or both. Only a text
+        // change marks the message as "Edited for AI".
         if (op.replacementContent) {
+          // Extract text content from replacement content blocks
+          let editedText = '';
           for (const block of op.replacementContent) {
             if (block.type === 'text') {
               editedText += block.text;
             }
           }
-        }
-        // Get original content from the target message
-        const targetMsg = visibleMsgs.find(m => m.id === op.targetMessageId);
-        const targetBranch = targetMsg?.branches.find((b: any) => b.id === op.targetBranchId);
-        const originalText = targetBranch?.content || '';
-        
-        affected.set(op.targetMessageId, { 
-          ...affected.get(op.targetMessageId) || { hidden: false, edited: false, hiddenAttachments: [] },
-          edited: true,
-          editedContent: editedText || undefined,
-          originalContent: originalText
-        });
-        break;
-      }
-        
-      case 'hide_attachment':
-        if (op.attachmentIndices) {
-          const current = affected.get(op.targetMessageId) || { hidden: false, edited: false, hiddenAttachments: [] };
-          affected.set(op.targetMessageId, { 
-            ...current,
-            hiddenAttachments: [...current.hiddenAttachments, ...op.attachmentIndices]
+          // Get original content from the target message
+          const targetMsg = visibleMsgs.find(m => m.id === op.targetMessageId);
+          const targetBranch = targetMsg?.branches.find((b: any) => b.id === op.targetBranchId);
+          const originalText = targetBranch?.content || '';
+
+          affected.set(op.targetMessageId, {
+            ...affected.get(op.targetMessageId) || unaffected(),
+            edited: true,
+            editedContent: editedText || undefined,
+            originalContent: originalText
           });
         }
+        applyAttachmentOp(op);
+        break;
+      }
+
+      case 'hide_attachment':
+        applyAttachmentOp(op);
         break;
         
       case 'unhide':
@@ -4150,21 +4165,57 @@ async function handlePostHocEdit(_messageId: string, _branchId: string) {
   console.log('handlePostHocEdit called - should use inline editing instead');
 }
 
-// New handler for inline post-hoc editing
-async function handlePostHocEditContent(messageId: string, branchId: string, content: string) {
+// New handler for inline post-hoc editing ("edit in place"). `content` and
+// `attachments` are each present only when that part was edited, so the
+// operation changes just that part of what the AI sees.
+async function handlePostHocEditContent(
+  messageId: string,
+  branchId: string,
+  content: string | undefined,
+  attachments?: { hiddenIndices: number[]; added: WsAttachment[] }
+) {
   if (!currentConversation.value) return;
-  
+  if (content === undefined && !attachments) return;
+  const conversationId = currentConversation.value.id;
+
   try {
-    await api.post(`/conversations/${currentConversation.value.id}/post-hoc-operation`, {
+    await api.post(`/conversations/${conversationId}/post-hoc-operation`, {
       type: 'edit',
       targetMessageId: messageId,
       targetBranchId: branchId,
-      replacementContent: [{ type: 'text', text: content }],
+      ...(content !== undefined && { replacementContent: [{ type: 'text', text: content }] }),
+      ...(attachments && {
+        attachmentIndices: attachments.hiddenIndices,
+        addedAttachments: attachments.added.map(att => ({
+          fileName: att.fileName,
+          fileType: att.fileType,
+          content: att.content,
+          fileSize: att.fileSize,
+          mimeType: att.mimeType,
+          encoding: att.encoding
+        }))
+      }),
       parentBranchId: getLastVisibleBranchId()
     });
-    await store.loadConversation(currentConversation.value.id);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to create post-hoc edit operation:', error);
+    // The editor has already closed, so a failed save (for example an
+    // attachment over the upload limit) must not pass silently.
+    errorSnackbarMessage.value = 'The edit in place was not saved';
+    errorSnackbarDetails.value = error?.response?.data?.error || error?.message || '';
+    errorSnackbar.value = true;
+    return;
+  }
+
+  // Saved. A failed reload is a different thing from a failed save: saying
+  // "not saved" here would invite a retry that stores the edit a second time.
+  try {
+    await store.loadConversation(conversationId);
+  } catch (error) {
+    console.error('Failed to reload the conversation after a post-hoc edit:', error);
+    errorSnackbarMessage.value = 'The edit in place was saved, but the conversation could not be reloaded';
+    errorSnackbarDetails.value = 'Reload the page to see it.';
+    errorSnackbar.value = true;
   }
 }
 

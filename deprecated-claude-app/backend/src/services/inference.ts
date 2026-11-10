@@ -1,4 +1,4 @@
-import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, Conversation, Model, PostHocOperation, MessageBranch, ContentBlock, Attachment, getActiveBranch } from '@deprecated-claude/shared';
+import { Message, ConversationFormat, ConversationMode, ModelSettings, Participant, ApiKey, Conversation, Model, PostHocOperation, PostHocAttachmentState, MessageBranch, ContentBlock, Attachment, getActiveBranch, applyPostHocAttachmentOp, postHocEditsAttachments, resolvePostHocAttachments } from '@deprecated-claude/shared';
 import { Database } from '../database/index.js';
 import { BedrockService } from './bedrock.js';
 import { AnthropicService } from './anthropic.js';
@@ -1783,13 +1783,14 @@ export class InferenceService {
   
   /**
    * Apply post-hoc operations to messages for context building.
-   * Operations are processed in message order - later operations override earlier ones.
+   * Operations are processed in conversation-path order - later operations override earlier ones.
    * 
    * Post-hoc operations allow retroactively modifying how previous messages appear
    * in context without actually changing the original data:
    * - 'hide': Exclude a specific message from context
    * - 'hide_before': Exclude all messages before a target message
-   * - 'edit': Replace the content of a target message
+   * - 'edit': Replace the content of a target message, and/or change which
+   *   attachments it carries (hide some of its own, add others)
    * - 'hide_attachment': Remove specific attachments from a target message
    */
   private applyPostHocOperations(messages: Message[]): Message[] {
@@ -1821,13 +1822,22 @@ export class InferenceService {
       messageOrderById.set(msg.id, msg.order);
     }
     
-    // Track which messages are hidden and which have edits/attachment hides
+    // Track which messages are hidden and which have edits/attachment changes
     const hiddenMessageIds = new Set<string>();
     const messageEdits = new Map<string, ContentBlock[]>(); // messageId -> replacement content
-    const attachmentHides = new Map<string, Set<number>>(); // messageId -> set of hidden indices
-    
-    // Process operations in order
-    for (const { order, op } of operations.sort((a, b) => a.order - b.order)) {
+    const attachmentStates = new Map<string, PostHocAttachmentState>(); // messageId -> hidden own + added attachments
+    const applyAttachmentOp = (op: PostHocOperation) => {
+      const state = applyPostHocAttachmentOp(attachmentStates.get(op.targetMessageId), op);
+      if (state) attachmentStates.set(op.targetMessageId, state);
+    };
+
+    // Process operations in the order they come on the conversation path, which
+    // is the order of `messages` (history is built by walking parent links) and
+    // the order the frontend applies them in. Not by `message.order`: that is
+    // the conversation's message count at creation, so after deletions a newer
+    // operation can carry a lower number than an older one, and for edits the
+    // later operation has to win.
+    for (const { op } of operations) {
       switch (op.type) {
         case 'hide':
           hiddenMessageIds.add(op.targetMessageId);
@@ -1852,15 +1862,15 @@ export class InferenceService {
             messageEdits.set(op.targetMessageId, op.replacementContent);
             Logger.inference(`[PostHoc] Editing message ${op.targetMessageId}`);
           }
+          if (postHocEditsAttachments(op)) {
+            applyAttachmentOp(op);
+            Logger.inference(`[PostHoc] Editing attachments of message ${op.targetMessageId}: hiding [${(op.attachmentIndices || []).join(', ')}], adding ${op.addedAttachments?.length || 0}`);
+          }
           break;
-          
+
         case 'hide_attachment':
           if (op.attachmentIndices && op.attachmentIndices.length > 0) {
-            const existing = attachmentHides.get(op.targetMessageId) || new Set();
-            for (const idx of op.attachmentIndices) {
-              existing.add(idx);
-            }
-            attachmentHides.set(op.targetMessageId, existing);
+            applyAttachmentOp(op);
             Logger.inference(`[PostHoc] Hiding attachments ${op.attachmentIndices.join(', ')} from message ${op.targetMessageId}`);
           }
           break;
@@ -1889,11 +1899,11 @@ export class InferenceService {
         continue;
       }
       
-      // Apply edits and attachment hides if needed
+      // Apply edits and attachment changes if needed
       const edit = messageEdits.get(msg.id);
-      const hiddenAttachments = attachmentHides.get(msg.id);
-      
-      if (edit || hiddenAttachments) {
+      const attachmentState = attachmentStates.get(msg.id);
+
+      if (edit || attachmentState) {
         // Need to modify this message
         const modifiedBranches = msg.branches.map(branch => {
           if (branch.id !== msg.activeBranchId) {
@@ -1910,11 +1920,9 @@ export class InferenceService {
             modifiedBranch.content = textBlocks.map(b => (b as any).text).join('\n\n');
           }
           
-          // Apply attachment hides
-          if (hiddenAttachments && modifiedBranch.attachments) {
-            modifiedBranch.attachments = modifiedBranch.attachments.filter(
-              (_, idx) => !hiddenAttachments.has(idx)
-            );
+          // Apply attachment changes: drop the hidden own ones, append the added ones
+          if (attachmentState) {
+            modifiedBranch.attachments = resolvePostHocAttachments(modifiedBranch.attachments, attachmentState);
           }
           
           return modifiedBranch;

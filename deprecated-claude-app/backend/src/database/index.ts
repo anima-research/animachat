@@ -1,4 +1,4 @@
-import { User, Conversation, Message, MessageBranch, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults, ChannelTokens } from '@deprecated-claude/shared';
+import { User, Conversation, Message, MessageBranch, Attachment, Participant, ApiKey, Bookmark, UserDefinedModel, GrantInfo, GrantCapability, UserGrantSummary, GrantUsageDetails, Invite, getValidatedModelDefaults, ChannelTokens } from '@deprecated-claude/shared';
 import { TotalsMetrics, TotalsMetricsSchema, ModelConversationMetrics, ModelConversationMetricsSchema } from '@deprecated-claude/shared';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -2935,6 +2935,7 @@ export class Database {
       targetBranchId: string;
       replacementContent?: any[];
       attachmentIndices?: number[];
+      addedAttachments?: Attachment[];
       reason?: string;
       parentBranchId?: string; // Parent branch passed from frontend for correct tree integration
     }

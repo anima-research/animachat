@@ -490,7 +490,7 @@ export const AttachmentSchema = z.object({
 
 export type Attachment = z.infer<typeof AttachmentSchema>;
 
-const WsAttachmentSchema = z.object({
+export const WsAttachmentSchema = z.object({
   fileName: z.string(),
   fileType: z.string(),
   content: z.string(),
@@ -606,8 +606,13 @@ export const PostHocOperationSchema = z.object({
   targetBranchId: z.string().uuid(),
   // For edits - the replacement content
   replacementContent: z.array(ContentBlockSchema).optional(),
-  // For attachment hiding - which attachments to hide (by index)
+  // For attachment hiding, and for edits that change attachments - which of the
+  // target branch's own attachments the AI does not see (by index)
   attachmentIndices: z.array(z.number()).optional(),
+  // For edits that change attachments - attachments the AI sees in addition,
+  // after the target's own that remain. An edit carrying either attachment
+  // field states the whole attachment change (see post-hoc.ts).
+  addedAttachments: z.array(AttachmentSchema).optional(),
   // User-provided reason for the operation
   reason: z.string().optional(),
 });

@@ -103,7 +103,7 @@
         @bookmark-changed="() => emit('bookmark-changed')"
         @post-hoc-hide="(msgId: string, branchId: string) => emit('post-hoc-hide', msgId, branchId)"
         @post-hoc-edit="(msgId: string, branchId: string) => emit('post-hoc-edit', msgId, branchId)"
-        @post-hoc-edit-content="(msgId: string, branchId: string, content: string) => emit('post-hoc-edit-content', msgId, branchId, content)"
+        @post-hoc-edit-content="(msgId: string, branchId: string, content: string | undefined, attachments?: PostHocAttachmentEdit) => emit('post-hoc-edit-content', msgId, branchId, content, attachments)"
         @post-hoc-hide-before="(msgId: string, branchId: string) => emit('post-hoc-hide-before', msgId, branchId)"
         @post-hoc-unhide="(msgId: string, branchId: string) => emit('post-hoc-unhide', msgId, branchId)"
         @delete-post-hoc-operation="(msgId: string) => emit('delete-post-hoc-operation', msgId)"
@@ -124,6 +124,10 @@ import type { Message, Participant, WsAttachment } from '@deprecated-claude/shar
 import { getAvatarUrl, getParticipantColor } from '@/utils/avatars';
 import { useStore } from '@/store';
 import { type AuthenticityStatus, getAuthenticityLevel } from '@/utils/authenticity';
+
+// What an edit in place does to a message's attachments for the AI: which of
+// its own are hidden (by index) and which new ones are added.
+type PostHocAttachmentEdit = { hiddenIndices: number[]; added: WsAttachment[] };
 
 const props = defineProps<{
   messages: Message[];
@@ -153,7 +157,7 @@ const emit = defineEmits<{
   'bookmark-changed': [];
   'post-hoc-hide': [msgId: string, branchId: string];
   'post-hoc-edit': [msgId: string, branchId: string];
-  'post-hoc-edit-content': [msgId: string, branchId: string, content: string];
+  'post-hoc-edit-content': [msgId: string, branchId: string, content: string | undefined, attachments?: PostHocAttachmentEdit];
   'post-hoc-hide-before': [msgId: string, branchId: string];
   'post-hoc-unhide': [msgId: string, branchId: string];
   'delete-post-hoc-operation': [msgId: string];
