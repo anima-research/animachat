@@ -678,7 +678,8 @@ export class InferenceService {
           effectiveSystemPrompt,
           effectiveSettings,
           finalOnChunk,
-          stopSequences
+          stopSequences,
+          abortSignal
         );
       } else {
         usageResult = await openRouterService.streamCompletion(

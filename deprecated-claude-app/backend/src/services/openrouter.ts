@@ -82,7 +82,9 @@ export class OpenRouterService {
     systemPrompt: string | undefined,
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
-    stopSequences?: string[]
+    stopSequences?: string[],
+    // Cancels the HTTP request (Stop button)
+    signal?: AbortSignal
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -131,7 +133,8 @@ export class OpenRouterService {
           'HTTP-Referer': process.env.APP_URL || 'http://localhost:3010',
           'X-Title': 'Arc Chat'
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal
       });
       
       const duration = Date.now() - startTime;
