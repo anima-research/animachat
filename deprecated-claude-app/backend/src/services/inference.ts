@@ -650,6 +650,8 @@ export class InferenceService {
     };
 
     let usageResult: { usage?: any; rawRequest?: any } = {};
+    // A request that throws returns no rawRequest; don't leave the previous one in place.
+    this.lastRawRequest = undefined;
 
     try {
       if (model.provider === 'anthropic') {
