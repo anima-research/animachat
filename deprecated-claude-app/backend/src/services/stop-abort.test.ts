@@ -19,9 +19,11 @@ function event(e: any): string {
 
 type ApiState = { streaming: boolean; clientClosed: boolean; stopSequenceSentAt?: number; clientClosedAt?: number };
 
-// Streams forever (every 20ms) until the client hangs up: either pings only, or
-// text that turns into another participant's turn after a few deltas.
-async function withEndlessApi<T>(mode: 'pings' | 'stop-sequence', fn: (state: ApiState) => Promise<T>): Promise<T> {
+// Streams forever (every 20ms) until the client hangs up: either pings only, or the
+// given text deltas (one of which starts another participant's turn) followed by
+// endless filler. The mock ignores stop_sequences, like pseudo-prefill or upstreams
+// that don't enforce them.
+async function withEndlessApi<T>(script: 'pings' | string[], fn: (state: ApiState) => Promise<T>): Promise<T> {
   const state: ApiState = { streaming: false, clientClosed: false };
   const server = http.createServer((req, res) => {
     req.resume();
@@ -33,12 +35,11 @@ async function withEndlessApi<T>(mode: 'pings' | 'stop-sequence', fn: (state: Ap
       let i = 0;
       const timer = setInterval(() => {
         i++;
-        if (mode === 'pings') {
+        if (script === 'pings') {
           res.write(event({ type: 'ping' }));
         } else {
-          // The mock ignores stop_sequences, like pseudo-prefill or upstreams that don't enforce them
-          const text = i === 3 ? '\n\nUser: speaking for the user' : `w${i} `;
-          if (i === 3) state.stopSequenceSentAt = Date.now();
+          const text = script[i - 1] ?? `f${i} `;
+          if (text.includes('User:') && state.stopSequenceSentAt === undefined) state.stopSequenceSentAt = Date.now();
           res.write(event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }));
         }
       }, 20);
@@ -100,12 +101,27 @@ const history: any[] = [
     branches: [{ id: 'b1', role: 'user', content: 'Hello', createdAt: new Date(), parentBranchId: 'root', participantId: 'p-user' }] },
 ];
 
-async function generate(format: 'standard' | 'prefill', signal: AbortSignal, onChunk: (isComplete: boolean, chunk: string) => void) {
+type GenerateOptions = {
+  thinking?: boolean;                      // prefill with <think> tags
+  pseudoPrefill?: 'cat' | 'tail-cut';      // responder's conversationMode
+};
+
+async function generate(
+  format: 'standard' | 'prefill',
+  signal: AbortSignal,
+  onChunk: (isComplete: boolean, chunk: string) => void | Promise<void>,
+  options: GenerateOptions = {},
+) {
   const { InferenceService } = await import('./inference.js');
   const { EnhancedInferenceService } = await import('./enhanced-inference.js');
   const { ContextManager } = await import('./context-manager.js');
+  const testModel = { ...model, supportsThinking: !!options.thinking };
+  const responder = options.pseudoPrefill
+    ? { ...participants[1], conversationMode: 'pseudo-prefill', pseudoPrefillMode: options.pseudoPrefill }
+    : participants[1];
+  const testParticipants = [participants[0], responder];
   const base: any = new InferenceService({} as any);
-  base.modelLoader = { getModelById: async () => model };
+  base.modelLoader = { getModelById: async () => testModel };
   base.apiKeyManager = {
     getApiKeyForRequest: async () => ({ source: 'user', credentials: { apiKey: 'sk-ant-api03-test' } }),
     checkRateLimits: async () => ({ allowed: true }),
@@ -113,11 +129,22 @@ async function generate(format: 'standard' | 'prefill', signal: AbortSignal, onC
   const enhanced: any = new EnhancedInferenceService(base, new ContextManager());
   enhanced.calculateCostBreakdown = async () => new Proxy({}, { get: () => 0 });
   const conversation: any = { id: 'c', userId: 'u', format, model: model.id, title: 't', settings: {} };
+  const settings: any = { temperature: 1, maxTokens: 4096 };
+  if (options.thinking) settings.thinking = { enabled: true, budgetTokens: 1024 };
   await enhanced.streamCompletion(
-    model, history, '', { temperature: 1, maxTokens: 4096 }, 'u',
+    testModel, history, '', settings, 'u',
     async (chunk: string, isComplete: boolean) => onChunk(isComplete, chunk),
-    conversation, participants[1], async () => {}, participants, signal,
+    conversation, responder, async () => {}, testParticipants, signal,
   );
+}
+
+// Without the cancellation the mock streams forever; fail instead of hanging.
+async function withinDeadline<T>(promise: Promise<T>, ms = 2000): Promise<T> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => { deadline = setTimeout(() => reject(new Error(`still streaming after ${ms}ms`)), ms); }),
+  ]).finally(() => clearTimeout(deadline));
 }
 
 test('Stop cancels the request while the stream is silent', { timeout: 5000 }, async t => {
@@ -131,23 +158,67 @@ test('Stop cancels the request while the stream is silent', { timeout: 5000 }, a
   });
 });
 
-test('A post-facto stop sequence cancels the request and completes normally', { timeout: 5000 }, async () => {
-  await withEndlessApi('stop-sequence', async state => {
-    let text = '';
-    let completions = 0;
-    let deadline: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      generate('prefill', new AbortController().signal, (isComplete, chunk) => {
+// Each stop path in InferenceService: the model's text, and what the client should get.
+const stopPaths: { name: string; script: string[]; expected: string; options?: GenerateOptions }[] = [
+  {
+    name: 'prefill',
+    script: ['w1 ', 'w2 ', '\n\nUser: speaking for the user'],
+    expected: 'w1 w2',
+  },
+  {
+    name: 'prefill with thinking, stop later in the response',
+    script: ['<think>', 'pondering', '</think>\n\nanswer ', 'w2 ', '\n\nUser: speaking for the user'],
+    expected: 'answer w2',
+    options: { thinking: true },
+  },
+  {
+    name: 'prefill with thinking, stop right after </think>',
+    script: ['<think>', 'pondering', '</think>\n\nUser: speaking for the user'],
+    expected: '',
+    options: { thinking: true },
+  },
+  {
+    name: 'pseudo-prefill cat',
+    script: ['User: Hello\n\nClaude: ', 'This is the reply, long enough to pass the fifty-character mark. ', 'w2 ', '\n\nUser: speaking for the user'],
+    expected: 'This is the reply, long enough to pass the fifty-character mark. w2',
+    options: { pseudoPrefill: 'cat' },
+  },
+  {
+    name: 'pseudo-prefill tail-cut',
+    script: ['Claude: hi there ', 'w2 ', '\n\nUser: speaking for the user'],
+    expected: 'hi there w2',
+    options: { pseudoPrefill: 'tail-cut' },
+  },
+];
+
+for (const path of stopPaths) {
+  test(`A post-facto stop sequence cancels the request and completes normally: ${path.name}`, { timeout: 5000 }, async () => {
+    await withEndlessApi(path.script, async state => {
+      const userStop = new AbortController();
+      let text = '';
+      let completions = 0;
+      await withinDeadline(generate('prefill', userStop.signal, (isComplete, chunk) => {
         text += chunk;
         if (isComplete) completions++;
-      }),
-      // Without the cancellation the mock streams forever; fail instead of hanging
-      new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('still streaming after 2s')), 2000); }),
-    ]).finally(() => clearTimeout(deadline));
-    assert.equal(text.trimEnd(), 'w1 w2', 'the text is cut at the stop sequence');
-    assert.equal(completions, 1);
+      }, path.options));
+      assert.equal(text.trimEnd(), path.expected, 'the text is cut at the stop sequence');
+      assert.equal(completions, 1);
+      assert.equal(userStop.signal.aborted, false, 'the user signal was touched');
+      assert.equal(await closedWithin(state, 1000), true, 'the HTTP request was not cancelled');
+      const lag = state.clientClosedAt! - state.stopSequenceSentAt!;
+      assert.ok(lag < 100, `request cancelled ${lag}ms after the stop sequence`);
+    });
+  });
+}
+
+test('A failure saving the cut reply is not hidden by the cancellation', { timeout: 5000 }, async () => {
+  await withEndlessApi(stopPaths[0].script, async state => {
+    await assert.rejects(
+      withinDeadline(generate('prefill', new AbortController().signal, isComplete => {
+        if (isComplete) throw new Error('save failed');
+      })),
+      /save failed/,
+    );
     assert.equal(await closedWithin(state, 1000), true, 'the HTTP request was not cancelled');
-    const lag = state.clientClosedAt! - state.stopSequenceSentAt!;
-    assert.ok(lag < 100, `request cancelled ${lag}ms after the stop sequence`);
   });
 });
