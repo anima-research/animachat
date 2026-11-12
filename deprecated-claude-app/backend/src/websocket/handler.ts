@@ -19,36 +19,57 @@ interface AuthenticatedWebSocket extends WebSocket {
 }
 
 // Track active generations for abort support
-// Key: `${userId}:${conversationId}`, Value: AbortController
+// Key: conversationId (one generation per conversation, whoever started it), Value: AbortController
 const activeGenerations = new Map<string, AbortController>();
+// Generations aborted because a newer one took their place. When they unwind they
+// must leave the room's AI request and the client's streaming state alone: those
+// belong to the replacement now.
+const replacedGenerations = new WeakSet<AbortController>();
+const releasedGenerations = new WeakSet<AbortController>();
 
-function getGenerationKey(userId: string, conversationId: string): string {
-  return `${userId}:${conversationId}`;
-}
-
-function startGeneration(userId: string, conversationId: string): AbortController {
-  const key = getGenerationKey(userId, conversationId);
+function startGeneration(conversationId: string): AbortController {
   // Abort any existing generation for this conversation
-  const existing = activeGenerations.get(key);
+  const existing = activeGenerations.get(conversationId);
   if (existing) {
+    replacedGenerations.add(existing);
     existing.abort();
   }
   const controller = new AbortController();
-  activeGenerations.set(key, controller);
+  activeGenerations.set(conversationId, controller);
   return controller;
 }
 
-function endGeneration(userId: string, conversationId: string): void {
-  const key = getGenerationKey(userId, conversationId);
-  activeGenerations.delete(key);
+function endGeneration(conversationId: string, controller: AbortController): void {
+  // Only remove our own entry: a generation that was replaced by a newer one
+  // must not unregister the newer one when it finishes unwinding.
+  if (activeGenerations.get(conversationId) === controller) {
+    activeGenerations.delete(conversationId);
+  }
 }
 
-function abortGeneration(userId: string, conversationId: string): boolean {
-  const key = getGenerationKey(userId, conversationId);
-  const controller = activeGenerations.get(key);
+function wasReplaced(controller: AbortController | undefined): boolean {
+  return controller !== undefined && replacedGenerations.has(controller);
+}
+
+// Unregister a generation and end its room AI request, once (finally and catch
+// both call this). A replaced generation leaves the room request to its
+// replacement: ending it would broadcast ai_finished and hide the replacement's
+// Stop button.
+function releaseGeneration(conversationId: string, controller: AbortController): void {
+  if (releasedGenerations.has(controller)) return;
+  releasedGenerations.add(controller);
+  endGeneration(conversationId, controller);
+  if (!replacedGenerations.has(controller)) {
+    roomManager.endAiRequest(conversationId);
+  }
+}
+
+function abortGeneration(conversationId: string): boolean {
+  const controller = activeGenerations.get(conversationId);
   if (controller) {
+    // The entry stays until the generation releases itself, so a Regenerate
+    // pressed right after Stop still counts as replacing it.
     controller.abort();
-    activeGenerations.delete(key);
     return true;
   }
   return false;
@@ -690,7 +711,7 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
           break;
           
         case 'abort':
-          handleAbort(ws, message);
+          await handleAbort(ws, message, db);
           break;
         
         case 'join_room':
@@ -744,13 +765,17 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
   ws.send(JSON.stringify({ type: 'connected', userId: ws.userId }));
 }
 
-function handleAbort(
+async function handleAbort(
   ws: AuthenticatedWebSocket,
-  message: { type: 'abort'; conversationId: string }
+  message: { type: 'abort'; conversationId: string },
+  db: Database
 ) {
   if (!ws.userId) return;
   
-  const aborted = abortGeneration(ws.userId, message.conversationId);
+  // Generations are registered per conversation, not per user, so a collaborator
+  // can stop a generation the owner (or another collaborator) started.
+  const canChat = await db.canUserChatInConversation(message.conversationId, ws.userId);
+  const aborted = canChat && abortGeneration(message.conversationId);
   console.log(`[Abort] User ${ws.userId} aborted generation for conversation ${message.conversationId}: ${aborted ? 'success' : 'no active generation'}`);
   
   ws.send(JSON.stringify({
@@ -1108,6 +1133,7 @@ async function handleChatMessage(
     : filteredHistory;
   
   // Stream response from appropriate service
+  let abortController: AbortController | undefined;
   try {
     Logger.websocket(`[WebSocket] Responder:`, JSON.stringify(responder, null, 2));
     Logger.websocket(`[WebSocket] Conversation model: "${conversation.model}"`);
@@ -1179,7 +1205,7 @@ async function handleChatMessage(
     });
     
     // Create abort controller for this generation
-    const abortController = startGeneration(conversation.userId, conversation.id);
+    abortController = startGeneration(conversation.id);
 
     // Track AI request in room manager for multi-user sync
     roomManager.startAiRequest(message.conversationId, ws.userId!, assistantMessage.id);
@@ -1361,17 +1387,16 @@ async function handleChatMessage(
     }
     
     } finally {
-      endGeneration(conversation.userId, conversation.id);
-      roomManager.endAiRequest(message.conversationId);
+      releaseGeneration(conversation.id, abortController);
     }
   } catch (error) {
     // Clean up generation tracking on error
-    endGeneration(conversation.userId, conversation.id);
-    roomManager.endAiRequest(message.conversationId);
+    if (abortController) releaseGeneration(conversation.id, abortController);
     
     // Check if this was an abort
     if (error instanceof Error && error.message === 'Generation aborted') {
       console.log(`[Abort] Generation was aborted for conversation ${message.conversationId}`);
+      if (wasReplaced(abortController)) return; // the replacement owns the client's streaming state
       ws.send(JSON.stringify({
         type: 'stream',
         messageId: assistantMessage.id,
@@ -1606,6 +1631,7 @@ async function handleRegenerate(
   }
   
   // Stream new response
+  let abortController: AbortController | undefined;
   try {
     // Log WebSocket event
     await llmLogger.logWebSocketEvent({
@@ -1651,7 +1677,7 @@ async function handleRegenerate(
     });
     
     // Create abort controller for this generation
-    const abortController = startGeneration(conversation.userId, conversation.id);
+    abortController = startGeneration(conversation.id);
     
     // Track AI request in room manager for multi-user sync
     roomManager.startAiRequest(message.conversationId, ws.userId!, updatedMessage.id);
@@ -1690,8 +1716,7 @@ async function handleRegenerate(
         personaContext: responderParticipant?.personaContext
       });
     } finally {
-      endGeneration(conversation.userId, conversation.id);
-      roomManager.endAiRequest(message.conversationId);
+      releaseGeneration(conversation.id, abortController);
     }
 
     // Capture debug request/response for researchers (only for first branch)
@@ -1767,12 +1792,12 @@ async function handleRegenerate(
       // Don't fail the whole request if debug capture fails
     }
   } catch (error) {
-    endGeneration(conversation.userId, conversation.id);
-    roomManager.endAiRequest(message.conversationId);
+    if (abortController) releaseGeneration(conversation.id, abortController);
 
     // Check if this was an abort
     if (error instanceof Error && error.message === 'Generation aborted') {
       console.log(`[Abort] Regeneration was aborted for conversation ${message.conversationId}`);
+      if (wasReplaced(abortController)) return; // the replacement owns the client's streaming state
       // Send abort notification for all branches on the message
       for (const branch of updatedMessage.branches) {
         ws.send(JSON.stringify({
@@ -2060,6 +2085,7 @@ async function handleEdit(
     }
     
     // Stream response
+    let abortController: AbortController | undefined;
     try {
       const targetMessage = assistantMessage!;
       const targetBranchId = targetMessage.activeBranchId;
@@ -2106,7 +2132,7 @@ async function handleEdit(
       });
       
       // Create abort controller for this generation
-      const abortController = startGeneration(conversation.userId, conversation.id);
+      abortController = startGeneration(conversation.id);
       
       // Track AI request in room manager for multi-user sync
       roomManager.startAiRequest(message.conversationId, ws.userId!, targetMessage.id);
@@ -2145,8 +2171,7 @@ async function handleEdit(
           personaContext: responderParticipant?.personaContext
         });
       } finally {
-        endGeneration(conversation.userId, conversation.id);
-        roomManager.endAiRequest(message.conversationId);
+        releaseGeneration(conversation.id, abortController);
       }
       
       // Capture debug request/response for researchers
@@ -2200,6 +2225,18 @@ async function handleEdit(
         console.error('[DEBUG CAPTURE] Failed to capture debug data for edit:', debugError);
       }
     } catch (error) {
+      if (abortController) releaseGeneration(conversation.id, abortController);
+      // Stopped by the user: not an error
+      if (error instanceof Error && error.message === 'Generation aborted') {
+        console.log(`[Abort] Edit generation was aborted for conversation ${conversation.id}`);
+        if (wasReplaced(abortController)) return; // the replacement owns the client's streaming state
+        ws.send(JSON.stringify({
+          type: 'generation_aborted',
+          conversationId: conversation.id,
+          aborted: true
+        }));
+        return;
+      }
       console.error('Error generating response to edited message:', error);
       let errorMsg = error instanceof Error ? error.message : String(error);
       
@@ -2280,6 +2317,7 @@ async function handleContinue(
     console.log(`[Continue] Sampling ${samplingBranchCount} response branches in parallel`);
   }
   
+  let abortController: AbortController | undefined;
   try {
     // Verify conversation access
     const conversation = await db.getConversation(conversationId, ws.userId);
@@ -2463,7 +2501,7 @@ async function handleContinue(
     }
     
     // Create abort controller for this generation
-    const abortController = startGeneration(conversation.userId, conversationId);
+    abortController = startGeneration(conversationId);
     
     // Track AI request in room manager
     roomManager.startAiRequest(conversationId, ws.userId!, assistantMessage.id);
@@ -2576,19 +2614,18 @@ async function handleContinue(
     }
     
     } finally {
-      endGeneration(conversation.userId, conversationId);
-      roomManager.endAiRequest(conversationId);
+      releaseGeneration(conversationId, abortController);
     }
 
   } catch (error) {
-    if (ws.userId) {
-      endGeneration(ws.userId, conversationId);
+    if (abortController) {
+      releaseGeneration(conversationId, abortController);
     }
-    roomManager.endAiRequest(conversationId);
     
     // Check if this was an abort
     if (error instanceof Error && error.message === 'Generation aborted') {
       console.log(`[Abort] Continue generation was aborted for conversation ${conversationId}`);
+      if (wasReplaced(abortController)) return; // the replacement owns the client's streaming state
       // Note: assistantMessage/assistantBranch may not be defined if error happened early
       ws.send(JSON.stringify({
         type: 'generation_aborted',

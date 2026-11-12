@@ -121,7 +121,9 @@ export class GeminiService {
     systemPrompt: string | undefined,
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: ContentBlock[], usage?: any) => Promise<void>,
-    stopSequences?: string[]
+    stopSequences?: string[],
+    // Cancels the HTTP request (Stop button)
+    signal?: AbortSignal
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -224,6 +226,7 @@ export class GeminiService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestBody),
+        signal,
       });
       
       if (!response.ok) {

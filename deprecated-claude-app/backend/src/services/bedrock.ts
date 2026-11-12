@@ -72,7 +72,9 @@ export class BedrockService {
     systemPrompt: string | undefined,
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
-    stopSequences?: string[]
+    stopSequences?: string[],
+    // Cancels the HTTP request (Stop button)
+    signal?: AbortSignal
   ): Promise<{ rawRequest?: any }> {
     // Demo mode - simulate streaming response
     if (process.env.DEMO_MODE === 'true') {
@@ -126,7 +128,7 @@ export class BedrockService {
       });
 
       const targetClient = this.getClientForModel(bedrockModelId);
-      const response = await targetClient.send(command);
+      const response = await targetClient.send(command, { abortSignal: signal });
       
       if (!response.body) {
         throw new Error('No response body from Bedrock');

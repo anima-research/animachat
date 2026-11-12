@@ -74,7 +74,9 @@ export class AnthropicService {
       effortLevels?: string[];
       supportsSampling?: boolean;
       thinkingPrefixMismatch?: 'error' | 'drop_block';
-    }
+    },
+    // Cancels the HTTP request (Stop button); the SDK then throws APIUserAbortError
+    signal?: AbortSignal
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -320,9 +322,12 @@ export class AnthropicService {
       let currentBlock: any = null;
       
       // block_binding is rejected (400) unless its beta is in the header.
-      const requestOptions = requestParams.thinking?.block_binding
-        ? { headers: { 'anthropic-beta': this.betaHeader(['thinking-binding-controls-2026-08-01']) } }
-        : undefined;
+      const requestOptions = {
+        ...(requestParams.thinking?.block_binding
+          ? { headers: { 'anthropic-beta': this.betaHeader(['thinking-binding-controls-2026-08-01']) } }
+          : {}),
+        signal
+      };
       const stream = await this.client.messages.create(requestParams, requestOptions) as any;
 
       let stopReason: string | undefined;
