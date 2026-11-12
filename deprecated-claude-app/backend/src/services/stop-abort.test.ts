@@ -20,10 +20,12 @@ function event(e: any): string {
 type ApiState = { streaming: boolean; clientClosed: boolean; stopSequenceSentAt?: number; clientClosedAt?: number };
 
 // Streams forever (every 20ms) until the client hangs up: either pings only, or the
-// given text deltas (one of which starts another participant's turn) followed by
-// endless filler. The mock ignores stop_sequences, like pseudo-prefill or upstreams
+// given text deltas followed by endless filler. The delta written as { stop } is the
+// one that starts another participant's turn; the cancellation clock starts there. The mock ignores stop_sequences, like pseudo-prefill or upstreams
 // that don't enforce them.
-async function withEndlessApi<T>(script: 'pings' | string[], fn: (state: ApiState) => Promise<T>): Promise<T> {
+type ScriptDelta = string | { stop: string };
+
+async function withEndlessApi<T>(script: 'pings' | ScriptDelta[], fn: (state: ApiState) => Promise<T>): Promise<T> {
   const state: ApiState = { streaming: false, clientClosed: false };
   const server = http.createServer((req, res) => {
     req.resume();
@@ -38,8 +40,9 @@ async function withEndlessApi<T>(script: 'pings' | string[], fn: (state: ApiStat
         if (script === 'pings') {
           res.write(event({ type: 'ping' }));
         } else {
-          const text = script[i - 1] ?? `f${i} `;
-          if (text.includes('User:') && state.stopSequenceSentAt === undefined) state.stopSequenceSentAt = Date.now();
+          const delta = script[i - 1] ?? `f${i} `;
+          const text = typeof delta === 'string' ? delta : delta.stop;
+          if (typeof delta !== 'string') state.stopSequenceSentAt = Date.now();
           res.write(event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }));
         }
       }, 20);
@@ -159,33 +162,33 @@ test('Stop cancels the request while the stream is silent', { timeout: 5000 }, a
 });
 
 // Each stop path in InferenceService: the model's text, and what the client should get.
-const stopPaths: { name: string; script: string[]; expected: string; options?: GenerateOptions }[] = [
+const stopPaths: { name: string; script: ScriptDelta[]; expected: string; options?: GenerateOptions }[] = [
   {
     name: 'prefill',
-    script: ['w1 ', 'w2 ', '\n\nUser: speaking for the user'],
+    script: ['w1 ', 'w2 ', { stop: '\n\nUser: speaking for the user' }],
     expected: 'w1 w2',
   },
   {
     name: 'prefill with thinking, stop later in the response',
-    script: ['<think>', 'pondering', '</think>\n\nanswer ', 'w2 ', '\n\nUser: speaking for the user'],
+    script: ['<think>', 'pondering', '</think>\n\nanswer ', 'w2 ', { stop: '\n\nUser: speaking for the user' }],
     expected: 'answer w2',
     options: { thinking: true },
   },
   {
     name: 'prefill with thinking, stop right after </think>',
-    script: ['<think>', 'pondering', '</think>\n\nUser: speaking for the user'],
+    script: ['<think>', 'pondering', { stop: '</think>\n\nUser: speaking for the user' }],
     expected: '',
     options: { thinking: true },
   },
   {
     name: 'pseudo-prefill cat',
-    script: ['User: Hello\n\nClaude: ', 'This is the reply, long enough to pass the fifty-character mark. ', 'w2 ', '\n\nUser: speaking for the user'],
+    script: ['User: Hello\n\nClaude: ', 'This is the reply, long enough to pass the fifty-character mark. ', 'w2 ', { stop: '\n\nUser: speaking for the user' }],
     expected: 'This is the reply, long enough to pass the fifty-character mark. w2',
     options: { pseudoPrefill: 'cat' },
   },
   {
     name: 'pseudo-prefill tail-cut',
-    script: ['Claude: hi there ', 'w2 ', '\n\nUser: speaking for the user'],
+    script: ['Claude: hi there ', 'w2 ', { stop: '\n\nUser: speaking for the user' }],
     expected: 'hi there w2',
     options: { pseudoPrefill: 'tail-cut' },
   },
