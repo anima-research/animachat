@@ -8,7 +8,8 @@ import type { AddressInfo } from 'node:net';
 // The Stop button aborts the generation's AbortSignal. The signal must cancel
 // the provider request itself, not wait for the next chunk to reach the
 // callback: during silent stretches (time to first token, ping-only periods)
-// and after a post-facto stop sequence no chunk ever arrives there. Drives
+// and after a post-facto stop sequence no chunk ever arrives there. A post-facto
+// stop sequence must also cancel the request on its own, with no Stop press. Drives
 // EnhancedInferenceService -> InferenceService -> AnthropicService -> SDK
 // against a local mock API; only model lookup, API key and pricing are stubbed.
 
@@ -16,7 +17,7 @@ function event(e: any): string {
   return `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`;
 }
 
-type ApiState = { streaming: boolean; clientClosed: boolean };
+type ApiState = { streaming: boolean; clientClosed: boolean; stopSequenceSentAt?: number; clientClosedAt?: number };
 
 // Streams forever (every 20ms) until the client hangs up: either pings only, or
 // text that turns into another participant's turn after a few deltas.
@@ -37,12 +38,14 @@ async function withEndlessApi<T>(mode: 'pings' | 'stop-sequence', fn: (state: Ap
         } else {
           // The mock ignores stop_sequences, like pseudo-prefill or upstreams that don't enforce them
           const text = i === 3 ? '\n\nUser: speaking for the user' : `w${i} `;
+          if (i === 3) state.stopSequenceSentAt = Date.now();
           res.write(event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }));
         }
       }, 20);
       res.on('close', () => {
         clearInterval(timer);
         state.clientClosed = true;
+        state.clientClosedAt = Date.now();
       });
     });
   });
@@ -97,7 +100,7 @@ const history: any[] = [
     branches: [{ id: 'b1', role: 'user', content: 'Hello', createdAt: new Date(), parentBranchId: 'root', participantId: 'p-user' }] },
 ];
 
-async function generate(format: 'standard' | 'prefill', signal: AbortSignal, onChunk: (isComplete: boolean) => void) {
+async function generate(format: 'standard' | 'prefill', signal: AbortSignal, onChunk: (isComplete: boolean, chunk: string) => void) {
   const { InferenceService } = await import('./inference.js');
   const { EnhancedInferenceService } = await import('./enhanced-inference.js');
   const { ContextManager } = await import('./context-manager.js');
@@ -112,7 +115,7 @@ async function generate(format: 'standard' | 'prefill', signal: AbortSignal, onC
   const conversation: any = { id: 'c', userId: 'u', format, model: model.id, title: 't', settings: {} };
   await enhanced.streamCompletion(
     model, history, '', { temperature: 1, maxTokens: 4096 }, 'u',
-    async (_chunk: string, isComplete: boolean) => onChunk(isComplete),
+    async (chunk: string, isComplete: boolean) => onChunk(isComplete, chunk),
     conversation, participants[1], async () => {}, participants, signal,
   );
 }
@@ -128,18 +131,23 @@ test('Stop cancels the request while the stream is silent', { timeout: 5000 }, a
   });
 });
 
-test('Stop cancels the request after a post-facto stop sequence swallowed the rest', { timeout: 5000 }, async t => {
+test('A post-facto stop sequence cancels the request and completes normally', { timeout: 5000 }, async () => {
   await withEndlessApi('stop-sequence', async state => {
-    const controller = new AbortController();
-    let completedEarly = false;
-    t.after(stopAfterStreaming(state, controller, 300));
-    const started = Date.now();
-    await assert.rejects(
-      generate('prefill', controller.signal, isComplete => { if (isComplete) completedEarly = true; }),
-      /Generation aborted/,
-    );
-    assert.equal(completedEarly, true, 'the client was told the message is complete before Stop');
-    assert.ok(Date.now() - started < 1500, `settled after ${Date.now() - started}ms`);
+    let text = '';
+    let completions = 0;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      generate('prefill', new AbortController().signal, (isComplete, chunk) => {
+        text += chunk;
+        if (isComplete) completions++;
+      }),
+      // Without the cancellation the mock streams forever; fail instead of hanging
+      new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('still streaming after 2s')), 2000); }),
+    ]).finally(() => clearTimeout(deadline));
+    assert.equal(text.trimEnd(), 'w1 w2', 'the text is cut at the stop sequence');
+    assert.equal(completions, 1);
     assert.equal(await closedWithin(state, 1000), true, 'the HTTP request was not cancelled');
+    const lag = state.clientClosedAt! - state.stopSequenceSentAt!;
+    assert.ok(lag < 100, `request cancelled ${lag}ms after the stop sequence`);
   });
 });
