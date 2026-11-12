@@ -59,14 +59,20 @@ async function withEndlessApi<T>(mode: 'pings' | 'stop-sequence', fn: (state: Ap
   }
 }
 
-// Presses Stop once the response is streaming (not while the request is still being built)
-function stopAfterStreaming(state: ApiState, controller: AbortController, delayMs: number) {
+// Presses Stop once the response is streaming (not while the request is still being built).
+// Returns a cleanup that cancels the pending press, for tests that fail before it happens.
+function stopAfterStreaming(state: ApiState, controller: AbortController, delayMs: number): () => void {
+  let press: ReturnType<typeof setTimeout> | undefined;
   const poll = setInterval(() => {
     if (state.streaming) {
       clearInterval(poll);
-      setTimeout(() => controller.abort(), delayMs);
+      press = setTimeout(() => controller.abort(), delayMs);
     }
   }, 5);
+  return () => {
+    clearInterval(poll);
+    clearTimeout(press);
+  };
 }
 
 async function closedWithin(state: ApiState, ms: number): Promise<boolean> {
@@ -111,10 +117,10 @@ async function generate(format: 'standard' | 'prefill', signal: AbortSignal, onC
   );
 }
 
-test('Stop cancels the request while the stream is silent', { timeout: 5000 }, async () => {
+test('Stop cancels the request while the stream is silent', { timeout: 5000 }, async t => {
   await withEndlessApi('pings', async state => {
     const controller = new AbortController();
-    stopAfterStreaming(state, controller, 200);
+    t.after(stopAfterStreaming(state, controller, 200));
     const started = Date.now();
     await assert.rejects(generate('standard', controller.signal, () => {}), /Generation aborted/);
     assert.ok(Date.now() - started < 1500, `settled after ${Date.now() - started}ms`);
@@ -122,11 +128,11 @@ test('Stop cancels the request while the stream is silent', { timeout: 5000 }, a
   });
 });
 
-test('Stop cancels the request after a post-facto stop sequence swallowed the rest', { timeout: 5000 }, async () => {
+test('Stop cancels the request after a post-facto stop sequence swallowed the rest', { timeout: 5000 }, async t => {
   await withEndlessApi('stop-sequence', async state => {
     const controller = new AbortController();
     let completedEarly = false;
-    stopAfterStreaming(state, controller, 300);
+    t.after(stopAfterStreaming(state, controller, 300));
     const started = Date.now();
     await assert.rejects(
       generate('prefill', controller.signal, isComplete => { if (isComplete) completedEarly = true; }),
