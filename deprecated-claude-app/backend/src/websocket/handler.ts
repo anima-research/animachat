@@ -2203,6 +2203,16 @@ async function handleEdit(
         console.error('[DEBUG CAPTURE] Failed to capture debug data for edit:', debugError);
       }
     } catch (error) {
+      // Stopped by the user: not an error
+      if (error instanceof Error && error.message === 'Generation aborted') {
+        console.log(`[Abort] Edit generation was aborted for conversation ${conversation.id}`);
+        ws.send(JSON.stringify({
+          type: 'generation_aborted',
+          conversationId: conversation.id,
+          aborted: true
+        }));
+        return;
+      }
       console.error('Error generating response to edited message:', error);
       let errorMsg = error instanceof Error ? error.message : String(error);
       
