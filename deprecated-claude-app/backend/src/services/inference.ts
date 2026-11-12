@@ -636,6 +636,19 @@ export class InferenceService {
         // Case 3: Standard mode - just pass through
         : baseOnChunk;
 
+    // An error thrown by our own callbacks (saving the reply, metrics) is a real
+    // failure even after the request was cancelled at a stop sequence; only the
+    // provider's cancellation error may be treated as a normal finish below.
+    let callbackFailed = false;
+    const providerOnChunk = async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+      try {
+        await finalOnChunk(chunk, isComplete, contentBlocks, usage);
+      } catch (error) {
+        callbackFailed = true;
+        throw error;
+      }
+    };
+
     let usageResult: { usage?: any; rawRequest?: any } = {};
 
     try {
@@ -653,7 +666,7 @@ export class InferenceService {
           formattedMessages,
           effectiveSystemPrompt,
           effectiveSettings,
-          finalOnChunk,
+          providerOnChunk,
           stopSequences,
           model.reasoningDisplay,
           {
@@ -674,7 +687,7 @@ export class InferenceService {
           formattedMessages,
           effectiveSystemPrompt,
           effectiveSettings,
-          finalOnChunk,
+          providerOnChunk,
           stopSequences,
           upstream.signal
         );
@@ -697,7 +710,7 @@ export class InferenceService {
             formattedMessages,
             effectiveSystemPrompt,
             effectiveSettings,
-            finalOnChunk,
+            providerOnChunk,
             stopSequences,
             upstream.signal
           );
@@ -707,7 +720,7 @@ export class InferenceService {
           formattedMessages,
           effectiveSystemPrompt,
           effectiveSettings,
-          finalOnChunk,
+          providerOnChunk,
           stopSequences,
           undefined,
           { thinkingApi: model.thinkingApi, effortLevels: model.effortLevels, supportsThinking: model.supportsThinking },
@@ -741,7 +754,7 @@ export class InferenceService {
           formattedMessages,
           effectiveSystemPrompt,
           effectiveSettings,
-          finalOnChunk,
+          providerOnChunk,
           stopSequences,
           undefined,
           upstream.signal
@@ -798,7 +811,7 @@ export class InferenceService {
           messagesToSend,
           effectiveSystemPrompt,
           geminiSettings,
-          finalOnChunk,
+          providerOnChunk,
           stopSequences,
           upstream.signal
         );
@@ -809,7 +822,7 @@ export class InferenceService {
       // Our own cancellation surfaces as the provider's abort error. The message is
       // already complete (early completion went out with the stop sequence), so this
       // is a normal finish, not a failure; usage is whatever the provider had sent.
-      if (!cancelledAtStopSequence || abortSignal?.aborted) throw error;
+      if (!cancelledAtStopSequence || !upstream.signal.aborted || abortSignal?.aborted || callbackFailed) throw error;
       console.log(`[InferenceService] Provider request cancelled after stop sequence (${error instanceof Error ? error.message : error})`);
     } finally {
       abortSignal?.removeEventListener('abort', forwardUserAbort);
