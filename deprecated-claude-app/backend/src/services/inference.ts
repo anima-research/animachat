@@ -338,6 +338,22 @@ export class InferenceService {
       console.log(`[InferenceService] Using custom model with embedded endpoint: ${(model as any).customEndpoint.baseUrl}`);
     }
 
+    // The provider request gets its own controller: the Stop button aborts it through
+    // the user's signal, and a post-facto stop sequence aborts it from here. Once the
+    // stop sequence has fired, everything the model writes is swallowed below, so
+    // letting the stream run on would only bill tokens nobody sees.
+    const upstream = new AbortController();
+    const forwardUserAbort = () => upstream.abort(abortSignal?.reason);
+    if (abortSignal?.aborted) upstream.abort(abortSignal.reason);
+    else abortSignal?.addEventListener('abort', forwardUserAbort, { once: true });
+    let cancelledAtStopSequence = false;
+    const cancelAtStopSequence = () => {
+      if (upstream.signal.aborted) return;
+      cancelledAtStopSequence = true;
+      console.log('[InferenceService] Cancelling the provider request after a post-facto stop sequence');
+      upstream.abort();
+    };
+
     // Track token usage
     let inputTokens = 0;
     let outputTokens = 0;
@@ -361,7 +377,7 @@ export class InferenceService {
       const catMsg = formattedMessages[formattedMessages.length - 1];
       const catContent = catMsg?.branches.find(b => b.id === catMsg.activeBranchId)?.content || '';
       const ppMode: 'cat' | 'tail-cut' = catContent.includes('cat ') && !catContent.includes('cut ') ? 'cat' : 'tail-cut';
-      baseOnChunk = this.createPseudoPrefillChunkHandler(trackingOnChunk, logContent, participants, responderId, ppMode);
+      baseOnChunk = this.createPseudoPrefillChunkHandler(trackingOnChunk, logContent, participants, responderId, ppMode, cancelAtStopSequence);
     } else if (actualFormat === 'messages') {
       baseOnChunk = this.createMessagesModeChunkHandler(trackingOnChunk, participants, responderId);
     } else {
@@ -508,6 +524,7 @@ export class InferenceService {
                 const stopMatch = findStopSequence(trimmedAfterTag);
                 if (stopMatch) {
                   responseHitStopSequence = true;
+                  cancelAtStopSequence();
                   const truncated = trimmedAfterTag.substring(0, stopMatch.index).trimEnd();
                   if (stopMatch.index === 0) {
                     // Stop sequence at position 0 means model tried to write as another participant
@@ -551,6 +568,7 @@ export class InferenceService {
             const stopMatch = findStopSequence(responseBuffer);
             if (stopMatch) {
               responseHitStopSequence = true;
+              cancelAtStopSequence();
               console.log(`[InferenceService] Stop sequence "${stopMatch.sequence}" found at position ${stopMatch.index}, truncating response`);
               // Calculate how much of this chunk to send
               const totalBefore = responseBuffer.length - chunk.length;
@@ -597,6 +615,7 @@ export class InferenceService {
             const stopMatch = findStopSequence(responseBuffer);
             if (stopMatch) {
               responseHitStopSequence = true;
+              cancelAtStopSequence();
               console.log(`[InferenceService] Stop sequence "${stopMatch.sequence}" found at position ${stopMatch.index}, truncating response`);
               // Calculate how much of this chunk to send
               const totalBefore = responseBuffer.length - chunk.length;
@@ -617,173 +636,198 @@ export class InferenceService {
         // Case 3: Standard mode - just pass through
         : baseOnChunk;
 
-    let usageResult: { usage?: any; rawRequest?: any } = {};
+    // An error thrown by our own callbacks (saving the reply, metrics) is a real
+    // failure even after the request was cancelled at a stop sequence; only the
+    // provider's cancellation error may be treated as a normal finish below.
+    let callbackFailed = false;
+    const providerOnChunk = async (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => {
+      try {
+        await finalOnChunk(chunk, isComplete, contentBlocks, usage);
+      } catch (error) {
+        callbackFailed = true;
+        throw error;
+      }
+    };
 
-    if (model.provider === 'anthropic') {
-      if (!selectedKey) {
-        throw new Error('No API key available for Anthropic');
-      }
-      const anthropicService = new AnthropicService(
-        this.db, 
-        selectedKey.credentials.apiKey
-      );
-      
-      usageResult = await anthropicService.streamCompletion(
-        model.providerModelId,
-        formattedMessages,
-        effectiveSystemPrompt,
-        effectiveSettings,
-        finalOnChunk,
-        stopSequences,
-        model.reasoningDisplay,
-        {
-          thinkingApi: model.thinkingApi,
-          effortLevels: model.effortLevels,
-          supportsSampling: model.supportsSampling,
-          thinkingPrefixMismatch: model.thinkingPrefixMismatch
-        },
-        abortSignal
-      );
-    } else if (model.provider === 'bedrock') {
-      if (!selectedKey) {
-        throw new Error('No API key available for Bedrock');
-      }
-      const bedrockService = new BedrockService(this.db, selectedKey.credentials);
-      usageResult = await bedrockService.streamCompletion(
-        model.providerModelId,
-        formattedMessages,
-        effectiveSystemPrompt,
-        effectiveSettings,
-        finalOnChunk,
-        stopSequences,
-        abortSignal
-      );
-    } else if (model.provider === 'openrouter') {
-      if (!selectedKey) {
-        throw new Error('No API key available for OpenRouter');
-      }
-      const openRouterService = new OpenRouterService(
-        this.db, 
-        selectedKey.credentials.apiKey
-      );
-      
-      // Use exact test script reproduction if enabled (for debugging)
-      const useExactTest = process.env.OPENROUTER_EXACT_TEST === 'true';
-      
-      if (useExactTest) {
-        Logger.info('[InferenceService] 🧪 Using EXACT test script reproduction for OpenRouter');
-        usageResult = await openRouterService.streamCompletionExactTest(
+    let usageResult: { usage?: any; rawRequest?: any } = {};
+    // A request that throws returns no rawRequest; don't leave the previous one in place.
+    this.lastRawRequest = undefined;
+
+    try {
+      if (model.provider === 'anthropic') {
+        if (!selectedKey) {
+          throw new Error('No API key available for Anthropic');
+        }
+        const anthropicService = new AnthropicService(
+          this.db, 
+          selectedKey.credentials.apiKey
+        );
+        
+        usageResult = await anthropicService.streamCompletion(
           model.providerModelId,
           formattedMessages,
           effectiveSystemPrompt,
           effectiveSettings,
-          finalOnChunk,
+          providerOnChunk,
           stopSequences,
-          abortSignal
+          model.reasoningDisplay,
+          {
+            thinkingApi: model.thinkingApi,
+            effortLevels: model.effortLevels,
+            supportsSampling: model.supportsSampling,
+            thinkingPrefixMismatch: model.thinkingPrefixMismatch
+          },
+          upstream.signal
         );
-      } else {
-        usageResult = await openRouterService.streamCompletion(
-        model.providerModelId,
-        formattedMessages,
-        effectiveSystemPrompt,
-        effectiveSettings,
-        finalOnChunk,
-        stopSequences,
-        undefined,
-        { thinkingApi: model.thinkingApi, effortLevels: model.effortLevels, supportsThinking: model.supportsThinking },
-        abortSignal
-      );
-      }
-    } else if (model.provider === 'openai-compatible') {
-      // Check if this is a custom user model with its own endpoint
-      const isCustomModel = (model as any).customEndpoint !== undefined;
-      const baseUrl = isCustomModel 
-        ? (model as any).customEndpoint.baseUrl
-        : (selectedKey?.credentials.baseUrl || 'http://localhost:11434');
-      const apiKey = isCustomModel
-        ? ((model as any).customEndpoint.apiKey || '')
-        : (selectedKey?.credentials.apiKey || '');
-      const modelPrefix = isCustomModel
-        ? undefined
-        : selectedKey?.credentials.modelPrefix;
-      
-      console.log(`[InferenceService] OpenAI-compatible model config: isCustomModel=${isCustomModel}, baseUrl=${baseUrl}`);
-      
-      const openAIService = new OpenAICompatibleService(
-        this.db,
-        apiKey,
-        baseUrl,
-        modelPrefix
-      );
-      
-      usageResult = await openAIService.streamCompletion(
-        model.providerModelId,
-        formattedMessages,
-        effectiveSystemPrompt,
-        effectiveSettings,
-        finalOnChunk,
-        stopSequences,
-        undefined,
-        abortSignal
-      );
-    } else if ((model.provider as string) === 'google') {
-      if (!selectedKey) {
-        throw new Error('No API key available for Google');
-      }
-      const geminiService = new GeminiService(
-        this.db,
-        selectedKey.credentials.apiKey
-      );
-      
-      // Pass model-specific settings - merge with model defaults
-      const userModelSpecific = (effectiveSettings as any).modelSpecific || {};
-      
-      // DEBUG: Log what was passed in vs defaults
-      console.log(`[Gemini] User modelSpecific from settings:`, JSON.stringify(userModelSpecific, null, 2));
-      
-      // Apply defaults from model's configurableSettings if not set by user
-      const modelDefaults: Record<string, any> = {};
-      if ((model as any).configurableSettings) {
-        for (const setting of (model as any).configurableSettings) {
-          if (userModelSpecific[setting.key] === undefined) {
-            modelDefaults[setting.key] = setting.default;
-            console.log(`[Gemini] Using default for ${setting.key}: ${setting.default}`);
+      } else if (model.provider === 'bedrock') {
+        if (!selectedKey) {
+          throw new Error('No API key available for Bedrock');
+        }
+        const bedrockService = new BedrockService(this.db, selectedKey.credentials);
+        usageResult = await bedrockService.streamCompletion(
+          model.providerModelId,
+          formattedMessages,
+          effectiveSystemPrompt,
+          effectiveSettings,
+          providerOnChunk,
+          stopSequences,
+          upstream.signal
+        );
+      } else if (model.provider === 'openrouter') {
+        if (!selectedKey) {
+          throw new Error('No API key available for OpenRouter');
+        }
+        const openRouterService = new OpenRouterService(
+          this.db, 
+          selectedKey.credentials.apiKey
+        );
+        
+        // Use exact test script reproduction if enabled (for debugging)
+        const useExactTest = process.env.OPENROUTER_EXACT_TEST === 'true';
+        
+        if (useExactTest) {
+          Logger.info('[InferenceService] 🧪 Using EXACT test script reproduction for OpenRouter');
+          usageResult = await openRouterService.streamCompletionExactTest(
+            model.providerModelId,
+            formattedMessages,
+            effectiveSystemPrompt,
+            effectiveSettings,
+            providerOnChunk,
+            stopSequences,
+            upstream.signal
+          );
+        } else {
+          usageResult = await openRouterService.streamCompletion(
+          model.providerModelId,
+          formattedMessages,
+          effectiveSystemPrompt,
+          effectiveSettings,
+          providerOnChunk,
+          stopSequences,
+          undefined,
+          { thinkingApi: model.thinkingApi, effortLevels: model.effortLevels, supportsThinking: model.supportsThinking },
+          upstream.signal
+        );
+        }
+      } else if (model.provider === 'openai-compatible') {
+        // Check if this is a custom user model with its own endpoint
+        const isCustomModel = (model as any).customEndpoint !== undefined;
+        const baseUrl = isCustomModel 
+          ? (model as any).customEndpoint.baseUrl
+          : (selectedKey?.credentials.baseUrl || 'http://localhost:11434');
+        const apiKey = isCustomModel
+          ? ((model as any).customEndpoint.apiKey || '')
+          : (selectedKey?.credentials.apiKey || '');
+        const modelPrefix = isCustomModel
+          ? undefined
+          : selectedKey?.credentials.modelPrefix;
+        
+        console.log(`[InferenceService] OpenAI-compatible model config: isCustomModel=${isCustomModel}, baseUrl=${baseUrl}`);
+        
+        const openAIService = new OpenAICompatibleService(
+          this.db,
+          apiKey,
+          baseUrl,
+          modelPrefix
+        );
+        
+        usageResult = await openAIService.streamCompletion(
+          model.providerModelId,
+          formattedMessages,
+          effectiveSystemPrompt,
+          effectiveSettings,
+          providerOnChunk,
+          stopSequences,
+          undefined,
+          upstream.signal
+        );
+      } else if ((model.provider as string) === 'google') {
+        if (!selectedKey) {
+          throw new Error('No API key available for Google');
+        }
+        const geminiService = new GeminiService(
+          this.db,
+          selectedKey.credentials.apiKey
+        );
+        
+        // Pass model-specific settings - merge with model defaults
+        const userModelSpecific = (effectiveSettings as any).modelSpecific || {};
+        
+        // DEBUG: Log what was passed in vs defaults
+        console.log(`[Gemini] User modelSpecific from settings:`, JSON.stringify(userModelSpecific, null, 2));
+        
+        // Apply defaults from model's configurableSettings if not set by user
+        const modelDefaults: Record<string, any> = {};
+        if ((model as any).configurableSettings) {
+          for (const setting of (model as any).configurableSettings) {
+            if (userModelSpecific[setting.key] === undefined) {
+              modelDefaults[setting.key] = setting.default;
+              console.log(`[Gemini] Using default for ${setting.key}: ${setting.default}`);
+            }
           }
         }
+        
+        const geminiSettings = {
+          ...effectiveSettings,
+          modelSpecific: { ...modelDefaults, ...userModelSpecific },
+        };
+        
+        console.log(`[Gemini] Final model-specific settings:`, JSON.stringify(geminiSettings.modelSpecific, null, 2));
+        
+        // Auto-truncate context if enabled (check user setting first, then model capability)
+        let messagesToSend = formattedMessages;
+        // User can override via modelSpecific.autoTruncateContext setting
+        const userAutoTruncate = geminiSettings.modelSpecific?.autoTruncateContext;
+        const modelAutoTruncate = (model as any).capabilities?.autoTruncateContext;
+        // Default to true if user hasn't set it but model capability is true
+        const shouldAutoTruncate = userAutoTruncate !== undefined ? userAutoTruncate : modelAutoTruncate;
+        console.log(`[Gemini] autoTruncateContext: user=${userAutoTruncate}, model=${modelAutoTruncate}, effective=${shouldAutoTruncate}, contextWindow: ${model.contextWindow}`);
+        if (shouldAutoTruncate && model.contextWindow) {
+          console.log(`[Gemini] Truncating context to fit ${model.contextWindow} tokens...`);
+          messagesToSend = this.truncateMessagesToFit(formattedMessages, model.contextWindow, effectiveSystemPrompt);
+          console.log(`[Gemini] After truncation: ${messagesToSend.length} messages (was ${formattedMessages.length})`);
+        }
+        
+        usageResult = await geminiService.streamCompletion(
+          model.providerModelId,
+          messagesToSend,
+          effectiveSystemPrompt,
+          geminiSettings,
+          providerOnChunk,
+          stopSequences,
+          upstream.signal
+        );
+      } else {
+        throw new Error(`Unsupported provider: ${model.provider}`);
       }
-      
-      const geminiSettings = {
-        ...effectiveSettings,
-        modelSpecific: { ...modelDefaults, ...userModelSpecific },
-      };
-      
-      console.log(`[Gemini] Final model-specific settings:`, JSON.stringify(geminiSettings.modelSpecific, null, 2));
-      
-      // Auto-truncate context if enabled (check user setting first, then model capability)
-      let messagesToSend = formattedMessages;
-      // User can override via modelSpecific.autoTruncateContext setting
-      const userAutoTruncate = geminiSettings.modelSpecific?.autoTruncateContext;
-      const modelAutoTruncate = (model as any).capabilities?.autoTruncateContext;
-      // Default to true if user hasn't set it but model capability is true
-      const shouldAutoTruncate = userAutoTruncate !== undefined ? userAutoTruncate : modelAutoTruncate;
-      console.log(`[Gemini] autoTruncateContext: user=${userAutoTruncate}, model=${modelAutoTruncate}, effective=${shouldAutoTruncate}, contextWindow: ${model.contextWindow}`);
-      if (shouldAutoTruncate && model.contextWindow) {
-        console.log(`[Gemini] Truncating context to fit ${model.contextWindow} tokens...`);
-        messagesToSend = this.truncateMessagesToFit(formattedMessages, model.contextWindow, effectiveSystemPrompt);
-        console.log(`[Gemini] After truncation: ${messagesToSend.length} messages (was ${formattedMessages.length})`);
-      }
-      
-      usageResult = await geminiService.streamCompletion(
-        model.providerModelId,
-        messagesToSend,
-        effectiveSystemPrompt,
-        geminiSettings,
-        finalOnChunk,
-        stopSequences,
-        abortSignal
-      );
-    } else {
-      throw new Error(`Unsupported provider: ${model.provider}`);
+    } catch (error) {
+      // Our own cancellation surfaces as the provider's abort error. The message is
+      // already complete (early completion went out with the stop sequence), so this
+      // is a normal finish, not a failure; usage is whatever the provider had sent.
+      if (!cancelledAtStopSequence || !upstream.signal.aborted || abortSignal?.aborted || callbackFailed) throw error;
+      console.log(`[InferenceService] Provider request cancelled after stop sequence (${error instanceof Error ? error.message : error})`);
+    } finally {
+      abortSignal?.removeEventListener('abort', forwardUserAbort);
     }
 
     // Store raw request for debugging if provider returned it
@@ -2011,7 +2055,8 @@ export class InferenceService {
     conversationLog: string,
     participants: Participant[],
     responderId?: string,
-    mode: 'cat' | 'tail-cut' = 'cat'
+    mode: 'cat' | 'tail-cut' = 'cat',
+    onStopSequence?: () => void
   ): (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void> {
     let buffer = '';
     let logStripped = mode === 'tail-cut'; // tail-cut skips log stripping
@@ -2070,6 +2115,7 @@ export class InferenceService {
       const stop = findStop(emittedContent);
       if (stop) {
         hitStopSequence = true;
+        onStopSequence?.();
         // Calculate how much of the CURRENT text to emit
         const prevLen = emittedContent.length - text.length;
         const cutInText = stop.index - prevLen;
