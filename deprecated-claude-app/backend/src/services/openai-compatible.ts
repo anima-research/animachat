@@ -27,7 +27,9 @@ export class OpenAICompatibleService {
     settings: ModelSettings,
     onChunk: (chunk: string, isComplete: boolean, contentBlocks?: any[], usage?: any) => Promise<void>,
     stopSequences?: string[],
-    onTokenUsage?: (usage: TokenUsage) => Promise<void>
+    onTokenUsage?: (usage: TokenUsage) => Promise<void>,
+    // Cancels the HTTP request (Stop button)
+    signal?: AbortSignal
   ): Promise<{ rawRequest?: any }> {
     const requestId = `openai-compatible-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const startTime = Date.now();
@@ -90,7 +92,8 @@ export class OpenAICompatibleService {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal
       });
 
       if (!response.ok) {

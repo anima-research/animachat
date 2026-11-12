@@ -153,7 +153,8 @@ export class InferenceService {
     responderId?: string,
     conversation?: Conversation,
     cacheMarkerIndices?: number[],  // Message indices where to insert cache breakpoints (for prefill)
-    personaContext?: string  // Per-participant persona context to inject into prefill
+    personaContext?: string,  // Per-participant persona context to inject into prefill
+    abortSignal?: AbortSignal  // Stop button: handed to the provider's HTTP request
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -640,7 +641,8 @@ export class InferenceService {
           effortLevels: model.effortLevels,
           supportsSampling: model.supportsSampling,
           thinkingPrefixMismatch: model.thinkingPrefixMismatch
-        }
+        },
+        abortSignal
       );
     } else if (model.provider === 'bedrock') {
       if (!selectedKey) {
@@ -653,7 +655,8 @@ export class InferenceService {
         effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
-        stopSequences
+        stopSequences,
+        abortSignal
       );
     } else if (model.provider === 'openrouter') {
       if (!selectedKey) {
@@ -686,7 +689,8 @@ export class InferenceService {
         finalOnChunk,
         stopSequences,
         undefined,
-        { thinkingApi: model.thinkingApi, effortLevels: model.effortLevels, supportsThinking: model.supportsThinking }
+        { thinkingApi: model.thinkingApi, effortLevels: model.effortLevels, supportsThinking: model.supportsThinking },
+        abortSignal
       );
       }
     } else if (model.provider === 'openai-compatible') {
@@ -717,7 +721,9 @@ export class InferenceService {
         effectiveSystemPrompt,
         effectiveSettings,
         finalOnChunk,
-        stopSequences
+        stopSequences,
+        undefined,
+        abortSignal
       );
     } else if ((model.provider as string) === 'google') {
       if (!selectedKey) {
@@ -772,7 +778,8 @@ export class InferenceService {
         effectiveSystemPrompt,
         geminiSettings,
         finalOnChunk,
-        stopSequences
+        stopSequences,
+        abortSignal
       );
     } else {
       throw new Error(`Unsupported provider: ${model.provider}`);

@@ -211,7 +211,9 @@ export class OpenRouterService {
     stopSequences?: string[],
     onTokenUsage?: (usage: TokenUsage) => Promise<void>,
     // Model.thinkingApi / effortLevels from the model entry (see shared/types.ts)
-    modelHints?: { thinkingApi?: string; effortLevels?: string[]; supportsThinking?: boolean }
+    modelHints?: { thinkingApi?: string; effortLevels?: string[]; supportsThinking?: boolean },
+    // Cancels the HTTP request (Stop button)
+    signal?: AbortSignal
   ): Promise<{
     usage?: {
       inputTokens: number;
@@ -356,7 +358,8 @@ export class OpenRouterService {
           'HTTP-Referer': process.env.APP_URL || 'http://localhost:3010',
           'X-Title': 'Deprecated Claude App'
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal
       });
 
       if (!response.ok) {

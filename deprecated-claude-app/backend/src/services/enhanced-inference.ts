@@ -780,20 +780,35 @@ export class EnhancedInferenceService {
     }
     
     // Call inference (actual usage will be passed through the callback)
-    await this.inferenceService.streamCompletion(
-      model.id,
-      messagesToSend,
-      systemPrompt,
-      settings,
-      userId,
-      enhancedCallback,
-      conversation?.format || 'standard',
-      participants || [],
-      participant?.id,
-      conversation,
-      cacheMarkerIndices,  // Pass cache marker indices for Chapter II prefill caching
-      personaContext  // Per-participant persona context for prefill injection
-    );
+    try {
+      await this.inferenceService.streamCompletion(
+        model.id,
+        messagesToSend,
+        systemPrompt,
+        settings,
+        userId,
+        enhancedCallback,
+        conversation?.format || 'standard',
+        participants || [],
+        participant?.id,
+        conversation,
+        cacheMarkerIndices,  // Pass cache marker indices for Chapter II prefill caching
+        personaContext,  // Per-participant persona context for prefill injection
+        abortSignal  // Cancels the provider request itself, not just the next chunk
+      );
+    } catch (error) {
+      // A cancelled request surfaces as the provider's own error (APIUserAbortError,
+      // AbortError, ...); report it as the abort the websocket handler checks for.
+      if (abortSignal?.aborted) {
+        throw new Error('Generation aborted');
+      }
+      throw error;
+    }
+    // The Anthropic SDK stream ends quietly instead of throwing when its request is
+    // cancelled, so an aborted generation can also arrive here as a normal return.
+    if (abortSignal?.aborted) {
+      throw new Error('Generation aborted');
+    }
   }
   
   private addCacheControlToMessages(window: ContextWindow, model?: Model): Message[] {
