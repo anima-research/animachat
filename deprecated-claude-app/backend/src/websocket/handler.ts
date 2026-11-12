@@ -19,36 +19,33 @@ interface AuthenticatedWebSocket extends WebSocket {
 }
 
 // Track active generations for abort support
-// Key: `${userId}:${conversationId}`, Value: AbortController
+// Key: conversationId (one generation per conversation, whoever started it), Value: AbortController
 const activeGenerations = new Map<string, AbortController>();
 
-function getGenerationKey(userId: string, conversationId: string): string {
-  return `${userId}:${conversationId}`;
-}
-
-function startGeneration(userId: string, conversationId: string): AbortController {
-  const key = getGenerationKey(userId, conversationId);
+function startGeneration(conversationId: string): AbortController {
   // Abort any existing generation for this conversation
-  const existing = activeGenerations.get(key);
+  const existing = activeGenerations.get(conversationId);
   if (existing) {
     existing.abort();
   }
   const controller = new AbortController();
-  activeGenerations.set(key, controller);
+  activeGenerations.set(conversationId, controller);
   return controller;
 }
 
-function endGeneration(userId: string, conversationId: string): void {
-  const key = getGenerationKey(userId, conversationId);
-  activeGenerations.delete(key);
+function endGeneration(conversationId: string, controller: AbortController): void {
+  // Only remove our own entry: a generation that was replaced by a newer one
+  // must not unregister the newer one when it finishes unwinding.
+  if (activeGenerations.get(conversationId) === controller) {
+    activeGenerations.delete(conversationId);
+  }
 }
 
-function abortGeneration(userId: string, conversationId: string): boolean {
-  const key = getGenerationKey(userId, conversationId);
-  const controller = activeGenerations.get(key);
+function abortGeneration(conversationId: string): boolean {
+  const controller = activeGenerations.get(conversationId);
   if (controller) {
     controller.abort();
-    activeGenerations.delete(key);
+    activeGenerations.delete(conversationId);
     return true;
   }
   return false;
@@ -690,7 +687,7 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
           break;
           
         case 'abort':
-          handleAbort(ws, message);
+          await handleAbort(ws, message, db);
           break;
         
         case 'join_room':
@@ -744,13 +741,17 @@ export function websocketHandler(ws: AuthenticatedWebSocket, req: IncomingMessag
   ws.send(JSON.stringify({ type: 'connected', userId: ws.userId }));
 }
 
-function handleAbort(
+async function handleAbort(
   ws: AuthenticatedWebSocket,
-  message: { type: 'abort'; conversationId: string }
+  message: { type: 'abort'; conversationId: string },
+  db: Database
 ) {
   if (!ws.userId) return;
   
-  const aborted = abortGeneration(ws.userId, message.conversationId);
+  // Generations are registered per conversation, not per user, so a collaborator
+  // can stop a generation the owner (or another collaborator) started.
+  const canChat = await db.canUserChatInConversation(message.conversationId, ws.userId);
+  const aborted = canChat && abortGeneration(message.conversationId);
   console.log(`[Abort] User ${ws.userId} aborted generation for conversation ${message.conversationId}: ${aborted ? 'success' : 'no active generation'}`);
   
   ws.send(JSON.stringify({
@@ -1108,6 +1109,7 @@ async function handleChatMessage(
     : filteredHistory;
   
   // Stream response from appropriate service
+  let abortController: AbortController | undefined;
   try {
     Logger.websocket(`[WebSocket] Responder:`, JSON.stringify(responder, null, 2));
     Logger.websocket(`[WebSocket] Conversation model: "${conversation.model}"`);
@@ -1179,7 +1181,7 @@ async function handleChatMessage(
     });
     
     // Create abort controller for this generation
-    const abortController = startGeneration(conversation.userId, conversation.id);
+    abortController = startGeneration(conversation.id);
 
     // Track AI request in room manager for multi-user sync
     roomManager.startAiRequest(message.conversationId, ws.userId!, assistantMessage.id);
@@ -1361,12 +1363,12 @@ async function handleChatMessage(
     }
     
     } finally {
-      endGeneration(conversation.userId, conversation.id);
+      endGeneration(conversation.id, abortController);
       roomManager.endAiRequest(message.conversationId);
     }
   } catch (error) {
     // Clean up generation tracking on error
-    endGeneration(conversation.userId, conversation.id);
+    if (abortController) endGeneration(conversation.id, abortController);
     roomManager.endAiRequest(message.conversationId);
     
     // Check if this was an abort
@@ -1606,6 +1608,7 @@ async function handleRegenerate(
   }
   
   // Stream new response
+  let abortController: AbortController | undefined;
   try {
     // Log WebSocket event
     await llmLogger.logWebSocketEvent({
@@ -1651,7 +1654,7 @@ async function handleRegenerate(
     });
     
     // Create abort controller for this generation
-    const abortController = startGeneration(conversation.userId, conversation.id);
+    abortController = startGeneration(conversation.id);
     
     // Track AI request in room manager for multi-user sync
     roomManager.startAiRequest(message.conversationId, ws.userId!, updatedMessage.id);
@@ -1690,7 +1693,7 @@ async function handleRegenerate(
         personaContext: responderParticipant?.personaContext
       });
     } finally {
-      endGeneration(conversation.userId, conversation.id);
+      endGeneration(conversation.id, abortController);
       roomManager.endAiRequest(message.conversationId);
     }
 
@@ -1767,7 +1770,7 @@ async function handleRegenerate(
       // Don't fail the whole request if debug capture fails
     }
   } catch (error) {
-    endGeneration(conversation.userId, conversation.id);
+    if (abortController) endGeneration(conversation.id, abortController);
     roomManager.endAiRequest(message.conversationId);
 
     // Check if this was an abort
@@ -2106,7 +2109,7 @@ async function handleEdit(
       });
       
       // Create abort controller for this generation
-      const abortController = startGeneration(conversation.userId, conversation.id);
+      const abortController = startGeneration(conversation.id);
       
       // Track AI request in room manager for multi-user sync
       roomManager.startAiRequest(message.conversationId, ws.userId!, targetMessage.id);
@@ -2145,7 +2148,7 @@ async function handleEdit(
           personaContext: responderParticipant?.personaContext
         });
       } finally {
-        endGeneration(conversation.userId, conversation.id);
+        endGeneration(conversation.id, abortController);
         roomManager.endAiRequest(message.conversationId);
       }
       
@@ -2280,6 +2283,7 @@ async function handleContinue(
     console.log(`[Continue] Sampling ${samplingBranchCount} response branches in parallel`);
   }
   
+  let abortController: AbortController | undefined;
   try {
     // Verify conversation access
     const conversation = await db.getConversation(conversationId, ws.userId);
@@ -2463,7 +2467,7 @@ async function handleContinue(
     }
     
     // Create abort controller for this generation
-    const abortController = startGeneration(conversation.userId, conversationId);
+    abortController = startGeneration(conversationId);
     
     // Track AI request in room manager
     roomManager.startAiRequest(conversationId, ws.userId!, assistantMessage.id);
@@ -2576,13 +2580,13 @@ async function handleContinue(
     }
     
     } finally {
-      endGeneration(conversation.userId, conversationId);
+      endGeneration(conversationId, abortController);
       roomManager.endAiRequest(conversationId);
     }
 
   } catch (error) {
-    if (ws.userId) {
-      endGeneration(ws.userId, conversationId);
+    if (abortController) {
+      endGeneration(conversationId, abortController);
     }
     roomManager.endAiRequest(conversationId);
     
