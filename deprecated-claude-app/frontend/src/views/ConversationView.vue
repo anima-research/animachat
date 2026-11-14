@@ -1384,6 +1384,12 @@ const getStuckThresholdMs = () => {
 // (console.log -> push to ref -> reactivity -> re-render -> console.log -> ...)
 let consoleLogs: string[] = [];
 const MAX_CONSOLE_LOGS = 200;
+// One logged payload (a sent message with attachments, a whole server event)
+// can be megabytes once stringified; the stuck report only needs the start
+const MAX_CONSOLE_LOG_LENGTH = 2000;
+// Restored on unmount, so remounting the view doesn't stack another wrapper
+// that keeps the old instance alive and stringifies every log once more
+let restoreConsole: (() => void) | null = null;
 
 // General error snackbar (for non-streaming errors like pricing validation)
 const errorSnackbar = ref(false);
@@ -2324,7 +2330,8 @@ onMounted(async () => {
           return '[unserializable]';
         }
       }).join(' ');
-      consoleLogs.push(`[${timestamp}] [${level}] ${message}`);
+      const entry = `[${timestamp}] [${level}] ${message}`;
+      consoleLogs.push(entry.length > MAX_CONSOLE_LOG_LENGTH ? entry.slice(0, MAX_CONSOLE_LOG_LENGTH) + '…[truncated]' : entry);
       if (consoleLogs.length > MAX_CONSOLE_LOGS) {
         consoleLogs.shift();
       }
@@ -2333,6 +2340,11 @@ onMounted(async () => {
     console.log = (...args) => { captureLog('LOG', args); originalLog.apply(console, args); };
     console.warn = (...args) => { captureLog('WARN', args); originalWarn.apply(console, args); };
     console.error = (...args) => { captureLog('ERROR', args); originalError.apply(console, args); };
+    restoreConsole = () => {
+      console.log = originalLog;
+      console.warn = originalWarn;
+      console.error = originalError;
+    };
   }
   
   if (typeof window !== 'undefined') {
@@ -2750,6 +2762,8 @@ onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', updateMobileState);
   }
+  restoreConsole?.();
+  restoreConsole = null;
   
   // Leave room when unmounting
   if (currentConversation.value && store.state.wsService) {
