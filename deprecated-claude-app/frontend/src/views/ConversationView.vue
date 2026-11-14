@@ -531,9 +531,14 @@
           </div>
           
           <div v-else>
-            <template v-for="(group, groupIndex) in groupedMessages" :key="group.id">
+            <div v-if="renderedFromGroupIndex > 0" class="text-center my-2">
+              <v-btn variant="text" size="small" prepend-icon="mdi-chevron-up" @click="showEarlierMessages">
+                Show {{ hiddenEarlierMessageCount }} earlier {{ hiddenEarlierMessageCount === 1 ? 'message' : 'messages' }}
+              </v-btn>
+            </div>
+            <template v-for="(group, renderedIndex) in renderedGroups" :key="group.id">
               <div
-                v-if="showContextDivider && groupIndex === firstInWindowGroupIndex"
+                v-if="showContextDivider && renderedFromGroupIndex + renderedIndex === firstInWindowGroupIndex"
                 class="context-window-divider"
                 :title="contextPreview && contextPreview.current.droppedFromHistory > 0
                   ? `${contextPreview.current.droppedFromHistory} earlier message(s) are outside the rolling window and not sent to the model.`
@@ -544,7 +549,7 @@
               <CompositeMessageGroup
               :messages="group.messages"
               :participants="participants"
-              :is-last-group="groupIndex === groupedMessages.length - 1"
+              :is-last-group="renderedFromGroupIndex + renderedIndex === groupedMessages.length - 1"
               :selected-branch-for-parent="selectedBranchForParent"
               :streaming-message-id="streamingMessageId"
               :streaming-branch-id="streamingBranchId"
@@ -1308,6 +1313,7 @@ import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
 import { getModelColor } from '@/utils/modelColors';
 import { serializeConversationToMarkdown } from '@/utils/conversationMarkdown';
 import { computeAuthenticity, type AuthenticityStatus } from '@/utils/authenticity';
+import { RENDER_WINDOW_GROUPS, windowStart, countToReveal, hiddenMessageCount } from '@/utils/renderWindow';
 
 const route = useRoute();
 const router = useRouter();
@@ -1749,6 +1755,44 @@ const groupedMessages = computed((): MessageGroup[] => {
   
   return groups;
 });
+
+// Long conversations mount only the newest groups (every mounted message is a
+// full MessageComponent with its rendered DOM); earlier ones are added by
+// scrolling to the top, the "show earlier" button, or navigating to a message.
+const renderedGroupCount = ref(RENDER_WINDOW_GROUPS);
+const renderedFromGroupIndex = computed(() => windowStart(groupedMessages.value.length, renderedGroupCount.value));
+const renderedGroups = computed(() => groupedMessages.value.slice(renderedFromGroupIndex.value));
+const hiddenEarlierMessageCount = computed(() => hiddenMessageCount(groupedMessages.value, renderedGroupCount.value));
+
+watch(() => currentConversation.value?.id, () => {
+  renderedGroupCount.value = RENDER_WINDOW_GROUPS;
+});
+
+let showingEarlier = false; // one step per reach of the top, not one per scroll event
+async function showEarlierMessages() {
+  if (showingEarlier) return;
+  showingEarlier = true;
+  const element = (messagesContainer.value as any)?.$el || messagesContainer.value;
+  // Keep the messages that were on screen in place while content grows above them
+  const fromBottom = element ? element.scrollHeight - element.scrollTop : 0;
+  renderedGroupCount.value = groupedMessages.value.length - renderedFromGroupIndex.value + RENDER_WINDOW_GROUPS;
+  await nextTick();
+  if (element) {
+    isProgrammaticScroll.value = true;
+    element.scrollTop = element.scrollHeight - fromBottom;
+    setTimeout(() => { isProgrammaticScroll.value = false; }, 100);
+  }
+  showingEarlier = false;
+}
+
+/** Mount the group holding `messageId` if it is outside the window (before scrolling to it). */
+async function revealMessage(messageId: string) {
+  const count = countToReveal(groupedMessages.value, messageId, renderedGroupCount.value);
+  if (count === null) return;
+  renderedGroupCount.value = count;
+  await nextTick();
+}
+
 const wsConnectionState = computed(() => store.state.wsConnectionState);
 const isWsConnected = computed(() => store.state.wsConnectionState === 'connected');
 
@@ -2948,6 +2992,11 @@ watch(messagesContainer, (container) => {
           else if (scrollBottom <= 10) {
             autoScrollEnabled.value = true;
           }
+
+          // Reaching the top mounts the next earlier groups
+          if (element.scrollTop < 200 && renderedFromGroupIndex.value > 0) {
+            void showEarlierMessages();
+          }
         }
         
         // Debounce the sync to avoid too many calls
@@ -3513,6 +3562,7 @@ async function navigateToTreeBranch(messageId: string, branchId: string) {
   
   // Wait for DOM to update, then scroll to the clicked message
   await nextTick();
+  await revealMessage(messageId);
   setTimeout(() => {
     const messageElement = document.getElementById(`message-${messageId}`);
     if (messageElement) {
@@ -4385,7 +4435,8 @@ async function handleBookmarkChanged() {
   }
 }
 
-function scrollToMessage(messageId: string) {
+async function scrollToMessage(messageId: string) {
+  await revealMessage(messageId);
   const element = document.getElementById(`message-${messageId}`);
   if (element) {
     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
