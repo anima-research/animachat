@@ -119,11 +119,18 @@ let branchToMessageMap: Map<string, { message: Message, branch: MessageBranch }>
 const treeData = computed(() => {
   if (!props.messages || props.messages.length === 0) return null;
   
-  // Build a map of branch ID to message for quick lookup
+  // Build a map of branch ID to message for quick lookup, and each branch's
+  // children in the same order (one pass instead of a scan per node)
   branchToMessageMap.clear();
+  const childrenByParent = new Map<string, string[]>();
   for (const message of props.messages) {
     for (const branch of message.branches) {
       branchToMessageMap.set(branch.id, { message, branch });
+      if (branch.parentBranchId) {
+        const siblings = childrenByParent.get(branch.parentBranchId);
+        if (siblings) siblings.push(branch.id);
+        else childrenByParent.set(branch.parentBranchId, [branch.id]);
+      }
     }
   }
   
@@ -191,12 +198,10 @@ const treeData = computed(() => {
     };
     
     // Find children (branches that have this branch as parent)
-    for (const [childBranchId, childData] of branchToMessageMap) {
-      if (childData.branch.parentBranchId === branchId) {
-        const childNode = buildNode(childBranchId);
-        if (childNode) {
-          node.children.push(childNode);
-        }
+    for (const childBranchId of childrenByParent.get(branchId) || []) {
+      const childNode = buildNode(childBranchId);
+      if (childNode) {
+        node.children.push(childNode);
       }
     }
     
@@ -932,7 +937,8 @@ async function loadBookmarks() {
 }
 
 // Generate a fingerprint of tree structure (IDs only, not content)
-// This helps us avoid re-rendering during streaming when only content changes
+// Used as the watch source for messages: it reads only ids, parents and active
+// branches, so streamed content never triggers it (bookmarks have their own watch)
 function getTreeStructureFingerprint(): string {
   if (!props.messages || props.messages.length === 0) return '';
   
@@ -944,15 +950,11 @@ function getTreeStructureFingerprint(): string {
       parts.push(`b:${branch.id}:${branch.parentBranchId || 'root'}`);
     }
   }
-  // Include bookmarks
-  parts.push(`bm:${bookmarks.value.map(b => b.id).join(',')}`);
-  
   return parts.join('|');
 }
 
 // Check if structure changed and render if needed
-function renderIfStructureChanged() {
-  const newFingerprint = getTreeStructureFingerprint();
+function renderIfStructureChanged(newFingerprint: string) {
   if (newFingerprint !== lastTreeStructure.value) {
     lastTreeStructure.value = newFingerprint;
     renderTree();
@@ -975,11 +977,10 @@ watch([
   renderTree(); // Immediate render for user interactions
 });
 
-// Watch for message changes separately - only render if structure changed
-// This prevents re-renders during streaming (content-only updates)
-watch(() => props.messages, () => {
-  renderIfStructureChanged();
-}, { deep: true });
+// Watch for message changes separately - only render if structure changed.
+// Not a deep watch: that walked every branch, content block and attachment of
+// the whole conversation on each streamed chunk.
+watch(getTreeStructureFingerprint, renderIfStructureChanged);
 
 // Reset manual flag when messages change significantly (new conversation)
 watch(() => props.messages, (newMessages, oldMessages) => {
