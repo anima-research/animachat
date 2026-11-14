@@ -1393,6 +1393,12 @@ const MAX_CONSOLE_LOGS = 200;
 // One logged payload (a sent message with attachments, a whole server event)
 // can be megabytes once stringified; the stuck report only needs the start
 const MAX_CONSOLE_LOG_LENGTH = 2000;
+// In V8 a slice of a long string can keep the whole original alive behind it;
+// prepending a character and slicing it off forces a flat copy of the prefix
+// alone, so the truncated entry really holds only MAX_CONSOLE_LOG_LENGTH chars
+function truncatedCopy(s: string): string {
+  return (' ' + s.slice(0, MAX_CONSOLE_LOG_LENGTH)).slice(1) + '…[truncated]';
+}
 // Restored on unmount, so remounting the view doesn't stack another wrapper
 // that keeps the old instance alive and stringifies every log once more
 let restoreConsole: (() => void) | null = null;
@@ -2391,7 +2397,7 @@ onMounted(async () => {
         }
       }).join(' ');
       const entry = `[${timestamp}] [${level}] ${message}`;
-      consoleLogs.push(entry.length > MAX_CONSOLE_LOG_LENGTH ? entry.slice(0, MAX_CONSOLE_LOG_LENGTH) + '…[truncated]' : entry);
+      consoleLogs.push(entry.length > MAX_CONSOLE_LOG_LENGTH ? truncatedCopy(entry) : entry);
       if (consoleLogs.length > MAX_CONSOLE_LOGS) {
         consoleLogs.shift();
       }
