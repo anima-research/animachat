@@ -670,8 +670,12 @@
         </v-btn>
       </div>
 
+    <!-- Dialogs are mounted only while open (v-if): a long conversation has
+         one of each per message, and a closed v-dialog is still a full overlay
+         component instance. -->
+
     <!-- Bookmark dialog -->
-    <v-dialog v-model="bookmarkDialog" max-width="400">
+    <v-dialog v-if="bookmarkDialog" v-model="bookmarkDialog" max-width="400">
       <v-card>
         <v-card-title>{{ hasBookmark ? 'Edit Bookmark' : 'Add Bookmark' }}</v-card-title>
         <v-card-text>
@@ -708,7 +712,7 @@
     </v-dialog>
     
     <!-- Image Preview Dialog -->
-    <v-dialog v-model="imagePreviewDialog" max-width="90vw">
+    <v-dialog v-if="imagePreviewDialog" v-model="imagePreviewDialog" max-width="90vw">
       <v-card class="pa-2" style="background: rgba(0,0,0,0.9);">
         <v-card-text class="pa-0 text-center">
           <img
@@ -725,6 +729,7 @@
 
     <!-- Debug Dialog -->
     <DebugMessageDialog
+      v-if="showDebugDialog"
       v-model="showDebugDialog"
       :conversation-id="message.conversationId"
       :message-id="message.id"
@@ -733,7 +738,7 @@
     
     
     <!-- Metadata Dialog (for researchers/admins) -->
-    <v-dialog v-model="showMetadataDialog" max-width="800">
+    <v-dialog v-if="showMetadataDialog" v-model="showMetadataDialog" max-width="800">
       <v-card>
         <v-card-title class="d-flex align-center">
           <v-icon class="mr-2">mdi-information-outline</v-icon>
@@ -915,7 +920,7 @@
     </v-dialog>
     
     <!-- Avatar Preview Dialog -->
-    <v-dialog v-model="showAvatarPreview" max-width="400">
+    <v-dialog v-if="showAvatarPreview" v-model="showAvatarPreview" max-width="400">
       <v-card>
         <v-card-title class="d-flex align-center">
           <div>
