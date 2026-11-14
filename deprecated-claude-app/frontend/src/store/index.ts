@@ -4,6 +4,7 @@ import type { User, Conversation, Message, Model, OpenRouterModel, UserDefinedMo
 import { getValidatedModelDefaults } from '@deprecated-claude/shared';
 import { api } from '../services/api';
 import { WebSocketService } from '../services/websocket';
+import { invalidateConversationBookmarks } from '../services/bookmarks';
 import { createClientUuid } from '../utils/uuid';
 
 // Model availability info - which providers user can use
@@ -513,6 +514,8 @@ export function createStore(): {
 
       // Clear branch notifications when switching conversations
       state.hiddenBranchActivities.clear();
+      // A (re)load is when bookmarks set by collaborators get picked up
+      invalidateConversationBookmarks(id);
       // Note: Don't clear readBranchIds here - we'll set it atomically after loading
       // to avoid a flash of "all unread" while the new read state loads
 

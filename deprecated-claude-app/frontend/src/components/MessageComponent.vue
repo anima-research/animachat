@@ -952,6 +952,7 @@ import { getModelColor } from '@/utils/modelColors';
 import { extractMath, restoreMath, KATEX_ALLOWED_TAGS, KATEX_ALLOWED_ATTRS } from '@/utils/latex';
 import '@/utils/dompurify-hooks'; // side-effect: hardens img tags via DOMPurify hook
 import { api } from '@/services/api';
+import { getConversationBookmarks, invalidateConversationBookmarks } from '@/services/bookmarks';
 import { useStore } from '@/store';
 import { getParticipantAvatarUrl, getAvatarColor, loadAvatarPacks } from '@/utils/avatars';
 import DebugMessageDialog from './DebugMessageDialog.vue';
@@ -2360,8 +2361,7 @@ async function loadBookmark() {
     const conversationId = store.state.currentConversation?.id;
     if (!conversationId) return;
 
-    const response = await api.get(`/bookmarks/conversation/${conversationId}`);
-    const bookmarks = response.data;
+    const bookmarks = await getConversationBookmarks(conversationId);
 
     // Find bookmark for current branch
     const bookmark = bookmarks.find((b: any) =>
@@ -2402,6 +2402,7 @@ async function saveBookmark() {
       branchId: currentBranch.value.id,
       label
     });
+    invalidateConversationBookmarks(conversationId);
 
     bookmarkLabel.value = label;
     bookmarkDialog.value = false;
@@ -2416,6 +2417,7 @@ async function saveBookmark() {
 async function deleteBookmark() {
   try {
     await api.delete(`/bookmarks/${props.message.id}/${currentBranch.value.id}`);
+    invalidateConversationBookmarks(store.state.currentConversation?.id);
 
     bookmarkLabel.value = null;
     bookmarkDialog.value = false;

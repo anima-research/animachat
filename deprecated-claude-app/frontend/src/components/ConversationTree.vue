@@ -69,7 +69,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import * as d3 from 'd3';
 import type { Message, MessageBranch, Bookmark } from '@deprecated-claude/shared';
 import { getModelColor } from '@/utils/modelColors';
-import { api } from '@/services/api';
+import { getConversationBookmarks } from '@/services/bookmarks';
 import { useStore } from '@/store';
 
 const props = defineProps<{
@@ -925,8 +925,7 @@ async function loadBookmarks() {
     const conversationId = store.state.currentConversation?.id;
     if (!conversationId) return;
 
-    const response = await api.get(`/bookmarks/conversation/${conversationId}`);
-    bookmarks.value = response.data;
+    bookmarks.value = await getConversationBookmarks(conversationId);
   } catch (error) {
     console.error('Failed to load bookmarks:', error);
   }

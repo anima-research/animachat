@@ -1287,6 +1287,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore, computeVisibleMessages } from '@/store';
 import { api } from '@/services/api';
+import { getConversationBookmarks, invalidateConversationBookmarks } from '@/services/bookmarks';
 import type { Attachment, Conversation, Participant, Model, Bookmark, Persona, PostHocAttachmentState, WsAttachment } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema, getValidatedModelDefaults, applyPostHocAttachmentOp } from '@deprecated-claude/shared';
 import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
@@ -4355,8 +4356,7 @@ async function loadBookmarks() {
     const conversationId = currentConversation.value?.id;
     if (!conversationId) return;
 
-    const response = await api.get(`/bookmarks/conversation/${conversationId}`);
-    bookmarks.value = response.data;
+    bookmarks.value = await getConversationBookmarks(conversationId);
   } catch (error) {
     console.error('Failed to load bookmarks:', error);
   }
@@ -4364,6 +4364,7 @@ async function loadBookmarks() {
 
 async function handleBookmarkChanged() {
   // Reload bookmarks in both the view and the tree
+  invalidateConversationBookmarks(currentConversation.value?.id);
   await loadBookmarks();
   if (conversationTreeRef.value) {
     await (conversationTreeRef.value as any).loadBookmarks();
