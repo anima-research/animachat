@@ -1,44 +1,106 @@
 // Run: npm test -w frontend   (= node --import tsx --test tests/*.test.ts, from deprecated-claude-app)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RENDER_WINDOW_GROUPS, windowStart, countToReveal, hiddenMessageCount } from '../src/utils/renderWindow.js';
+import {
+  RENDER_WINDOW_GROUPS as N,
+  initialAnchor,
+  windowStart,
+  earlierAnchor,
+  anchorToReveal,
+  hiddenMessageCount,
+} from '../src/utils/renderWindow.js';
 
-/** groups[i] holds `sizes[i]` messages with ids "g<i>m<j>" */
-function groups(...sizes: number[]) {
-  return sizes.map((n, i) => ({ messages: Array.from({ length: n }, (_, j) => ({ id: `g${i}m${j}` })) }));
+type Group = { messages: { id: string }[] };
+
+/** `count` one-message groups with ids "m<offset>", "m<offset+1>", ... */
+function groups(count: number, offset = 0): Group[] {
+  return Array.from({ length: count }, (_, i) => ({ messages: [{ id: `m${offset + i}` }] }));
 }
 
-test('short conversations are mounted whole', () => {
-  assert.equal(windowStart(5, RENDER_WINDOW_GROUPS), 0);
-  assert.equal(windowStart(RENDER_WINDOW_GROUPS, RENDER_WINDOW_GROUPS), 0);
-  assert.equal(hiddenMessageCount(groups(1, 2, 3), RENDER_WINDOW_GROUPS), 0);
+/** Ids of the messages mounted for this anchor */
+function mounted(gs: Group[], anchor: ReturnType<typeof initialAnchor>): string[] {
+  return gs.slice(windowStart(gs, anchor)).flatMap(g => g.messages.map(m => m.id));
+}
+
+test('short and empty conversations are mounted whole', () => {
+  assert.equal(windowStart(groups(5), initialAnchor(groups(5))), 0);
+  assert.equal(windowStart(groups(N), initialAnchor(groups(N))), 0);
+  assert.equal(initialAnchor([]), 'start');
 });
 
-test('long conversations mount the newest groups', () => {
-  assert.equal(windowStart(100, 30), 70);
-  assert.equal(windowStart(100, 60), 40);
-  assert.equal(windowStart(100, 1000), 0);
+test('a long conversation opens on its newest groups', () => {
+  const gs = groups(100);
+  assert.equal(windowStart(gs, initialAnchor(gs)), 100 - N);
+  assert.equal(windowStart(gs, null), 100 - N);
+  assert.equal(hiddenMessageCount(gs, 100 - N), 100 - N);
 });
 
-test('the window follows new messages', () => {
-  assert.equal(windowStart(101, 30), 71);
+test('never unmounts a mounted group while the conversation is open: new groups only add', () => {
+  let gs = groups(100);
+  const anchor = initialAnchor(gs);
+  const before = mounted(gs, anchor);
+  for (let added = 1; added <= 3 * N; added++) {
+    gs = groups(100 + added);
+    const now = mounted(gs, anchor);
+    assert.deepEqual(now.slice(0, before.length), before, `a mounted message left after ${added} new groups`);
+  }
 });
 
-test('hidden count sums messages of unmounted groups', () => {
-  assert.equal(hiddenMessageCount(groups(2, 3, 1, 4), 2), 5);
-  assert.equal(hiddenMessageCount(groups(2, 3, 1, 4), 1), 6);
+test('a conversation that opened empty keeps everything mounted as it grows', () => {
+  const anchor = initialAnchor([]);
+  assert.equal(windowStart(groups(3 * N), anchor), 0);
 });
 
-test('revealing a hidden message widens the window exactly to its group', () => {
-  const g = groups(1, 1, 2, 1, 1);
-  assert.equal(countToReveal(g, 'g2m1', 2), 3);
-  assert.equal(windowStart(g.length, 3), 2);
-  assert.equal(countToReveal(g, 'g0m0', 2), 5);
+test('regrouping into finer groups (participants loaded) keeps the same first mounted message', () => {
+  // before participants load: the same 100 messages merged into pairs
+  const paired: Group[] = [];
+  for (let i = 0; i < 100; i += 2) paired.push({ messages: [{ id: `m${i}` }, { id: `m${i + 1}` }] });
+  const anchor = initialAnchor(paired);
+  const firstMounted = mounted(paired, anchor)[0];
+  assert.equal(mounted(groups(100), anchor)[0], firstMounted);
+});
+
+test('regrouping into coarser groups still mounts at least the newest groups', () => {
+  const anchor = initialAnchor(groups(100)); // m70
+  const paired: Group[] = [];
+  for (let i = 0; i < 100; i += 2) paired.push({ messages: [{ id: `m${i}` }, { id: `m${i + 1}` }] });
+  assert.equal(windowStart(paired, anchor), 50 - N);
+});
+
+test('anchor message gone from the path (branch switch): fall back to the newest groups', () => {
+  const anchor = initialAnchor(groups(100));
+  const otherPath = groups(100, 1000);
+  assert.equal(windowStart(otherPath, anchor), 100 - N);
+});
+
+test('a shorter path still mounts the newest groups', () => {
+  const anchor = initialAnchor(groups(100)); // m70
+  assert.equal(windowStart(groups(75), anchor), 75 - N);
+});
+
+test('show earlier moves the start back one step, not below 0', () => {
+  const gs = groups(100);
+  assert.equal(windowStart(gs, earlierAnchor(gs, 70)), 70 - N);
+  assert.equal(windowStart(gs, earlierAnchor(gs, 10)), 0);
+  assert.equal(earlierAnchor(gs, 0), 'start');
+});
+
+test('hidden count sums messages of groups before the start', () => {
+  const gs = [{ messages: [1, 2] }, { messages: [3, 4, 5] }, { messages: [6] }];
+  assert.equal(hiddenMessageCount(gs, 2), 5);
+  assert.equal(hiddenMessageCount(gs, 10), 6);
+});
+
+test('revealing a hidden message mounts from its group', () => {
+  const gs = groups(100);
+  assert.deepEqual(anchorToReveal(gs, 'm42', 70), { messageId: 'm42' });
+  assert.equal(windowStart(gs, anchorToReveal(gs, 'm42', 70)), 42);
+  assert.equal(anchorToReveal(gs, 'm0', 70), 'start');
 });
 
 test('revealing a mounted or unknown message changes nothing', () => {
-  const g = groups(1, 1, 2, 1, 1);
-  assert.equal(countToReveal(g, 'g4m0', 2), null);
-  assert.equal(countToReveal(g, 'g3m0', 2), null);
-  assert.equal(countToReveal(g, 'not-on-path', 2), null);
+  const gs = groups(100);
+  assert.equal(anchorToReveal(gs, 'm70', 70), null);
+  assert.equal(anchorToReveal(gs, 'm99', 70), null);
+  assert.equal(anchorToReveal(gs, 'not-on-path', 70), null);
 });

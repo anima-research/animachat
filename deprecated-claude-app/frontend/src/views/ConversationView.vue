@@ -1313,7 +1313,7 @@ import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
 import { getModelColor } from '@/utils/modelColors';
 import { serializeConversationToMarkdown } from '@/utils/conversationMarkdown';
 import { computeAuthenticity, type AuthenticityStatus } from '@/utils/authenticity';
-import { RENDER_WINDOW_GROUPS, windowStart, countToReveal, hiddenMessageCount } from '@/utils/renderWindow';
+import { initialAnchor, windowStart, earlierAnchor, anchorToReveal, hiddenMessageCount, type WindowAnchor } from '@/utils/renderWindow';
 
 const route = useRoute();
 const router = useRouter();
@@ -1759,13 +1759,27 @@ const groupedMessages = computed((): MessageGroup[] => {
 // Long conversations mount only the newest groups (every mounted message is a
 // full MessageComponent with its rendered DOM); earlier ones are added by
 // scrolling to the top, the "show earlier" button, or navigating to a message.
-const renderedGroupCount = ref(RENDER_WINDOW_GROUPS);
-const renderedFromGroupIndex = computed(() => windowStart(groupedMessages.value.length, renderedGroupCount.value));
+// The window is anchored at its first mounted message (see utils/renderWindow):
+// new messages extend it and never unmount anything, e.g. a message being edited.
+const windowAnchor = ref<WindowAnchor>(null);
+const renderedFromGroupIndex = computed(() => windowStart(groupedMessages.value, windowAnchor.value));
 const renderedGroups = computed(() => groupedMessages.value.slice(renderedFromGroupIndex.value));
-const hiddenEarlierMessageCount = computed(() => hiddenMessageCount(groupedMessages.value, renderedGroupCount.value));
+const hiddenEarlierMessageCount = computed(() => hiddenMessageCount(groupedMessages.value, renderedFromGroupIndex.value));
 
-watch(() => currentConversation.value?.id, () => {
-  renderedGroupCount.value = RENDER_WINDOW_GROUPS;
+// Every conversation switch goes through isLoadingConversation (mount and route
+// change); anchor once its messages are in, not on the previous conversation's.
+// Participants load after the messages and change the grouping (until then all
+// assistant messages in a row form one "Assistant" group), so anchor again when
+// they arrive unless the user has already moved the window.
+let anchorAwaitsParticipants = false;
+watch(isLoadingConversation, (loading) => {
+  windowAnchor.value = loading ? null : initialAnchor(groupedMessages.value);
+  anchorAwaitsParticipants = !loading;
+});
+watch(participants, () => {
+  if (!anchorAwaitsParticipants || isLoadingConversation.value) return;
+  anchorAwaitsParticipants = false;
+  windowAnchor.value = initialAnchor(groupedMessages.value);
 });
 
 let showingEarlier = false; // one step per reach of the top, not one per scroll event
@@ -1775,7 +1789,8 @@ async function showEarlierMessages() {
   const element = (messagesContainer.value as any)?.$el || messagesContainer.value;
   // Keep the messages that were on screen in place while content grows above them
   const fromBottom = element ? element.scrollHeight - element.scrollTop : 0;
-  renderedGroupCount.value = groupedMessages.value.length - renderedFromGroupIndex.value + RENDER_WINDOW_GROUPS;
+  windowAnchor.value = earlierAnchor(groupedMessages.value, renderedFromGroupIndex.value);
+  anchorAwaitsParticipants = false;
   await nextTick();
   if (element) {
     isProgrammaticScroll.value = true;
@@ -1787,9 +1802,10 @@ async function showEarlierMessages() {
 
 /** Mount the group holding `messageId` if it is outside the window (before scrolling to it). */
 async function revealMessage(messageId: string) {
-  const count = countToReveal(groupedMessages.value, messageId, renderedGroupCount.value);
-  if (count === null) return;
-  renderedGroupCount.value = count;
+  const anchor = anchorToReveal(groupedMessages.value, messageId, renderedFromGroupIndex.value);
+  if (anchor === null) return;
+  windowAnchor.value = anchor;
+  anchorAwaitsParticipants = false;
   await nextTick();
 }
 
