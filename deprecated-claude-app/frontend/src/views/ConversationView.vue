@@ -531,9 +531,14 @@
           </div>
           
           <div v-else>
-            <template v-for="(group, groupIndex) in groupedMessages" :key="group.id">
+            <div v-if="renderedFromGroupIndex > 0" class="text-center my-2">
+              <v-btn variant="text" size="small" prepend-icon="mdi-chevron-up" @click="showEarlierMessages">
+                Show {{ hiddenEarlierMessageCount }} earlier {{ hiddenEarlierMessageCount === 1 ? 'message' : 'messages' }}
+              </v-btn>
+            </div>
+            <template v-for="(group, renderedIndex) in renderedGroups" :key="group.id">
               <div
-                v-if="showContextDivider && groupIndex === firstInWindowGroupIndex"
+                v-if="showContextDivider && renderedFromGroupIndex + renderedIndex === firstInWindowGroupIndex"
                 class="context-window-divider"
                 :title="contextPreview && contextPreview.current.droppedFromHistory > 0
                   ? `${contextPreview.current.droppedFromHistory} earlier message(s) are outside the rolling window and not sent to the model.`
@@ -544,7 +549,7 @@
               <CompositeMessageGroup
               :messages="group.messages"
               :participants="participants"
-              :is-last-group="groupIndex === groupedMessages.length - 1"
+              :is-last-group="renderedFromGroupIndex + renderedIndex === groupedMessages.length - 1"
               :selected-branch-for-parent="selectedBranchForParent"
               :streaming-message-id="streamingMessageId"
               :streaming-branch-id="streamingBranchId"
@@ -1287,6 +1292,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore, computeVisibleMessages } from '@/store';
 import { api } from '@/services/api';
+import { getConversationBookmarks, invalidateConversationBookmarks } from '@/services/bookmarks';
 import type { Attachment, Conversation, Participant, Model, Bookmark, Persona, PostHocAttachmentState, WsAttachment } from '@deprecated-claude/shared';
 import { UpdateParticipantSchema, getValidatedModelDefaults, applyPostHocAttachmentOp } from '@deprecated-claude/shared';
 import CompositeMessageGroup from '@/components/CompositeMessageGroup.vue';
@@ -1307,6 +1313,7 @@ import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
 import { getModelColor } from '@/utils/modelColors';
 import { serializeConversationToMarkdown } from '@/utils/conversationMarkdown';
 import { computeAuthenticity, type AuthenticityStatus } from '@/utils/authenticity';
+import { initialAnchor, windowStart, earlierAnchor, anchorToReveal, hiddenMessageCount, type WindowAnchor } from '@/utils/renderWindow';
 
 const route = useRoute();
 const router = useRouter();
@@ -1383,6 +1390,18 @@ const getStuckThresholdMs = () => {
 // (console.log -> push to ref -> reactivity -> re-render -> console.log -> ...)
 let consoleLogs: string[] = [];
 const MAX_CONSOLE_LOGS = 200;
+// One logged payload (a sent message with attachments, a whole server event)
+// can be megabytes once stringified; the stuck report only needs the start
+const MAX_CONSOLE_LOG_LENGTH = 2000;
+// In V8 a slice of a long string can keep the whole original alive behind it;
+// prepending a character and slicing it off forces a flat copy of the prefix
+// alone, so the truncated entry really holds only MAX_CONSOLE_LOG_LENGTH chars
+function truncatedCopy(s: string): string {
+  return (' ' + s.slice(0, MAX_CONSOLE_LOG_LENGTH)).slice(1) + '…[truncated]';
+}
+// Restored on unmount, so remounting the view doesn't stack another wrapper
+// that keeps the old instance alive and stringifies every log once more
+let restoreConsole: (() => void) | null = null;
 
 // General error snackbar (for non-streaming errors like pricing validation)
 const errorSnackbar = ref(false);
@@ -1742,6 +1761,60 @@ const groupedMessages = computed((): MessageGroup[] => {
   
   return groups;
 });
+
+// Long conversations mount only the newest groups (every mounted message is a
+// full MessageComponent with its rendered DOM); earlier ones are added by
+// scrolling to the top, the "show earlier" button, or navigating to a message.
+// The window is anchored at its first mounted message (see utils/renderWindow):
+// new messages extend it and never unmount anything, e.g. a message being edited.
+const windowAnchor = ref<WindowAnchor>(null);
+const renderedFromGroupIndex = computed(() => windowStart(groupedMessages.value, windowAnchor.value));
+const renderedGroups = computed(() => groupedMessages.value.slice(renderedFromGroupIndex.value));
+const hiddenEarlierMessageCount = computed(() => hiddenMessageCount(groupedMessages.value, renderedFromGroupIndex.value));
+
+// Every conversation switch goes through isLoadingConversation (mount and route
+// change); anchor once its messages are in, not on the previous conversation's.
+// Participants load after the messages and change the grouping (until then all
+// assistant messages in a row form one "Assistant" group), so anchor again when
+// they arrive unless the user has already moved the window.
+let anchorAwaitsParticipants = false;
+watch(isLoadingConversation, (loading) => {
+  windowAnchor.value = loading ? null : initialAnchor(groupedMessages.value);
+  anchorAwaitsParticipants = !loading;
+});
+watch(participants, () => {
+  if (!anchorAwaitsParticipants || isLoadingConversation.value) return;
+  anchorAwaitsParticipants = false;
+  windowAnchor.value = initialAnchor(groupedMessages.value);
+});
+
+let showingEarlier = false; // one step per reach of the top, not one per scroll event
+async function showEarlierMessages() {
+  if (showingEarlier) return;
+  showingEarlier = true;
+  const element = (messagesContainer.value as any)?.$el || messagesContainer.value;
+  // Keep the messages that were on screen in place while content grows above them
+  const fromBottom = element ? element.scrollHeight - element.scrollTop : 0;
+  windowAnchor.value = earlierAnchor(groupedMessages.value, renderedFromGroupIndex.value);
+  anchorAwaitsParticipants = false;
+  await nextTick();
+  if (element) {
+    isProgrammaticScroll.value = true;
+    element.scrollTop = element.scrollHeight - fromBottom;
+    setTimeout(() => { isProgrammaticScroll.value = false; }, 100);
+  }
+  showingEarlier = false;
+}
+
+/** Mount the group holding `messageId` if it is outside the window (before scrolling to it). */
+async function revealMessage(messageId: string) {
+  const anchor = anchorToReveal(groupedMessages.value, messageId, renderedFromGroupIndex.value);
+  if (anchor === null) return;
+  windowAnchor.value = anchor;
+  anchorAwaitsParticipants = false;
+  await nextTick();
+}
+
 const wsConnectionState = computed(() => store.state.wsConnectionState);
 const isWsConnected = computed(() => store.state.wsConnectionState === 'connected');
 
@@ -2323,7 +2396,8 @@ onMounted(async () => {
           return '[unserializable]';
         }
       }).join(' ');
-      consoleLogs.push(`[${timestamp}] [${level}] ${message}`);
+      const entry = `[${timestamp}] [${level}] ${message}`;
+      consoleLogs.push(entry.length > MAX_CONSOLE_LOG_LENGTH ? truncatedCopy(entry) : entry);
       if (consoleLogs.length > MAX_CONSOLE_LOGS) {
         consoleLogs.shift();
       }
@@ -2332,6 +2406,11 @@ onMounted(async () => {
     console.log = (...args) => { captureLog('LOG', args); originalLog.apply(console, args); };
     console.warn = (...args) => { captureLog('WARN', args); originalWarn.apply(console, args); };
     console.error = (...args) => { captureLog('ERROR', args); originalError.apply(console, args); };
+    restoreConsole = () => {
+      console.log = originalLog;
+      console.warn = originalWarn;
+      console.error = originalError;
+    };
   }
   
   if (typeof window !== 'undefined') {
@@ -2749,6 +2828,8 @@ onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', updateMobileState);
   }
+  restoreConsole?.();
+  restoreConsole = null;
   
   // Leave room when unmounting
   if (currentConversation.value && store.state.wsService) {
@@ -2932,6 +3013,11 @@ watch(messagesContainer, (container) => {
           // If user scrolls back near the bottom, re-enable (only for user scrolls)
           else if (scrollBottom <= 10) {
             autoScrollEnabled.value = true;
+          }
+
+          // Reaching the top mounts the next earlier groups
+          if (element.scrollTop < 200 && renderedFromGroupIndex.value > 0) {
+            void showEarlierMessages();
           }
         }
         
@@ -3498,6 +3584,7 @@ async function navigateToTreeBranch(messageId: string, branchId: string) {
   
   // Wait for DOM to update, then scroll to the clicked message
   await nextTick();
+  await revealMessage(messageId);
   setTimeout(() => {
     const messageElement = document.getElementById(`message-${messageId}`);
     if (messageElement) {
@@ -4355,8 +4442,7 @@ async function loadBookmarks() {
     const conversationId = currentConversation.value?.id;
     if (!conversationId) return;
 
-    const response = await api.get(`/bookmarks/conversation/${conversationId}`);
-    bookmarks.value = response.data;
+    bookmarks.value = await getConversationBookmarks(conversationId);
   } catch (error) {
     console.error('Failed to load bookmarks:', error);
   }
@@ -4364,13 +4450,15 @@ async function loadBookmarks() {
 
 async function handleBookmarkChanged() {
   // Reload bookmarks in both the view and the tree
+  invalidateConversationBookmarks(currentConversation.value?.id);
   await loadBookmarks();
   if (conversationTreeRef.value) {
     await (conversationTreeRef.value as any).loadBookmarks();
   }
 }
 
-function scrollToMessage(messageId: string) {
+async function scrollToMessage(messageId: string) {
+  await revealMessage(messageId);
   const element = document.getElementById(`message-${messageId}`);
   if (element) {
     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
