@@ -1,24 +1,22 @@
 <template>
-  <div class="conversation-search">
+  <!-- Keys are handled on the root (focusable), so they still work after a click on a result. -->
+  <div class="conversation-search" tabindex="-1" @keydown="onKeydown">
     <div class="conversation-search-input">
       <v-text-field
         ref="inputRef"
         :model-value="modelValue"
         @update:model-value="onInput"
-        @keydown="onKeydown"
         placeholder="Search all branches…"
         prepend-inner-icon="mdi-magnify"
         density="compact"
         variant="outlined"
         hide-details
         clearable
-        autofocus
-        @click:clear="onInput('')"
       />
-      <div class="text-caption text-grey mt-1">{{ countLine }}</div>
+      <div class="text-caption text-grey mt-1" aria-live="polite">{{ countLine }}</div>
     </div>
 
-    <div ref="listRef" class="conversation-search-results">
+    <div ref="listRef" class="conversation-search-results" @scroll="onScroll">
       <div
         v-for="(result, i) in shownResults"
         :key="result.branchId"
@@ -29,39 +27,50 @@
         @mousemove="activeIndex = i"
       >
         <div class="d-flex align-center text-caption text-grey">
-          <v-icon size="x-small" class="mr-1">{{ roleIcon(result.role) }}</v-icon>
+          <v-icon size="x-small" class="mr-1" :aria-label="result.role">{{ roleIcon(result.role) }}</v-icon>
           <span>{{ result.date }}</span>
           <v-spacer />
           <v-chip
             size="x-small"
-            :color="result.onCurrentPath ? 'primary' : undefined"
+            :color="currentPathSet.has(result.branchId) ? 'primary' : undefined"
             variant="tonal"
           >
-            {{ result.onCurrentPath ? 'current path' : 'other branch' }}
+            {{ currentPathSet.has(result.branchId) ? 'current path' : 'other branch' }}
           </v-chip>
         </div>
         <!-- snippet is HTML-escaped in buildSnippet; only <mark> is ours -->
         <div class="conversation-search-snippet text-body-2" v-html="result.snippet" />
       </div>
 
-      <div
+      <v-btn
         v-if="results.length > shownResults.length"
+        variant="text"
+        size="small"
+        block
         class="conversation-search-more text-caption"
         @click="limit += RESULT_CAP"
       >
         more… ({{ results.length - shownResults.length }} not shown)
-      </div>
+      </v-btn>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, toRef, watch } from 'vue';
 import type { Message } from '@deprecated-claude/shared';
-import { parseQuery, matchIndex, buildSnippet, branchSearchText, type SearchQuery } from '@/utils/conversationSearch';
+import { parseQuery, buildSnippet, searchConversation, type SearchHit, type SearchQuery } from '@/utils/conversationSearch';
 
 const RESULT_CAP = 200;
 const DEBOUNCE_MS = 150;
+
+export interface SearchPanelState {
+  activeIndex: number;
+  limit: number;
+  scrollTop: number;
+  /** The displayed path when the query ran; fixes the order so a jump does not reshuffle the list. */
+  orderPath: string[] | null;
+}
 
 const props = defineProps<{
   messages: Message[];
@@ -69,6 +78,10 @@ const props = defineProps<{
   currentPath: string[];
   isMobile: boolean;
   modelValue: string;
+  /** Owned by the parent so the panel reopens as it was left. */
+  state: SearchPanelState;
+  /** A reply is streaming; its text is searched when the stream ends. */
+  streaming: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -77,22 +90,14 @@ const emit = defineEmits<{
   (e: 'close'): void;
 }>();
 
-interface SearchResult {
-  messageId: string;
-  branchId: string;
-  role: string;
-  date: string;
-  snippet: string;
-  onCurrentPath: boolean;
-  sortKey: number;
-}
-
 const inputRef = ref<any>(null);
 const listRef = ref<HTMLElement | null>(null);
-const activeIndex = ref(0);
-const limit = ref(RESULT_CAP);
+// The parent owns the object, so these writes survive unmount.
+const activeIndex = toRef(props.state, 'activeIndex');
+const limit = toRef(props.state, 'limit');
 // The query actually searched; trails modelValue by the debounce.
 const query = ref<SearchQuery | null>(parseQuery(props.modelValue || ''));
+if (query.value && !props.state.orderPath) props.state.orderPath = props.currentPath.slice();
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 function onInput(value: string | null) {
@@ -103,9 +108,11 @@ watch(() => props.modelValue, (value) => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     query.value = parseQuery(value || '');
-    lastJumpedBranchId = null;
     activeIndex.value = 0;
     limit.value = RESULT_CAP;
+    props.state.orderPath = props.currentPath.slice();
+    props.state.scrollTop = 0;
+    if (listRef.value) listRef.value.scrollTop = 0;
   }, DEBOUNCE_MS);
 });
 
@@ -113,43 +120,44 @@ onBeforeUnmount(() => clearTimeout(debounceTimer));
 
 onMounted(async () => {
   await nextTick();
-  inputRef.value?.focus?.();
+  if (listRef.value) listRef.value.scrollTop = props.state.scrollTop;
+  // On phones a reopen with results should show them, not the keyboard.
+  if (!props.isMobile || !props.modelValue) inputRef.value?.focus?.();
 });
+
+function onScroll(e: Event) {
+  props.state.scrollTop = (e.target as HTMLElement).scrollTop;
+}
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-const results = computed<SearchResult[]>(() => {
+// Reruns when a branch is added or removed and when a stream starts or ends,
+// not on every streamed token: the text itself is read untracked.
+const structureKey = computed(() => props.messages.reduce((n, m) => n + m.branches.length, 0));
+
+const results = computed<SearchHit[]>(() => {
   const q = query.value;
   if (!q) return [];
-  const pathIndex = new Map(props.currentPath.map((id, i) => [id, i]));
-  const onPath: SearchResult[] = [];
-  const others: SearchResult[] = [];
-
-  for (const message of props.messages) {
-    for (const branch of message.branches) {
-      const text = branchSearchText(branch);
-      if (matchIndex(text, q) === -1) continue;
-      const created = branch.createdAt ? new Date(branch.createdAt) : null;
-      const time = created && !isNaN(created.getTime()) ? created.getTime() : 0;
-      const position = pathIndex.get(branch.id);
-      const result: SearchResult = {
-        messageId: message.id,
-        branchId: branch.id,
-        role: branch.role,
-        date: time ? dateFormat.format(created!) : '',
-        snippet: buildSnippet(text, q),
-        onCurrentPath: position !== undefined,
-        sortKey: position ?? time,
-      };
-      (position !== undefined ? onPath : others).push(result);
-    }
-  }
-  onPath.sort((a, b) => a.sortKey - b.sortKey);
-  others.sort((a, b) => a.sortKey - b.sortKey);
-  return [...onPath, ...others];
+  void structureKey.value;
+  void props.streaming;
+  return searchConversation(toRaw(props.messages), q, props.state.orderPath ?? []);
 });
 
-const shownResults = computed(() => results.value.slice(0, limit.value));
+// Snippets only for what is shown.
+const shownResults = computed(() => {
+  const q = query.value;
+  if (!q) return [];
+  return results.value.slice(0, limit.value).map(hit => ({
+    ...hit,
+    date: hit.created ? dateFormat.format(hit.created) : '',
+    snippet: buildSnippet(hit.text, q),
+  }));
+});
+
+// The chip follows the live path; a string key keeps it from re-rendering
+// the list when the path array is rebuilt with the same ids.
+const currentPathKey = computed(() => props.currentPath.join('\n'));
+const currentPathSet = computed(() => new Set(currentPathKey.value.split('\n')));
 
 const countLine = computed(() => {
   if (!query.value) return 'Type at least 2 characters. "Quotes" for an exact phrase.';
@@ -163,21 +171,8 @@ function roleIcon(role: string) {
   return 'mdi-robot';
 }
 
-// A jump changes the displayed path, which re-sorts the results; keep the
-// selection on the result that was jumped to.
-let lastJumpedBranchId: string | null = null;
-watch(results, (list) => {
-  if (!lastJumpedBranchId) return;
-  const i = list.findIndex(r => r.branchId === lastJumpedBranchId);
-  if (i !== -1 && i < limit.value) {
-    activeIndex.value = i;
-    scrollActiveIntoView();
-  }
-});
-
-function jump(result: SearchResult) {
-  lastJumpedBranchId = result.branchId;
-  activeIndex.value = shownResults.value.indexOf(result);
+function jump(result: SearchHit) {
+  activeIndex.value = shownResults.value.findIndex(r => r.branchId === result.branchId);
   emit('jump', result.messageId, result.branchId);
 }
 
@@ -190,6 +185,8 @@ function scrollActiveIntoView() {
 }
 
 function onKeydown(e: KeyboardEvent) {
+  // keyCode 229: Safari sends the IME-committing Enter after compositionend.
+  if (e.isComposing || e.keyCode === 229) return;
   const count = shownResults.value.length;
   if (e.key === 'ArrowDown' && count > 0) {
     e.preventDefault();
@@ -200,6 +197,8 @@ function onKeydown(e: KeyboardEvent) {
     activeIndex.value = Math.max(0, activeIndex.value - 1);
     scrollActiveIntoView();
   } else if (e.key === 'Enter') {
+    // A held Enter would jump again and again; Enter on "more…" is that button's.
+    if (e.repeat || (e.target as HTMLElement).closest('button')) return;
     e.preventDefault();
     const result = shownResults.value[activeIndex.value];
     if (result) jump(result);
@@ -214,6 +213,7 @@ function onKeydown(e: KeyboardEvent) {
 
 <style scoped>
 .conversation-search {
+  outline: none;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -249,9 +249,6 @@ function onKeydown(e: KeyboardEvent) {
   padding: 0 1px;
 }
 .conversation-search-more {
-  padding: 8px;
-  text-align: center;
-  cursor: pointer;
   opacity: 0.8;
 }
 </style>

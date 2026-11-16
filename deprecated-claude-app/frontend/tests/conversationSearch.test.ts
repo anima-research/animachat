@@ -1,7 +1,7 @@
 // Run: npm test -w frontend   (= node --import tsx --test tests/*.test.ts, from deprecated-claude-app)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseQuery, matchIndex, buildSnippet, branchSearchText } from '../src/utils/conversationSearch.js';
+import { parseQuery, matchIndex, buildSnippet, branchSearchText, flattenText, searchConversation } from '../src/utils/conversationSearch.js';
 
 function q(raw: string) {
   const parsed = parseQuery(raw);
@@ -76,4 +76,67 @@ test('branch text: content plus thinking; text blocks only as fallback', () => {
     'shown\n\nmused'
   );
   assert.equal(branchSearchText({ content: '', contentBlocks: [{ type: 'text', text: 'only here' }] }), 'only here');
+});
+
+test('a phrase matches across a line break or a double space', () => {
+  const text = flattenText(branchSearchText({ content: 'the quick\nbrown fox,  quick   brown again' }));
+  assert.equal(matchIndex(text, q('"quick brown"')), text.indexOf('quick'));
+  assert.deepEqual(q('"quick   brown"').terms, ['quick brown']);
+  assert.equal(buildSnippet('quick\n\nbrown', q('"quick brown"')), '<mark>quick brown</mark>');
+});
+
+test('phrase and word together at match level', () => {
+  assert.equal(matchIndex('fox brown quick', q('"quick brown" fox')), -1);
+  assert.equal(matchIndex('quick brown fox', q('"quick brown" fox')), 0);
+});
+
+test('snippet: no leading ellipsis at offset 0, no trailing one near the end', () => {
+  const head = buildSnippet('needle ' + 'x'.repeat(300), q('needle'), 160);
+  assert.ok(head.startsWith('<mark>needle</mark>') && head.endsWith('…'));
+  const tail = buildSnippet('x'.repeat(300) + ' needle end', q('needle'), 160);
+  assert.ok(tail.startsWith('…') && tail.endsWith('<mark>needle</mark> end'));
+});
+
+test('snippet: a mark next to an escaped entity', () => {
+  assert.equal(buildSnippet('a&b', q('&b')), 'a<mark>&amp;b</mark>');
+});
+
+test('snippet: an emoji at the cut is not split', () => {
+  for (const pad of [0, 52]) {
+    const snippet = buildSnippet('x'.repeat(pad) + '😀'.repeat(40) + 'z needle ' + '😀'.repeat(80) + ' ' + 'y'.repeat(300), q('needle'), 160);
+    assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(snippet), `pad ${pad}`);
+  }
+});
+
+const day = (d: number) => new Date(Date.UTC(2026, 10, d));
+function conversation() {
+  return [
+    { id: 'm1', branches: [
+      { id: 'a1', role: 'user', content: 'apple one', createdAt: day(1) },
+      { id: 'a2', role: 'user', content: 'apple two', createdAt: day(2) },
+    ] },
+    { id: 'm2', branches: [
+      { id: 'b1', role: 'assistant', content: 'apple three', createdAt: day(3) },
+      { id: 'b2', role: 'assistant', content: 'apple four', createdAt: undefined },
+      { id: 'b3', role: 'assistant', content: 'apple five', createdAt: day(4) },
+    ] },
+  ];
+}
+
+test('order: path first in document order, then others oldest first, undated last', () => {
+  const hits = searchConversation(conversation(), q('apple'), ['a1', 'b1']);
+  assert.deepEqual(hits.map(h => h.branchId), ['a1', 'b1', 'a2', 'b3', 'b2']);
+  assert.equal(hits.find(h => h.branchId === 'b2')!.sortKey, Number.MAX_SAFE_INTEGER);
+  assert.equal(hits.find(h => h.branchId === 'b2')!.created, null);
+});
+
+test('order is frozen to the path the query ran on, not the displayed one', () => {
+  const messages = conversation();
+  const orderPath = ['a1', 'b1'];
+  const before = searchConversation(messages, q('apple'), orderPath).map(h => h.branchId);
+  // A jump to b3 makes it the displayed path; the list keeps its order.
+  const displayed = ['a1', 'b3'];
+  const after = searchConversation(messages, q('apple'), orderPath).map(h => h.branchId);
+  assert.deepEqual(after, before);
+  assert.notDeepEqual(searchConversation(messages, q('apple'), displayed).map(h => h.branchId), before);
 });

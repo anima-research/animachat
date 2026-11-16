@@ -1005,6 +1005,8 @@
         :messages="allMessages"
         :current-path="currentPathBranchIds"
         :is-mobile="isMobile"
+        :state="searchPanel"
+        :streaming="isStreaming"
         @jump="navigateToSearchResult"
         @close="searchDrawer = false"
         class="flex-grow-1"
@@ -1325,7 +1327,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore, computeVisibleMessages } from '@/store';
@@ -1345,7 +1347,7 @@ import DuplicateConversationDialog from '@/components/DuplicateConversationDialo
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
-import ConversationSearch from '@/components/ConversationSearch.vue';
+import ConversationSearch, { type SearchPanelState } from '@/components/ConversationSearch.vue';
 import MetricsDisplay from '@/components/MetricsDisplay.vue';
 import ModelPillBar from '@/components/ModelPillBar.vue';
 import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
@@ -1369,8 +1371,10 @@ const isMobile = ref(false);
 const mobilePanel = ref<MobilePanel>('sidebar');
 const treeDrawer = ref(false);
 const searchDrawer = ref(false);
-// Kept here, not in ConversationSearch, so it survives closing the drawer.
+// Kept here, not in ConversationSearch, so the panel reopens as it was left
+// (phones close it on every jump).
 const searchQuery = ref('');
+const searchPanel = reactive<SearchPanelState>({ activeIndex: 0, limit: 200, scrollTop: 0, orderPath: null });
 watch(treeDrawer, (open) => { if (open) searchDrawer.value = false; });
 watch(searchDrawer, (open) => { if (open) treeDrawer.value = false; });
 const importDialog = ref(false);
@@ -1747,7 +1751,10 @@ const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
 // The displayed path, root to leaf — the same branches the tree highlights.
 const currentPathBranchIds = computed(() => messages.value.map(m => m.activeBranchId));
-watch(() => currentConversation.value?.id, () => { searchQuery.value = ''; });
+watch(() => currentConversation.value?.id, () => {
+  searchQuery.value = '';
+  Object.assign(searchPanel, { activeIndex: 0, limit: 200, scrollTop: 0, orderPath: null });
+});
 
 // STUBBED: Unread count disabled pending architecture review
 const unreadBranchCount = computed(() => 0);
