@@ -144,3 +144,56 @@ export function sourceSplitIndex(source: string, prefix: string, total: string):
   }
   return -1;
 }
+
+/**
+ * Touch path for splitting (2026-11-16). iOS Safari never fires `contextmenu`, and
+ * Android's long-press also starts native selection, so the phone path is: arm
+ * split mode from the action bar, then tap the content. A tap is a pointerdown and
+ * pointerup close together — anything longer is a scroll or a drag and must not split.
+ */
+export const TAP_SLOP_PX = 8;
+
+export function isTap(down: { x: number; y: number }, up: { x: number; y: number }, slop = TAP_SLOP_PX): boolean {
+  return Math.hypot(up.x - down.x, up.y - down.y) < slop;
+}
+
+/**
+ * The last non-empty selection on the page and when it was last seen. On a phone
+ * the taps that open the action bar and choose "Split…" may collapse the selection
+ * before the handler runs; this remembers it for a short while. One listener for
+ * the whole page, installed on first use.
+ */
+let lastSelection: { range: Range; collapsedAt: number | null } | null = null;
+let tracking = false;
+
+export function trackSelection(doc: Document = document): void {
+  if (tracking) return;
+  tracking = true;
+  doc.addEventListener('selectionchange', () => {
+    const sel = doc.getSelection();
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+      lastSelection = { range: sel.getRangeAt(0).cloneRange(), collapsedAt: null };
+    } else if (lastSelection && lastSelection.collapsedAt === null) {
+      lastSelection.collapsedAt = Date.now(); // ages from the moment it went away
+    }
+  });
+}
+
+/** End of the current — or a just-collapsed (within `maxAgeMs`) — selection inside `container`. */
+export function selectionEndIn(container: Node, maxAgeMs = 10_000, doc: Document = document): Range | null {
+  const sel = doc.getSelection();
+  let range: Range | null = null;
+  if (sel && sel.rangeCount > 0 && !sel.isCollapsed) range = sel.getRangeAt(0);
+  else if (lastSelection && lastSelection.collapsedAt !== null && Date.now() - lastSelection.collapsedAt <= maxAgeMs) {
+    range = lastSelection.range;
+  }
+  if (!range || range.collapsed || !container.contains(range.endContainer)) return null;
+  const end = range.cloneRange();
+  end.collapse(false);
+  return end;
+}
+
+/** Drop the remembered selection once it has been used for a split. */
+export function forgetSelection(): void {
+  lastSelection = null;
+}

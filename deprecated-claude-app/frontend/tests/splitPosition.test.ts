@@ -1,7 +1,7 @@
 // Run: npm test -w frontend   (= node --import tsx --test tests/*.test.ts, from deprecated-claude-app)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sourceSplitIndex, maskMarkup, alignPrefix } from '../src/utils/splitPosition.js';
+import { sourceSplitIndex, maskMarkup, alignPrefix, isTap } from '../src/utils/splitPosition.js';
 
 /** rendered prefix = rendered text up to and including the Nth occurrence of clickAfter */
 function at(source: string, rendered: string, clickAfter: string, occurrence = 1): number {
@@ -91,4 +91,12 @@ test('alignPrefix returns -1 when a rendered character has no source within the 
 test('empty or whitespace prefix is refused', () => {
   assert.equal(sourceSplitIndex('abc def', '', 'abc def'), -1);
   assert.equal(sourceSplitIndex('abc def', '   ', 'abc def'), -1);
+});
+
+test('isTap: a still finger is a tap, a scroll is not', () => {
+  assert.equal(isTap({ x: 100, y: 200 }, { x: 100, y: 200 }), true);
+  assert.equal(isTap({ x: 100, y: 200 }, { x: 105, y: 204 }), true); // ~6.4 px jitter
+  assert.equal(isTap({ x: 100, y: 200 }, { x: 100, y: 208 }), false); // 8 px: the slop is exclusive
+  assert.equal(isTap({ x: 100, y: 200 }, { x: 100, y: 120 }), false); // a scroll
+  assert.equal(isTap({ x: 0, y: 0 }, { x: 3, y: 0 }, 2), false); // custom slop
 });
