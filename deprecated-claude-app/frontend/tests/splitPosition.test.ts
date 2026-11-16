@@ -1,7 +1,7 @@
 // Run: npm test -w frontend   (= node --import tsx --test tests/*.test.ts, from deprecated-claude-app)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sourceSplitIndex, maskMarkup, alignPrefix } from '../src/utils/splitPosition.js';
+import { sourceSplitIndex, maskMarkup, alignPrefix, isTap, selectionEndIn } from '../src/utils/splitPosition.js';
 
 /** rendered prefix = rendered text up to and including the Nth occurrence of clickAfter */
 function at(source: string, rendered: string, clickAfter: string, occurrence = 1): number {
@@ -91,4 +91,37 @@ test('alignPrefix returns -1 when a rendered character has no source within the 
 test('empty or whitespace prefix is refused', () => {
   assert.equal(sourceSplitIndex('abc def', '', 'abc def'), -1);
   assert.equal(sourceSplitIndex('abc def', '   ', 'abc def'), -1);
+});
+
+test('isTap: a still, short touch is a tap; a scroll or a long-press is not', () => {
+  const p = (x: number, y: number, t = 0) => ({ x, y, t });
+  assert.equal(isTap(p(100, 200), p(100, 200, 120)), true);
+  assert.equal(isTap(p(100, 200), p(105, 204, 120)), true); // ~6.4 px jitter
+  assert.equal(isTap(p(100, 200), p(100, 208, 120)), false); // 8 px: the slop is exclusive
+  assert.equal(isTap(p(100, 200), p(100, 120, 120)), false); // a scroll
+  assert.equal(isTap(p(0, 0), p(3, 0)), true);
+  assert.equal(isTap(p(0, 0), p(3, 0), 2), false); // custom slop
+  assert.equal(isTap(p(0, 0, 1000), p(0, 0, 1500)), true); // 500 ms: the limit is inclusive
+  assert.equal(isTap(p(0, 0, 1000), p(0, 0, 1501)), false); // a long-press
+  assert.equal(isTap(p(0, 0), p(0, 0, 900), 8, 1000), true); // custom duration
+});
+
+test('selectionEndIn: only a non-empty selection that ends inside the container', () => {
+  const inside = {}, outside = {};
+  const container = { contains: (n: unknown) => n === inside } as unknown as Node;
+  const range = (endContainer: unknown, collapsed = false) => ({
+    endContainer, collapsed,
+    cloneRange() { return { endContainer, collapsed: false, collapse(toStart: boolean) { this.collapsed = !toStart; } }; }
+  });
+  const doc = (r: ReturnType<typeof range> | null, isCollapsed = false) => ({
+    getSelection: () => (r ? { rangeCount: 1, isCollapsed, getRangeAt: () => r } : null)
+  }) as unknown as Pick<Document, 'getSelection'>;
+
+  const end = selectionEndIn(container, doc(range(inside)));
+  assert.ok(end);
+  assert.equal(end.endContainer, inside);
+  assert.equal(end.collapsed, true); // collapsed to its end, a copy
+  assert.equal(selectionEndIn(container, doc(range(outside))), null); // another message
+  assert.equal(selectionEndIn(container, doc(range(inside), true)), null); // just a caret
+  assert.equal(selectionEndIn(container, doc(null)), null);
 });

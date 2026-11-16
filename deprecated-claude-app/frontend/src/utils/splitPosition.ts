@@ -144,3 +144,30 @@ export function sourceSplitIndex(source: string, prefix: string, total: string):
   }
   return -1;
 }
+
+/**
+ * Touch path for splitting (2026-11-16). iOS Safari never fires `contextmenu`, and
+ * Android's long-press also starts native selection, so the phone path is: arm
+ * split mode from the action bar, then tap the content. A tap is a pointerdown and
+ * pointerup close together in space and time — a scroll, a drag or a long-press
+ * must not split. `t` is the event's timeStamp in ms.
+ */
+export const TAP_SLOP_PX = 8;
+export const TAP_MAX_MS = 500;
+
+type PointerSample = { x: number; y: number; t: number };
+
+export function isTap(down: PointerSample, up: PointerSample, slop = TAP_SLOP_PX, maxMs = TAP_MAX_MS): boolean {
+  return Math.hypot(up.x - down.x, up.y - down.y) < slop && up.t - down.t <= maxMs;
+}
+
+/** End of the current non-empty selection, if it ends inside `container`. */
+export function selectionEndIn(container: Node, doc: Pick<Document, 'getSelection'> = document): Range | null {
+  const sel = doc.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  if (range.collapsed || !container.contains(range.endContainer)) return null;
+  const end = range.cloneRange();
+  end.collapse(false);
+  return end;
+}
