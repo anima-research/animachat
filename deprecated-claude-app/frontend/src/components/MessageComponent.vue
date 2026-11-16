@@ -95,6 +95,17 @@
           @click="copyContent"
         />
       </span>
+      <span v-if="message.branches[branchIndex].role === 'assistant'" class="hover-tooltip" data-tooltip="Split…">
+        <v-btn
+          icon="mdi-content-cut"
+          :color="splitArmed ? 'info' : undefined"
+          size="x-small"
+          variant="text"
+          density="compact"
+          aria-label="Split message"
+          @click="startSplitMode"
+        />
+      </span>
       <span v-if="!isLastMessage" class="hover-tooltip" data-tooltip="Branch Mode">
         <v-btn
           :icon="isSelectedParent ? 'mdi-source-branch-check' : 'mdi-source-branch'"
@@ -459,12 +470,31 @@
         </v-expansion-panels>
       </div>
       
+      <!-- Split mode hint (armed from the action bar; the touch path to Split) -->
+      <div v-if="splitArmed && !isEditing" class="split-hint text-caption">
+        <v-icon size="14" icon="mdi-content-cut" class="mr-1" />
+        <span>{{ isTouchDevice ? 'Tap' : 'Click' }} where to split</span>
+        <v-btn
+          icon="mdi-close"
+          size="small"
+          variant="text"
+          density="comfortable"
+          aria-label="Cancel split"
+          @click.stop="cancelSplitMode"
+        />
+      </div>
+
       <!-- Message content or edit mode -->
       <div 
         v-if="!isEditing" 
-        :class="['message-content', { 'monospace-mode': isMonospace }]" 
+        ref="contentEl"
+        :class="['message-content', { 'monospace-mode': isMonospace, 'split-armed': splitArmed }]" 
         v-html="renderedContent"
         @contextmenu="handleContentContextMenu"
+        @pointerdown="onContentPointerDown"
+        @pointerup="onContentPointerUp"
+        @pointercancel="splitPointerDown = null"
+        @click="onContentClick"
       />
       <v-textarea
         v-else
@@ -485,7 +515,7 @@
         >
           <v-card elevation="8" class="pa-0">
             <v-list density="compact" class="pa-0">
-              <v-list-item @click="splitAtContextPosition" density="compact">
+              <v-list-item @click="splitAtContextPosition" density="compact" class="split-menu-item">
                 <template v-slot:prepend>
                   <v-icon size="16" icon="mdi-content-cut" />
                 </template>
@@ -949,7 +979,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onUpdated, watch } from 'vue';
-import { caretAtPoint, renderedPrefix, sourceSplitIndex } from '@/utils/splitPosition';
+import { caretAtPoint, renderedPrefix, sourceSplitIndex, isTap, trackSelection, selectionEndIn, forgetSelection } from '@/utils/splitPosition';
+import { useRoute } from 'vue-router';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Attachment, Message, Participant } from '@deprecated-claude/shared';
@@ -1028,6 +1059,11 @@ const showSplitContextMenu = ref(false); // Context menu visibility
 const splitMenuPosition = ref({ x: 0, y: 0 }); // Position for context menu
 const contextSplitPosition = ref(0); // Position determined from context menu click
 const splitMenuCloseHandler = ref<((e: MouseEvent) => void) | null>(null); // Track close handler for cleanup
+const contentEl = ref<HTMLElement>();
+const splitArmed = ref(false); // Split mode: the next tap on the content picks the split point
+let splitPointerDown: { x: number; y: number } | null = null;
+let swallowContentClick = false; // the click that follows the tap which opened the menu
+const route = useRoute();
 
 // Detect touch device on mount - use multiple detection methods for reliability
 onMounted(() => {
@@ -1035,14 +1071,15 @@ onMounted(() => {
     'ontouchstart' in window || 
     navigator.maxTouchPoints > 0 ||
     (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  trackSelection();
 });
 
 onUnmounted(() => {
   // Clean up split menu handler
-  if (splitMenuCloseHandler.value) {
-    document.removeEventListener('click', splitMenuCloseHandler.value);
-    document.removeEventListener('contextmenu', splitMenuCloseHandler.value);
-  }
+  closeSplitMenuListeners();
+  // Watchers are already stopped here, so split-mode listeners are removed by hand
+  document.removeEventListener('pointerdown', handleSplitOutsidePointer, true);
+  document.removeEventListener('keydown', handleSplitEscape);
 });
 
 // Toggle action bar on touch devices
@@ -2011,11 +2048,21 @@ function saveEditOnly() {
 
 
 
+/** Source index for a DOM caret inside the content, or -1 if it is not a valid split point. */
+function splitIndexAt(container: HTMLElement, node: Node, offset: number): number {
+  const source = currentBranch.value?.content || '';
+  const rendered = renderedPrefix(container, node, offset);
+  if (!rendered) return -1;
+  const index = sourceSplitIndex(source, rendered.prefix, rendered.total);
+  return index > 0 && index < source.length ? index : -1;
+}
+
 function handleContentContextMenu(event: MouseEvent) {
   // Only show for assistant messages
   if (currentBranch.value?.role !== 'assistant') return;
 
   event.preventDefault();
+  cancelSplitMode();
 
   // Where in the RENDERED text did the user click? A right-click does not move
   // the caret, so window.getSelection() is stale after the first split (that
@@ -2023,7 +2070,6 @@ function handleContentContextMenu(event: MouseEvent) {
   // a non-empty selection inside this message means "split after the selection".
   const container = event.currentTarget as HTMLElement | null;
   if (!container) return;
-  const source = currentBranch.value?.content || '';
 
   let caret: { node: Node; offset: number } | null = null;
   const selection = window.getSelection();
@@ -2034,35 +2080,34 @@ function handleContentContextMenu(event: MouseEvent) {
   if (!caret) caret = caretAtPoint(document, event.clientX, event.clientY);
   if (!caret) return;
 
-  const rendered = renderedPrefix(container, caret.node, caret.offset);
-  if (!rendered) return;
-  const searchPosition = sourceSplitIndex(source, rendered.prefix, rendered.total);
+  const searchPosition = splitIndexAt(container, caret.node, caret.offset);
+  if (searchPosition < 0) return; // Can't determine valid split position
+  openSplitMenu(searchPosition, event.clientX, event.clientY);
+}
 
-  // Validate position
-  if (searchPosition <= 0 || searchPosition >= source.length) {
-    // Can't determine valid split position
-    return;
-  }
+// Room the "Split here" card needs, so it is clamped inside the viewport on narrow screens
+const SPLIT_MENU_W = 150;
+const SPLIT_MENU_H = 56;
 
-  contextSplitPosition.value = searchPosition;
-  // Use clientX/clientY for fixed positioning (viewport-relative)
-  splitMenuPosition.value = { x: event.clientX, y: event.clientY };
+function openSplitMenu(position: number, x: number, y: number) {
+  contextSplitPosition.value = position;
+  // Viewport-relative (the menu is position: fixed)
+  splitMenuPosition.value = {
+    x: Math.max(8, Math.min(x, window.innerWidth - SPLIT_MENU_W - 8)),
+    y: Math.max(8, Math.min(y, window.innerHeight - SPLIT_MENU_H - 8))
+  };
   showSplitContextMenu.value = true;
   
   // Clean up any existing handler first
-  if (splitMenuCloseHandler.value) {
-    document.removeEventListener('click', splitMenuCloseHandler.value);
-    document.removeEventListener('contextmenu', splitMenuCloseHandler.value);
-  }
+  closeSplitMenuListeners();
   
-  // Close menu on click outside or another context menu
-  splitMenuCloseHandler.value = () => {
+  // Close menu on click outside or another context menu. Also on a pointerdown
+  // outside the menu: iOS Safari does not deliver a tap on plain text as a click
+  // to document, so "tap elsewhere" would otherwise leave the menu open.
+  splitMenuCloseHandler.value = (e: MouseEvent) => {
+    if (e.type === 'pointerdown' && (e.target as Element | null)?.closest?.('.split-context-menu')) return;
     showSplitContextMenu.value = false;
-    if (splitMenuCloseHandler.value) {
-      document.removeEventListener('click', splitMenuCloseHandler.value);
-      document.removeEventListener('contextmenu', splitMenuCloseHandler.value);
-      splitMenuCloseHandler.value = null;
-    }
+    closeSplitMenuListeners();
   };
   
   // Delay adding listener so current event doesn't trigger it
@@ -2070,9 +2115,112 @@ function handleContentContextMenu(event: MouseEvent) {
     if (splitMenuCloseHandler.value) {
       document.addEventListener('click', splitMenuCloseHandler.value);
       document.addEventListener('contextmenu', splitMenuCloseHandler.value);
+      document.addEventListener('pointerdown', splitMenuCloseHandler.value, true);
     }
   }, 10);
 }
+
+function closeSplitMenuListeners() {
+  if (!splitMenuCloseHandler.value) return;
+  document.removeEventListener('click', splitMenuCloseHandler.value);
+  document.removeEventListener('contextmenu', splitMenuCloseHandler.value);
+  document.removeEventListener('pointerdown', splitMenuCloseHandler.value, true);
+  splitMenuCloseHandler.value = null;
+}
+
+// "Split…" from the action bar. With a selection inside this message, offer the
+// split right after it; otherwise arm split mode and wait for a tap on the content.
+function startSplitMode() {
+  if (currentBranch.value?.role !== 'assistant') return;
+  if (splitArmed.value) { cancelSplitMode(); return; }
+  const container = contentEl.value;
+  if (!container) return;
+  touchActionsOpen.value = false; // the bar would cover the text
+
+  const end = selectionEndIn(container);
+  if (end) {
+    const position = splitIndexAt(container, end.endContainer, end.endOffset);
+    if (position > 0) {
+      forgetSelection();
+      const rects = end.getClientRects();
+      const rect = rects.length ? rects[rects.length - 1] : end.getBoundingClientRect();
+      const box = rect.width || rect.height ? rect : container.getBoundingClientRect();
+      openSplitMenu(position, box.right, box.bottom);
+      return;
+    }
+  }
+  splitArmed.value = true;
+}
+
+function cancelSplitMode() {
+  splitArmed.value = false;
+  splitPointerDown = null;
+}
+
+function onContentPointerDown(event: PointerEvent) {
+  swallowContentClick = false;
+  splitPointerDown = splitArmed.value && event.isPrimary ? { x: event.clientX, y: event.clientY } : null;
+}
+
+function onContentPointerUp(event: PointerEvent) {
+  if (!splitArmed.value || !splitPointerDown) return;
+  const down = splitPointerDown;
+  splitPointerDown = null;
+  // Only a tap picks the point: a scroll or a drag (moved >= 8 px) never splits
+  if (!isTap(down, { x: event.clientX, y: event.clientY })) return;
+  const container = event.currentTarget as HTMLElement | null;
+  if (!container) return;
+  const caret = caretAtPoint(document, event.clientX, event.clientY);
+  if (!caret) return;
+  const position = splitIndexAt(container, caret.node, caret.offset);
+  if (position < 0) return; // stays armed; tap somewhere else in the text
+  splitArmed.value = false;
+  swallowContentClick = true;
+  openSplitMenu(position, event.clientX, event.clientY);
+}
+
+function onContentClick(event: MouseEvent) {
+  // In split mode a tap must not follow links; the click after the tap that opened
+  // the menu must not reach the menu's own close-on-click handler.
+  if (swallowContentClick) {
+    swallowContentClick = false;
+    event.preventDefault();
+    event.stopPropagation();
+  } else if (splitArmed.value) {
+    event.preventDefault();
+  }
+}
+
+// Cancel split mode on a tap outside this message, on Escape, on navigation
+function handleSplitOutsidePointer(event: PointerEvent) {
+  const card = messageCard.value;
+  if (card && !card.contains(event.target as Node)) cancelSplitMode();
+}
+
+function handleSplitEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return;
+  cancelSplitMode();
+  if (showSplitContextMenu.value) closeSplitMenu();
+}
+
+watch(splitArmed, (armed) => {
+  if (armed) {
+    document.addEventListener('pointerdown', handleSplitOutsidePointer, true);
+  } else {
+    document.removeEventListener('pointerdown', handleSplitOutsidePointer, true);
+  }
+});
+
+watch(() => splitArmed.value || showSplitContextMenu.value, (active) => {
+  if (active) document.addEventListener('keydown', handleSplitEscape);
+  else document.removeEventListener('keydown', handleSplitEscape);
+});
+
+// A string, so an unrelated update to the message does not count as a change
+watch(
+  () => `${route?.fullPath}|${isEditing.value}|${!!props.isStreaming}|${currentBranch.value?.id}`,
+  () => cancelSplitMode()
+);
 
 function splitAtContextPosition() {
   if (contextSplitPosition.value > 0 && contextSplitPosition.value < (currentBranch.value?.content?.length || 0)) {
@@ -2083,11 +2231,7 @@ function splitAtContextPosition() {
 
 function closeSplitMenu() {
   showSplitContextMenu.value = false;
-  if (splitMenuCloseHandler.value) {
-    document.removeEventListener('click', splitMenuCloseHandler.value);
-    document.removeEventListener('contextmenu', splitMenuCloseHandler.value);
-    splitMenuCloseHandler.value = null;
-  }
+  closeSplitMenuListeners();
 }
 
 function copyContent() {
@@ -2937,6 +3081,25 @@ span.attachment-hidden-for-ai {
 }
 
 /* Split context menu - teleported to body, so unscoped */
+.split-hint {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 4px;
+  color: rgb(var(--v-theme-info));
+}
+
+.message-content.split-armed {
+  outline: 1px dashed rgba(var(--v-theme-info), 0.6);
+  outline-offset: 4px;
+  border-radius: 2px;
+  cursor: text;
+}
+
+.split-menu-item {
+  min-height: 44px !important;
+}
+
 .split-context-menu {
   position: fixed;
   z-index: 9999;
