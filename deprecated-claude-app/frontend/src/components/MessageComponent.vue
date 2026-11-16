@@ -103,6 +103,8 @@
           variant="text"
           density="compact"
           aria-label="Split message"
+          :aria-pressed="splitArmed"
+          @pointerdown="snapshotSelection"
           @click="startSplitMode"
         />
       </span>
@@ -444,6 +446,7 @@
       variant="text"
       density="compact"
       class="touch-toggle-btn"
+      @pointerdown="snapshotSelection"
       @click="toggleTouchActions"
     />
       
@@ -471,7 +474,7 @@
       </div>
       
       <!-- Split mode hint (armed from the action bar; the touch path to Split) -->
-      <div v-if="splitArmed && !isEditing" class="split-hint text-caption">
+      <div v-if="splitArmed && !isEditing" class="split-hint text-caption" role="status">
         <v-icon size="14" icon="mdi-content-cut" class="mr-1" />
         <span>{{ isTouchDevice ? 'Tap' : 'Click' }} where to split</span>
         <v-btn
@@ -979,7 +982,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onUpdated, watch } from 'vue';
-import { caretAtPoint, renderedPrefix, sourceSplitIndex, isTap, trackSelection, selectionEndIn, forgetSelection } from '@/utils/splitPosition';
+import { caretAtPoint, renderedPrefix, sourceSplitIndex, isTap, selectionEndIn } from '@/utils/splitPosition';
 import { useRoute } from 'vue-router';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -1061,8 +1064,9 @@ const contextSplitPosition = ref(0); // Position determined from context menu cl
 const splitMenuCloseHandler = ref<((e: MouseEvent) => void) | null>(null); // Track close handler for cleanup
 const contentEl = ref<HTMLElement>();
 const splitArmed = ref(false); // Split mode: the next tap on the content picks the split point
-let splitPointerDown: { x: number; y: number } | null = null;
-let swallowContentClick = false; // the click that follows the tap which opened the menu
+let splitPointerDown: { x: number; y: number; t: number } | null = null;
+let splitTapPoint: { x: number; y: number } | null = null; // a tap seen at pointerup, acted on at its click
+let selectionAtPress: Range | null = null; // selection end, taken before the taps on "⋯"/"Split…" can clear it
 const route = useRoute();
 
 // Detect touch device on mount - use multiple detection methods for reliability
@@ -1071,7 +1075,6 @@ onMounted(() => {
     'ontouchstart' in window || 
     navigator.maxTouchPoints > 0 ||
     (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-  trackSelection();
 });
 
 onUnmounted(() => {
@@ -1109,6 +1112,7 @@ watch(touchActionsOpen, (isOpen) => {
     }, 10);
   } else {
     document.removeEventListener('click', handleClickOutside);
+    selectionAtPress = null;
   }
 });
 const bookmarkDialog = ref(false);
@@ -2128,20 +2132,30 @@ function closeSplitMenuListeners() {
   splitMenuCloseHandler.value = null;
 }
 
+// On a phone, the taps on "⋯" and on "Split…" can collapse the selection before
+// startSplitMode runs; pointerdown comes first, so the selection end is kept here.
+// With the touch bar open, the press on "Split…" keeps what "⋯" saw.
+function snapshotSelection() {
+  const container = contentEl.value;
+  const end = container ? selectionEndIn(container) : null;
+  if (end || !touchActionsOpen.value) selectionAtPress = end;
+}
+
 // "Split…" from the action bar. With a selection inside this message, offer the
 // split right after it; otherwise arm split mode and wait for a tap on the content.
-function startSplitMode() {
+function startSplitMode(event?: MouseEvent) {
+  const pressed = event && event.detail !== 0 ? selectionAtPress : null; // a keyboard press has no pointerdown
+  selectionAtPress = null;
   if (currentBranch.value?.role !== 'assistant') return;
   if (splitArmed.value) { cancelSplitMode(); return; }
   const container = contentEl.value;
   if (!container) return;
   touchActionsOpen.value = false; // the bar would cover the text
 
-  const end = selectionEndIn(container);
+  const end = selectionEndIn(container) ?? (pressed && container.contains(pressed.endContainer) ? pressed : null);
   if (end) {
     const position = splitIndexAt(container, end.endContainer, end.endOffset);
     if (position > 0) {
-      forgetSelection();
       const rects = end.getClientRects();
       const rect = rects.length ? rects[rects.length - 1] : end.getBoundingClientRect();
       const box = rect.width || rect.height ? rect : container.getBoundingClientRect();
@@ -2155,40 +2169,45 @@ function startSplitMode() {
 function cancelSplitMode() {
   splitArmed.value = false;
   splitPointerDown = null;
+  splitTapPoint = null;
 }
 
+// A tap is recognised at pointerup but acted on at the click that follows it: the
+// browser already withholds that click for a scroll stop, a long-press or a pinch.
 function onContentPointerDown(event: PointerEvent) {
-  swallowContentClick = false;
-  splitPointerDown = splitArmed.value && event.isPrimary ? { x: event.clientX, y: event.clientY } : null;
+  splitTapPoint = null;
+  splitPointerDown = splitArmed.value && event.isPrimary && event.button === 0
+    ? { x: event.clientX, y: event.clientY, t: event.timeStamp }
+    : null;
 }
 
 function onContentPointerUp(event: PointerEvent) {
-  if (!splitArmed.value || !splitPointerDown) return;
   const down = splitPointerDown;
   splitPointerDown = null;
-  // Only a tap picks the point: a scroll or a drag (moved >= 8 px) never splits
-  if (!isTap(down, { x: event.clientX, y: event.clientY })) return;
+  if (!splitArmed.value || !down) return;
+  // Only a tap picks the point: a scroll or a drag (>= 8 px) or a long-press (> 500 ms) never splits
+  const up = { x: event.clientX, y: event.clientY, t: event.timeStamp };
+  if (isTap(down, up)) splitTapPoint = { x: up.x, y: up.y };
+}
+
+function onContentClick(event: MouseEvent) {
+  if (!splitArmed.value) return;
+  // In split mode a tap must not follow links or toggle <details>. Handlers attached
+  // directly to elements inside the rendered content would still run — there are none.
+  event.preventDefault();
+  const tap = splitTapPoint;
+  splitTapPoint = null;
+  if (!tap || event.detail === 0) return; // a keyboard click is not a tap
   const container = event.currentTarget as HTMLElement | null;
   if (!container) return;
-  const caret = caretAtPoint(document, event.clientX, event.clientY);
+  const caret = caretAtPoint(document, tap.x, tap.y);
   if (!caret) return;
   const position = splitIndexAt(container, caret.node, caret.offset);
   if (position < 0) return; // stays armed; tap somewhere else in the text
   splitArmed.value = false;
-  swallowContentClick = true;
-  openSplitMenu(position, event.clientX, event.clientY);
-}
-
-function onContentClick(event: MouseEvent) {
-  // In split mode a tap must not follow links; the click after the tap that opened
-  // the menu must not reach the menu's own close-on-click handler.
-  if (swallowContentClick) {
-    swallowContentClick = false;
-    event.preventDefault();
-    event.stopPropagation();
-  } else if (splitArmed.value) {
-    event.preventDefault();
-  }
+  // This click must not reach the menu's close-on-click handler
+  event.stopPropagation();
+  openSplitMenu(position, tap.x, tap.y);
 }
 
 // Cancel split mode on a tap outside this message, on Escape, on navigation
@@ -2198,7 +2217,8 @@ function handleSplitOutsidePointer(event: PointerEvent) {
 }
 
 function handleSplitEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape') return;
+  if (event.key !== 'Escape' || event.defaultPrevented) return; // a dialog or menu already took this Escape
+  event.preventDefault();
   cancelSplitMode();
   if (showSplitContextMenu.value) closeSplitMenu();
 }
