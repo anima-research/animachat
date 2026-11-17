@@ -487,6 +487,15 @@
           title="Toggle conversation tree"
         />
 
+        <v-btn
+          v-if="allMessages.length > 0"
+          icon="mdi-text-search"
+          :color="searchDrawer ? 'primary' : undefined"
+          variant="text"
+          @click="searchDrawer = !searchDrawer"
+          title="Search in conversation"
+        />
+
         <!-- History button with unread badge -->
         <v-badge
           v-if="currentConversation"
@@ -973,6 +982,37 @@
       </v-container>
     </v-navigation-drawer>
 
+    <!-- Right sidebar with search across all branches; same shell as the tree
+         drawer, and the two never open together. -->
+    <v-navigation-drawer
+      v-if="searchDrawer && (!isMobile || mobilePanel === 'conversation')"
+      v-model="searchDrawer"
+      location="right"
+      :width="isMobile ? undefined : 400"
+      :permanent="!isMobile"
+      :temporary="isMobile"
+      :scrim="isMobile"
+      class="tree-drawer search-drawer"
+      :class="{ 'tree-drawer--mobile': isMobile }"
+    >
+      <div v-if="isMobile" class="tree-drawer-mobile-header">
+        <span class="text-subtitle-2">Search in conversation</span>
+        <v-btn icon="mdi-close" variant="text" size="small" title="Close search" @click="searchDrawer = false" />
+      </div>
+
+      <ConversationSearch
+        v-model="searchQuery"
+        :messages="allMessages"
+        :current-path="currentPathBranchIds"
+        :is-mobile="isMobile"
+        :state="searchPanel"
+        :streaming="isStreaming"
+        @jump="navigateToSearchResult"
+        @close="searchDrawer = false"
+        class="flex-grow-1"
+      />
+    </v-navigation-drawer>
+
     <!-- Dialogs -->
     <ImportDialogV2
       v-model="importDialog"
@@ -1287,7 +1327,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { isEqual } from 'lodash-es';
 import { useStore, computeVisibleMessages } from '@/store';
@@ -1307,6 +1347,7 @@ import DuplicateConversationDialog from '@/components/DuplicateConversationDialo
 import ArcLogo from '@/components/ArcLogo.vue';
 import WelcomeDialog from '@/components/WelcomeDialog.vue';
 import ConversationTree from '@/components/ConversationTree.vue';
+import ConversationSearch, { type SearchPanelState } from '@/components/ConversationSearch.vue';
 import MetricsDisplay from '@/components/MetricsDisplay.vue';
 import ModelPillBar from '@/components/ModelPillBar.vue';
 import AddParticipantDialog from '@/components/AddParticipantDialog.vue';
@@ -1329,6 +1370,13 @@ const drawer = ref(true);
 const isMobile = ref(false);
 const mobilePanel = ref<MobilePanel>('sidebar');
 const treeDrawer = ref(false);
+const searchDrawer = ref(false);
+// Kept here, not in ConversationSearch, so the panel reopens as it was left
+// (phones close it on every jump).
+const searchQuery = ref('');
+const searchPanel = reactive<SearchPanelState>({ activeIndex: 0, limit: 200, scrollTop: 0, orderPath: null });
+watch(treeDrawer, (open) => { if (open) searchDrawer.value = false; });
+watch(searchDrawer, (open) => { if (open) treeDrawer.value = false; });
 const importDialog = ref(false);
 const settingsDialog = ref(false);
 const conversationSettingsDialog = ref(false);
@@ -1701,6 +1749,12 @@ function getPermissionColor(permission: string): string {
 const currentConversation = computed(() => store.state.currentConversation);
 const messages = computed(() => store.messages);
 const allMessages = computed(() => store.state.allMessages); // Get ALL messages for tree view
+// The displayed path, root to leaf — the same branches the tree highlights.
+const currentPathBranchIds = computed(() => messages.value.map(m => m.activeBranchId));
+watch(() => currentConversation.value?.id, () => {
+  searchQuery.value = '';
+  Object.assign(searchPanel, { activeIndex: 0, limit: 200, scrollTop: 0, orderPath: null });
+});
 
 // STUBBED: Unread count disabled pending architecture review
 const unreadBranchCount = computed(() => 0);
@@ -3521,6 +3575,12 @@ function switchBranch(messageId: string, branchId: string) {
   setTimeout(() => {
     isSwitchingBranch.value = false;
   }, 100);
+}
+
+async function navigateToSearchResult(messageId: string, branchId: string) {
+  // On phones the drawer covers the conversation, so close it to show the hit.
+  if (isMobile.value) searchDrawer.value = false;
+  await navigateToTreeBranch(messageId, branchId);
 }
 
 async function navigateToTreeBranch(messageId: string, branchId: string) {
@@ -5497,6 +5557,10 @@ function formatDate(date: Date | string): string {
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.search-drawer :deep(.conversation-search) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .tree-drawer--mobile :deep(.conversation-tree-container) {
   flex: 1 1 auto;
   min-height: 0;
