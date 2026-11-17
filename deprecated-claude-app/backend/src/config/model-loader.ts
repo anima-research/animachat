@@ -8,8 +8,11 @@ import { getOpenRouterModelsCache } from '../services/pricing-cache.js';
 // models whose entry does not declare its own levels.
 const OPENROUTER_EFFORT_LEVELS = ['low', 'medium', 'high'];
 // OpenRouter ids of model families whose reasoning cannot be disabled
-// (OpenAI's o-series and GPT-5 line). The catalogue does not expose this.
-const REASONING_ONLY_MODEL = /^openai\/(o[0-9]|gpt-5)/;
+// (OpenAI's o-series, and the GPT-5 line and later: GPT-6 answers 400
+// "Reasoning is mandatory" to an attempt to disable it). The catalogue does
+// not expose this. Without an effort these models still reason but return no
+// summary, so they must not be treated as having a thinking toggle.
+const REASONING_ONLY_MODEL = /^openai\/(o[0-9]|gpt-[5-9])/;
 
 export class ModelLoader {
   private static instance: ModelLoader;
